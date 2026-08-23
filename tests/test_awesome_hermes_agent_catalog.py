@@ -55,6 +55,18 @@ class AwesomeHermesAgentCatalogTests(unittest.TestCase):
         self.assertEqual(len({item.item.id for item in coverage}), 216)
         self.assertEqual(sum(1 for item in coverage if item.item.subsection == PLUGIN_SUBSECTION), 35)
 
+    def test_lintlang_metadata_matches_current_upstream_contract(self) -> None:
+        lintlang = awesome_hermes_item("lintlang").item
+
+        self.assertEqual(lintlang.author, "Hermes Labs")
+        self.assertEqual(lintlang.author_url, "https://github.com/hermes-labs-ai")
+        self.assertEqual(
+            lintlang.summary,
+            "Static analysis for AI agent configs, tool descriptions, and system prompts, "
+            "returning a PASS / REVIEW / FAIL verdict. Zero-LLM, deterministic checks, built for CI.",
+        )
+        self.assertEqual(lintlang.url, "https://github.com/hermes-labs-ai/lintlang")
+
     def test_plugin_coverage_maps_high_value_gaps_to_existing_omh_surfaces(self) -> None:
         web_search = awesome_hermes_item("hermes-web-search-plus")
         self.assertEqual(web_search.status, "partial")
