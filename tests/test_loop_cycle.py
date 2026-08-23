@@ -41,7 +41,29 @@ from omh.goal_loop import (
 )
 from omh.paths import resolve_paths
 from omh.record_revision import StaleRecordMutation
-from omh.workflows.goal_loop import _INNER_TIER_EXPECTED_SIGNAL
+from omh.skills.packaging import builtin_skill_templates
+from omh.workflows.goal_loop import (
+    LOOP_WORKFLOW_PATTERNS,
+    _INNER_TIER_EXPECTED_SIGNAL,
+)
+
+# Canonical LOOP_WORKFLOW_PATTERNS member -> the form the loop skill body
+# documents. Two writers, one vocabulary. A sixth member fails this test until
+# the prose is updated -- and when you add one, these are the other writers it
+# must reach:
+#   - site/docs/loop/index.html enumerates the patterns by hand and is pinned
+#     by a SUBSTRING assertion in tests/test_router_content.py, so it goes
+#     stale silently rather than failing.
+#   - _subagent_verification_policy() and _loop_cost_policy() in
+#     src/workflows/goal_loop.py decide whether the new member does anything
+#     at all, or lands inert.
+WORKFLOW_PATTERN_PROSE = {
+    "single_step": "single-step",
+    "fan_out_synthesize": "fan-out-and-synthesize",
+    "adversarial_verification": "adversarial verification",
+    "tournament": "tournament",
+    "triage_batch": "triage batch",
+}
 
 
 class GoalLoopTests(unittest.TestCase):
@@ -1180,6 +1202,13 @@ class GoalLoopTests(unittest.TestCase):
 
         self.assertFalse(validation["ok"])
         self.assertIn("runtime.queue[0].subagent_plan.result_contract must be an object", validation["errors"])
+
+    def test_every_workflow_pattern_is_documented_in_the_loop_body(self) -> None:
+        self.assertEqual(set(WORKFLOW_PATTERN_PROSE), set(LOOP_WORKFLOW_PATTERNS))
+        body = {skill.name: skill for skill in builtin_skill_templates()}["loop"].content
+        for canonical, prose in WORKFLOW_PATTERN_PROSE.items():
+            with self.subTest(pattern=canonical):
+                self.assertIn(prose, body)
 
 
 class LoopCycleMutationGuardTests(unittest.TestCase):

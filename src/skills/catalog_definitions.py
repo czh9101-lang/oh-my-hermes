@@ -359,6 +359,11 @@ _DEFINITIONS = [
             "Drive iteration with the upstream `/goal` loop from the prepared loop_goal_driver_handoff/v1, and register OMH's inner-tier checks as `/goal gate add` commands so verification runs before the judge.",
             "Treat a judge `done` verdict, a turn-ceiling pause, or a gate-retry pause as narration; completion still requires the linked goal ledger completion gate and observed evidence.",
             "Name the one element gating this loop from the `loop_constraint_assessment/v1` block before choosing the next action; if none is binding, say so from the recorded reason rather than assuming.",
+            "When the goal is measurable, declare the evaluation contract before the first attempt - exact command, metric name, direction, and the rule that the loop may not modify the scoring harness - and bind every keep or discard decision to it; when no such contract exists, say the goal is unmeasured instead of scoring it by judgement.",
+            "Run a measurable cycle as attempt, commit, measure, then keep or reset; a reset is the normal discard, and rewinding to an older commit is for a run of discards that traces to one bad ancestor.",
+            "For a measurable loop, keep a human-scannable ledger the loop itself appends to - one tab-separated line per cycle carrying commit, metric, cost, keep or discard or crash, and a one-line description - beside the JSON loop artifacts.",
+            "Send long-running cycle output to a log file and pull only the declared metric and error lines into context; read the whole log only when the cycle crashed.",
+            "On an equal metric keep the simpler change, always keep an improvement achieved by deletion, and do not let a small gain buy added complexity.",
         ),
         why_this_exists="`loop` exists for goals whose correct implementation cannot be known upfront but can be discovered through bounded cycles of definition, action, verification, and revision without confusing planned cycles with observed progress.",
         do_not_use_when=(
@@ -391,6 +396,7 @@ _DEFINITIONS = [
             "If the goal turns into external waiting, record the waiting state and next observable signal instead of continuing locally.",
             "If context or budget is exhausted, checkpoint the loop artifact and continue from the latest loop_cycle/v1 state.",
             "If the upstream goal loop paused on its turn ceiling or a failing gate, record the pause as a loop wait state, not as completion, re-prepare the driver handoff, and re-register every gate after re-setting the goal, because setting a goal discards the previous gates.",
+            "If the loop runs out of next actions, re-read the scoped files, recombine the near-miss attempts, then escalate to a more radical change before declaring the loop blocked.",
         ),
     ),
     SkillDefinition(
