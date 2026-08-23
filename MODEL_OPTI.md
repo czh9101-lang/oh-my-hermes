@@ -43,8 +43,8 @@ identical prompt. Nothing else about the pipeline changes per model.
 
 | Family | Matched by | Example ids |
 | --- | --- | --- |
-| `gpt` | `gpt-` | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` |
-| `claude` | `claude-`, bare tiers `opus`/`sonnet`/`haiku` | `claude-fable-5`, `claude-opus-5` |
+| `gpt` | `gpt-`; design-qualified alias `openai-gpt-` | `gpt-5.6-sol`, `digitalocean/openai-gpt-5.6-sol` |
+| `claude` | `claude-`; design-qualified alias `anthropic-claude-`; bare tiers `opus`/`sonnet`/`haiku` | `claude-fable-5`, `digitalocean/anthropic-claude-opus-5` |
 | `gemini` | `gemini-` | `gemini-3.1-pro` |
 | `kimi` | `kimi-` | `kimi-k3`, `kimi-k3-ultrafast` |
 | `glm` | `glm-` | `glm-5.2`, `glm-5.2-ultrafast` |
@@ -55,8 +55,18 @@ identical prompt. Nothing else about the pipeline changes per model.
 | `llama` | `llama-` | open-weights Llama ids, any serving host |
 | `codestral` | `codestral-` | Codestral coding ids |
 | `solar` | `solar-` | Upstage Solar Pro ids |
-| `openai`, `anthropic` | bare-vendor prefixes | rarely-seen ids (kept on `generic`) |
 | `unknown` | anything else | emerging families before a prefix lands |
+
+The design-qualified aliases are concrete serving-catalog ids, not new model
+families. Bare vendor prefixes remain unclassified because the same provider
+catalog also includes other designs such as `openai-o3` and non-text models
+such as `openai-gpt-image-2`; neither may inherit GPT text calibration. The
+models.dev catalog used by OpenCode lists, for example,
+`digitalocean/openai-gpt-5.6-sol` with base model `openai/gpt-5.6-sol` and
+`digitalocean/anthropic-claude-opus-5` with base model
+`anthropic/claude-opus-5`. After the serving provider segment is stripped,
+those aliases therefore select the existing `gpt` and `claude` calibrations;
+they do not create vendor-wide calibration families.
 
 ## Universal protocols (every model, every family)
 
@@ -407,7 +417,8 @@ would be guidance without a stated reason, which the governing rule forbids.
 | Family | Recognized | Calibrated (both tables) | Status |
 | --- | --- | --- | --- |
 | `gpt`, `claude`, `gemini`, `grok`, `kimi`, `glm`, `qwen`, `deepseek`, `mistral`, `llama`, `codestral`, `solar` | yes | yes | full guidance, provenance above (#1051/#1052 closed the last four) |
-| `openai`, `anthropic` (bare-vendor prefixes) | yes | no → `generic` | deliberate: these prefixes name a vendor, not a model design — they stay on `generic` until real ids with stated characteristics appear |
+| `openai-gpt-`, `anthropic-claude-` (design-qualified aliases) | yes → `gpt` / `claude` | yes, through the design family | concrete models.dev/OpenCode serving ids carry these sub-prefixes; their catalog `base_model` fields establish the underlying design family |
+| other `openai-`, `anthropic-` vendor-qualified ids | recognized as model targets, family `unknown` | no → `generic` | vendor qualification alone does not establish a design; O-series, image, and emerging ids remain uncalibrated |
 | emerging families | no → `unknown` | no → `generic` | add a prefix and a calibration pair when one lands (the #1051/#1052 pattern) |
 
 Gaps close by evidence, not by copywriting: a new calibration entry needs an

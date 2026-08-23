@@ -107,10 +107,22 @@ class FamilyPrefixParityTests(unittest.TestCase):
         them was previously silent (no gate) and is a live risk each time a
         family is added. The family label is the prefix minus its dash."""
         from omh.coding.dynamic_workflow_specs import _MODEL_TARGET_PREFIXES
-        from omh.coding.model_routing import _MODEL_FAMILY_PREFIXES
+        from omh.coding.model_routing import _MODEL_FAMILY_ALIASES, _MODEL_FAMILY_PREFIXES
 
         routing_prefixes = tuple(prefix for prefix, _family in _MODEL_FAMILY_PREFIXES)
-        self.assertEqual(routing_prefixes, _MODEL_TARGET_PREFIXES)
+        routing_aliases = dict(_MODEL_FAMILY_ALIASES)
+        canonical_targets = tuple(
+            prefix
+            for prefix in _MODEL_TARGET_PREFIXES
+            if not any(alias.startswith(prefix) for alias in routing_aliases)
+        )
+        self.assertEqual(routing_prefixes, canonical_targets)
+        self.assertTrue(
+            all(
+                prefix in routing_prefixes or any(alias.startswith(prefix) for alias in routing_aliases)
+                for prefix in _MODEL_TARGET_PREFIXES
+            )
+        )
         for prefix, family in _MODEL_FAMILY_PREFIXES:
             self.assertEqual(family, prefix.rstrip("-"), prefix)
 
@@ -122,6 +134,14 @@ class FamilyPrefixParityTests(unittest.TestCase):
         # label is what routes them to their calibration instead of generic.
         self.assertEqual(model_family("solar-pro2"), "solar")
         self.assertEqual(model_family("upstage/solar-pro2"), "solar")
+
+    def test_vendor_prefixed_model_ids_alias_to_design_families(self) -> None:
+        self.assertEqual(model_family("digitalocean/openai-gpt-5.6-sol"), "gpt")
+        self.assertEqual(model_family("digitalocean/anthropic-claude-opus-5"), "claude")
+
+    def test_vendor_prefixed_non_design_models_remain_unknown(self) -> None:
+        self.assertEqual(model_family("digitalocean/openai-o3"), "unknown")
+        self.assertEqual(model_family("digitalocean/openai-gpt-image-2"), "unknown")
 
     def test_provider_prefixed_ids_classify_by_model_segment(self) -> None:
         self.assertEqual(model_family("opencode/kimi-k3"), "kimi")
