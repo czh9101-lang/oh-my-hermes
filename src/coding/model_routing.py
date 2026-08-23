@@ -408,8 +408,6 @@ _MODEL_FAMILY_PREFIXES: Final[tuple[tuple[str, str], ...]] = (
     ("gpt-", "gpt"),
     ("glm-", "glm"),
     ("claude-", "claude"),
-    ("openai-", "openai"),
-    ("anthropic-", "anthropic"),
     ("gemini-", "gemini"),
     ("grok-", "grok"),
     ("qwen-", "qwen"),
@@ -421,8 +419,11 @@ _MODEL_FAMILY_PREFIXES: Final[tuple[tuple[str, str], ...]] = (
     ("solar-", "solar"),
 )
 _MODEL_FAMILY_ALIASES: Final[tuple[tuple[str, str], ...]] = (
+    ("openai-gpt-", "gpt"),
+    ("anthropic-claude-", "claude"),
     ("qwen3-", "qwen"),
 )
+_MODEL_FAMILY_ALIAS_EXCLUSIONS: Final[tuple[str, ...]] = ("openai-gpt-image-",)
 _CLAUDE_TIER_ALIASES: Final[frozenset[str]] = frozenset({"opus", "sonnet", "haiku"})
 
 
@@ -437,6 +438,8 @@ def model_family(model_id: str) -> str:
         normalized = normalized.rsplit("/", 1)[1]
     if normalized in _CLAUDE_TIER_ALIASES:
         return "claude"
+    if normalized.startswith(_MODEL_FAMILY_ALIAS_EXCLUSIONS):
+        return "unknown"
     for prefix, family in _MODEL_FAMILY_ALIASES:
         if normalized.startswith(prefix):
             return family

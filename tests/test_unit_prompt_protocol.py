@@ -131,11 +131,19 @@ class CalibrationSelectionTests(unittest.TestCase):
     def test_unknown_family_high_effort_falls_back_to_generic(self) -> None:
         route = {"selected_reasoning_effort": "xhigh", "model_family": "unknown"}
         self.assertEqual(calibration_for_route(route), HIGH_EFFORT_CALIBRATIONS["generic"])
-        # mistral gained its own block; bare-vendor prefixes stay generic.
         route = {"selected_reasoning_effort": "xhigh", "model_family": "mistral"}
         self.assertEqual(calibration_for_route(route), HIGH_EFFORT_CALIBRATIONS["mistral"])
-        route = {"selected_reasoning_effort": "xhigh", "model_family": "openai"}
-        self.assertEqual(calibration_for_route(route), HIGH_EFFORT_CALIBRATIONS["generic"])
+
+    def test_vendor_prefixed_models_get_design_family_composition(self) -> None:
+        cases = {
+            "digitalocean/openai-gpt-5.6-sol": "gpt",
+            "digitalocean/anthropic-claude-opus-5": "claude",
+        }
+        for model_id, family in cases.items():
+            self.assertEqual(
+                composition_calibration_for_model(model_id),
+                MAIN_AGENT_COMPOSITION_CALIBRATIONS[family],
+            )
 
     def test_each_declared_family_gets_its_own_block(self) -> None:
         # gemini/grok/kimi/glm/qwen/deepseek ride provider-surfaced routes; each family's
@@ -312,18 +320,11 @@ class ModelOptiDocTests(unittest.TestCase):
         self.assertIn("MAIN_AGENT_COMPOSITION_CALIBRATIONS", doc)
         self.assertIn("UNIT_PROMPT_MAX_BYTES", doc)
 
-    def test_uncalibrated_recognized_families_stay_named_as_gaps(self) -> None:
-        doc = self._doc()
-        # The #1051/#1052 families are calibrated now; the only deliberate
-        # remainder is the bare-vendor prefixes, which name a vendor rather
-        # than a model design and stay on generic until real ids appear.
-        for family in ("mistral", "llama", "codestral", "solar"):
+    def test_recognized_design_families_are_calibrated(self) -> None:
+        for family in ("mistral", "llama", "codestral", "solar", "gpt", "claude"):
             self.assertIn(family, HIGH_EFFORT_CALIBRATIONS)
-        for family in ("openai", "anthropic"):
-            self.assertNotIn(family, HIGH_EFFORT_CALIBRATIONS)
-            self.assertIn(f"`{family}`", doc, family)
-        self.assertIn("#1051", doc)
-        self.assertIn("#1052", doc)
+        for vendor in ("openai", "anthropic"):
+            self.assertNotIn(vendor, HIGH_EFFORT_CALIBRATIONS)
 
 
 if __name__ == "__main__":
