@@ -97,12 +97,14 @@ class MeasuredLoopDisciplineDoctrineTests(unittest.TestCase):
 
     def test_recovery_notes_carry_the_idea_exhaustion_ladder(self) -> None:
         loop = self._definitions()["loop"]
-        self.assertTrue(
-            any(
-                "recombine" in note and "before declaring the loop blocked" in note
-                for note in loop.recovery_notes
-            )
-        )
+        ladder = [
+            note
+            for note in loop.recovery_notes
+            if "recombine" in note and "before declaring the loop blocked" in note
+        ]
+        self.assertEqual(len(ladder), 1)
+        self.assertIn("re-read the scoped files", ladder[0])
+        self.assertIn("a more radical change", ladder[0])
 
     def test_pointers_are_targeted(self) -> None:
         skills = self._skills()

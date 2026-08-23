@@ -1994,7 +1994,7 @@ If any condition fails, the loop is unmeasured. It says so plainly and keeps dec
 
 ## The Evaluation Contract
 
-Fix the contract before the first attempt and record it as loop-held state against the `loop_cycle/v1` artifact the loop already maintains.
+Fix the contract before the first attempt and record it as loop-held state beside the `loop_cycle/v1` artifact the loop already maintains.
 
 | field | meaning |
 | --- | --- |
@@ -2010,7 +2010,7 @@ OMH validates no such field today. The contract is a discipline the loop keeps i
 
 ## The Attempt-Commit Cycle
 
-One cycle: make one attempt, commit it, run the command, keep or reset.
+One cycle: make one attempt, commit it, run the command, keep or reset - all on a branch or worktree the loop owns, so a reset never discards work that is not the loop's own.
 
 The commit precedes the measurement. A committed attempt has a stable name, so a discard is a reset to a known parent instead of an effort to remember what was edited, and a keep needs no second step. Measuring first leaves the winning state living only in the working tree.
 
@@ -2060,7 +2060,7 @@ Declaring blocked before step 3 is premature; skipping step 4 and cycling on noi
 
 ## What This Does Not Change
 
-- The permission profile still gates every dispatch. A metric win authorizes nothing the profile forbids.
+- The permission profile still gates every dispatch and every repository mutation - committing an attempt or resetting to discard one needs `repo_edit` in the loop's authority envelope. A metric win authorizes nothing the profile forbids.
 - A metric win is not execution, review, CI, merge, or completion evidence. It stays `prepared_not_observed` until an evidence ref exists.
 - The goal closes only on linked `goal_ledger/v1` evidence.
 - The binding constraint from `references/goal-constraint-discipline.md` still chooses which attempt to make. The metric only chooses whether that attempt is kept.
