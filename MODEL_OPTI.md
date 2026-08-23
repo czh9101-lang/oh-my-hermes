@@ -382,13 +382,36 @@ whose worst-case assembled size is policy-gated in tests
 
 `build_throughput_overlay()` in `src/coding/throughput_prompting.py` gives
 every family the base rules — batch independent tool calls and reads in one
-shot, keep dependency-bound work sequential. Two advanced modes are gated to
-the `gpt` family: `gpt_sol_codex_handoff` (a `*-sol` model on the codex
-profile, adding single-eval-cell internal parallelism) and `gpt_hermes_ulw`
-(gpt family on the hermes profile running ultrawork). *Why gated:* the
-eval-batching behavior was designed and verified against GPT-5.6 Sol's
-execution surface; extending an unverified throughput claim to other families
-would be guidance without a stated reason, which the governing rule forbids.
+shot, keep dependency-bound work sequential. Three advanced modes are gated to
+measured family/surface pairs:
+
+- `gpt_sol_codex_handoff` applies to a `*-sol` model on the codex profile and
+  adds single-eval-cell internal parallelism.
+- `gpt_hermes_ulw` applies to the gpt family on the hermes profile running
+  ultrawork.
+- `claude_code_handoff` applies to the claude family on the Claude Code
+  profile. It adds advanced handoff and stop-condition rules but no eval
+  strategy: the measured Claude Code surface exposed parallel tool use and
+  agents, not a batchable eval cell.
+
+The Claude gate comes from a 2026-08-23 counterbalanced six-pair live comparison
+on Claude Fable 5 at medium effort. Both conditions received the identical
+six-file independent-read task and base throughput rules; the advanced
+condition added only `_ADVANCED_THROUGHPUT_RULES`. Both passed 6/6. Advanced
+was faster in 4/6 pairs, with median wall time 13.28 s versus 15.82 s
+(87.31 s versus 110.33 s total), and used 435,295 versus 490,034 reported
+tokens. The narrow synthetic corpus does not establish general model
+superiority, but it supports this exact prepared-guidance gate on the measured
+Claude Code surface.
+
+Kimi and Gemini stay on `parallel_handoff`. Credential-readiness probes on the
+same host completed zero live pairs: Kimi (`opengateway` and `kimi-coding`)
+and Gemini (`google`, `opencode`, and `github-copilot`) all reported
+`credentials_not_configured` or `invalid_state`. Existing Kimi calibration
+measurements do not compare these throughput rules, so they cannot justify an
+advanced overlay. No eval strategy is claimed for either family. This is an
+explicit measured availability null, not model-performance evidence; a future
+gate requires a completed paired run on the intended execution surface.
 
 ## Routing, chains, and per-model bookkeeping
 

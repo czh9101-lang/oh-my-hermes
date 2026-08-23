@@ -34,6 +34,9 @@ def build_throughput_overlay(
         rules.extend(_ADVANCED_THROUGHPUT_RULES)
         rules.append(_EVAL_BATCHING_RULE)
         eval_strategy = "single_cell_internal_parallel"
+    elif profile == "claude-code" and family == "claude":
+        mode = "claude_code_handoff"
+        rules.extend(_ADVANCED_THROUGHPUT_RULES)
     elif (
         profile == "hermes"
         and family == "gpt"
