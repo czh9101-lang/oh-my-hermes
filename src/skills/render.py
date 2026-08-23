@@ -1871,13 +1871,42 @@ def _constraint_discipline_section() -> str:
     )
 
 
+# Measured-loop decision rule spliced into the loop skill body after the
+# constraint-discipline section. Only the decision rule lives here; the contract
+# fields, keep/discard rules, ledger columns, log rail, and attribution live in
+# the on-demand reference. The trailing blank line separates it from
+# `## Runtime Evidence`.
+_MEASURED_LOOP_SECTION = (
+    "## Measured Loops\n"
+    "\n"
+    "The measured-loop rules in the quality bar above apply when a loop has a score.\n"
+    "\n"
+    "A loop is measurable when one command produces one number and a direction. Fix that evaluation "
+    "contract before the first attempt, declare it in the loop's own state, and let it decide what is "
+    "kept - the loop never edits the scoring harness that judges it. A loop with no such command says it "
+    "is unmeasured and keeps deciding on verification evidence instead of inventing a score.\n"
+    "\n"
+    "The two disciplines compose and do not compete: the binding constraint chooses which attempt to "
+    "make, and the metric chooses whether that attempt is kept.\n"
+    "\n"
+    "The metric never decides completion. The loop still stops at its permission, evidence, verification, "
+    "context, budget, and external-wait gates, and closing the goal still requires linked "
+    "`goal_ledger/v1` evidence.\n"
+    "\n"
+    "Load `references/measured-loop-discipline.md` for the full method: the contract fields, the keep and "
+    "discard rules, the ledger columns, the log rail, and the idea-exhaustion ladder.\n"
+    "\n"
+)
+
+
 def loop_skill() -> SkillTemplate:
-    """Splice the constraint-discipline section into the loop catalog body."""
+    """Splice the constraint-discipline and measured-loop sections into the loop catalog body."""
     template = workflow_skill("loop")
     marker = "## Runtime Evidence\n"
     if marker not in template.content:
         raise ValueError("loop skill constraint-discipline marker is missing")
-    return SkillTemplate(template.name, template.content.replace(marker, _constraint_discipline_section() + marker, 1))
+    sections = _constraint_discipline_section() + _MEASURED_LOOP_SECTION
+    return SkillTemplate(template.name, template.content.replace(marker, sections + marker, 1))
 
 
 def loop_reference_templates() -> list[SkillReferenceTemplate]:
@@ -1888,6 +1917,7 @@ def loop_reference_templates() -> list[SkillReferenceTemplate]:
 def _loop_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
     return (
         SkillReferenceTemplate("loop", "references/goal-constraint-discipline.md", _goal_constraint_discipline_reference()),
+        SkillReferenceTemplate("loop", "references/measured-loop-discipline.md", _measured_loop_discipline_reference()),
     )
 
 
@@ -1944,6 +1974,100 @@ When nothing fires, it says so with a derived reason naming every class it check
 ## Attribution
 
 The constraint-first prioritization above adapts Eliyahu M. Goldratt's Theory of Constraints as presented in *The Goal* (1984). No upstream text is reproduced. OMH maps the mechanisms onto its own goal ledger, queue, permission envelope, and evidence vocabulary, and keeps prepared analysis separate from observed evidence.
+"""
+
+
+def _measured_loop_discipline_reference() -> str:
+    return """# Measured Loop Discipline
+
+Load this reference when a loop's goal has a score: one command that judges the work and reports a number the loop is trying to move. Constraint discipline decides where the next unit of attention goes; this decides what survives once it has been spent.
+
+## When A Loop Is Measurable
+
+All three conditions must hold:
+
+- A command runs unattended to completion - no prompts, no manual setup, no human reading the output to decide.
+- It reports exactly one number. Several signals may feed it, but the loop compares one value.
+- The number has a declared direction: higher is better, or lower is better.
+
+If any condition fails, the loop is unmeasured. It says so plainly and keeps deciding on its verification gates - tests, review, named acceptance criteria - instead of inventing a score. A fabricated metric is worse than none: it makes arbitrary discard decisions look principled.
+
+## The Evaluation Contract
+
+Fix the contract before the first attempt and record it as loop-held state against the `loop_cycle/v1` artifact the loop already maintains.
+
+| field | meaning |
+| --- | --- |
+| `command` | the exact unattended command that produces the score |
+| `metric` | what the single number counts |
+| `direction` | `higher_is_better` or `lower_is_better` |
+| `harness_mutable: false` | the contract is fixed for the run - see below |
+| `baseline` | the metric value before the first attempt |
+
+Non-gameability: the loop may not edit the scoring harness, its fixtures, or the metric definition. Raising the score by changing what the score means is not an improvement. If the contract genuinely must change, that starts a new baseline, and every earlier ledger line is labelled as measured under the old contract rather than compared across the boundary.
+
+OMH validates no such field today. The contract is a discipline the loop keeps in its own state; no schema enforces `harness_mutable`, and no gate rejects a loop that edits the harness judging it. This is a deliberate deferral, stated here because a reader would otherwise assume the enforcement exists.
+
+## The Attempt-Commit Cycle
+
+One cycle: make one attempt, commit it, run the command, keep or reset.
+
+The commit precedes the measurement. A committed attempt has a stable name, so a discard is a reset to a known parent instead of an effort to remember what was edited, and a keep needs no second step. Measuring first leaves the winning state living only in the working tree.
+
+Rewinding past the immediate parent to an older ancestor is justified only when a run of discards traces to one bad ancestor that every later attempt inherited. It stays rare, because repeated discards usually mean a bad idea rather than a bad ancestor, and rewinding throws away kept work.
+
+This is not a workflow pattern. A workflow pattern says how many agents run per step inside one cycle; this says what happens across cycles.
+
+## Keep And Discard Rules
+
+- Better metric: keep.
+- Worse metric: discard, reset, next attempt.
+- Crash or non-zero exit from the scoring command: discard and log the cycle with status `crash`. Never silently retry - a crash that repeats is a finding.
+- Equal metric: keep the simpler change. Less code at the same score is a win.
+- A deletion that holds the metric is always kept.
+- A gain inside measurement noise is not a gain. If the command is nondeterministic, establish its spread first and treat anything smaller as equal.
+
+## The Experiment Ledger
+
+One append-only, tab-separated line per cycle, maintained by the loop itself:
+
+| column | meaning |
+| --- | --- |
+| `commit` | the commit the attempt produced |
+| `metric` | the measured value |
+| `cost` | what the cycle spent - turns, tokens, or wall time |
+| `status` | `kept`, `discarded`, or `crash` |
+| `description` | one line naming what was tried |
+
+OMH emits no such ledger. It is the loop's own running record and a companion to the JSON artifacts, never a replacement for them, and its rows stay `prepared` until they carry evidence refs.
+
+## Log Hygiene
+
+Send full command output to a file. Bring only the declared metric line and any error lines into context. Read the whole log only when the status is `crash`.
+
+Context spent re-reading passing output is context not spent on the next attempt: a loop that pastes a green log every cycle exhausts its budget before it exhausts its ideas.
+
+## Idea Exhaustion
+
+When attempts stop producing gains, climb in order:
+
+1. Re-read the scoped files. Most exhaustion is stale context, not a solved problem.
+2. Recombine the near misses - the discards that came closest. Two partial ideas often compose into one that keeps.
+3. Escalate to a more radical change: replace the approach instead of tuning it.
+4. Only then record the loop as blocked, naming the reason and the ladder step it stopped on.
+
+Declaring blocked before step 3 is premature; skipping step 4 and cycling on noise is worse.
+
+## What This Does Not Change
+
+- The permission profile still gates every dispatch. A metric win authorizes nothing the profile forbids.
+- A metric win is not execution, review, CI, merge, or completion evidence. It stays `prepared_not_observed` until an evidence ref exists.
+- The goal closes only on linked `goal_ledger/v1` evidence.
+- The binding constraint from `references/goal-constraint-discipline.md` still chooses which attempt to make. The metric only chooses whether that attempt is kept.
+
+## Attribution
+
+The measured-loop discipline above adapts the operating practices of the `karpathy/autoresearch` project. No upstream text is reproduced. OMH maps the mechanisms onto its own loop cycle, queue, permission envelope, and evidence vocabulary, and keeps a metric decision separate from completion evidence.
 """
 
 

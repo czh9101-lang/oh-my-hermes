@@ -167,7 +167,14 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # and the reference pointer) plus one constraint-first quality-bar bullet, and
 # ultrawork gained one durable-checkpoint quality-bar bullet pointing at the
 # same reference; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 709511
+# 709511 -> 711787: the loop skill gained the measured-loop discipline
+# (+2276 chars: five quality-bar rules for the evaluation contract, the
+# attempt-commit cycle, the experiment ledger, the log rail, and the
+# simplicity tiebreaker, one idea-exhaustion recovery note, and a connective
+# section carrying the constraint-versus-metric precedence and the completion
+# boundary); the full method and the attribution live in the on-demand
+# reference; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 711787
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
