@@ -686,6 +686,8 @@ _DIRECT_ANSWER_CONCEPT_EXPLAIN_STARTERS = (
     "describe ",
     "tell me about ",
 )
+_DIRECT_ANSWER_HOW_WORK_STARTER = "explain how "
+_DIRECT_ANSWER_HOW_WORK_ENDINGS = (" work", " works")
 _DIRECT_ANSWER_MULTILINGUAL_EXPLAIN_STARTERS = (
     "explícame ",
     "explicame ",
@@ -5066,6 +5068,7 @@ _CODING_STATUS_BOARD_CUES = (
     # required and a lone token cannot reach them.
     "show me the sessions",
     "show me the running sessions",
+    "show me the work board",
     "status board",
     "coding status board",
 )
@@ -6556,6 +6559,13 @@ def _is_direct_answer_concept_question(text: str, direct_text: str) -> bool:
         return has_concept_keyword or _is_short_generic_korean_concept_question(direct_text)
     if any(marker in direct_text for marker in _DIRECT_ANSWER_MULTILINGUAL_CONCEPT_MARKERS):
         return _is_short_generic_multilingual_concept_question(direct_text)
+    concept_text = direct_text.removesuffix("?")
+    if (
+        concept_text.startswith(_DIRECT_ANSWER_HOW_WORK_STARTER)
+        and concept_text.endswith(_DIRECT_ANSWER_HOW_WORK_ENDINGS)
+        and _is_short_generic_concept_question(direct_text)
+    ):
+        return True
     if has_concept_keyword and any(
         direct_text.startswith(starter) for starter in _DIRECT_ANSWER_CONCEPT_EXPLAIN_STARTERS
     ):

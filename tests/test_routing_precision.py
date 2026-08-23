@@ -15,21 +15,21 @@ class RoutingPrecisionTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "routing_precision/v1")
         self.assertEqual(payload["source"], "discord")
         self.assertTrue(payload["summary"]["all_passing"])
-        self.assertEqual(payload["summary"]["case_count"], 69)
-        self.assertEqual(payload["summary"]["passing_count"], 69)
-        self.assertEqual(payload["summary"]["negative_case_count"], 69)
-        self.assertEqual(payload["summary"]["negative_passing_count"], 69)
-        self.assertEqual(payload["summary"]["direct_answer_count"], 63)
+        self.assertEqual(payload["summary"]["case_count"], 70)
+        self.assertEqual(payload["summary"]["passing_count"], 70)
+        self.assertEqual(payload["summary"]["negative_case_count"], 70)
+        self.assertEqual(payload["summary"]["negative_passing_count"], 70)
+        self.assertEqual(payload["summary"]["direct_answer_count"], 64)
         self.assertEqual(payload["summary"]["file_lookup_count"], 4)
         self.assertEqual(payload["summary"]["overroute_count"], 0)
         self.assertEqual(payload["summary"]["catalog_picker_count"], 0)
         self.assertEqual(payload["summary"]["generic_ack_count"], 0)
-        self.assertEqual(payload["summary"]["intervention_case_count"], 180)
-        self.assertEqual(payload["summary"]["intervention_passing_count"], 180)
+        self.assertEqual(payload["summary"]["intervention_case_count"], 184)
+        self.assertEqual(payload["summary"]["intervention_passing_count"], 184)
         self.assertEqual(payload["summary"]["missed_intervention_count"], 0)
         self.assertEqual(payload["summary"]["intervention_generic_ack_count"], 0)
-        self.assertEqual(payload["summary"]["total_case_count"], 249)
-        self.assertEqual(payload["summary"]["total_passing_count"], 249)
+        self.assertEqual(payload["summary"]["total_case_count"], 254)
+        self.assertEqual(payload["summary"]["total_passing_count"], 254)
         self.assertEqual(routing_precision_errors(payload), [])
         self.assertIn("over-intervention and missed-intervention guards", payload["claim_boundary"])
 
@@ -81,6 +81,7 @@ class RoutingPrecisionTests(unittest.TestCase):
         self.assertEqual(cases["regex-write-generic-noise"]["observed"]["next_action"], "answer_directly")
         self.assertEqual(cases["exclamatory-thanks-direct"]["observed"]["next_action"], "answer_directly")
         self.assertEqual(cases["owner-default-concept"]["observed"]["next_action"], "answer_directly")
+        self.assertEqual(cases["markov-chain-models-work-concept"]["observed"]["next_action"], "answer_directly")
         for case in cases.values():
             self.assertFalse(case["observed"]["overrouted"])
             self.assertFalse(case["observed"]["catalog_picker_opened"])
@@ -224,6 +225,17 @@ class RoutingPrecisionTests(unittest.TestCase):
             with self.subTest(case_id=case_id):
                 self.assertEqual(interventions[case_id]["observed"]["route_workflow"], "agent-ops-review")
                 self.assertEqual(interventions[case_id]["observed"]["next_action"], "refresh_agent_ops_status")
+        for case_id in (
+            "running-work-board-natural-request",
+            "running-work-board-explicit-request",
+            "running-work-board-models-request",
+        ):
+            with self.subTest(case_id=case_id):
+                self.assertEqual(interventions[case_id]["observed"]["route_workflow"], "running-work-board")
+                self.assertEqual(
+                    interventions[case_id]["observed"]["next_action"],
+                    "show_running_work_board",
+                )
         self.assertEqual(interventions["loopable-project"]["observed"]["route_workflow"], "loop")
         self.assertEqual(interventions["one-cycle-delivery"]["observed"]["route_workflow"], "ultrawork")
         self.assertEqual(
@@ -395,14 +407,22 @@ class RoutingPrecisionTests(unittest.TestCase):
         self.assertEqual(curation["skill"], "memory-sync")
         self.assertIn("Korean routes", curation["wrapper_guidance"])
 
+    def test_running_work_board_requires_complete_english_trigger_phrases(self) -> None:
+        recommendations = recommend_module.recommend_skills("explain how markov chain models work", limit=10)
+
+        board = next(item for item in recommendations if item["skill"] == "running-work-board")
+        self.assertLess(board["score"], 8)
+        self.assertNotIn("trigger:models", board["matched"])
+        self.assertNotIn("trigger:work", board["matched"])
+
     def test_routing_precision_cli_outputs_summary_and_json(self) -> None:
         status, stdout, stderr = run_cli(["demo", "routing-precision", "--summary"], output_json=False)
 
         self.assertEqual(status, 0, stderr)
         self.assertEqual(stderr, "")
         self.assertIn("OMH routing precision", stdout)
-        self.assertIn("69/69 negative-control cases passing", stdout)
-        self.assertIn("Interventions: 180/180 expected workflow cases passing", stdout)
+        self.assertIn("70/70 negative-control cases passing", stdout)
+        self.assertIn("Interventions: 184/184 expected workflow cases passing", stdout)
         self.assertIn("overroutes: 0", stdout)
         self.assertIn("catalog pickers: 0", stdout)
         self.assertIn("generic ack: 0", stdout)
