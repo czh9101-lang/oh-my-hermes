@@ -393,6 +393,7 @@ class DistributionReleaseContractTests(unittest.TestCase):
             r"(?:-\s+)?uses:\s+[^@\s]+@[0-9a-f]{40}(?:\s+#.*)?$"
         )
         for relative in (
+            ".github/workflows/auto-release.yml",
             ".github/workflows/ci.yml",
             ".github/workflows/release.yml",
         ):
