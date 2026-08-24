@@ -145,10 +145,18 @@ class AutoReleaseWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.workflow = AUTO_RELEASE.read_text()
 
-    def test_cadence_is_scheduled_not_per_merge(self) -> None:
-        self.assertIn("schedule:", self.workflow)
-        self.assertIn('cron: "30 22 * * *"', self.workflow)
-        self.assertIn("workflow_dispatch:", self.workflow)
+    def test_release_is_cut_only_on_demand(self) -> None:
+        """No trigger may cut a release without a person asking for one.
+
+        A scheduled revision of this workflow moved the public version daily,
+        which is what this guard exists to prevent: choosing that main is
+        worth a version is a human decision, not a cron's.
+        """
+
+        triggers = self.workflow.split("\non:\n", 1)[1].split("\nconcurrency:", 1)[0]
+        self.assertEqual(triggers.strip(), "workflow_dispatch:")
+        self.assertNotIn("\n  schedule:", self.workflow)
+        self.assertNotIn("cron:", self.workflow)
         self.assertNotIn("\n  push:", self.workflow)
         self.assertNotIn("pull_request", self.workflow)
         self.assertIn("group: auto-release\n", self.workflow)

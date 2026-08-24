@@ -1,10 +1,11 @@
-name: Auto Release
+name: Cut Release
 
-# Cuts one stable patch release per day when main has moved past the last
-# tag, so the npm/Bun package, GitHub wheel, and Homebrew tap track main
-# instead of waiting for a manual tag. The cadence is daily rather than
-# per-merge because the protected `npm` environment requires one human
-# deployment approval per release run.
+# Runs the mechanics of a stable patch release -- bump every version surface,
+# gate, tag, dispatch the distribution workflow -- but only when a maintainer
+# asks for one. There is deliberately NO schedule: deciding that main's
+# current state is worth a version belongs to a person. An earlier revision
+# of this file cut a release every day, which moved the public version
+# without anyone choosing to, and made the number meaningless.
 #
 # The tag and the workflow_dispatch of release.yml are both created with
 # GITHUB_TOKEN on purpose: a GITHUB_TOKEN tag push cannot trigger the
@@ -12,8 +13,6 @@ name: Auto Release
 # exception that still creates a run.
 
 on:
-  schedule:
-    - cron: "30 22 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -96,13 +95,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml src/omh/version.py \
             src/plugin_bundle/omh/plugin.yaml .release-channel
-          git commit -s -m "chore(release): cut v$NEW_VERSION on the daily stable cadence
+          git commit -s -m "chore(release): cut v$NEW_VERSION
 
-          Constraint: npm/Bun, the GitHub wheel, and the Homebrew tap publish only from vX.Y.Z tags, so tracking main requires this version-bump commit on main
-          Rejected: per-merge releases | the protected npm environment requires one human deployment approval per run
+          Constraint: npm/Bun, the GitHub wheel, and the Homebrew tap publish only from vX.Y.Z tags, so a release requires this version-bump commit on main
+          Rejected: any automatic trigger | choosing that main is worth a version is a maintainer decision, not a schedule's
           Confidence: high
           Scope-risk: narrow
-          Directive: pause the cadence by disabling the auto-release workflow, never by reverting bump commits
+          Directive: this commit exists because a maintainer ran the Cut Release workflow; never add a trigger that creates it unattended
           Tested: full unittest suite and compileall on the bumped tree inside this workflow run
           Not-tested: npm environment approval and downstream release.yml publication happen after this commit"
           git tag "v$NEW_VERSION"

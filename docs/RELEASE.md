@@ -30,10 +30,11 @@ The tag-driven npm/Bun, GitHub wheel, and Homebrew tap release is defined by
 `.github/workflows/release.yml`. Its release order, one-time external setup,
 resume rules, rollback matrix, immutable artifact checks, and pending-first-
 release status are the single contract in [Distribution](DISTRIBUTION.md).
-A daily auto-release workflow cuts the next stable patch tag whenever `main`
-has moved past the last release, so these channels track `main` instead of
-waiting for a manual tag; its guards and boundaries live in the same
-Distribution contract under "Automated stable cadence".
+Releases are cut only when a maintainer asks for one; the *Cut Release*
+workflow performs the mechanics on demand, and its guards live in the same
+Distribution contract under "Cutting a release on demand". Package-manager
+channels therefore advance per release, not per merge — people who want
+`main` itself use the preview channel below, which needs no version.
 
 Those package-manager artifacts extend the stable channel; they do not replace
 the installer, Hermes skill tap, generated-document, or evidence checks below.
