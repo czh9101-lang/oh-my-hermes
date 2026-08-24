@@ -234,6 +234,149 @@ def display_skin_selection(config_text: str) -> str:
     return _section_scalar(config_text, "display", "skin")
 
 
+def _references_mapping_key(line: str, key: str) -> bool:
+    escaped = re.escape(key)
+    token = rf"""(?:{escaped}|"{escaped}"|'{escaped}')"""
+    return (
+        re.search(rf"(?:^|[{{,])\s*{token}\s*:", line) is not None
+        or re.match(rf"^\s*\?\s*{token}\s*$", line) is not None
+    )
+
+
+def _contains_potential_quoted_mapping_key(line: str) -> bool:
+    return (
+        re.match(r"""^\s*(?:\?\s*)?["']""", line) is not None
+        or re.search(r"""(?:^|[,{])\s*["']""", line) is not None
+    )
+
+
+def _contains_unsupported_yaml_node_syntax(line: str) -> bool:
+    return (
+        re.match(r"^\s*\?", line) is not None
+        or re.match(r"^\s*[&*!]", line) is not None
+        or re.search(r"(?:^|[,{])\s*[&*!]", line) is not None
+        or re.search(r":\s*[&*!]", line) is not None
+    )
+
+
+def _display_node_is_sequence(lines: list[str]) -> bool:
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line.startswith(" ") and stripped.startswith("-"):
+            return True
+    display_indices = [index for index, line in enumerate(lines) if line == "display:"]
+    if len(display_indices) != 1:
+        return False
+    for line in lines[display_indices[0] + 1 :]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line.startswith(" "):
+            break
+        return stripped.startswith("-")
+    return False
+
+
+def _root_is_plain_block_mapping(lines: list[str]) -> bool:
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or line.startswith(" "):
+            continue
+        if stripped in {"---", "..."} or stripped.startswith("%"):
+            return False
+        if stripped.startswith(("{", "[", "-")):
+            return False
+        if re.match(r"^[^:#][^:]*:(?:\s|$)", stripped) is None:
+            return False
+    return True
+
+
+def _display_edit_guard(lines: list[str]) -> str:
+    if lines and lines[0].startswith("\ufeff"):
+        return "BOM-prefixed YAML is user-owned; leaving it alone"
+    if not _root_is_plain_block_mapping(lines):
+        return "non-mapping or multi-document YAML is user-owned; leaving it alone"
+    if _display_node_is_sequence(lines):
+        return "sequence display configuration is user-owned; leaving it alone"
+    if any(_contains_potential_quoted_mapping_key(line) for line in lines):
+        return "quoted YAML mapping keys are user-owned; leaving them alone"
+    if any(_contains_unsupported_yaml_node_syntax(line) for line in lines):
+        return "YAML node properties are user-owned; leaving them alone"
+    display_lines = [line for line in lines if _references_mapping_key(line, "display")]
+    display_indices = [index for index, line in enumerate(lines) if line == "display:"]
+    if len(display_lines) > 1:
+        return "duplicate display sections are ambiguous; leaving them alone"
+    if display_lines and not display_indices:
+        return "noncanonical display configuration is user-owned; leaving it alone"
+    return ""
+
+
+def _canonical_display_entries(lines: list[str], key: str) -> list[tuple[int, str]]:
+    display_indices = [index for index, line in enumerate(lines) if line == "display:"]
+    if len(display_indices) != 1:
+        return []
+    entries: list[tuple[int, str]] = []
+    for index in range(display_indices[0] + 1, len(lines)):
+        line = lines[index]
+        if line.strip() and not line.startswith(" "):
+            break
+        if line.startswith("  ") and not line.startswith("    "):
+            candidate, separator, rest = line.strip().partition(":")
+            if separator and candidate == key:
+                entries.append((index, rest.strip()))
+    return entries
+
+
+def _activate_display_scalar(config_text: str, key: str, value: str) -> ConfigChange:
+    """Set one canonical ``display`` scalar after explicit operator consent."""
+    lines = config_text.splitlines()
+    guard = _display_edit_guard(lines)
+    if guard:
+        return ConfigChange(False, guard, config_text)
+    dotted = f"display.{key}"
+    if any(_references_mapping_key(line, dotted) for line in lines):
+        return ConfigChange(False, f"dotted display.{key} is user-owned; leaving it alone", config_text)
+
+    display_indices = [index for index, line in enumerate(lines) if line == "display:"]
+    if not display_indices:
+        text = (config_text.rstrip() + f"\n\ndisplay:\n  {key}: {value}\n").lstrip("\n")
+        return ConfigChange(True, f"appended display.{key}", text)
+
+    display_index = display_indices[0]
+    entries: list[tuple[int, str]] = []
+    key_like_lines = 0
+    for index in range(display_index + 1, len(lines)):
+        line = lines[index]
+        if line.strip() and not line.startswith(" "):
+            break
+        if _references_mapping_key(line, key):
+            key_like_lines += 1
+        if line.startswith("  ") and not line.startswith("    "):
+            candidate, separator, rest = line.strip().partition(":")
+            if separator and candidate == key:
+                entries.append((index, rest.strip()))
+    if key_like_lines != len(entries) or len(entries) > 1:
+        return ConfigChange(False, f"ambiguous display.{key} is user-owned; leaving it alone", config_text)
+    if entries:
+        index, raw = entries[0]
+        if not _scalar_value(raw) or raw.startswith(("{", "[", "|", ">")):
+            return ConfigChange(False, f"non-scalar display.{key} is user-owned; leaving it alone", config_text)
+        if _scalar_value(raw) == value:
+            return ConfigChange(False, f"display.{key} is already {value}", config_text)
+        lines[index] = f"  {key}: {value}"
+        return ConfigChange(True, f"set display.{key} to {value}", "\n".join(lines) + "\n")
+
+    lines.insert(display_index + 1, f"  {key}: {value}")
+    return ConfigChange(True, f"inserted display.{key}", "\n".join(lines) + "\n")
+
+
+def activate_omh_skin(config_text: str, name: str) -> ConfigChange:
+    """Select the managed OMH skin after the operator accepts the prompt."""
+    return _activate_display_scalar(config_text, "skin", name)
+
+
 def ensure_omh_skin(config_text: str, name: str) -> ConfigChange:
     """Default `display.skin` to the managed OMH skin when no skin is chosen.
 
@@ -246,13 +389,24 @@ def ensure_omh_skin(config_text: str, name: str) -> ConfigChange:
     <anything>` immediately and permanently overrides it because an explicit
     value is never rewritten.
     """
+    lines = config_text.splitlines()
+    guard = _display_edit_guard(lines)
+    if guard:
+        return ConfigChange(False, guard, config_text)
+    skin_entries = _canonical_display_entries(lines, "skin")
+    if len(skin_entries) > 1:
+        return ConfigChange(False, "duplicate display.skin keys are ambiguous; leaving them alone", config_text)
+    if skin_entries and (
+        not _scalar_value(skin_entries[0][1])
+        or skin_entries[0][1].startswith(("{", "[", "|", ">"))
+    ):
+        return ConfigChange(False, "non-scalar display.skin is user-owned; leaving it alone", config_text)
     selected = display_skin_selection(config_text)
     if selected == name:
         return ConfigChange(False, f"display.skin is already {name}", config_text)
     if selected:
         return ConfigChange(False, f"display.skin is {selected}; leaving user preference unchanged", config_text)
 
-    lines = config_text.splitlines()
     if any(line.startswith("display.skin:") for line in lines):
         return ConfigChange(False, "dotted display.skin is user-owned; leaving it alone", config_text)
     display_indices = [index for index, line in enumerate(lines) if line == "display:"]
@@ -296,6 +450,11 @@ def display_interface_selection(config_text: str) -> str:
     return _scalar_value(entries[0])
 
 
+def activate_tui_interface(config_text: str) -> ConfigChange:
+    """Select Hermes' modern TUI after the operator accepts the prompt."""
+    return _activate_display_scalar(config_text, "interface", "tui")
+
+
 def ensure_tui_interface(config_text: str) -> ConfigChange:
     """Default `display.interface` to tui whenever the user has not chosen one.
 
@@ -306,6 +465,9 @@ def ensure_tui_interface(config_text: str) -> ConfigChange:
     user-owned; only the genuinely unset case is defaulted.
     """
     lines = config_text.splitlines()
+    guard = _display_edit_guard(lines)
+    if guard:
+        return ConfigChange(False, guard, config_text)
     display_lines = [
         line
         for line in lines
@@ -340,7 +502,7 @@ def ensure_tui_interface(config_text: str) -> ConfigChange:
     if len(interface_entries) > 1:
         return ConfigChange(False, "duplicate display.interface keys are ambiguous; leaving them alone", config_text)
     if interface_entries and (
-        not interface_entries[0][1]
+        not _scalar_value(interface_entries[0][1])
         or interface_entries[0][1].startswith(("{", "[", "|", ">"))
     ):
         return ConfigChange(False, "non-scalar display.interface is user-owned; leaving it alone", config_text)

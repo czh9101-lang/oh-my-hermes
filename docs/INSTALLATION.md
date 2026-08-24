@@ -467,9 +467,17 @@ OMH's setup footprint is intentionally bounded:
   preserved.
 - It defaults `display.interface: tui` whenever the user has not chosen an
   interface — on fresh configs and on existing configs alike, so upgraders
-  reach the installed HUD without knowing about `hermes --tui`. Explicit or
-  noncanonical display choices are always preserved, and uninstall does not
-  remove this default.
+  reach the installed HUD without knowing about `hermes --tui`.
+- Interactive `omh setup` and `omh update` offer a default-Yes branded-TUI
+  choice when the canonical config is not already
+  `display.interface: tui` plus `display.skin: omh`. Accepting it (or passing
+  `--yes`) sets both values, so bare `omh` and `hermes` open the same
+  OH-MY-HERMES TUI. An already-active update does not ask. No or
+  `--no-omh-tui` preserves the current values. JSON suppresses prompting;
+  explicit canonical values remain unchanged unless `--yes` supplies consent.
+  Dry-run never persists a previewed change. Noncanonical/quoted YAML shapes
+  never prompt or change, even with `--yes`. Uninstall does not remove an
+  accepted display selection.
 - It adds `auxiliary.compression.fallback_chain` when the config pins
   compression to a single provider and already lists other fallback providers.
   Without a compression fallback, one unreachable endpoint leaves a session

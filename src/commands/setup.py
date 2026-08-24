@@ -32,11 +32,14 @@ from ..coding.model_discovery import discover_local_models
 from ..coding.model_recommendations import resolve_model_recommendation
 from ..config_adapter import (
     ConfigChange,
+    activate_omh_skin,
+    activate_tui_interface,
     display_interface_selection,
     display_skin_selection,
     ensure_external_dir,
     ensure_omh_skin,
     ensure_plugin_enabled,
+    ensure_tui_interface,
     external_dirs,
     maybe_set_memory_provider,
     memory_provider_selection,
@@ -330,6 +333,9 @@ def cmd_update(args: argparse.Namespace) -> int:
     self_update = _command_package_self_update_plan(args)
     if self_update.get("should_update"):
         return _run_command_package_self_update(args, self_update)
+    _preset_tui_identity_choice(args)
+    if _update_should_interact(args):
+        _ask_tui_identity_choice(args, _paths(args), _resolve_language(args))
     code = cmd_install(args)
     if code == 0:
         if not (args.from_skills_dir or args.source):
@@ -1524,25 +1530,29 @@ def _apply_result(args: argparse.Namespace) -> dict[str, object]:
         # Hermes. Doing only the first leaves an install that passes every
         # structural check while no OMH tool is reachable in chat.
         plugin_enable = ensure_plugin_enabled(compression.text, PLUGIN_NAME)
-        # `display.interface` is Hermes' own, and its default is the classic
-        # REPL. OMH used to write `tui` here so its widget would be reachable,
-        # because Hermes loads tui-widgets only in the Ink TUI. That traded the
-        # user's terminal for OMH's convenience: the classic REPL draws the
-        # banner, the status line, and the rules framing the prompt, and the
-        # Ink TUI does not, so installing OMH visibly stripped chrome the user
-        # never asked to lose -- and it wrote a Hermes-owned key to a
-        # non-default value the user had not chosen, which is exactly what
-        # Managed artifact forbids.
-        # OMH now reads the interface and adapts to it instead: the widget
-        # renders when the user runs the Ink TUI, and doctor names the
-        # trade-off for the classic REPL.
-        tui_interface = ConfigChange(False, "display.interface is Hermes-owned; OMH reads it and never writes it", plugin_enable.text)
-        # Identity is different from terminal choice. The managed skin themes
-        # whichever surface the user already runs -- classic CLI, Ink TUI, and
-        # desktop all read the same YAML -- so defaulting `display.skin` to it
-        # costs no chrome and changes no behaviour, and an explicit skin
-        # choice is never rewritten (see `ensure_omh_skin`).
-        skin_active = ensure_omh_skin(tui_interface.text, SKIN_NAME)
+        # Fresh installs default to the one branded surface the product
+        # promises: bare `omh` and bare `hermes` both enter Hermes' modern TUI,
+        # where the OMH HUD can render. Existing explicit choices are preserved
+        # unless the operator accepts the setup/update prompt; that consent
+        # allows stock `cli`/`default` values to be migrated too.
+        tui_choice = getattr(args, "_omh_tui_choice", None)
+        if tui_choice is False:
+            tui_interface = ConfigChange(
+                False,
+                "operator declined the OH-MY-HERMES modern TUI",
+                plugin_enable.text,
+            )
+            skin_active = ConfigChange(
+                False,
+                "operator declined the OH-MY-HERMES skin",
+                tui_interface.text,
+            )
+        elif tui_choice is True:
+            tui_interface = activate_tui_interface(plugin_enable.text)
+            skin_active = activate_omh_skin(tui_interface.text, SKIN_NAME)
+        else:
+            tui_interface = ensure_tui_interface(plugin_enable.text)
+            skin_active = ensure_omh_skin(tui_interface.text, SKIN_NAME)
         # Same reasoning one layer down. OMH's memory provider ships inside the
         # bundle, and a provider Hermes never selects is a provider that never
         # runs -- so requiring a control-plane command to switch it on meant the
@@ -1943,6 +1953,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
     validate_model_setup_args(args)
     language = _setup_language(args)
     paths = _paths(args)
+    _preset_tui_identity_choice(args)
     if _setup_should_interact(args):
         if not _setup_paths_were_explicit(args) and not getattr(args, "scope", None):
             args.scope = _ask_setup_scope(use_color=_use_color(), language=language)
@@ -2161,11 +2172,11 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
 
 def _setup_should_interact(args: argparse.Namespace) -> bool:
+    if _wants_json(args) or getattr(args, "dry_run", False):
+        return False
     if getattr(args, "interactive", False):
         return True
     if getattr(args, "no_interactive", False) or getattr(args, "yes", False):
-        return False
-    if _wants_json(args) or getattr(args, "dry_run", False):
         return False
     if (
         args.profile
@@ -2181,6 +2192,54 @@ def _setup_should_interact(args: argparse.Namespace) -> bool:
     ):
         return False
     return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _update_should_interact(args: argparse.Namespace) -> bool:
+    if not hasattr(args, "omh_home") or not hasattr(args, "hermes_home"):
+        return False
+    if getattr(args, "from_skills_dir", None) or getattr(args, "source", None):
+        return False
+    if _wants_json(args) or getattr(args, "dry_run", False):
+        return False
+    if getattr(args, "interactive", False):
+        return True
+    if (
+        getattr(args, "no_interactive", False)
+        or getattr(args, "yes", False)
+        or getattr(args, "no_omh_tui", False)
+    ):
+        return False
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _preset_tui_identity_choice(args: argparse.Namespace) -> None:
+    if getattr(args, "no_omh_tui", False):
+        args._omh_tui_choice = False
+    elif getattr(args, "yes", False):
+        args._omh_tui_choice = True
+
+
+def _ask_tui_identity_choice(args: argparse.Namespace, paths: OmhPaths, language: str) -> None:
+    if hasattr(args, "_omh_tui_choice"):
+        return
+    config_text = read_config(paths.hermes_config_path)
+    if (
+        display_interface_selection(config_text) == "tui"
+        and display_skin_selection(config_text) == SKIN_NAME
+    ):
+        return
+    if (
+        not activate_tui_interface(config_text).changed
+        and not activate_omh_skin(config_text, SKIN_NAME).changed
+    ):
+        return
+    args._omh_tui_choice = _ask_yes_no(
+        tr(language, "tui_identity_prompt"),
+        default=True,
+        use_color=_use_color(),
+        note=tr(language, "tui_identity_note"),
+        language=language,
+    )
 
 
 def _print_model_preview_review(payload: dict[str, object], *, language: str) -> None:
@@ -2291,6 +2350,7 @@ def _run_setup_wizard(args: argparse.Namespace, paths, language: str) -> None:
     else:
         print(f"{tr(language, 'hermes_config')}: {_color(str(paths.hermes_config_path), '36', use_color)} ({tr(language, 'status_will_create')})")
     print(f"{tr(language, 'managed_skills')}: {_color(str(paths.skills_dir), '36', use_color)}")
+    _ask_tui_identity_choice(args, paths, language)
 
     if not args.profile and not getattr(args, "default_executor", None):
         # No upfront coding-owner question: safety-first records "choose" so
@@ -3942,6 +4002,11 @@ def _add_top_level_commands(sub) -> None:
     setup.add_argument("--yes", action="store_true", help="Use default setup choices without interactive prompts.")
     setup.add_argument("--interactive", action="store_true", help="Force the interactive setup wizard.")
     setup.add_argument("--no-interactive", action="store_true", help="Disable the interactive setup wizard.")
+    setup.add_argument(
+        "--no-omh-tui",
+        action="store_true",
+        help="Keep the current Hermes display interface and skin instead of activating the branded OMH TUI.",
+    )
     setup.add_argument("--skip-apply", action="store_true", help="Install skills without registering them in Hermes config.")
     setup.add_argument(
         "--model-setup",
@@ -4059,6 +4124,14 @@ def _add_top_level_commands(sub) -> None:
     update = sub.add_parser("update", help="Refresh OMH from a preview, stable, local, or explicit package source.")
     _add_common_install_options(update)
     update.add_argument("--json", action="store_true", help="Print the full machine-readable update payload.")
+    update.add_argument("--yes", action="store_true", help="Use the recommended branded TUI choice without prompting.")
+    update.add_argument("--interactive", action="store_true", help="Force the interactive update prompt.")
+    update.add_argument("--no-interactive", action="store_true", help="Disable the interactive update prompt.")
+    update.add_argument(
+        "--no-omh-tui",
+        action="store_true",
+        help="Keep the current Hermes display interface and skin instead of activating the branded OMH TUI.",
+    )
     update.set_defaults(func=cmd_update)
 
     convert = sub.add_parser("convert", help="Import a local skills directory into the managed OMH skill pack.")

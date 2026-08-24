@@ -243,12 +243,13 @@ def widget_render_blockers(preflight: dict[str, Any]) -> list[str]:
     if interface.get("explicit") and interface.get("value") not in ("", "tui"):
         blockers.append(
             f"display.interface is set to {interface['value']!r} — the OMH HUD renders only in the modern TUI "
-            "(`hermes --tui` still reaches it)."
+            "(run `omh setup` or interactive `omh update` and accept the branded TUI; "
+            "`hermes --tui` still reaches it for one session)."
         )
     elif not interface.get("explicit") and interface.get("settable"):
         blockers.append(
-            "display.interface is unset, so bare `hermes` opens the classic REPL where the HUD cannot render; "
-            "open the styled TUI with `omh` or `hermes --tui` (the classic REPL still shows the OMH-skinned banner)."
+            "display.interface is unset, so bare `omh` and `hermes` open the classic REPL where the HUD cannot render; "
+            "run `omh setup` or interactive `omh update` and accept the branded TUI, or use `hermes --tui` for one session."
         )
     if not widget.get("installed"):
         blockers.append("the OMH status widget is not installed; run `omh setup`.")
@@ -272,8 +273,8 @@ def tui_identity_verdict(paths: OmhPaths) -> dict[str, Any]:
     to print LAST: it names the exact next command per blocker — an old
     Hermes without the widget loader needs `hermes update`, which OMH never
     runs on its own — and states the two facts users trip on: a running
-    Hermes session keeps its old chrome until restarted, and the styled TUI
-    door is `omh` (or `hermes --tui`).
+    Hermes session keeps its old chrome until restarted, and a ready install
+    opens the styled TUI from either bare `omh` or bare `hermes`.
     """
     preflight = hermes_tui_preflight(paths)
     blockers = widget_render_blockers(preflight)

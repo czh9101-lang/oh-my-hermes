@@ -231,10 +231,11 @@ class HermesTuiPreflightTests(unittest.TestCase):
             unset = hermes_tui_preflight(paths)
             self.assertFalse(unset["display_interface"]["explicit"])
             self.assertTrue(unset["display_interface"]["settable"])
-            self.assertEqual(
-                [blocker for blocker in widget_render_blockers(unset) if "classic REPL" in blocker and "hermes --tui" in blocker],
-                widget_render_blockers(unset),
-            )
+            unset_blockers = widget_render_blockers(unset)
+            self.assertEqual(len(unset_blockers), 1)
+            self.assertIn("omh setup", unset_blockers[0])
+            self.assertIn("hermes --tui", unset_blockers[0])
+            self.assertNotIn("styled TUI with `omh`", unset_blockers[0])
 
             _write_display_interface(paths.hermes_home, "cli")
             explicit = hermes_tui_preflight(paths)
