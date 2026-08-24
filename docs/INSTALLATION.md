@@ -276,6 +276,38 @@ walks, and HUD category labels alike — until the user removes it. An invalid
 document is ignored whole (defaults apply) and reported by
 `omh_delegate_route` `action=status` as `chain_overrides: invalid: ...`.
 
+### Reaching models through a provider
+
+Chains name models the way a person says them (`glm-5.2`, `kimi-k3`). A host
+that reaches models through a provider usually needs two different values
+instead: a provider id, and that provider's own model string, which is often
+namespaced like `vendor/model-name`. Which provider serves which model, and
+under what name, belongs to one account — so OMH ships no routes and hardcodes
+no provider.
+
+Supply them in `~/.omh/routing/model-providers.json`
+(`model_provider_routes/v1`), a sibling of the chain document:
+
+```json
+{
+  "schema_version": "model_provider_routes/v1",
+  "models": {
+    "glm-5.2": {"provider": "my-gateway", "model": "z-ai/glm-5.2"},
+    "kimi-k3": {"provider": "my-gateway", "model": "moonshotai/kimi-k3"}
+  }
+}
+```
+
+An alias listed here dispatches as that provider's model; an alias not listed
+dispatches unchanged with no provider, which is what a direct-billing host
+wants — the file is optional and absent by default. A `provider` passed
+explicitly to `omh_delegate_route` outranks any stored route. Fallback still
+walks the chain by alias, so a routed model is translated back before its
+chain position is looked up. Validation matches the chain document: strict,
+token-only, atomic, with an invalid file ignored whole and reported by
+`action=status` as `provider_routes: invalid: ...` beside the resolved
+`provider_routes_path`.
+
 The X/Grok row is a static, editable affinity for work explicitly declaring X
 platform data. It is not a measured capability, performance, or availability
 claim, never removes another candidate, and never overrides an explicit user

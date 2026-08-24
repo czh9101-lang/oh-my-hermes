@@ -123,6 +123,134 @@ class DelegateRouteToolTest(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _write_provider_routes(self, models: dict) -> None:
+        path = self.omh_home / "routing" / "model-providers.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"schema_version": "model_provider_routes/v1", "models": models}),
+            encoding="utf-8",
+        )
+
+    def test_a_routed_alias_dispatches_the_providers_own_model_name(self):
+        self._write_provider_routes(
+            {"gpt-5.6-sol": {"provider": "gateway", "model": "vendor/gpt-5.6-sol"}}
+        )
+        result = self._call(action="set", category="ultrabrain")
+        self.assertEqual(
+            result["applied"],
+            {
+                "model": "vendor/gpt-5.6-sol",
+                "provider": "gateway",
+                "reasoning_effort": "xhigh",
+            },
+        )
+
+    def test_an_unrouted_alias_dispatches_unchanged_with_no_provider(self):
+        self._write_provider_routes(
+            {"some-other-model": {"provider": "gateway", "model": "vendor/other"}}
+        )
+        result = self._call(action="set", category="ultrabrain")
+        self.assertEqual(
+            result["applied"], {"model": "gpt-5.6-sol", "reasoning_effort": "xhigh"}
+        )
+
+    def test_an_explicit_provider_outranks_a_stored_route(self):
+        self._write_provider_routes(
+            {"gpt-5.6-sol": {"provider": "gateway", "model": "vendor/gpt-5.6-sol"}}
+        )
+        result = self._call(
+            action="set", model="gpt-5.6-sol", reasoning_effort="high", provider="direct"
+        )
+        self.assertEqual(
+            result["applied"],
+            {"model": "gpt-5.6-sol", "provider": "direct", "reasoning_effort": "high"},
+        )
+
+    def test_fallback_finds_the_chain_position_of_a_routed_wire_model(self):
+        """The live route holds the wire model; chains are keyed by alias.
+
+        Without translating back, a routed model reads as absent from its own
+        chain and fallback errors instead of advancing.
+        """
+
+        self._write_overrides(
+            {
+                "quick": [
+                    {"model": "first-model", "reasoning_effort": "low"},
+                    {"model": "second-model", "reasoning_effort": "low"},
+                ]
+            }
+        )
+        self._write_provider_routes(
+            {
+                "first-model": {"provider": "gateway", "model": "vendor/first"},
+                "second-model": {"provider": "gateway", "model": "vendor/second"},
+            }
+        )
+        self._call(action="set", category="quick")
+        self.assertEqual(
+            read_delegation_route(self.home)["model"], "vendor/first"
+        )
+        fallback = self._call(action="fallback")
+        self.assertEqual(fallback["status"], "fell_back")
+        self.assertEqual(
+            fallback["applied"],
+            {
+                "model": "vendor/second",
+                "provider": "gateway",
+                "reasoning_effort": "low",
+            },
+        )
+
+    def test_status_reports_provider_route_state_and_dispatched_values(self):
+        result = self._call(action="status")
+        self.assertEqual(result["provider_routes"], "absent")
+        self.assertEqual(
+            Path(result["provider_routes_path"]),
+            self.omh_home / "routing" / "model-providers.json",
+        )
+        self._write_overrides(
+            {"deep": [{"model": "aliased-model", "reasoning_effort": "xhigh"}]}
+        )
+        self._write_provider_routes(
+            {"aliased-model": {"provider": "gateway", "model": "vendor/aliased"}}
+        )
+        applied = self._call(action="status")
+        self.assertEqual(applied["provider_routes"], "applied")
+        self.assertEqual(
+            applied["categories"]["deep"],
+            [
+                {
+                    "model": "aliased-model",
+                    "provider": "gateway",
+                    "reasoning_effort": "xhigh",
+                    "wire_model": "vendor/aliased",
+                }
+            ],
+        )
+
+    def test_an_invalid_provider_route_document_is_ignored_whole(self):
+        path = self.omh_home / "routing" / "model-providers.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "model_provider_routes/v1",
+                    "models": {
+                        "gpt-5.6-sol": {"provider": "gateway", "model": "vendor/ok"},
+                        "bad": {"provider": "gateway", "model": "not a token"},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        status = self._call(action="status")
+        self.assertTrue(status["provider_routes"].startswith("invalid: "))
+        result = self._call(action="set", category="ultrabrain")
+        self.assertEqual(
+            result["applied"], {"model": "gpt-5.6-sol", "reasoning_effort": "xhigh"}
+        )
+
     def test_an_overridden_chain_routes_and_falls_back_on_the_users_order(self):
         self._write_overrides({
             "quick": [
