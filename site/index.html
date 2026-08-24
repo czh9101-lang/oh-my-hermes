@@ -250,7 +250,7 @@
         <div class="section__head section__head--center" data-reveal>
           <p class="kicker" data-i18n="route.kicker">Model routing</p>
           <h2 id="routing-title" data-i18n="route.title">Set the model per kind of work.</h2>
-          <p class="section__lead" data-i18n="route.lead">Eight editable categories. Missing models are skipped, not fatal.</p>
+          <p class="section__lead" data-i18n="route.lead">Nine editable categories. Missing models are skipped, not fatal.</p>
           <p class="exec-route"><code>routing-model-setup</code></p>
         </div>
 
@@ -322,6 +322,42 @@
         <div class="route-cta" data-reveal>
           <a class="button button--chrome" href="docs/model-routing/" data-i18n="route.cta">Read the routing setup guide</a>
         </div>
+      </section>
+
+      <!-- ========================================================== CHAINS -->
+      <section class="section section--tight" id="chains" aria-labelledby="chains-title">
+        <div class="section__head section__head--center" data-reveal>
+          <p class="kicker" data-i18n="chain.kicker">Recommended chains</p>
+          <h2 id="chains-title" data-i18n="chain.title">Nine categories, in the order we ship.</h2>
+          <p class="section__lead" data-i18n="chain.lead">OMH ships with these editable, ordered recommendation chains. Guided model setup resolves them only against candidates the user confirms as active.</p>
+        </div>
+
+        <div class="glass-card table-card" data-reveal>
+          <table class="chain-table">
+            <thead>
+              <tr>
+                <th scope="col" data-i18n="chain.head.category">Category</th>
+                <th scope="col" data-i18n="chain.head.purpose">Purpose</th>
+                <th scope="col" data-i18n="chain.head.order">Shipped order</th>
+                <th scope="col" data-i18n="chain.head.effort">Effort</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row"><span>ultrabrain</span></th><td data-i18n="chain.ultrabrain">Deepest reasoning</td><td class="chain-order"><code>GPT-5.6 Sol</code></td><td class="chain-effort"><span class="chain-badge">xhigh</span></td></tr>
+              <tr><th scope="row"><span>deep</span></th><td data-i18n="chain.deep">Strong default tier</td><td class="chain-order"><code>GPT-5.6 Terra</code><span class="chain-arrow" aria-hidden="true">→</span><code>DeepSeek V3.2</code></td><td class="chain-effort"><span class="chain-badge">high</span></td></tr>
+              <tr><th scope="row"><span>architect</span></th><td data-i18n="chain.architect">Architecture and system design</td><td class="chain-order"><code>Claude Fable 5</code><span class="chain-arrow" aria-hidden="true">→</span><code>GPT-5.6 Sol</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3</code></td><td class="chain-effort"><span class="chain-badge">xhigh</span></td></tr>
+              <tr><th scope="row"><span>unspecified-high</span></th><td data-i18n="chain.unspecified-high">Default working model</td><td class="chain-order"><code>Kimi K3</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Opus 5</code></td><td class="chain-effort"><span class="chain-badge">medium</span></td></tr>
+              <tr><th scope="row"><span>unspecified-low</span></th><td data-i18n="chain.unspecified-low">Cheaper fallback</td><td class="chain-order"><code>GLM 5.2</code><span class="chain-arrow" aria-hidden="true">→</span><code>GLM 5.2 Ultrafast</code><span class="chain-arrow" aria-hidden="true">→</span><code>DeepSeek V3.2</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Opus 5</code></td><td class="chain-effort"><span class="chain-badge">low</span></td></tr>
+              <tr><th scope="row"><span>quick</span></th><td data-i18n="chain.quick">Short tasks</td><td class="chain-order"><code>GLM 5.2 Ultrafast</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3</code><span class="chain-arrow" aria-hidden="true">→</span><code>GPT-5.6 Luna</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Fable 5</code></td><td class="chain-effort"><span class="chain-badge">low</span></td></tr>
+              <tr><th scope="row"><span>writing</span></th><td data-i18n="chain.writing">Prose and docs</td><td class="chain-order"><code>Kimi K3</code><span class="chain-arrow" aria-hidden="true">→</span><code>Qwen3-Coder</code><span class="chain-arrow" aria-hidden="true">→</span><code>Gemini 3.1 Pro</code></td><td class="chain-effort"><span class="chain-badge">medium</span></td></tr>
+              <tr><th scope="row"><span>visual-engineering</span></th><td data-i18n="chain.visual-engineering">Frontend and visual</td><td class="chain-order"><code>Claude Fable 5</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3</code></td><td class="chain-effort"><span class="chain-badge">high</span></td></tr>
+              <tr><th scope="row"><span>artistry</span></th><td data-i18n="chain.artistry">Unconventional work</td><td class="chain-order"><code>Gemini 3.1 Pro</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Fable 5</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3</code></td><td class="chain-effort"><span class="chain-badge">high</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="ev-note" data-reveal data-i18n="chain.note">The result is prepared routing configuration, not provider availability, credential, dispatch, or execution evidence.</p>
+        <p class="ev-note" data-reveal data-i18n-html="chain.edit">Every chain is yours to reorder. Edit <code>~/.omh/routing/model-chains.json</code>, then run <code>omh model-chains show</code> to print what is in effect.</p>
       </section>
 
       <!-- ======================================================= PLATFORMS -->
