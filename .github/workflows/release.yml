@@ -184,12 +184,16 @@ jobs:
             if [ "$RELEASE_CHANNEL" = "beta" ]; then
               extra+=(--prerelease)
             fi
+            # macos-latest ships bash 3.2, where `set -u` treats an empty
+            # array's "${a[@]}" as unbound. Only the stable path leaves this
+            # array empty, so v1.0.7 (beta) never reached it and v1.0.8 --
+            # the first stable cut -- failed before creating the release.
             gh release create "$RELEASE_TAG" \
               "$OMH_WHEEL#Python wheel" \
               --verify-tag \
               --generate-notes \
               --title "$RELEASE_TAG" \
-              "${extra[@]}"
+              ${extra[@]+"${extra[@]}"}
           fi
 
       - name: Verify immutable release wheel
@@ -224,7 +228,8 @@ jobs:
             if [ "$RELEASE_CHANNEL" = "beta" ]; then
               tag_args+=(--tag beta)
             fi
-            npm publish "$OMH_TARBALL" --access public --provenance "${tag_args[@]}"
+            # Same bash 3.2 empty-array guard as the release-create step.
+            npm publish "$OMH_TARBALL" --access public --provenance ${tag_args[@]+"${tag_args[@]}"}
           fi
 
       - name: Render verified Homebrew formula
