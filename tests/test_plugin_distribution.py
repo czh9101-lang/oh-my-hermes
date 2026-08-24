@@ -1514,6 +1514,30 @@ class HermesProfileSyncTests(unittest.TestCase):
                 (profile / "config.yaml").read_text(encoding="utf-8"),
             )
 
+    def test_update_with_active_primary_preserves_profile_display_choice(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = self._profile(root, "bluntcritic")
+            status, _, stderr = run_cli(self._base(root) + ["setup", "--json"], output_json=False)
+            self.assertEqual(status, 0, stderr)
+            config = profile / "config.yaml"
+            config.write_text(
+                config.read_text(encoding="utf-8")
+                .replace("  interface: tui\n", "  interface: cli\n")
+                .replace("  skin: omh\n", "  skin: default\n"),
+                encoding="utf-8",
+            )
+
+            status, _, stderr = run_cli(
+                self._base(root) + ["update", "--interactive"],
+                output_json=False,
+            )
+
+            self.assertEqual(status, 0, stderr)
+            config_text = config.read_text(encoding="utf-8")
+            self.assertIn("  interface: cli\n", config_text)
+            self.assertIn("  skin: default\n", config_text)
+
     def test_a_deliberately_unregistered_profile_stays_unregistered(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -6,8 +6,11 @@ from _local_package import load_local_package
 
 load_local_package()
 from omh.config_adapter import (
+    activate_omh_skin,
+    activate_tui_interface,
     display_interface_selection,
     ensure_external_dir,
+    ensure_omh_skin,
     ensure_tui_interface,
     external_dirs,
     remove_external_dir,
@@ -60,6 +63,68 @@ class ConfigAdapterTests(unittest.TestCase):
                 self.assertFalse(change.changed)
                 self.assertEqual(change.text, original)
                 self.assertEqual(display_interface_selection(change.text), selected)
+
+    def test_activation_preserves_quoted_display_keys(self) -> None:
+        fixtures = (
+            ('"display":\n  interface: cli\n', activate_tui_interface),
+            ("'display':\n  skin: default\n", lambda text: activate_omh_skin(text, "omh")),
+            ('display:\n  "interface": cli\n', activate_tui_interface),
+            ("display:\n  'skin': default\n", lambda text: activate_omh_skin(text, "omh")),
+            ('{"display": {"interface": "cli"}}\n', activate_tui_interface),
+            ('? "display"\n:\n  interface: cli\n', activate_tui_interface),
+            ('"displ\\u0061y":\n  interface: cli\n', activate_tui_interface),
+            ('display:\n  "inter\\u0066ace": cli\n', activate_tui_interface),
+            ('display:\n  "sk\\u0069n": default\n', lambda text: activate_omh_skin(text, "omh")),
+            ('!!str display:\n  interface: cli\n', activate_tui_interface),
+            ('display:\n  &key interface: cli\n', activate_tui_interface),
+            ('display:\n  !!str skin: default\n', lambda text: activate_omh_skin(text, "omh")),
+            ('display:\n  ? !!str interface\n  : cli\n', activate_tui_interface),
+            ('display:\n  *interface_key : cli\n', activate_tui_interface),
+            ('display:\n  interface: &current cli\ncopy: *current\n', activate_tui_interface),
+            ('display:\n  skin: !!str default\n', lambda text: activate_omh_skin(text, "omh")),
+            ('current: &current cli\ndisplay:\n  interface: *current\n', activate_tui_interface),
+            ('display:\n  - "interface": cli\n', activate_tui_interface),
+            ('display:\n  - interface: cli\n', activate_tui_interface),
+            ('display:\n  - !!str skin: default\n', lambda text: activate_omh_skin(text, "omh")),
+            ('- "display":\n    interface: cli\n', activate_tui_interface),
+            ('model\n', activate_tui_interface),
+            ('{model: local}\n', activate_tui_interface),
+            ('model: local\n---\ndisplay:\n  interface: cli\n', activate_tui_interface),
+            ('\ufeffdisplay:\n  interface: cli\n', activate_tui_interface),
+            ('\ufeffdisplay:\n  skin: default\n', lambda text: activate_omh_skin(text, "omh")),
+            ('display:\n  interface: # choices\n    - cli\n', activate_tui_interface),
+            ('display:\n  skin: # theme\n    name: default\n', lambda text: activate_omh_skin(text, "omh")),
+        )
+        for original, activate in fixtures:
+            with self.subTest(original=original):
+                change = activate(original)
+                self.assertFalse(change.changed)
+                self.assertEqual(change.text, original)
+
+    def test_display_defaults_preserve_noncanonical_yaml_syntax(self) -> None:
+        fixtures = (
+            ('"display":\n  interface: cli\n', ensure_tui_interface),
+            ('display:\n  "skin": default\n', lambda text: ensure_omh_skin(text, "omh")),
+            ('{"display": {"interface": "cli"}}\n', ensure_tui_interface),
+            ('? !!str display\n:\n  interface: cli\n', ensure_tui_interface),
+            ('display:\n  interface: &current cli\ncopy: *current\n', ensure_tui_interface),
+            ('display:\n  - "interface": cli\n', ensure_tui_interface),
+            ('display:\n  - interface: cli\n', ensure_tui_interface),
+            ('display:\n  - !!str skin: default\n', lambda text: ensure_omh_skin(text, "omh")),
+            ('- "display":\n    interface: cli\n', ensure_tui_interface),
+            ('model\n', ensure_tui_interface),
+            ('{model: local}\n', ensure_tui_interface),
+            ('model: local\n---\ndisplay:\n  interface: cli\n', ensure_tui_interface),
+            ('\ufeffdisplay:\n  interface: cli\n', ensure_tui_interface),
+            ('\ufeffdisplay:\n  skin: default\n', lambda text: ensure_omh_skin(text, "omh")),
+            ('display:\n  interface: # choices\n    - cli\n', ensure_tui_interface),
+            ('display:\n  skin: # theme\n    name: default\n', lambda text: ensure_omh_skin(text, "omh")),
+        )
+        for original, ensure in fixtures:
+            with self.subTest(original=original):
+                change = ensure(original)
+                self.assertFalse(change.changed)
+                self.assertEqual(change.text, original)
 
     def test_external_dirs_treats_bare_yaml_null_as_empty(self) -> None:
         for value in ("null", "Null", "NULL", "~"):

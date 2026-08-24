@@ -43,20 +43,11 @@ class TuiWidgetPackTests(unittest.TestCase):
             self.assertEqual((widget_dir / "omh-status.mjs").read_bytes(), expected)
             self.assertEqual(unrelated.read_bytes(), unrelated_bytes)
             self.assertEqual(payload["steps"]["tui_widget"]["status"], "installed")
-            # `display.interface` is Hermes-owned. Installing the widget must
-            # not move the user's terminal to make that widget reachable.
-            self.assertNotIn(
-                "interface:",
-                (hermes_home / "config.yaml").read_text(encoding="utf-8"),
-            )
+            config_text = (hermes_home / "config.yaml").read_text(encoding="utf-8")
+            self.assertIn("  interface: tui\n", config_text)
+            self.assertIn("  skin: omh\n", config_text)
 
-    def test_setup_never_writes_display_interface(self) -> None:
-        # Inverted deliberately. OMH used to write `display.interface: tui`
-        # here so its widget -- which Hermes loads only in the Ink TUI -- would
-        # be reachable. That moved the user off Hermes' own default classic
-        # REPL, and with it the banner, status line, and the rules framing the
-        # prompt, to serve an OMH surface. `display.interface` is Hermes-owned:
-        # OMH reads it and adapts, and never writes it.
+    def test_setup_defaults_bare_launchers_to_the_branded_modern_tui(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             omh_home = root / ".omh"
@@ -80,18 +71,23 @@ class TuiWidgetPackTests(unittest.TestCase):
             self.assertEqual((status, stderr), (0, ""))
             config_text = config.read_text(encoding="utf-8")
             self.assertIn("  compact: true", config_text)
-            self.assertNotIn("interface:", config_text)
+            self.assertIn("  interface: tui\n", config_text)
+            self.assertIn("  skin: omh\n", config_text)
             tui_interface = json.loads(stdout)["steps"]["apply"]["tui_interface"]
-            self.assertFalse(tui_interface["changed"])
+            self.assertTrue(tui_interface["changed"])
+            self.assertEqual(tui_interface["selected"], "tui")
 
-    def test_setup_preserves_an_explicit_classic_interface(self) -> None:
+    def test_setup_yes_switches_stock_classic_interface_and_skin(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             omh_home = root / ".omh"
             hermes_home = root / ".hermes"
             config = hermes_home / "config.yaml"
             config.parent.mkdir(parents=True)
-            config.write_text("display:\n  interface: classic\n", encoding="utf-8")
+            config.write_text(
+                "display:\n  interface: classic\n  skin: default\n",
+                encoding="utf-8",
+            )
 
             status, stdout, stderr = run_cli(
                 [
@@ -100,6 +96,7 @@ class TuiWidgetPackTests(unittest.TestCase):
                     "--hermes-home",
                     str(hermes_home),
                     "setup",
+                    "--yes",
                     "--json",
                 ],
                 output_json=False,
@@ -107,15 +104,15 @@ class TuiWidgetPackTests(unittest.TestCase):
 
             self.assertEqual((status, stderr), (0, ""))
             config_text = config.read_text(encoding="utf-8")
-            # The identity skin default lands in the same display section, so
-            # the interface line is no longer adjacent to the header; what this
-            # test protects is that the explicit classic choice SURVIVES setup.
-            self.assertIn("  interface: classic\n", config_text)
+            self.assertIn("  interface: tui\n", config_text)
             self.assertIn("  skin: omh\n", config_text)
             self.assertEqual(config_text.count("interface:"), 1)
-            self.assertEqual(json.loads(stdout)["steps"]["apply"]["tui_interface"]["selected"], "classic")
+            self.assertEqual(config_text.count("skin:"), 1)
+            apply = json.loads(stdout)["steps"]["apply"]
+            self.assertEqual(apply["tui_interface"]["selected"], "tui")
+            self.assertEqual(apply["skin"]["selected"], "omh")
 
-    def test_update_restores_widget_without_overriding_display_preference(self) -> None:
+    def test_update_yes_restores_widget_and_switches_stock_display_defaults(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             omh_home = root / ".omh"
@@ -131,11 +128,10 @@ class TuiWidgetPackTests(unittest.TestCase):
             widget = hermes_home / "tui-widgets" / "omh-status.mjs"
             widget.unlink()
             config = hermes_home / "config.yaml"
-            # Authored here rather than derived from a value OMH wrote: OMH no
-            # longer writes display.interface at all, so the explicit classic
-            # preference this test protects has to come from the user.
             config.write_text(
-                config.read_text(encoding="utf-8") + "\ndisplay:\n  interface: cli\n",
+                config.read_text(encoding="utf-8")
+                .replace("  interface: tui\n", "  interface: cli\n")
+                .replace("  skin: omh\n", "  skin: default\n"),
                 encoding="utf-8",
             )
 
@@ -143,10 +139,7 @@ class TuiWidgetPackTests(unittest.TestCase):
                 [
                     *common,
                     "update",
-                    "--source",
-                    str(Path(__file__).parents[1]),
-                    "--channel",
-                    "local",
+                    "--yes",
                     "--json",
                 ],
                 output_json=False,
@@ -155,7 +148,9 @@ class TuiWidgetPackTests(unittest.TestCase):
             self.assertEqual((status, stderr), (0, ""))
             expected = widget_payload(Path(sys.executable))
             self.assertEqual(widget.read_bytes(), expected)
-            self.assertIn("display:\n  interface: cli\n", config.read_text(encoding="utf-8"))
+            config_text = config.read_text(encoding="utf-8")
+            self.assertIn("  interface: tui\n", config_text)
+            self.assertIn("  skin: omh\n", config_text)
 
     def test_setup_reports_config_changed_when_only_plugin_enablement_changes(self) -> None:
         with TemporaryDirectory() as tmp:

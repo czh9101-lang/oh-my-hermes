@@ -209,14 +209,20 @@ of its proofs in hand.
 _Avoid_: opening a PR for it, reaching for `hermes update`
 
 **Hermes user-config fault**:
-A key that the user or `hermes setup` owns, and that OMH must never write, is
-set inconsistently with what the reporter expects — `model.default`,
-`model.provider`, `model.base_url`, `display.interface`, an explicitly chosen
-skin. Reading the key proves it. OMH reports the inconsistency and stops
-there; it only ever writes the managed keys it installed (see Managed
-artifact) — `display.skin` counts as managed only in its unset-default case.
-Check it alongside the install fault, before reproducing anything.
-_Avoid_: writing the key from OMH, filing it as a product fault
+A user-owned key is set inconsistently with what the reporter expects —
+`model.default`, `model.provider`, `model.base_url`, or a display choice the
+operator declined to migrate. Reading the key proves it. OMH normally reports
+the inconsistency and stops there. The narrow display exception is the branded
+TUI choice: fresh canonical configs default to `display.interface: tui` and
+`display.skin: omh`; interactive setup/update may replace canonical display
+values only after a default-Yes confirmation (or `--yes`). No,
+`--no-omh-tui`, and every noncanonical YAML shape preserve the existing
+display choice byte-for-byte. JSON suppresses prompting but `--yes` remains
+explicit consent; without `--yes`, JSON preserves explicit canonical values.
+Dry-run may preview the accepted change but never persists it. Check this
+fault alongside the install fault, before reproducing anything.
+_Avoid_: rewriting a declined or noncanonical display choice, filing it as a
+product fault
 
 **OMH product fault**:
 The behaviour reproduces from a clean install and on the repo dev tree,
@@ -258,9 +264,12 @@ _Avoid_: underroute (that name matches nothing in the code)
 A file OMH installs and refreshes under a host-owned root and may safely
 overwrite on setup/update — the plugin bundle, the widget file, the identity
 skin (`skins/omh.yaml`), managed skills, and the config keys OMH inserted.
-`display.skin` is the one identity default OMH sets, and only when the user
-has not chosen a skin; an explicit choice — including `hermes skin use` over
-OMH's default — is user-owned from then on. Everything else under a host root
-is user-owned and preserved.
-_Avoid_: overwriting anything OMH did not write, rewriting an explicit skin
-choice back to `omh`
+The branded-TUI consent is the narrow exception for existing canonical config:
+accepting the interactive default or passing `--yes` may set
+`display.interface: tui` and `display.skin: omh` so bare `omh` and `hermes`
+open the same surface. Already-active installs are not prompted. Declining,
+passing `--no-omh-tui`, or using a noncanonical YAML shape leaves the display
+configuration untouched. Everything else under a host root is user-owned and
+preserved.
+_Avoid_: overwriting anything OMH did not write without explicit consent,
+rewriting a declined or noncanonical display choice
