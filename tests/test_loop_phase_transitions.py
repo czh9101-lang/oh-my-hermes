@@ -162,6 +162,11 @@ class PhaseGraphTests(unittest.TestCase):
             "phase_transitions[1].phase transition chain is disconnected",
             errors,
         )
+
+    def test_first_generation_aware_history_row_starts_at_zero(self) -> None:
+        legacy = _transition()
+        legacy.pop("from_phase_generation")
+        legacy.pop("to_phase_generation")
         forged_generation = _transition(
             transition_id="phase-transition-2",
             sequence=2,
