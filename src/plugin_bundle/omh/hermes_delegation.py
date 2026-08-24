@@ -28,6 +28,7 @@ import json
 import re
 import sqlite3
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -172,6 +173,115 @@ def effective_mixture_category_chains(
         name: overrides.get(name, chain)
         for name, chain in HERMES_MIXTURE_CATEGORY_CHAINS.items()
     }
+
+
+# User-editable alias -> (provider, wire model) routes.
+#
+# A chain names a model the way a person says it (`glm-5.2`, `kimi-k3`), but a
+# host that reaches models through a provider usually needs two different
+# values: a provider id and that provider's own model string, which is often
+# namespaced (`vendor/model`). Which provider serves which model, and under
+# what name, is a property of one person's account -- so OMH ships NO routes
+# and hardcodes no provider. Absent this document every alias dispatches
+# unchanged, which is the behavior every host without a provider indirection
+# wants.
+#
+# Validation mirrors the chain-override contract exactly: strict, atomic, and
+# token-only, so a crafted value can never smuggle structure into config.yaml
+# through a later omh_delegate_route write.
+MODEL_PROVIDER_ROUTES_SCHEMA_VERSION = "model_provider_routes/v1"
+
+
+def model_provider_routes_path(omh_home: str | Path | None = None) -> Path:
+    root = Path(omh_home).expanduser() if omh_home else Path.home() / ".omh"
+    return root / "routing" / "model-providers.json"
+
+
+def load_model_provider_routes(
+    omh_home: str | Path | None = None,
+) -> tuple[dict[str, tuple[str, str]], str]:
+    """Read the user's alias -> (provider, model) document.
+
+    Returns ``(routes, status)`` where status is ``absent``, ``applied``, or
+    ``invalid: <reason>``, matching `load_mixture_chain_overrides`.
+    """
+    path = model_provider_routes_path(omh_home)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, "absent"
+    except (OSError, UnicodeDecodeError, ValueError):
+        return {}, "invalid: unreadable JSON"
+    return parse_model_provider_routes(raw)
+
+
+def parse_model_provider_routes(
+    raw: object,
+) -> tuple[dict[str, tuple[str, str]], str]:
+    """Validate one already-parsed provider-route document."""
+    if not isinstance(raw, dict):
+        return {}, "invalid: document must be a JSON object"
+    if raw.get("schema_version") != MODEL_PROVIDER_ROUTES_SCHEMA_VERSION:
+        return {}, f"invalid: schema_version must be {MODEL_PROVIDER_ROUTES_SCHEMA_VERSION}"
+    models = raw.get("models")
+    if not isinstance(models, dict):
+        return {}, "invalid: models must be an object"
+    unknown = sorted(set(raw) - {"schema_version", "models"})
+    if unknown:
+        return {}, f"invalid: unsupported fields {unknown}"
+    routes: dict[str, tuple[str, str]] = {}
+    for alias, entry in models.items():
+        if not _CHAIN_TOKEN_RE.match(str(alias)):
+            return {}, f"invalid: alias {alias!r} is not a token"
+        if not isinstance(entry, dict):
+            return {}, f"invalid: alias {alias!r} must map to an object"
+        unknown_keys = sorted(set(entry) - {"provider", "model"})
+        if unknown_keys:
+            return {}, f"invalid: alias {alias!r} entry fields {unknown_keys}"
+        provider = str(entry.get("provider", ""))
+        model = str(entry.get("model", ""))
+        if not _CHAIN_TOKEN_RE.match(provider):
+            return {}, f"invalid: alias {alias!r} names a non-token provider"
+        if not _CHAIN_TOKEN_RE.match(model):
+            return {}, f"invalid: alias {alias!r} names a non-token model"
+        routes[str(alias)] = (provider, model)
+    return routes, "applied"
+
+
+def resolve_provider_model(
+    model: str,
+    provider: str = "",
+    routes: Mapping[str, tuple[str, str]] | None = None,
+) -> tuple[str, str]:
+    """Expand one alias into ``(wire model, provider)``.
+
+    A caller that pinned a provider is answered verbatim: an explicit choice
+    outranks a stored route. An alias with no route is returned unchanged with
+    no provider, which is what a direct-billing host needs.
+    """
+    if provider:
+        return model, provider
+    resolved = (routes or {}).get(model)
+    if resolved is None:
+        return model, ""
+    resolved_provider, wire_model = resolved
+    return wire_model, resolved_provider
+
+
+def chain_alias_for(
+    model: str,
+    routes: Mapping[str, tuple[str, str]] | None = None,
+) -> str:
+    """Map a wire model back to the alias its chain uses.
+
+    Chain positions are matched by alias, so a route that was written as a
+    wire model has to be translated back before any chain lookup; otherwise a
+    routed model looks absent from the chain it came from.
+    """
+    for alias, (_, wire_model) in (routes or {}).items():
+        if model == wire_model:
+            return alias
+    return model
 
 # Rough USD-per-million-token list prices used ONLY when the host recorded no
 # cost (subscription billing bills nothing per call; the owner asked for an
