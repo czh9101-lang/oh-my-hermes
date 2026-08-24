@@ -5,7 +5,7 @@ import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Final, Iterable
+from typing import Any, Final, Iterable, Mapping
 
 from ..codex_progress import summarize_codex_jsonl_text
 from ..goal_ledger import build_goal_completion_gate, read_goal_ledger
@@ -15,6 +15,15 @@ from ..system.record_revision import DuplicateMutationReplay, guarded_record_upd
 from ..loopability import LOOPABILITY_ASSESSMENT_SCHEMA, assess_loopability, validate_loopability_assessment
 from ..paths import OmhPaths
 from .goal_quality_coaching import UPSTREAM_GOAL_DEFAULT_MAX_TURNS
+from .loop_phase_transitions import (
+    LOOP_GOAL_DRIVER_OBSERVATION_SCHEMA,
+    LOOP_PHASES,
+    native_goal_status,
+    phase_target,
+    transition_loop_phase,
+    validate_loop_goal_driver_observation,
+    validate_loop_phase_transition,
+)
 
 
 LOOP_CYCLE_SCHEMA = "loop_cycle/v1"
@@ -42,17 +51,6 @@ _INNER_TIER_EXPECTED_SIGNAL = (
 )
 _GOAL_DRIVER_LINE_LIMIT = 360
 
-LOOP_PHASES = {
-    "interview",
-    "research",
-    "plan",
-    "handoff",
-    "execution",
-    "feedback",
-    "waiting",
-    "blocked",
-    "complete",
-}
 WAIT_REASONS = {
     "none",
     "waiting_external_observation",
@@ -490,6 +488,8 @@ def create_loop_cycle(
         "feedback_gate": _feedback_gate(),
         "linked_goal_id": _storage_id(linked_goal_id, "linked_goal_id") if linked_goal_id else "",
         "cycles": [],
+        "phase_transitions": [],
+        "goal_driver_observations": [],
         "runtime": _runtime_state(),
         "loop_engineering": _loop_engineering_template(),
         "next_action": "continue_loop",
@@ -957,7 +957,6 @@ def tick_loop_runtime(
         runtime.setdefault("queue", []).append(queue_item)
         cycle["runtime"] = runtime
         if queue_item["status"] == "prepared_not_observed":
-            cycle["phase"] = str(plan["phase"])
             cycle["wait_reason"] = "none"
             cycle["next_action"] = "observe_runtime_queue"
         else:
@@ -1001,7 +1000,6 @@ def run_loop_once(paths: OmhPaths, loop_id: str) -> dict[str, Any]:
             # No write here: the tick below takes the lock again on its own.
             needs_tick["tick"] = True
             return None
-        cycle["phase"] = str(pending[-1].get("phase", cycle.get("phase", "handoff")))
         cycle["next_action"] = "observe_runtime_queue"
         cycle["updated_at"] = utc_now()
         return cycle
@@ -1118,9 +1116,23 @@ def build_loop_goal_driver_handoff(
     gate_commands: Iterable[str] | None = None,
     max_turns: int = 0,
 ) -> dict[str, Any]:
+    return _build_loop_goal_driver_handoff(
+        paths,
+        read_loop_cycle(paths, loop_id),
+        gate_commands=gate_commands,
+        max_turns=max_turns,
+    )
+
+
+def _build_loop_goal_driver_handoff(
+    paths: OmhPaths,
+    cycle: dict[str, Any],
+    *,
+    gate_commands: Iterable[str] | None = None,
+    max_turns: int = 0,
+) -> dict[str, Any]:
     if max_turns < 0:
         raise ValueError("max turns must be zero or positive")
-    cycle = read_loop_cycle(paths, loop_id)
     if cycle.get("phase") == "complete":
         raise ValueError("a completed loop cycle cannot render a goal driver handoff")
     wait_reason = str(cycle.get("wait_reason", ""))
@@ -1250,11 +1262,29 @@ def build_loop_goal_driver_handoff(
     else:
         wait_state = {"waiting": False, "reason": wait_reason, "caveat": ""}
 
+    goal_command_sha256 = sha256_text(goal_command)
     return {
         "schema_version": LOOP_GOAL_DRIVER_HANDOFF_SCHEMA,
         "loop_id": cycle["loop_id"],
         "phase": cycle["phase"],
         "goal_command": goal_command,
+        "goal_command_sha256": goal_command_sha256,
+        "observation_contract": {
+            "schema_version": LOOP_GOAL_DRIVER_OBSERVATION_SCHEMA,
+            "record_command": "omh loop goal-driver-observe",
+            "requires_user_activation": True,
+            "required_fields": [
+                "observation_id",
+                "loop_id",
+                "session_ref",
+                "goal_command_sha256",
+                "observation_source",
+                "observed_at",
+                "activation",
+                "turns",
+            ],
+        },
+        "native_goal_status": native_goal_status(cycle),
         "verify_source": verify_source,
         "contract_truncated": contract_truncated,
         "truncated_criteria_count": truncated_criteria_count,
@@ -1321,12 +1351,113 @@ def build_loop_goal_driver_handoff(
         ),
         "status": "prepared_not_observed",
         "next_action": "set_goal_then_register_gates",
-        "actions": ["set_upstream_goal", "register_goal_gates", "tick_loop", "show_loop_status"],
+        "actions": [
+            "set_upstream_goal",
+            "register_goal_gates",
+            "record_goal_driver_observation",
+            "tick_loop",
+            "show_loop_status",
+        ],
         "claim_boundary": (
             "Preparing goal driver text is not setting an upstream goal, not registering gates, "
             "not running gates, not a judge verdict, and not goal completion evidence."
         ),
     }
+
+
+def record_loop_goal_driver_observation(
+    paths: OmhPaths,
+    loop_id: str,
+    observation: Mapping[str, Any],
+    *,
+    expected_revision: int | None = None,
+    mutation_id: str | None = None,
+) -> dict[str, Any]:
+    canonical = json.loads(json.dumps(dict(observation), sort_keys=True))
+    if not isinstance(canonical, dict):
+        raise ValueError("goal driver observation must be an object")
+
+    def mutate(cycle: dict[str, Any]) -> dict[str, Any] | None:
+        expected_digest = str(_build_loop_goal_driver_handoff(paths, cycle)["goal_command_sha256"])
+        errors = validate_loop_goal_driver_observation(
+            canonical,
+            expected_loop_id=loop_id,
+            expected_goal_command_sha256=expected_digest,
+        )
+        if errors:
+            raise ValueError("; ".join(errors))
+
+        observations = cycle.get("goal_driver_observations", [])
+        if not isinstance(observations, list):
+            raise ValueError("goal_driver_observations must be a list")
+        observation_id = str(canonical["observation_id"])
+        for existing in observations:
+            if not isinstance(existing, dict) or existing.get("observation_id") != observation_id:
+                continue
+            comparable = {key: value for key, value in existing.items() if key != "native_goal_status"}
+            if comparable == canonical:
+                return None
+            raise ValueError(f"conflicting goal driver observation: {observation_id}")
+
+        session_ref = str(canonical["session_ref"])
+        goal_command_sha256 = str(canonical["goal_command_sha256"])
+        stream_turns = [
+            turn
+            for existing in observations
+            if isinstance(existing, dict)
+            and existing.get("session_ref") == session_ref
+            and existing.get("goal_command_sha256") == goal_command_sha256
+            for turn in existing.get("turns", [])
+            if isinstance(turn, dict)
+        ]
+        turns = canonical["turns"]
+        if stream_turns:
+            expected_turn = max(int(turn.get("turn_index", 0)) for turn in stream_turns) + 1
+            first_turn = int(turns[0]["turn_index"])
+            if first_turn != expected_turn:
+                raise ValueError(
+                    "loop_goal_driver_observation turns must continue the stored stream; "
+                    f"expected turn_index {expected_turn}, got {first_turn}"
+                )
+
+        observed_at = str(canonical["observed_at"])
+        for turn in turns:
+            turn_index = int(turn["turn_index"])
+            ended_refs = [str(value) for value in turn["turn_ended_evidence_refs"]]
+            gate_refs = [str(value) for value in turn["phase_gate_evidence_refs"]]
+            transition_loop_phase(
+                cycle,
+                to_phase=str(turn["to_phase"]),
+                phase_gate=str(turn["phase_gate"]),
+                transition_kind="observed_progress",
+                cause="native_goal_turn",
+                source_ref=f"{observation_id}-turn-{turn_index}",
+                evidence_refs=[*ended_refs, *gate_refs],
+                observed_at=observed_at,
+                native_goal={
+                    "observation_id": observation_id,
+                    "session_ref": session_ref,
+                    "goal_command_sha256": goal_command_sha256,
+                    "turn_index": turn_index,
+                },
+            )
+
+        stored = dict(canonical)
+        cycle["goal_driver_observations"] = [*observations, stored]
+        stored["native_goal_status"] = native_goal_status(cycle)
+        cycle["next_action"] = "continue_loop"
+        cycle["updated_at"] = utc_now()
+        return cycle
+
+    return _guarded_cycle_update(
+        paths,
+        loop_id,
+        mutate,
+        operation="record_loop_goal_driver_observation",
+        expected_revision=expected_revision,
+        mutation_id=mutation_id,
+        mutation_digest=_mutation_digest("record_loop_goal_driver_observation", canonical),
+    )
 
 
 def dispatch_loop_queue_item(
@@ -1424,15 +1555,33 @@ def observe_codex_loop_queue_item(
         item["executor_session"] = executor_session
         item["status"] = "observed"
         item["observed"] = True
-        item["observed_at"] = utc_now()
+        observed_at = utc_now()
+        item["observed_at"] = observed_at
         item["observed_evidence_refs"] = _safe_list([*_string_list(item.get("observed_evidence_refs", [])), *all_refs], limit=320)
         item["observation_summary"] = executor_session["summary"] or "Codex progress observed for this loop queue item."
         runtime["last_queue_id"] = str(item["queue_id"])
         runtime["last_queue_status"] = "observed"
         cycle["runtime"] = runtime
-        cycle["phase"] = "feedback"
+        phase_gate = str(item.get("phase_gate", ""))
+        source_phase = str(item.get("source_phase", ""))
+        if phase_gate and (not source_phase or cycle.get("phase") == source_phase):
+            transition_loop_phase(
+                cycle,
+                to_phase=str(item.get("target_phase", item.get("phase", ""))),
+                phase_gate=phase_gate,
+                transition_kind="observed_progress",
+                cause="codex_queue_observation",
+                source_ref=str(item["queue_id"]),
+                evidence_refs=all_refs,
+                observed_at=observed_at,
+            )
+            item["phase_transition_status"] = "observed"
+        elif phase_gate:
+            item["phase_transition_status"] = "superseded"
+        else:
+            cycle["phase"] = "feedback"
         cycle["wait_reason"] = "none"
-        cycle["next_action"] = "record_feedback"
+        cycle["next_action"] = "record_feedback" if cycle["phase"] == "feedback" else "continue_loop"
         cycle["updated_at"] = utc_now()
         return cycle
 
@@ -1507,7 +1656,8 @@ def observe_loop_queue_item(
             raise ValueError("only prepared_not_observed loop queue items can be observed")
         item["status"] = "observed"
         item["observed"] = True
-        item["observed_at"] = utc_now()
+        observed_at = utc_now()
+        item["observed_at"] = observed_at
         item["observed_evidence_refs"] = aggregate_refs
         item["observation_summary"] = _safe_summary(summary, limit=320) if summary.strip() else "Queue item observed by wrapper or operator evidence."
         _mark_queue_plans_observed(
@@ -1519,9 +1669,26 @@ def observe_loop_queue_item(
         runtime["last_queue_id"] = str(item["queue_id"])
         runtime["last_queue_status"] = "observed"
         cycle["runtime"] = runtime
-        cycle["phase"] = "feedback"
+        phase_gate = str(item.get("phase_gate", ""))
+        source_phase = str(item.get("source_phase", ""))
+        if phase_gate and (not source_phase or cycle.get("phase") == source_phase):
+            transition_loop_phase(
+                cycle,
+                to_phase=str(item.get("target_phase", item.get("phase", ""))),
+                phase_gate=phase_gate,
+                transition_kind="observed_progress",
+                cause="queue_observation",
+                source_ref=str(item["queue_id"]),
+                evidence_refs=aggregate_refs,
+                observed_at=observed_at,
+            )
+            item["phase_transition_status"] = "observed"
+        elif phase_gate:
+            item["phase_transition_status"] = "superseded"
+        else:
+            cycle["phase"] = "feedback"
         cycle["wait_reason"] = "none"
-        cycle["next_action"] = "record_feedback"
+        cycle["next_action"] = "record_feedback" if cycle["phase"] == "feedback" else "continue_loop"
         cycle["updated_at"] = utc_now()
         return cycle
 
@@ -1600,6 +1767,7 @@ def build_loop_status_card(paths: OmhPaths, loop_id: str) -> dict[str, Any]:
         "north_star": loopability.get("north_star", ""),
         "current_loop_goal": loopability.get("current_loop_goal", ""),
         "feedback_gate": cycle.get("feedback_gate", _feedback_gate()),
+        "native_goal_status": native_goal_status(cycle),
         "runtime_summary": _runtime_summary(cycle),
         "loop_engineering": _loop_engineering_status(cycle),
         "failure_mode_summary": _failure_mode_summary(cycle),
@@ -1690,6 +1858,27 @@ def validate_loop_cycle(cycle: dict[str, Any]) -> dict[str, Any]:
     runtime = cycle.get("runtime")
     if runtime is not None:
         errors.extend(_validate_runtime(runtime))
+    transitions = cycle.get("phase_transitions", [])
+    if not isinstance(transitions, list):
+        errors.append("phase_transitions must be a list")
+    else:
+        for index, transition in enumerate(transitions):
+            errors.extend(
+                f"phase_transitions[{index}].{error}"
+                for error in validate_loop_phase_transition(transition)
+            )
+    observations = cycle.get("goal_driver_observations", [])
+    if not isinstance(observations, list):
+        errors.append("goal_driver_observations must be a list")
+    else:
+        for index, observation in enumerate(observations):
+            errors.extend(
+                f"goal_driver_observations[{index}].{error}"
+                for error in validate_loop_goal_driver_observation(
+                    observation,
+                    expected_loop_id=loop_id,
+                )
+            )
     if cycle.get("completion_claim_allowed") is not False:
         errors.append("loop_cycle cannot directly allow goal completion claims")
     assessment = cycle.get("loopability_assessment")
@@ -2229,6 +2418,7 @@ def _next_runtime_plan(cycle: dict[str, Any], envelope: dict[str, Any]) -> dict[
         return {
             "planned_action": "request_permission",
             "phase": "waiting",
+            "phase_gate": "",
             "status": "blocked_by_permission",
             "next_action": "request_permission",
             "reason": "The loop has no allowed action yet.",
@@ -2240,6 +2430,7 @@ def _next_runtime_plan(cycle: dict[str, Any], envelope: dict[str, Any]) -> dict[
         return {
             "planned_action": "wait_for_external_observation",
             "phase": "waiting",
+            "phase_gate": "",
             "status": "blocked_by_wait",
             "next_action": "record_external_wait",
             "reason": "The loop is waiting for external evidence and should not auto-continue.",
@@ -2251,6 +2442,7 @@ def _next_runtime_plan(cycle: dict[str, Any], envelope: dict[str, Any]) -> dict[
         return {
             "planned_action": "checkpoint_resume",
             "phase": "waiting",
+            "phase_gate": "",
             "status": "blocked_by_wait",
             "next_action": "record_checkpoint",
             "reason": "The loop needs a checkpoint before more context or budget is available.",
@@ -2259,12 +2451,13 @@ def _next_runtime_plan(cycle: dict[str, Any], envelope: dict[str, Any]) -> dict[
             "subagent_result_contract_schema": LOOP_SUBAGENT_RESULT_CONTRACT_SCHEMA,
         }
 
-    planned_action, phase = _phase_runtime_action(str(cycle.get("phase", "interview")))
+    planned_action, phase, phase_gate = _phase_runtime_action(str(cycle.get("phase", "interview")))
     allowed = set(_string_set(envelope.get("allowed_actions", [])))
     if planned_action not in allowed:
         return {
             "planned_action": planned_action,
             "phase": str(cycle.get("phase", "interview")),
+            "phase_gate": "",
             "status": "blocked_by_permission",
             "next_action": "request_permission",
             "reason": f"`{planned_action}` is outside the current authority envelope.",
@@ -2275,6 +2468,7 @@ def _next_runtime_plan(cycle: dict[str, Any], envelope: dict[str, Any]) -> dict[
     return {
         "planned_action": planned_action,
         "phase": phase,
+        "phase_gate": phase_gate,
         "status": "prepared_not_observed",
         "next_action": "observe_runtime_queue",
         "reason": "Prepared the next loop step for a wrapper, scheduler, or executor to observe.",
@@ -2284,18 +2478,8 @@ def _next_runtime_plan(cycle: dict[str, Any], envelope: dict[str, Any]) -> dict[
     }
 
 
-def _phase_runtime_action(phase: str) -> tuple[str, str]:
-    if phase == "research":
-        return "planning", "plan"
-    if phase == "plan":
-        return "executor_handoff", "handoff"
-    if phase == "handoff":
-        return "executor_dispatch", "handoff"
-    if phase == "execution":
-        return "review_fix_loop", "feedback"
-    if phase == "feedback":
-        return "research", "research"
-    return "research", "research"
+def _phase_runtime_action(phase: str) -> tuple[str, str, str]:
+    return phase_target(phase)
 
 
 def _runtime_queue_item(
@@ -2336,7 +2520,10 @@ def _runtime_queue_item(
             LOOP_SUBAGENT_RESULT_CONTRACT_SCHEMA,
         ),
         "status": plan["status"],
+        "source_phase": str(cycle.get("phase", "interview")),
         "phase": plan["phase"],
+        "target_phase": plan["phase"],
+        "phase_gate": plan.get("phase_gate", ""),
         "reason": _safe_summary(plan["reason"], limit=320),
         "worktree_plan": (
             _worktree_plan(cycle, planned_action, worktree_base, branch_hint) if is_prepared else _empty_worktree_plan()

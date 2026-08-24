@@ -174,7 +174,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # section carrying the constraint-versus-metric precedence and the completion
 # boundary); the full method and the attribution live in the on-demand
 # reference; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 711787
+# 711787 -> 712692: the loop skill gained metadata-only native /goal
+# observation and evidence-backed phase-transition contracts (+905 chars:
+# schema names, same-session turn evidence, prepared-versus-observed guidance,
+# and generated output/artifact pointers); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 712692
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

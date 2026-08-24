@@ -79,6 +79,20 @@ interactive Hermes surface. OMH never sets the goal, never registers a gate,
 and never reads the judge's verdict. Verified against the observed basis
 Hermes Agent v0.20.4 (build 2026.8.18, `~/.hermes/hermes-agent/pyproject.toml`).
 
+After the host or wrapper observes Hermes accepting that exact prepared
+command and ending at least two contiguous turns in the same session, it may
+submit metadata-only references with
+`omh loop goal-driver-observe --loop <id> --observation-json <path|->`.
+The `goal_command_sha256` must match the current handoff, every turn must name
+the legal phase gate it satisfied, and activation, turn-end, and gate evidence
+references must be non-empty. OMH stores a
+`loop_goal_driver_observation/v1` receipt and one
+`loop_phase_transition/v1` record per accepted turn in the existing guarded
+`loop_cycle/v1`; it does not store prompts, transcripts, reasoning, or log
+bodies. A prepared handoff, an isolated turn, a skipped index, or a mismatched
+session remains non-observed and cannot advance the loop phase. The linked
+goal ledger still owns completion.
+
 Gate commands are operator-supplied inputs, never synthesized: pass each one
 via `--gate-command`, and the artifact echoes it as a `/goal gate add` line
 labelled `inner`. The single-line rule is a safety constraint, not

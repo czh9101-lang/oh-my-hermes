@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -8291,6 +8292,98 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertNotEqual(status, 0)
             self.assertEqual(stdout, "")
             self.assertIn("single-line", stderr)
+
+    def test_loop_cli_goal_driver_observe_records_contiguous_same_session_turns(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+            status, _, stderr = run_cli(
+                home
+                + [
+                    "loop",
+                    "start",
+                    "--loop-id",
+                    "loop-native-observed",
+                    "--goal-summary",
+                    "Observe Hermes native goal continuation",
+                    "--goal-reframe",
+                    "Record activation and two ordered turns without claiming completion.",
+                    "--criterion",
+                    "Observed native continuation is stored",
+                    "--permission-profile",
+                    "full_loop",
+                ]
+            )
+            self.assertEqual(status, 0, stderr)
+            status, stdout, stderr = run_cli(
+                home + ["loop", "goal-driver-handoff", "--loop", "loop-native-observed"]
+            )
+            self.assertEqual(status, 0, stderr)
+            goal_driver = json.loads(stdout)["goal_driver_handoff"]
+            digest = hashlib.sha256(goal_driver["goal_command"].encode()).hexdigest()
+            observation_path = root / "native-goal-observation.json"
+            observation_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "loop_goal_driver_observation/v1",
+                        "observation_id": "native-goal-cli-turns-1-2",
+                        "loop_id": "loop-native-observed",
+                        "session_ref": "hermes-session-cli",
+                        "goal_command_sha256": digest,
+                        "observation_source": "operator",
+                        "observed_at": "2026-08-24T12:00:00Z",
+                        "activation": {
+                            "status": "observed",
+                            "evidence_refs": ["hermes:session-cli:goal-accepted"],
+                        },
+                        "turns": [
+                            {
+                                "turn_index": 1,
+                                "session_ref": "hermes-session-cli",
+                                "from_phase": "interview",
+                                "to_phase": "plan",
+                                "phase_gate": "goal_contract_observed",
+                                "turn_ended_evidence_refs": ["hermes:session-cli:turn-1-ended"],
+                                "phase_gate_evidence_refs": ["wrapper:goal-contract:observed"],
+                            },
+                            {
+                                "turn_index": 2,
+                                "session_ref": "hermes-session-cli",
+                                "from_phase": "plan",
+                                "to_phase": "research",
+                                "phase_gate": "plan_observed",
+                                "turn_ended_evidence_refs": ["hermes:session-cli:turn-2-ended"],
+                                "phase_gate_evidence_refs": ["artifact:bounded-plan:sha256:abc123"],
+                            },
+                        ],
+                        "summary": "Hermes continued two observed turns.",
+                        "privacy": "metadata_only",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            status, stdout, stderr = run_cli(
+                home
+                + [
+                    "loop",
+                    "goal-driver-observe",
+                    "--loop",
+                    "loop-native-observed",
+                    "--observation-json",
+                    str(observation_path),
+                    "--mutation-id",
+                    "native-goal-cli-turns-1-2",
+                ]
+            )
+
+            self.assertEqual(status, 0, stderr)
+            payload = json.loads(stdout)
+            self.assertEqual(payload["goal_driver_observation"]["schema_version"], "loop_goal_driver_observation/v1")
+            self.assertEqual(payload["loop"]["phase"], "research")
+            self.assertEqual(payload["native_goal_status"]["activation_status"], "observed")
+            self.assertEqual(payload["native_goal_status"]["continuation_status"], "observed")
+            self.assertFalse(payload["loop"]["completion_claim_allowed"])
 
     def test_loop_cli_start_feedback_permit_and_status(self) -> None:
         with TemporaryDirectory() as tmp:
