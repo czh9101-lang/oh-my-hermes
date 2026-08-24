@@ -1562,3 +1562,122 @@ class HermesProfileSyncTests(unittest.TestCase):
             self.assertEqual((status, stderr), (0, ""))
             payload = json.loads(stdout)
             self.assertNotIn("hermes_profiles", payload)
+
+class HermesProfileUninstallTests(unittest.TestCase):
+    """The reverse of the sync: uninstall must reach every bot-profile home.
+
+    A full uninstall that leaves profiles registered keeps their skills.external_dirs
+    rows pointing at a removed ~/.omh/skills -- harmless at runtime, but stale the next
+    sync that treats as deliberate. Registration-only uninstall keeps each plugin dir
+    on purpose: that is the opt-out marker the sync guard respects
+    """
+
+    def _base(self, root: Path) -> list[str]:
+        return ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+
+    def _profile(self, root: Path, name: str) -> Path:
+        profile = root / ".hermes" / "profiles" / name
+        profile.mkdir(parents=True, exist_ok=True)
+        return profile
+
+    def _skills_dir(self, root: Path) -> str:
+        # .resolve() matches what registration writes (Windows expands 8.3
+        # short temp paths); same pattern as the sync tests above.
+        return (root / ".omh" / "skills").resolve().as_posix()
+
+    def test_full_uninstall_clears_every_profile(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            polite = self._profile(root, "politehelper")
+            blunt = self._profile(root, "bluntcritic")
+            unrelated = polite / "tui-widgets" / "personal.mjs"
+            status, _, stderr = run_cli(self._base(root) + ["setup", "--json"], output_json=False)
+            self.assertEqual((status, stderr), (0, ""))
+            unrelated.write_text("personal\n", encoding="utf-8")
+            status, stdout, stderr = run_cli(self._base(root) + ["uninstall", "--keep-command"])
+            self.assertEqual((status, stderr), (0, ""))
+            payload = json.loads(stdout)
+            rows = {entry["profile"]: entry["status"] for entry in payload["hermes_profiles"]}
+            self.assertEqual(rows, {"politehelper": "cleared", "bluntcritic": "cleared"})
+            for profile in (polite, blunt):
+                self.assertNotIn(self._skills_dir(root), (profile / "config.yaml").read_text(encoding="utf-8"))
+                self.assertFalse((profile / "plugins" / "omh").exists())
+                self.assertFalse((profile / "tui-widgets" / "omh-status.mjs").exists())
+                self.assertFalse((profile / "skins" / "omh.yaml").exists())
+                self.assertTrue(profile.is_dir())
+            self.assertTrue(unrelated.exists())
+
+    def test_dry_run_uninstall_leaves_profiles_untouched(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            polite = self._profile(root, "politehelper")
+            status, _, stderr = run_cli(self._base(root) + ["setup"])
+            self.assertEqual((status, stderr), (0, ""))
+            before = (polite / "config.yaml").read_text(encoding="utf-8")
+
+            status, stdout, stderr = run_cli(self._base(root) + ["uninstall", "--keep-command", "--dry-run", "--json"])
+            self.assertEqual((status, stderr), (0, ""))
+            rows = {entry["profile"]: entry["status"] for entry in json.loads(stdout)["hermes_profiles"]}
+            self.assertEqual(rows, {"politehelper": "cleared"})
+            self.assertEqual((polite / "config.yaml").read_text(encoding="utf-8"), before)
+            self.assertTrue((polite / "plugins" / "omh").is_dir())
+            self.assertIn(self._skills_dir(root), before)
+
+
+    def test_registration_only_leaves_plugin_dirs_as_deliberate_opt_out(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            polite = self._profile(root, "politehelper")
+            status, _, stderr = run_cli(self._base(root) + ["setup"])
+            self.assertEqual((status, stderr), (0, ""))
+
+            status, stdout, stderr = run_cli(self._base(root) + ["uninstall", "--registration-only"])
+            self.assertEqual((status, stderr), (0, ""))
+            rows = {entry["profile"]: entry["status"] for entry in json.loads(stdout)["hermes_profiles"]}
+            self.assertEqual(rows, {"politehelper": "unregistered"})
+            self.assertNotIn(self._skills_dir(root), (polite / "config.yaml").read_text(encoding="utf-8"))
+            self.assertTrue((polite / "plugins" / "omh").is_dir())
+
+            # The round-trip: plugin-dir-present plus unregistered is the
+            # documented opt-out, so the next sync must report it and keep it.
+            status, stdout, stderr = run_cli(self._base(root) + ["setup", "--json"], output_json=False)
+            self.assertEqual((status, stderr), (0, ""))
+            rows = {entry["profile"]: entry["status"] for entry in json.loads(stdout)["hermes_profiles"]}
+            self.assertEqual(rows, {"politehelper": "unregistered_kept"})
+
+    def test_uninstall_keeps_an_unmanaged_profile_plugin_dir_without_force(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            polite = self._profile(root, "politehelper")
+            status, _, stderr = run_cli(self._base(root) + ["setup"])
+            self.assertEqual((status, stderr), (0, ""))
+            plugin_dir = polite / "plugins" / "omh"
+            (plugin_dir / ".omh-plugin-manifest.json").unlink()
+
+            status, stdout, stderr = run_cli(self._base(root) + ["uninstall", "--keep-command"])
+            self.assertEqual((status, stderr), (0, ""))
+            payload = json.loads(stdout)
+            row = payload["hermes_profiles"][0]
+            self.assertEqual(row["status"], "cleared")
+            self.assertTrue(plugin_dir.is_dir())
+            kept_paths = [item["path"] for item in row["kept_paths"]]
+            # .resolve() matches what _collect_removal reports (macOS /var ->
+            # /private/var, Windows 8.3 short temp paths); same pattern as
+            # _skills_dir above.
+            self.assertIn(str(plugin_dir.resolve()), kept_paths)
+
+            status, _, stderr = run_cli(self._base(root) + ["setup", "--force"])
+            self.assertEqual((status, stderr), (0, ""))
+            status, stdout, stderr = run_cli(self._base(root) + ["uninstall", "--keep-command", "--force"])
+            self.assertEqual((status, stderr), (0, ""))
+            self.assertFalse(plugin_dir.exists())
+
+    def test_uninstall_without_profiles_reports_no_profile_rows(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            status, _, stderr = run_cli(self._base(root) + ["setup"])
+            self.assertEqual((status, stderr), (0, ""))
+
+            status, stdout, stderr = run_cli(self._base(root) + ["uninstall", "--keep-command"])
+            self.assertEqual((status, stderr), (0, ""))
+            self.assertNotIn("hermes_profiles", json.loads(stdout))

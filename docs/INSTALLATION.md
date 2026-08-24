@@ -502,6 +502,14 @@ zero OMH skills while the default chat has the full set.
   install — gets the full bootstrap on the next `omh setup` or `omh update`;
 - a deliberately unregistered profile (see below) is left alone.
 
+`omh uninstall` is symmetric with the sync. A full uninstall (`omh uninstall`,
+`--all`, or `--purge`) clears every profile's registration and removes its
+managed artifacts — the plugin bundle, the TUI widget, and the skin — through
+the same manifest checks the primary home gets: a profile directory OMH cannot
+prove it owns is kept and reported, never deleted blind. `--registration-only`
+unregisters every profile while keeping their plugin directories, which is
+exactly the deliberate opt-out state described below.
+
 After a sync, restart Hermes Desktop so bot chats reload their skills.
 
 To keep OMH out of one bot, unregister that profile only:
@@ -1922,9 +1930,11 @@ omh uninstall
 
 This unregisters `~/.omh/skills` from Hermes config, removes `~/.omh`, removes
 the managed `~/.hermes/plugins/omh` plugin bundle when it has an OMH manifest,
-removes generated team role files recorded in OMH team-profile manifests, and
-removes the install.sh-managed `omh` command venv/link when the current command
-is running from that managed venv. It does not delete unrelated Hermes files,
+removes generated team role files recorded in OMH team-profile manifests, clears the
+same registration and managed artifacts from every Hermes bot profile
+under `~/.hermes/profiles/` (through the same manifest-checked refusals as the primary
+home), and removes the install.sh-managed `omh` command venv/link when the current
+command is running from that managed venv. It does not delete unrelated Hermes files,
 unrelated plugins, unrelated agents, or pipx/development Python environments
 that OMH cannot safely identify as install.sh-managed.
 If `omh` still runs after uninstall, that means the command package is still on

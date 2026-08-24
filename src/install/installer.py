@@ -808,6 +808,35 @@ def uninstall_skill_pack(
     }
 
 
+def uninstall_profile_plugin(paths: OmhPaths, *, dry_run: bool = False, force: bool = False) -> dict:
+    """Remove only a bot-profile home's managed plugin directory.
+
+    Profile homes share the primary's omh_home, so this must never route
+    through uninstall_skill_pack's remove_all branches: those also collect the
+    shared ~/.omh (and would double-list it in a dry run). Only the plugin directory
+    is per-profile state, and it goes through the same manifest checked removal the
+    primary uses -- a directory OMH cannot prove ownership of is kept unless --force,
+    exactly as for the primary.
+    """
+    removed: list[str] = []
+    would_remove: list[str] = []
+    kept: list[dict[str, str]] = []
+    _collect_removal(
+        paths.hermes_plugin_dir,
+        removed=removed,
+        would_remove=would_remove,
+        kept=kept,
+        dry_run=dry_run,
+        force=force,
+        managed_plugin=True,
+    )
+    return {
+        "removed_paths": removed,
+        "would_remove": would_remove,
+        "kept_paths": kept,
+    }
+
+
 def _collect_removal(
     path: Path,
     *,

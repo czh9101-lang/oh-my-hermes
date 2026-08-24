@@ -55,6 +55,7 @@ from ..installer import (
     install_skill_pack,
     reconcile_skill_profile,
     skill_profile_report,
+    uninstall_profile_plugin,
     uninstall_skill_pack,
 )
 from ..local_store import atomic_write_text
@@ -486,11 +487,63 @@ def _sync_hermes_profiles(args: argparse.Namespace) -> list[dict[str, object]]:
     return results
 
 
+def _uninstall_hermes_profiles(args: argparse.Namespace, *, remove_all: bool) -> list[dict[str, object]]:
+    """Reverse the per-profile sync: unregister every bot-profile home.
+
+    Full scopes also removes each profile's managed artifacts through the
+    manifest-checked helpers -- never a raw rmtree -- so a profile whose plugin
+    directory OMH cannot prove ownership of is kept and reported, exactly as the
+    primary is. Registration-only scopes keep the plugin directory on purpose:
+    plugin-dir-present plus unregistered is the deliberate opt-out marker
+    _sync_hermes_profiles respects, so unregistering must not destroy that state.
+    One malformed profile config fails its own row and never aborts the primary uninstall
+    halfway.
+    """
+    results: list[dict[str, object]] = []
+    for name, profile_dir in _hermes_profile_dirs(_paths(args)):
+        clone = argparse.Namespace(**vars(args))
+        clone.hermes_home = str(profile_dir)
+        profile_paths = _paths(clone)
+        entry: dict[str, object] = {"profile": name}
+        try:
+            change = remove_external_dir(
+                read_config(profile_paths.hermes_config_path),
+                profile_paths.skills_dir,
+            )
+            if not args.dry_run and change.changed:
+                write_config(profile_paths.hermes_config_path, change.text)
+            touched = change.changed
+            if remove_all:
+                plugin = uninstall_profile_plugin(
+                    profile_paths,
+                    dry_run=bool(args.dry_run),
+                    force=bool(args.force),
+                )
+                uninstall_tui_widget(profile_paths.hermes_home, dry_run=bool(args.dry_run))
+                uninstall_skin(profile_paths.hermes_home, dry_run=bool(args.dry_run))
+                touched = touched or bool(plugin["removed_paths"]) or bool(plugin["would_remove"])
+                if plugin["kept_paths"]:
+                    entry["kept_paths"] = plugin["kept_paths"]
+            entry["status"] = (
+                ("cleared" if touched else "absent")
+                if remove_all
+                else ("unregistered" if change.changed else "absent")
+            )
+        except (ValueError, OmhError) as exc:
+            entry["status"] = "failed"
+            entry["error"] = str(exc)
+        results.append(entry)
+    return results
+
+
 _PROFILE_STATUS_LABELS = {
     "bootstrapped": "set up",
     "refreshed": "refreshed",
     "unregistered_kept": "left unregistered",
     "failed": "failed",
+    "cleared": "cleared",
+    "unregistered": "unregistered",
+    "absent": "nothing to remove",
 }
 
 
@@ -1586,6 +1639,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         if remove_all
         else {"status": "not_requested"}
     )
+    profile_results = _uninstall_hermes_profiles(args, remove_all=remove_all)
     scope = (
         tr(language, "uninstall_scope_all")
         if remove_all
@@ -1607,6 +1661,8 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
             "language": language,
         }
     )
+    if profile_results:
+        result["hermes_profiles"] = profile_results
     result["command_package"] = _command_package_status_for_uninstall(result)
     if _wants_json(args):
         _print_json(result)
@@ -2860,6 +2916,15 @@ def _print_uninstall_summary(payload: dict[str, object], *, language: str = "en"
             if item.get("path", "") in command_kept_paths:
                 continue
             print(f"  {tr(language, 'kept')}: {item.get('path', '')} ({item.get('reason', '')})")
+
+    profiles = payload.get("hermes_profiles")
+    if isinstance(profiles, list) and profiles:
+        summary = ", ".join(
+            f"{entry.get('profile')} ({_PROFILE_STATUS_LABELS.get(str(entry.get('status')), str(entry.get('status')))})"
+            for entry in profiles
+            if isinstance(entry, dict)
+        )
+        print(f"  {tr(language, 'hermes_profiles_uninstalled', summary=summary)}")
     print(_color(tr(language, "next"), "1;32", use_color))
     command_removed = payload.get("command_package_removed_paths", [])
     command_would_remove = payload.get("command_package_would_remove", [])
