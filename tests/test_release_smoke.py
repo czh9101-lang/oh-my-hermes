@@ -23,6 +23,7 @@ from omh.release import (
 )
 from omh.release_install_smoke import install_script_smoke_plan, run_install_script_smoke
 from omh.release_smoke_core import CommandResult, subprocess_runner, subprocess_runner_exact_env
+from omh.version import __version__ as package_version
 
 
 class ReleaseSmokeTests(unittest.TestCase):
@@ -976,6 +977,39 @@ class ReleaseSmokeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 124)
         self.assertIn("hello", result.stdout)
         self.assertTrue(result.stderr)
+
+
+class VersionSurfaceParityTests(unittest.TestCase):
+    """Every current-version surface must move together in the release bump.
+
+    Issue #1079: the 1.0.6 and 1.0.7 releases bumped `src/omh/version.py` and
+    `pyproject.toml` but left `src/plugin_bundle/omh/plugin.yaml` at 1.0.5, so
+    every version-sensitive Hermes surface (`hermes plugins doctor`, the plugin
+    listing) under-reported the installed plugin for two releases. The manifest
+    is a diagnostics surface, not just packaging metadata. These gates fail the
+    release bump commit that misses a surface, instead of leaving the drift to
+    a field report.
+    """
+
+    def test_plugin_manifest_version_matches_the_package(self) -> None:
+        import omh.plugin_bundle.omh as bundle
+
+        manifest = Path(bundle.__file__).resolve().parent / "plugin.yaml"
+        versions = [
+            line.split(":", 1)[1].strip().strip('"')
+            for line in manifest.read_text(encoding="utf-8").splitlines()
+            if line.startswith("version:")
+        ]
+        self.assertEqual(versions, [package_version])
+
+    def test_pyproject_version_matches_the_package(self) -> None:
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        versions = [
+            line.split("=", 1)[1].strip().strip('"')
+            for line in pyproject.read_text(encoding="utf-8").splitlines()
+            if line.startswith("version = ")
+        ]
+        self.assertEqual(versions, [package_version])
 
 
 if __name__ == "__main__":
