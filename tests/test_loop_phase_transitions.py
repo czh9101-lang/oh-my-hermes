@@ -162,6 +162,29 @@ class PhaseGraphTests(unittest.TestCase):
             "phase_transitions[1].phase transition chain is disconnected",
             errors,
         )
+        forged_generation = _transition(
+            transition_id="phase-transition-2",
+            sequence=2,
+            from_phase="plan",
+            to_phase="research",
+            from_phase_generation=7,
+            to_phase_generation=8,
+            phase_gate="plan_observed",
+        )
+        generation_errors = validate_loop_phase_history(
+            {
+                "loop_id": "loop-release",
+                "phase": "research",
+                "phase_generation": 8,
+                "phase_transitions": [legacy, forged_generation],
+                "goal_driver_observations": [],
+            }
+        )
+
+        self.assertIn(
+            "phase_transitions[1].first generation-aware transition must start at generation 0",
+            generation_errors,
+        )
 
 
 class GoalDriverObservationTests(unittest.TestCase):

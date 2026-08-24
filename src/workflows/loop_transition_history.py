@@ -36,6 +36,13 @@ def validate_loop_phase_history(cycle: Mapping[str, object]) -> list[str]:
                 f"{label}.generation-aware history cannot return to legacy rows"
             )
         if has_generation:
+            if (
+                not modern_started
+                and transition.get("from_phase_generation") != 0
+            ):
+                errors.append(
+                    f"{label}.first generation-aware transition must start at generation 0"
+                )
             if previous is not None:
                 if previous.get("to_phase") != transition.get("from_phase"):
                     errors.append(
