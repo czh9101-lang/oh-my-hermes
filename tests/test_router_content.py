@@ -53,6 +53,7 @@ from omh.skills.catalog import (
 from omh.skills.render import frontmatter_description, workflow_reference_markdown, workflow_reference_payload, workflow_skill
 from omh.snippet import WORKSPACE_SNIPPET
 from omh.use_cases import USE_CASES, list_use_cases
+from test_loop_cycle import WORKFLOW_PATTERN_PROSE
 
 
 FLAGSHIP_SKILLS = {
@@ -3748,7 +3749,8 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("pending_queue_exists", site_loop)
         self.assertIn("Test as stop signal", site_loop)
         self.assertIn("Automation, worktree, skill, connector, and subagent blocks", site_loop)
-        self.assertIn("fan-out, adversarial verification, tournament, and triage batch", site_loop)
+        for workflow_pattern in WORKFLOW_PATTERN_PROSE.values():
+            self.assertIn(workflow_pattern, site_loop)
         self.assertIn("Cost policy keeps reads bounded", site_loop)
         self.assertIn("A loop tick is not execution", site_loop)
         self.assertNotIn('<button type="button">Observe only</button>', site_loop)
