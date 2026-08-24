@@ -2987,18 +2987,19 @@ def _validate_executor_throughput_overlay(
     _require(overlay_contract.get("status") == "enabled", errors, f"{label} status must be enabled")
     mode = str(overlay_contract.get("mode", ""))
     specialized_mode = {
-        "gpt_sol_codex_handoff": "codex",
-        "gpt_hermes_ulw": "hermes",
+        "gpt_sol_codex_handoff": ("codex", "gpt"),
+        "gpt_hermes_ulw": ("hermes", "gpt"),
+        "claude_code_handoff": ("claude-code", "claude"),
     }.get(mode)
     _require(
-        mode == "parallel_handoff" or specialized_mode == expected_profile,
+        mode == "parallel_handoff" or (specialized_mode and specialized_mode[0] == expected_profile),
         errors,
         f"{label} mode does not match selected executor",
     )
     family = str(overlay_contract.get("model_family", ""))
     _require(bool(family), errors, f"{label} model_family must be non-empty")
     if specialized_mode:
-        _require(family == "gpt", errors, f"{label} specialized mode requires gpt model_family")
+        _require(family == specialized_mode[1], errors, f"{label} specialized mode requires matching model_family")
     eval_strategy = overlay_contract.get("eval_strategy")
     if mode == "gpt_sol_codex_handoff":
         _require(

@@ -262,29 +262,52 @@ class ExecutorPromptingTests(unittest.TestCase):
                 for rule in overlay["rules"]:
                     self.assertIn(rule, handoff["prompt_template"])
 
-    def test_parallel_guidance_reaches_non_gpt_handoffs(self) -> None:
-        cases = (
-            (
-                build_coding_delegation_payload(
-                    "Implement src/example.py",
-                    executor_target="claude-code",
-                    main_agent_model="claude-fable-5",
-                )["prompt_handoff"],
-                "claude-code",
-            ),
-            (
-                build_coding_delegation_payload(
-                    "Implement src/example.py",
-                    executor_target="generic",
-                )["prompt_handoff"],
-                "generic",
-            ),
+    def test_claude_code_handoff_adds_measured_advanced_rules(self) -> None:
+        # Given: a Claude-family model on the measured Claude Code surface.
+        payload = build_coding_delegation_payload(
+            "Implement src/example.py",
+            executor_target="claude-code",
+            main_agent_model="claude-fable-5",
         )
 
-        for handoff, profile in cases:
-            with self.subTest(profile=profile):
+        # When: the portable prompt handoff is prepared.
+        handoff = payload["prompt_handoff"]
+        overlay = handoff["executor_prompting_contract"]["throughput_overlay"]
+
+        # Then: Claude gets advanced handoff discipline without an eval strategy.
+        self.assertEqual(overlay["mode"], "claude_code_handoff")
+        self.assertGreater(len(overlay["rules"]), 2)
+        self.assertNotIn("eval_strategy", overlay)
+        for rule in overlay["rules"]:
+            self.assertIn(rule, handoff["prompt_template"])
+        self.assertEqual(validate_coding_prompt_handoff(handoff), [])
+
+    def test_unmeasured_non_gpt_handoffs_keep_base_parallel_guidance(self) -> None:
+        # Given: families without a completed advanced-overlay comparison.
+        cases = (
+            ("generic", "", "unknown"),
+            ("hermes", "moonshotai/kimi-k3-ultrafast", "kimi"),
+            ("hermes", "gemini-3.1-pro", "gemini"),
+        )
+
+        for profile, model, family in cases:
+            with self.subTest(family=family):
+                # When: a handoff is prepared for the unmeasured surface.
+                payload = build_coding_delegation_payload(
+                    "Implement src/example.py",
+                    executor_target=profile,
+                    preferred_workflow="ultrawork" if profile == "hermes" else "",
+                    preferred_workflow_score=10 if profile == "hermes" else 0,
+                    force_coding_handoff=profile == "hermes",
+                    main_agent_model=model,
+                )
+                handoff = payload["runtime_handoff" if profile == "hermes" else "prompt_handoff"]
                 overlay = handoff["executor_prompting_contract"]["throughput_overlay"]
+
+                # Then: no unsupported advanced or eval claim is prepared.
                 self.assertEqual(overlay["mode"], "parallel_handoff")
+                self.assertEqual(overlay["model_family"], family)
+                self.assertEqual(len(overlay["rules"]), 2)
                 self.assertNotIn("eval_strategy", overlay)
 
     def test_strategy_selection_distinguishes_plan_risk_and_repair(self) -> None:
