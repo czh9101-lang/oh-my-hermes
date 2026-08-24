@@ -1611,6 +1611,13 @@ _SIBLING_POINTER_METADATA_TOKENS = {
     "research": frozenset({"upstream", "guidance", "brief", "decision"}),
 }
 
+# These ordinary English words are meaningful only as complete status-board
+# phrases. Crediting them separately made unrelated sentences containing
+# `models` and `work` look like observed-work inventory requests.
+_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
+    "running-work-board": frozenset({"board", "models", "running", "units", "what", "which", "work"}),
+}
+
 
 def _prepare_definition(definition: SkillDefinition) -> _PreparedDefinition:
     trigger_phrases = tuple(normalized_phrase(trigger) for trigger in definition.triggers)
@@ -1623,7 +1630,8 @@ def _prepare_definition(definition: SkillDefinition) -> _PreparedDefinition:
         trigger_phrases=trigger_phrases,
         command_trigger_phrases=tuple(trigger for trigger in trigger_phrases if trigger in _COMMAND_TRIGGER_PHRASES),
         plain_trigger_phrases=tuple(trigger for trigger in trigger_phrases if trigger and trigger not in _COMMAND_TRIGGER_PHRASES),
-        trigger_tokens=frozenset(_tokens(" ".join(definition.triggers))),
+        trigger_tokens=frozenset(_tokens(" ".join(definition.triggers)))
+        - _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS.get(definition.name, frozenset()),
         name_phrase=normalized_phrase(definition.name),
         description_phrase=normalized_phrase(definition.description),
         use_when_phrase=normalized_phrase(definition.use_when),
