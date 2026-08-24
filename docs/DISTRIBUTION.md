@@ -94,33 +94,41 @@ All distribution tags share one non-cancelling concurrency group. The tap
 update cannot run before npm publication succeeds, and an older run cannot
 downgrade a newer tap formula.
 
-## Automated stable cadence
+## Cutting a release on demand
 
-`.github/workflows/auto-release.yml` keeps the package-manager channels
-tracking `main` without a human remembering to tag. Once a day (and on
-manual dispatch) it checks whether the `main` tip has moved past the tag of
-the current `pyproject.toml` version. When it has, the workflow bumps every
-version surface to the next patch release with
-`tools/package_manager/bump_version.py` (pyproject, `src/omh/version.py`,
-the plugin manifest, and `.release-channel` back to `stable`), runs the full
-test suite on the bumped tree, pushes the commit and `vX.Y.Z` tag to `main`
-atomically, and dispatches the distribution workflow for that tag.
+**Deciding that `main` deserves a version is a human decision.** Nothing in
+this repository cuts a release on its own: `main` may sit any distance ahead
+of the published packages, and that gap is not a fault to be automated away.
+People who want `main` itself install the preview channel, which needs no
+version at all.
 
-Boundaries of the automation:
+`.github/workflows/auto-release.yml` (Actions → *Cut Release* → Run workflow)
+performs the release mechanics once a maintainer asks for one. It bumps every
+version surface to the next patch with `tools/package_manager/bump_version.py`
+(pyproject, `src/omh/version.py`, the plugin manifest, and `.release-channel`
+back to `stable`), runs the full test suite on the bumped tree, pushes the
+commit and `vX.Y.Z` tag to `main` atomically, and dispatches the distribution
+workflow for that tag.
 
+Boundaries:
+
+- `workflow_dispatch` is the only trigger. An earlier revision carried a daily
+  `schedule:`; it advanced the public version every day that `main` moved,
+  without anyone choosing to release. `tests/test_auto_release.py` now fails if
+  a schedule, push, or pull_request trigger reappears.
 - It cuts stable patch releases only. When the version in `pyproject.toml`
-  has no tag yet, a manual release (stable or beta) is staged and the
-  automation skips without touching anything.
-- The cadence is daily, not per-merge, because the protected `npm`
-  environment requires one human deployment approval per release run. Each
-  automated release still pauses at that approval before anything publishes.
+  has no tag yet, a release is already staged by hand and the workflow skips
+  without touching anything.
+- Publication still pauses at the protected `npm` environment for one human
+  deployment approval, after the tag exists and before anything is published.
 - The bump commit and tag are pushed with the workflow's `GITHUB_TOKEN`, so
   they do not trigger the tag-push path of the distribution workflow or a CI
-  run on `main`; the auto-release job runs the full suite itself before
-  pushing, and it starts the distribution workflow through
-  `workflow_dispatch` with the new tag.
-- Pause the cadence by disabling the Auto Release workflow in the Actions
-  UI, never by reverting a bump commit.
+  run on `main`; the job runs the full suite itself before pushing, and it
+  starts the distribution workflow through `workflow_dispatch` with the new
+  tag.
+- To bump by hand instead, run `uv run tools/package_manager/bump_version.py`
+  (`--set X.Y.Z` for a minor or major, `--dry-run` to preview) and follow the
+  Required Checks in [Release](RELEASE.md).
 
 ## Resume and rollback
 
