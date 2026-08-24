@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from _local_package import load_local_package
 
 load_local_package()
+from omh.workflows import loop_observation_input
+from omh.workflows.loop_observation_input import read_loop_observation_json
 from omh.workflows.loop_phase_transitions import (
     LOOP_GOAL_DRIVER_OBSERVATION_SCHEMA,
     LOOP_PHASE_TRANSITION_SCHEMA,
@@ -89,6 +94,25 @@ def _transition_with_native_goal(
 
 
 class GoalDriverObservationTests(unittest.TestCase):
+    def test_observation_input_without_nofollow_uses_safe_regular_file_fallback(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            regular = Path(tmp) / "observation.json"
+            regular.write_text('{"privacy":"metadata_only"}', encoding="utf-8")
+            symlink = Path(tmp) / "observation-link.json"
+            symlink.symlink_to(regular)
+
+            with patch.object(loop_observation_input, "_NOFOLLOW", 0):
+                self.assertEqual(
+                    read_loop_observation_json(str(regular)),
+                    {"privacy": "metadata_only"},
+                )
+                with self.assertRaisesRegex(
+                    ValueError, "stable regular file"
+                ):
+                    read_loop_observation_json(str(symlink))
+
     def test_observation_is_valid_when_activation_and_two_turns_are_observed(
         self,
     ) -> None:

@@ -54,7 +54,8 @@ def _read_stdin_bytes() -> bytes:
 
 
 def _read_stable_file(path: Path) -> bytes:
-    if not _NOFOLLOW:
+    path_before = os.lstat(path) if not _NOFOLLOW else None
+    if path_before is not None and not stat.S_ISREG(path_before.st_mode):
         raise ValueError(
             "observation JSON path must be a stable regular file"
         )
@@ -70,6 +71,13 @@ def _read_stable_file(path: Path) -> bytes:
     try:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
+            raise ValueError(
+                "observation JSON path must be a stable regular file"
+            )
+        if (
+            path_before is not None
+            and _file_identity(path_before) != _file_identity(before)
+        ):
             raise ValueError(
                 "observation JSON path must be a stable regular file"
             )
@@ -92,6 +100,20 @@ def _read_stable_file(path: Path) -> bytes:
         raise ValueError(
             "observation JSON path must be a stable regular file"
         )
+    if path_before is not None:
+        try:
+            path_after = os.lstat(path)
+        except OSError as exc:
+            raise ValueError(
+                "observation JSON path must be a stable regular file"
+            ) from exc
+        if (
+            not stat.S_ISREG(path_after.st_mode)
+            or _file_identity(before) != _file_identity(path_after)
+        ):
+            raise ValueError(
+                "observation JSON path must be a stable regular file"
+            )
     return b"".join(chunks)
 
 
