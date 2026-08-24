@@ -22,6 +22,7 @@ from ..goal_loop import (
     observe_codex_loop_queue_item,
     observe_loop_queue_item,
     read_loop_cycle,
+    record_loop_goal_driver_observation,
     record_loop_feedback,
     run_loop_once_result,
     tick_loop_runtime,
@@ -29,7 +30,8 @@ from ..goal_loop import (
     validate_loop_cycle,
 )
 from ..installer import OmhError
-from .common import _chat_message, _paths, _print_json
+from ..workflows.loop_observation_input import read_loop_observation_json
+from .common import _chat_message, _paths, _print_json, add_revision_guard_arguments
 
 
 def cmd_loop_start_card(args: argparse.Namespace) -> int:
@@ -215,6 +217,30 @@ def cmd_loop_goal_driver_handoff(args: argparse.Namespace) -> int:
         )
     except (FileNotFoundError, ValueError) as exc:
         raise OmhError(str(exc)) from exc
+    return 0
+
+
+def cmd_loop_goal_driver_observe(args: argparse.Namespace) -> int:
+    try:
+        observation = read_loop_observation_json(args.observation_json)
+        cycle = record_loop_goal_driver_observation(
+            _paths(args),
+            args.loop_id,
+            observation,
+            expected_revision=args.expected_revision,
+            mutation_id=args.mutation_id or None,
+        )
+        status_card = build_loop_status_card(_paths(args), args.loop_id)
+        _print_json(
+            {
+                "goal_driver_observation": cycle["goal_driver_observations"][-1],
+                "native_goal_status": status_card["native_goal_status"],
+                "loop": cycle,
+                "status_card": status_card,
+            }
+        )
+    except (FileNotFoundError, OSError, TypeError, ValueError) as exc:
+        raise OmhError(f"invalid loop goal driver observation: {exc}") from exc
     return 0
 
 
@@ -408,6 +434,12 @@ def _add_loop_commands(sub) -> None:
     goal_driver_handoff.add_argument("--gate-command", action="append")
     goal_driver_handoff.add_argument("--max-turns", type=int, default=0)
     goal_driver_handoff.set_defaults(func=cmd_loop_goal_driver_handoff)
+
+    goal_driver_observe = loop_sub.add_parser("goal-driver-observe")
+    goal_driver_observe.add_argument("--loop", dest="loop_id", required=True)
+    goal_driver_observe.add_argument("--observation-json", required=True)
+    add_revision_guard_arguments(goal_driver_observe)
+    goal_driver_observe.set_defaults(func=cmd_loop_goal_driver_observe)
 
     queue = loop_sub.add_parser("queue")
     queue_sub = queue.add_subparsers(dest="queue_command", required=True)

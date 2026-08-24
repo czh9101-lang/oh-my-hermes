@@ -221,7 +221,12 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Keep the practical small-loop recipe visible: test as stop signal, plan -> execute -> verify, one task at a time.
   - Surface verification_gap, comprehension_debt, and cognitive_surrender as warnings before a loop starts looking self-steering.
   - Drive iteration with the upstream `/goal` loop from the prepared loop_goal_driver_handoff/v1, and register OMH's inner-tier checks as `/goal gate add` commands so verification runs before the judge.
+  - After Hermes accepts `/goal`, ingest metadata-only activation plus same-session contiguous turn evidence with `omh loop goal-driver-observe`; prepared text and isolated turn claims do not advance the loop.
+  - Treat ticks as preparation only. Advance one legal role phase through loop_phase_transition/v1 only after its named gate has observed evidence.
   - Treat a judge `done` verdict, a turn-ceiling pause, or a gate-retry pause as narration; completion still requires the linked goal ledger completion gate and observed evidence.
+  - Treat any future change to the default as a maintainer-reviewed product decision, not a runtime phase or automatic loop outcome.
+  - Compare only observed outcomes under matched task, model/provider, permissions, turn budget, and verification surface; unresolved evidence keeps the current default.
+  - Keep promotion governance separate from goal-ledger completion and ordinary measured-loop keep/discard decisions; do not invent subjective scorers, fixed numeric thresholds, minimum run counts, weighted percentages, or per-turn artifact quotas.
   - Name the one element gating this loop from the `loop_constraint_assessment/v1` block before choosing the next action; if none is binding, say so from the recorded reason rather than assuming.
   - When the goal is measurable, declare the evaluation contract before the first attempt - exact command, metric name, direction, and the rule that the loop may not modify the scoring harness - and bind every keep or discard decision to it; when no such contract exists, say the goal is unmeasured instead of scoring it by judgement.
   - Run a measurable cycle as attempt, commit, measure, then keep or reset; a reset is the normal discard, and rewinding to an older commit is for a run of discards that traces to one bad ancestor.
@@ -233,6 +238,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The current loop_status_card/v1 names the queue item, tick status, verification_plan, and next action.
   - failure_mode_summary checks verification_gap, comprehension_debt, and cognitive_surrender before progress advances.
   - Completion is backed by linked goal/runtime evidence; queued loop ticks alone are not observed work.
+  - Native `/goal` activation and continuation are backed by loop_goal_driver_observation/v1, and each observed role advance is backed by loop_phase_transition/v1.
 - Recovery notes:
   - If a queued tick is pending, show it as prepared queue state and use loop status/run-once before claiming progress.
   - If feedback is unclear, ask one gate question or route back to research/plan rather than advancing the loop.
@@ -264,15 +270,19 @@ These surfaces are generated command references, not installed Hermes workflow s
   - executor-neutral handoff only when permitted
   - external-wait or checkpoint boundary
   - loop_goal_driver_handoff/v1 prepared /goal driver text with gates and turn-ceiling guidance
+  - loop_goal_driver_observation/v1 metadata-only activation and same-session contiguous turn evidence
+  - loop_phase_transition/v1 evidence-backed progress record
 - Artifact expectations:
   - metadata-only .omh/loops loop_cycle/v1 artifact with loopability_assessment/v1
   - loop_engineering/v1 status over automation, worktree, skill, connector, subagent, verification policy, and failure modes
   - loop_runtime/v1 queue entries with context_policy_ref, cost_policy_ref, and verification_plan
   - loop_subagent_result_contract/v1 for prepared subagent handoffs
-  - loop_status_card/v1 wrapper payload with loopability_assessment, failure_mode_summary, and small_loop_guidance
+  - loop_status_card/v1 wrapper payload with loopability_assessment, failure_mode_summary, small_loop_guidance, and native-goal observation status
   - loop_start_card/v1 wrapper setup card
   - linked goal_ledger/v1 only when completion evidence is required
   - loop_goal_driver_handoff/v1 prepared upstream /goal command, gate lines, and completion ownership
+  - loop_goal_driver_observation/v1 stored in loop_cycle/v1 after `omh loop goal-driver-observe` ingests host evidence
+  - loop_phase_transition/v1 stored only when evidence advances an observed phase
 - Safety rules:
   - Do not treat loop persistence as permission to bypass the selected permission profile.
   - Do not treat a runtime tick as worktree creation, subagent dispatch, connector I/O, implementation, review, CI, merge, publication, or completion evidence.
@@ -8905,15 +8915,20 @@ Run explicit loop invocations through agentic interviewer -> planner -> research
   - loop_runtime/v1 queue entry with verification_plan
   - loop_queue_handoff/v1 actionable handoff
   - loop_subagent_result_contract/v1 when a subagent is planned
-  - loop_status_card/v1 next action with failure_mode_summary
+  - loop_status_card/v1 next action with failure_mode_summary and native-goal status
   - small_loop_guidance
   - permission envelope
   - linked goal or runtime evidence references when available
   - loop_goal_driver_handoff/v1 prepared /goal driver text
+  - loop_goal_driver_observation/v1 metadata-only activation and same-session continuation receipt
+  - loop_phase_transition/v1 evidence-backed role progress
 - Stop conditions:
   - goal is classified as task/project/ambition/external-wait/unclear
   - next loop step is clear
   - runtime tick queue is prepared, observed, or blocked with a reason
+  - prepared ticks do not advance the observed phase
+  - native-goal continuation requires same-session contiguous turn evidence
+  - every observed role transition names its gate and evidence refs
   - automation/worktree/skill/connector/subagent block states are visible
   - verification tier and stop signal are explicit
   - failure-mode warnings are visible
@@ -8925,10 +8940,12 @@ Run explicit loop invocations through agentic interviewer -> planner -> research
   - validate loop_cycle/v1
   - inspect loop_engineering/v1 snapshot
   - inspect loop_runtime/v1 queue verification_plan
-  - inspect loop_status_card/v1 failure_mode_summary
+  - inspect loop_status_card/v1 failure_mode_summary and native_goal_status
   - inspect loop_queue_handoff/v1 when a queued item is actionable
   - check linked goal_completion_gate/v1 before completion copy
   - inspect loop_goal_driver_handoff/v1 before pasting the /goal driver command
+  - record loop_goal_driver_observation/v1 through goal-driver-observe only after host evidence exists
+  - validate loop_phase_transition/v1 before reporting role progress
 - Evidence ladder:
   - `loop_triggered`
   - `loopability_assessed`
@@ -8960,6 +8977,8 @@ Run explicit loop invocations through agentic interviewer -> planner -> research
   - `loop_started`
   - `permission_profile_recorded`
   - `feedback_gate_recorded`
+  - `goal_driver_observation_recorded`
+  - `phase_transition_observed`
   - `loop_status_card_rendered`
 - Delegation expectation: Record loop state as Hermes-retained orchestration; record executor/runtime dispatch, implementation, review, CI, merge, and external publication only when observed by a linked runtime or operator artifact.
 - Privacy default: `metadata_only`
