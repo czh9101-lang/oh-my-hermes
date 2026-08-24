@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -112,6 +113,62 @@ class GoalDriverObservationTests(unittest.TestCase):
                     ValueError, "stable regular file"
                 ):
                     read_loop_observation_json(str(symlink))
+
+    def test_observation_input_uses_file_id_across_stat_apis(self) -> None:
+        with TemporaryDirectory() as tmp:
+            regular = Path(tmp) / "observation.json"
+            regular.write_text('{"privacy":"metadata_only"}', encoding="utf-8")
+            real_lstat = loop_observation_input.os.lstat
+
+            def lstat_with_distinct_metadata(path: object) -> object:
+                observed = real_lstat(path)
+                return SimpleNamespace(
+                    st_dev=observed.st_dev,
+                    st_ino=observed.st_ino,
+                    st_mode=observed.st_mode,
+                    st_size=observed.st_size + 1,
+                    st_mtime_ns=observed.st_mtime_ns + 1,
+                    st_ctime_ns=observed.st_ctime_ns + 1,
+                )
+
+            with (
+                patch.object(loop_observation_input, "_NOFOLLOW", 0),
+                patch.object(
+                    loop_observation_input.os,
+                    "lstat",
+                    side_effect=lstat_with_distinct_metadata,
+                ),
+            ):
+                self.assertEqual(
+                    read_loop_observation_json(str(regular)),
+                    {"privacy": "metadata_only"},
+                )
+
+    def test_observation_input_rejects_same_file_rewrite_before_open(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            regular = Path(tmp) / "observation.json"
+            regular.write_text('{"privacy":"metadata_only"}', encoding="utf-8")
+            real_open = loop_observation_input.os.open
+
+            def rewrite_then_open(path: object, flags: int) -> int:
+                regular.write_text(
+                    '{"privacy":"rewritten_after_lstat"}',
+                    encoding="utf-8",
+                )
+                return real_open(path, flags)
+
+            with (
+                patch.object(loop_observation_input, "_NOFOLLOW", 0),
+                patch.object(
+                    loop_observation_input.os,
+                    "open",
+                    side_effect=rewrite_then_open,
+                ),
+                self.assertRaisesRegex(ValueError, "stable regular file"),
+            ):
+                read_loop_observation_json(str(regular))
 
     def test_observation_is_valid_when_activation_and_two_turns_are_observed(
         self,

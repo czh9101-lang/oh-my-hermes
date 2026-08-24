@@ -12,6 +12,7 @@ from typing import Final, Never
 MAX_LOOP_OBSERVATION_BYTES: Final = 65_536
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+_BINARY = getattr(os, "O_BINARY", 0)
 
 
 def read_loop_observation_json(source: str) -> dict[str, object]:
@@ -59,7 +60,7 @@ def _read_stable_file(path: Path) -> bytes:
         raise ValueError(
             "observation JSON path must be a stable regular file"
         )
-    flags = os.O_RDONLY | _CLOEXEC | _NOFOLLOW
+    flags = os.O_RDONLY | _CLOEXEC | _NOFOLLOW | _BINARY
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -96,7 +97,7 @@ def _read_stable_file(path: Path) -> bytes:
         after = os.fstat(descriptor)
     finally:
         os.close(descriptor)
-    if _file_identity(before) != _file_identity(after):
+    if _file_snapshot(before) != _file_snapshot(after):
         raise ValueError(
             "observation JSON path must be a stable regular file"
         )
@@ -109,6 +110,7 @@ def _read_stable_file(path: Path) -> bytes:
             ) from exc
         if (
             not stat.S_ISREG(path_after.st_mode)
+            or _file_snapshot(path_before) != _file_snapshot(path_after)
             or _file_identity(before) != _file_identity(path_after)
         ):
             raise ValueError(
@@ -117,7 +119,11 @@ def _read_stable_file(path: Path) -> bytes:
     return b"".join(chunks)
 
 
-def _file_identity(value: os.stat_result) -> tuple[int, ...]:
+def _file_identity(value: os.stat_result) -> tuple[int, int]:
+    return value.st_dev, value.st_ino
+
+
+def _file_snapshot(value: os.stat_result) -> tuple[int, ...]:
     return (
         value.st_dev,
         value.st_ino,
