@@ -89,9 +89,16 @@ references must be non-empty. OMH stores a
 `loop_goal_driver_observation/v1` receipt and one
 `loop_phase_transition/v1` record per accepted turn in the existing guarded
 `loop_cycle/v1`; it does not store prompts, transcripts, reasoning, or log
-bodies. A prepared handoff, an isolated turn, a skipped index, or a mismatched
-session remains non-observed and cannot advance the loop phase. The linked
-goal ledger still owns completion.
+bodies. The first receipt starts at turn 1 and must carry at least two turns;
+later receipts may carry one or more turns but must start at the next index for
+the same original session and command digest. JSON input is capped at 65,536
+bytes; file input must be one stable regular file rather than a symlink or
+special file. A prepared handoff, an isolated first turn, a skipped or repeated
+index, or a mismatched session remains non-observed and cannot advance the loop
+phase. Prepared queue items are also bound to the phase occurrence and
+permission envelope that created them, so old work is marked `superseded`
+rather than becoming current when a phase name repeats. The linked goal ledger
+still owns completion.
 
 Gate commands are operator-supplied inputs, never synthesized: pass each one
 via `--gate-command`, and the artifact echoes it as a `/goal gate add` line

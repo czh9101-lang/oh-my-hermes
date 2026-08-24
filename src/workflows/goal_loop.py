@@ -19,10 +19,11 @@ from .loop_phase_transitions import (
     LOOP_GOAL_DRIVER_OBSERVATION_SCHEMA,
     LOOP_PHASES,
     native_goal_status,
+    parse_loop_goal_driver_observation,
     phase_target,
+    set_loop_phase,
     transition_loop_phase,
-    validate_loop_goal_driver_observation,
-    validate_loop_phase_transition,
+    validate_loop_phase_history,
 )
 
 
@@ -468,6 +469,7 @@ def create_loop_cycle(
         "updated_at": now,
         "source": _safe_summary(source, limit=120),
         "phase": "interview",
+        "phase_generation": 0,
         "wait_reason": "none",
         "goal": {
             "summary": _safe_summary(goal_summary),
@@ -835,14 +837,24 @@ def record_loop_feedback(
         next_action = "record_feedback"
 
     def mutate(cycle: dict[str, Any]) -> dict[str, Any]:
-        cycle["phase"] = phase
+        cycle_id = _new_item_id("cycle")
+        observed_at = utc_now()
+        set_loop_phase(
+            cycle,
+            to_phase=phase,
+            transition_kind="feedback_evaluation",
+            cause=wait_reason if wait_reason != "none" else "feedback_gate",
+            source_ref=cycle_id,
+            evidence_refs=artifacts,
+            observed_at=observed_at,
+        )
         cycle["wait_reason"] = wait_reason
         cycle["feedback_gate"] = feedback_gate
         cycle["next_action"] = next_action
         cycle["cycles"].append(
             {
-                "cycle_id": _new_item_id("cycle"),
-                "created_at": utc_now(),
+                "cycle_id": cycle_id,
+                "created_at": observed_at,
                 "phase": phase,
                 "wait_reason": wait_reason,
                 "observed_artifacts": artifacts,
@@ -1373,23 +1385,33 @@ def record_loop_goal_driver_observation(
     expected_revision: int | None = None,
     mutation_id: str | None = None,
 ) -> dict[str, Any]:
-    canonical = json.loads(json.dumps(dict(observation), sort_keys=True))
-    if not isinstance(canonical, dict):
+    submitted = json.loads(json.dumps(dict(observation), sort_keys=True))
+    if not isinstance(submitted, dict):
         raise ValueError("goal driver observation must be an object")
 
     def mutate(cycle: dict[str, Any]) -> dict[str, Any] | None:
         expected_digest = str(_build_loop_goal_driver_handoff(paths, cycle)["goal_command_sha256"])
-        errors = validate_loop_goal_driver_observation(
-            canonical,
-            expected_loop_id=loop_id,
-            expected_goal_command_sha256=expected_digest,
-        )
-        if errors:
-            raise ValueError("; ".join(errors))
-
         observations = cycle.get("goal_driver_observations", [])
         if not isinstance(observations, list):
             raise ValueError("goal_driver_observations must be a list")
+        stored_turns = [
+            turn
+            for existing in observations
+            if isinstance(existing, dict)
+            for turn in existing.get("turns", [])
+            if isinstance(turn, dict)
+        ]
+        expected_first_turn = (
+            max(int(turn.get("turn_index", 0)) for turn in stored_turns) + 1
+            if stored_turns
+            else 1
+        )
+        canonical = parse_loop_goal_driver_observation(
+            submitted,
+            expected_loop_id=loop_id,
+            expected_goal_command_sha256=expected_digest,
+            expected_first_turn_index=expected_first_turn,
+        )
         observation_id = str(canonical["observation_id"])
         for existing in observations:
             if not isinstance(existing, dict) or existing.get("observation_id") != observation_id:
@@ -1401,24 +1423,17 @@ def record_loop_goal_driver_observation(
 
         session_ref = str(canonical["session_ref"])
         goal_command_sha256 = str(canonical["goal_command_sha256"])
-        stream_turns = [
-            turn
-            for existing in observations
-            if isinstance(existing, dict)
-            and existing.get("session_ref") == session_ref
-            and existing.get("goal_command_sha256") == goal_command_sha256
-            for turn in existing.get("turns", [])
-            if isinstance(turn, dict)
-        ]
-        turns = canonical["turns"]
-        if stream_turns:
-            expected_turn = max(int(turn.get("turn_index", 0)) for turn in stream_turns) + 1
-            first_turn = int(turns[0]["turn_index"])
-            if first_turn != expected_turn:
+        if observations:
+            first = observations[0]
+            if not isinstance(first, dict) or (
+                first.get("session_ref"),
+                first.get("goal_command_sha256"),
+            ) != (session_ref, goal_command_sha256):
                 raise ValueError(
-                    "loop_goal_driver_observation turns must continue the stored stream; "
-                    f"expected turn_index {expected_turn}, got {first_turn}"
+                    "loop_goal_driver_observation must continue the original "
+                    "session and goal command stream"
                 )
+        turns = canonical["turns"]
 
         observed_at = str(canonical["observed_at"])
         for turn in turns:
@@ -1456,7 +1471,7 @@ def record_loop_goal_driver_observation(
         operation="record_loop_goal_driver_observation",
         expected_revision=expected_revision,
         mutation_id=mutation_id,
-        mutation_digest=_mutation_digest("record_loop_goal_driver_observation", canonical),
+        mutation_digest=_mutation_digest("record_loop_goal_driver_observation", submitted),
     )
 
 
@@ -1563,8 +1578,7 @@ def observe_codex_loop_queue_item(
         runtime["last_queue_status"] = "observed"
         cycle["runtime"] = runtime
         phase_gate = str(item.get("phase_gate", ""))
-        source_phase = str(item.get("source_phase", ""))
-        if phase_gate and (not source_phase or cycle.get("phase") == source_phase):
+        if phase_gate and _queue_phase_is_current(cycle, item):
             transition_loop_phase(
                 cycle,
                 to_phase=str(item.get("target_phase", item.get("phase", ""))),
@@ -1579,7 +1593,15 @@ def observe_codex_loop_queue_item(
         elif phase_gate:
             item["phase_transition_status"] = "superseded"
         else:
-            cycle["phase"] = "feedback"
+            set_loop_phase(
+                cycle,
+                to_phase="feedback",
+                transition_kind="legacy_queue_observation",
+                cause="codex_queue_observation",
+                source_ref=str(item["queue_id"]),
+                evidence_refs=all_refs,
+                observed_at=observed_at,
+            )
         cycle["wait_reason"] = "none"
         cycle["next_action"] = "record_feedback" if cycle["phase"] == "feedback" else "continue_loop"
         cycle["updated_at"] = utc_now()
@@ -1670,8 +1692,7 @@ def observe_loop_queue_item(
         runtime["last_queue_status"] = "observed"
         cycle["runtime"] = runtime
         phase_gate = str(item.get("phase_gate", ""))
-        source_phase = str(item.get("source_phase", ""))
-        if phase_gate and (not source_phase or cycle.get("phase") == source_phase):
+        if phase_gate and _queue_phase_is_current(cycle, item):
             transition_loop_phase(
                 cycle,
                 to_phase=str(item.get("target_phase", item.get("phase", ""))),
@@ -1686,7 +1707,15 @@ def observe_loop_queue_item(
         elif phase_gate:
             item["phase_transition_status"] = "superseded"
         else:
-            cycle["phase"] = "feedback"
+            set_loop_phase(
+                cycle,
+                to_phase="feedback",
+                transition_kind="legacy_queue_observation",
+                cause="queue_observation",
+                source_ref=str(item["queue_id"]),
+                evidence_refs=aggregate_refs,
+                observed_at=observed_at,
+            )
         cycle["wait_reason"] = "none"
         cycle["next_action"] = "record_feedback" if cycle["phase"] == "feedback" else "continue_loop"
         cycle["updated_at"] = utc_now()
@@ -1722,12 +1751,20 @@ def block_loop_queue_item(
             raise ValueError("observed loop queue items cannot be blocked")
         item["status"] = "blocked"
         item["observed"] = False
-        item["blocked_at"] = utc_now()
+        blocked_at = utc_now()
+        item["blocked_at"] = blocked_at
         item["blocker_reason"] = blocker
         runtime["last_queue_id"] = str(item["queue_id"])
         runtime["last_queue_status"] = "blocked"
         cycle["runtime"] = runtime
-        cycle["phase"] = "blocked"
+        set_loop_phase(
+            cycle,
+            to_phase="blocked",
+            transition_kind="queue_blocked",
+            cause="queue_blocker_observed",
+            source_ref=str(item["queue_id"]),
+            observed_at=blocked_at,
+        )
         cycle["wait_reason"] = "none"
         cycle["next_action"] = "resolve_runtime_queue_blocker"
         cycle["updated_at"] = utc_now()
@@ -1825,6 +1862,13 @@ def validate_loop_cycle(cycle: dict[str, Any]) -> dict[str, Any]:
         errors.append("loop_id must be a storage id")
     if cycle.get("phase") not in LOOP_PHASES:
         errors.append("phase is unsupported")
+    phase_generation = cycle.get("phase_generation")
+    if phase_generation is not None and (
+        isinstance(phase_generation, bool)
+        or not isinstance(phase_generation, int)
+        or phase_generation < 0
+    ):
+        errors.append("phase_generation must be a non-negative integer")
     if cycle.get("wait_reason") not in WAIT_REASONS:
         errors.append("wait_reason is unsupported")
     goal = cycle.get("goal")
@@ -1858,27 +1902,7 @@ def validate_loop_cycle(cycle: dict[str, Any]) -> dict[str, Any]:
     runtime = cycle.get("runtime")
     if runtime is not None:
         errors.extend(_validate_runtime(runtime))
-    transitions = cycle.get("phase_transitions", [])
-    if not isinstance(transitions, list):
-        errors.append("phase_transitions must be a list")
-    else:
-        for index, transition in enumerate(transitions):
-            errors.extend(
-                f"phase_transitions[{index}].{error}"
-                for error in validate_loop_phase_transition(transition)
-            )
-    observations = cycle.get("goal_driver_observations", [])
-    if not isinstance(observations, list):
-        errors.append("goal_driver_observations must be a list")
-    else:
-        for index, observation in enumerate(observations):
-            errors.extend(
-                f"goal_driver_observations[{index}].{error}"
-                for error in validate_loop_goal_driver_observation(
-                    observation,
-                    expected_loop_id=loop_id,
-                )
-            )
+    errors.extend(validate_loop_phase_history(cycle))
     if cycle.get("completion_claim_allowed") is not False:
         errors.append("loop_cycle cannot directly allow goal completion claims")
     assessment = cycle.get("loopability_assessment")
@@ -2521,6 +2545,8 @@ def _runtime_queue_item(
         ),
         "status": plan["status"],
         "source_phase": str(cycle.get("phase", "interview")),
+        "source_phase_generation": int(cycle.get("phase_generation", 0)),
+        "source_authority_sha256": _authority_envelope_sha256(envelope),
         "phase": plan["phase"],
         "target_phase": plan["phase"],
         "phase_gate": plan.get("phase_gate", ""),
@@ -2548,6 +2574,35 @@ def _runtime_queue_item(
         "loop_engineering": _queue_loop_engineering(planned_action, plan["status"], pattern),
         "claim_boundary": _runtime_claim_boundary(),
     }
+
+
+def _authority_envelope_sha256(envelope: Mapping[str, Any]) -> str:
+    return sha256_text(
+        json.dumps(
+            dict(envelope),
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+    )
+
+
+def _queue_phase_is_current(
+    cycle: Mapping[str, Any],
+    item: Mapping[str, Any],
+) -> bool:
+    generation = item.get("source_phase_generation")
+    if isinstance(generation, bool) or not isinstance(generation, int):
+        return False
+    envelope = cycle.get("authority_envelope")
+    if not isinstance(envelope, Mapping):
+        return False
+    return (
+        item.get("source_phase") == cycle.get("phase")
+        and generation == cycle.get("phase_generation", 0)
+        and item.get("source_authority_sha256")
+        == _authority_envelope_sha256(envelope)
+    )
 
 
 def _worktree_plan(cycle: dict[str, Any], planned_action: str, worktree_base: str, branch_hint: str) -> dict[str, Any]:
@@ -3307,6 +3362,23 @@ def _validate_runtime(runtime: object) -> list[str]:
             errors.append(f"runtime.queue[{index}].status is unsupported")
         if item.get("planned_action") not in allowed_runtime_actions:
             errors.append(f"runtime.queue[{index}].planned_action is unsupported")
+        source_generation = item.get("source_phase_generation")
+        if source_generation is not None and (
+            isinstance(source_generation, bool)
+            or not isinstance(source_generation, int)
+            or source_generation < 0
+        ):
+            errors.append(
+                f"runtime.queue[{index}].source_phase_generation must be a non-negative integer"
+            )
+        authority_digest = item.get("source_authority_sha256")
+        if authority_digest is not None and (
+            not isinstance(authority_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", authority_digest) is None
+        ):
+            errors.append(
+                f"runtime.queue[{index}].source_authority_sha256 must be a lowercase 64-hex digest"
+            )
         pattern = str(item.get("workflow_pattern", ""))
         if pattern and pattern not in LOOP_WORKFLOW_PATTERNS:
             errors.append(f"runtime.queue[{index}].workflow_pattern is unsupported")
@@ -3403,14 +3475,29 @@ def _normalize_permission_state(cycle: dict[str, Any]) -> None:
     envelope = _dict_value(cycle, "authority_envelope")
     allowed_actions = envelope.get("allowed_actions", [])
     if not isinstance(allowed_actions, list) or not allowed_actions:
-        cycle["phase"] = "waiting"
+        if cycle.get("phase") != "waiting":
+            set_loop_phase(
+                cycle,
+                to_phase="waiting",
+                transition_kind="permission_wait",
+                cause="authority_envelope",
+                source_ref=f"authority-{cycle.get('loop_id', 'loop')}",
+                observed_at=utc_now(),
+            )
         cycle["wait_reason"] = "permission_required"
         cycle["next_action"] = "request_permission"
         return
     if cycle.get("wait_reason") == "permission_required":
         cycle["wait_reason"] = "none"
         if cycle.get("phase") == "waiting":
-            cycle["phase"] = "feedback" if cycle.get("cycles") else "interview"
+            set_loop_phase(
+                cycle,
+                to_phase="feedback" if cycle.get("cycles") else "interview",
+                transition_kind="permission_resume",
+                cause="authority_envelope",
+                source_ref=f"authority-{cycle.get('loop_id', 'loop')}",
+                observed_at=utc_now(),
+            )
         if cycle.get("next_action") in {"", "request_permission"}:
             cycle["next_action"] = "continue_loop"
 

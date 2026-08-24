@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import threading
@@ -451,6 +452,124 @@ class GoalLoopTests(unittest.TestCase):
             )
             self.assertEqual(validate_loop_cycle(observed), {"ok": True, "errors": []})
 
+    def test_queue_item_is_superseded_after_phase_leaves_and_returns_to_same_name(self) -> None:
+        for observer_name in ("wrapper", "codex"):
+            with self.subTest(observer=observer_name), TemporaryDirectory() as tmp:
+                paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+                cycle = create_loop_cycle(
+                    paths,
+                    loop_id=f"phase-aba-{observer_name}",
+                    goal_summary="Prevent stale queue phase replay",
+                    goal_reframe="Bind prepared queue work to one phase occurrence.",
+                    success_criteria=["Old plan work cannot advance a later plan phase"],
+                    permission_profile="full_loop",
+                )
+
+                def observe(queue_id: str, index: int) -> dict[str, object]:
+                    if observer_name == "codex":
+                        return observe_codex_loop_queue_item(
+                            paths,
+                            cycle["loop_id"],
+                            queue_id,
+                            codex_log_text=(
+                                '{"type":"tool_call","tool":"read","args":"phase evidence"}\n'
+                                '{"role":"assistant","content":"Observed bounded phase evidence."}'
+                            ),
+                            evidence_refs=[f"codex-jsonl:{index}"],
+                            codex_log_ref=f"codex-session-log:{index}",
+                        )
+                    return observe_loop_queue_item(
+                        paths,
+                        cycle["loop_id"],
+                        queue_id,
+                        evidence_refs=[f"wrapper:phase-observation:{index}"],
+                    )
+
+                interview_item = tick_loop_runtime(
+                    paths, cycle["loop_id"], trigger="manual"
+                )["runtime"]["queue"][-1]
+                observe(str(interview_item["queue_id"]), 1)
+                old_plan_item = tick_loop_runtime(
+                    paths, cycle["loop_id"], trigger="manual"
+                )["runtime"]["queue"][-1]
+                new_plan_item = tick_loop_runtime(
+                    paths, cycle["loop_id"], trigger="manual"
+                )["runtime"]["queue"][-1]
+                observe(str(new_plan_item["queue_id"]), 2)
+                for index in range(3, 7):
+                    current_item = tick_loop_runtime(
+                        paths, cycle["loop_id"], trigger="manual"
+                    )["runtime"]["queue"][-1]
+                    observe(str(current_item["queue_id"]), index)
+                before_stale = read_loop_cycle(paths, cycle["loop_id"])
+
+                result = observe(str(old_plan_item["queue_id"]), 7)
+
+                stale = next(
+                    item
+                    for item in result["runtime"]["queue"]
+                    if item["queue_id"] == old_plan_item["queue_id"]
+                )
+                self.assertEqual(before_stale["phase"], "plan")
+                self.assertEqual(result["phase"], "plan")
+                self.assertEqual(stale["phase_transition_status"], "superseded")
+
+    def test_goal_driver_observation_cannot_bypass_executor_dispatch_permission(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            cycle = create_loop_cycle(
+                paths,
+                loop_id="native-goal-permission-boundary",
+                goal_summary="Preserve executor dispatch permission",
+                goal_reframe="Observed goal turns cannot cross a forbidden action.",
+                success_criteria=["Forbidden dispatch prevents execution phase"],
+                permission_profile="full_loop",
+                forbid_actions=["executor_dispatch"],
+            )
+            handoff = build_loop_goal_driver_handoff(paths, cycle["loop_id"])
+            cycle_path = loop_cycle_path(paths, cycle["loop_id"])
+            before = cycle_path.read_bytes()
+            observation = _goal_driver_observation(
+                cycle["loop_id"],
+                handoff["goal_command_sha256"],
+            )
+            turns = observation["turns"]
+            assert isinstance(turns, list)
+            turns.extend(
+                [
+                    {
+                        "turn_index": 3,
+                        "session_ref": "hermes-session-release",
+                        "from_phase": "research",
+                        "to_phase": "handoff",
+                        "phase_gate": "research_evidence_observed",
+                        "turn_ended_evidence_refs": ["hermes:session-release:turn-3-ended"],
+                        "phase_gate_evidence_refs": ["artifact:research:sha256:def456"],
+                    },
+                    {
+                        "turn_index": 4,
+                        "session_ref": "hermes-session-release",
+                        "from_phase": "handoff",
+                        "to_phase": "execution",
+                        "phase_gate": "handoff_observed",
+                        "turn_ended_evidence_refs": ["hermes:session-release:turn-4-ended"],
+                        "phase_gate_evidence_refs": ["wrapper:executor-dispatch:observed"],
+                    },
+                ]
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "executor_dispatch is outside the current authority envelope",
+            ):
+                goal_loop_module.record_loop_goal_driver_observation(
+                    paths,
+                    cycle["loop_id"],
+                    observation,
+                )
+
+            self.assertEqual(cycle_path.read_bytes(), before)
+
     def test_status_card_carries_a_constraint_assessment(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
@@ -795,6 +914,128 @@ class GoalLoopTests(unittest.TestCase):
             )
             self.assertFalse(observed["completion_claim_allowed"])
             self.assertEqual(validate_loop_cycle(observed), {"ok": True, "errors": []})
+
+    def test_loop_goal_driver_observation_appends_later_same_session_turns(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            cycle = create_loop_cycle(
+                paths,
+                loop_id="native-goal-observed-chunks",
+                goal_summary="Observe continued native goal chunks",
+                goal_reframe="Append later ordered turns from the same target session.",
+                success_criteria=["Turns three and four continue the accepted stream"],
+                permission_profile="full_loop",
+            )
+            handoff = build_loop_goal_driver_handoff(paths, cycle["loop_id"])
+            goal_loop_module.record_loop_goal_driver_observation(
+                paths,
+                cycle["loop_id"],
+                _goal_driver_observation(
+                    cycle["loop_id"],
+                    handoff["goal_command_sha256"],
+                ),
+                mutation_id="native-goal-release-turns-1-2",
+            )
+            later = _goal_driver_observation(
+                cycle["loop_id"],
+                handoff["goal_command_sha256"],
+                turns=[
+                    {
+                        "turn_index": 3,
+                        "session_ref": "hermes-session-release",
+                        "from_phase": "research",
+                        "to_phase": "handoff",
+                        "phase_gate": "research_evidence_observed",
+                        "turn_ended_evidence_refs": ["hermes:session-release:turn-3-ended"],
+                        "phase_gate_evidence_refs": ["artifact:research:sha256:def456"],
+                    },
+                    {
+                        "turn_index": 4,
+                        "session_ref": "hermes-session-release",
+                        "from_phase": "handoff",
+                        "to_phase": "execution",
+                        "phase_gate": "handoff_observed",
+                        "turn_ended_evidence_refs": ["hermes:session-release:turn-4-ended"],
+                        "phase_gate_evidence_refs": ["wrapper:executor-dispatch:observed"],
+                    },
+                ],
+            )
+            later["observation_id"] = "native-goal-release-turns-3-4"
+            later["summary"] = "Hermes continued the same goal through turns three and four."
+
+            observed = goal_loop_module.record_loop_goal_driver_observation(
+                paths,
+                cycle["loop_id"],
+                later,
+                mutation_id="native-goal-release-turns-3-4",
+            )
+
+            self.assertEqual(observed["phase"], "execution")
+            self.assertEqual(len(observed["goal_driver_observations"]), 2)
+            self.assertEqual(len(observed["phase_transitions"]), 4)
+            self.assertEqual(
+                observed["goal_driver_observations"][-1]["native_goal_status"],
+                {
+                    "activation_status": "observed",
+                    "continuation_status": "observed",
+                    "session_ref": "hermes-session-release",
+                    "last_turn_index": 4,
+                },
+            )
+            self.assertEqual(validate_loop_cycle(observed), {"ok": True, "errors": []})
+
+    def test_loop_cycle_rejects_disconnected_or_mismatched_transition_history(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            cycle = create_loop_cycle(
+                paths,
+                loop_id="native-goal-history",
+                goal_summary="Validate phase transition history",
+                goal_reframe="Treat phase transitions as one loop-bound chain.",
+                success_criteria=["Stored history remains contiguous and loop-bound"],
+                permission_profile="full_loop",
+            )
+            handoff = build_loop_goal_driver_handoff(paths, cycle["loop_id"])
+            observed = goal_loop_module.record_loop_goal_driver_observation(
+                paths,
+                cycle["loop_id"],
+                _goal_driver_observation(
+                    cycle["loop_id"],
+                    handoff["goal_command_sha256"],
+                ),
+            )
+
+        cases: tuple[tuple[str, object], ...] = (
+            ("wrong loop", ("loop_id", "another-loop")),
+            ("gapped sequence", ("sequence", 3)),
+            ("current phase mismatch", ("phase", "handoff")),
+            ("native goal mismatch", ("native_goal.turn_index", 99)),
+        )
+        for label, change in cases:
+            with self.subTest(label=label):
+                invalid = copy.deepcopy(observed)
+                field, value = change
+                if field == "phase":
+                    invalid["phase"] = value
+                elif field == "native_goal.turn_index":
+                    invalid["phase_transitions"][0]["native_goal"]["turn_index"] = value
+                else:
+                    invalid["phase_transitions"][0][field] = value
+                    if field == "sequence":
+                        invalid["phase_transitions"][0]["transition_id"] = (
+                            f"phase-transition-{value}"
+                        )
+
+                validation = validate_loop_cycle(invalid)
+
+                self.assertFalse(validation["ok"], validation)
+                self.assertTrue(
+                    any(
+                        "phase_transition" in error or "phase transition" in error
+                        for error in validation["errors"]
+                    ),
+                    validation,
+                )
 
     def test_loop_goal_driver_observation_rejects_non_contiguous_turns_without_writing(self) -> None:
         with TemporaryDirectory() as tmp:

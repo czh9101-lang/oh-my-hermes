@@ -30,6 +30,8 @@ def _transition(**overrides: object) -> dict[str, object]:
         "loop_id": "loop-release",
         "from_phase": "interview",
         "to_phase": "plan",
+        "from_phase_generation": 0,
+        "to_phase_generation": 1,
         "phase_gate": "goal_contract_observed",
         "transition_kind": "queue_observation",
         "cause": "observed_progress",
@@ -179,6 +181,58 @@ class GoalDriverObservationTests(unittest.TestCase):
         errors = validate_loop_goal_driver_observation(value)
 
         self.assertTrue(any("forbidden fields" in error for error in errors))
+
+    def test_observation_rejects_unbounded_or_structured_metadata(self) -> None:
+        cases: tuple[tuple[str, object, str], ...] = (
+            ("structured summary", {"transcript": "raw private content"}, "summary must be"),
+            ("oversized summary", "x" * 321, "summary must be"),
+            (
+                "oversized evidence ref",
+                ["artifact:" + ("x" * 321)],
+                "activation.evidence_refs",
+            ),
+            (
+                "duplicate evidence refs",
+                ["artifact:one", "artifact:one"],
+                "activation.evidence_refs",
+            ),
+        )
+        for label, invalid, expected in cases:
+            with self.subTest(label=label):
+                value = _observation()
+                if label.endswith("summary"):
+                    value["summary"] = invalid
+                else:
+                    activation = value["activation"]
+                    assert isinstance(activation, dict)
+                    activation["evidence_refs"] = invalid
+
+                errors = validate_loop_goal_driver_observation(value)
+
+                self.assertTrue(any(expected in error for error in errors), errors)
+
+    def test_transition_rejects_unclosed_native_goal_projection(self) -> None:
+        valid_native_goal = {
+            "observation_id": "native-goal-release-turns-1-2",
+            "session_ref": "hermes-session-release",
+            "goal_command_sha256": DIGEST,
+            "turn_index": 1,
+        }
+        cases = (
+            {**valid_native_goal, "prompt": "raw private prompt"},
+            {key: value for key, value in valid_native_goal.items() if key != "turn_index"},
+            {**valid_native_goal, "turn_index": True},
+        )
+        for native_goal in cases:
+            with self.subTest(native_goal=native_goal):
+                errors = validate_loop_phase_transition(
+                    _transition(native_goal=native_goal)
+                )
+
+                self.assertTrue(
+                    any("native_goal" in error for error in errors),
+                    errors,
+                )
 
     def test_native_goal_status_derives_latest_accepted_observation(self) -> None:
         observation = _observation()

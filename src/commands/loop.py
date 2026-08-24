@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
-from pathlib import Path
 
 from ..goal_loop import (
     LOOP_ACTIONS,
@@ -33,6 +30,7 @@ from ..goal_loop import (
     validate_loop_cycle,
 )
 from ..installer import OmhError
+from ..workflows.loop_observation_input import read_loop_observation_json
 from .common import _chat_message, _paths, _print_json, add_revision_guard_arguments
 
 
@@ -224,14 +222,7 @@ def cmd_loop_goal_driver_handoff(args: argparse.Namespace) -> int:
 
 def cmd_loop_goal_driver_observe(args: argparse.Namespace) -> int:
     try:
-        raw = (
-            sys.stdin.read()
-            if args.observation_json == "-"
-            else Path(args.observation_json).expanduser().read_text(encoding="utf-8")
-        )
-        observation = json.loads(raw)
-        if not isinstance(observation, dict):
-            raise ValueError("observation JSON must be an object")
+        observation = read_loop_observation_json(args.observation_json)
         cycle = record_loop_goal_driver_observation(
             _paths(args),
             args.loop_id,
@@ -248,7 +239,7 @@ def cmd_loop_goal_driver_observe(args: argparse.Namespace) -> int:
                 "status_card": status_card,
             }
         )
-    except (FileNotFoundError, OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+    except (FileNotFoundError, OSError, TypeError, ValueError) as exc:
         raise OmhError(f"invalid loop goal driver observation: {exc}") from exc
     return 0
 

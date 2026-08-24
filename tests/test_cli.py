@@ -8385,6 +8385,89 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(payload["native_goal_status"]["continuation_status"], "observed")
             self.assertFalse(payload["loop"]["completion_claim_allowed"])
 
+    def test_loop_cli_goal_driver_observe_bounds_json_and_rejects_symlinks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = [
+                "--omh-home",
+                str(root / ".omh"),
+                "--hermes-home",
+                str(root / ".hermes"),
+            ]
+            oversized = root / "oversized.json"
+            oversized.write_bytes(b"{" + (b" " * 65_536) + b"}")
+            duplicate = root / "duplicate.json"
+            duplicate.write_text(
+                '{"schema_version":"loop_goal_driver_observation/v1",'
+                '"schema_version":"loop_goal_driver_observation/v1"}',
+                encoding="utf-8",
+            )
+            target = root / "target.json"
+            target.write_text("{}", encoding="utf-8")
+            symlink = root / "symlink.json"
+            symlink.symlink_to(target)
+
+            status, stdout, stderr = run_cli(
+                home
+                + [
+                    "loop",
+                    "goal-driver-observe",
+                    "--loop",
+                    "bounded-observation",
+                    "--observation-json",
+                    str(oversized),
+                ]
+            )
+            self.assertNotEqual(status, 0)
+            self.assertEqual(stdout, "")
+            self.assertIn("exceeds 65536 bytes", stderr)
+
+            status, stdout, stderr = run_cli(
+                home
+                + [
+                    "loop",
+                    "goal-driver-observe",
+                    "--loop",
+                    "bounded-observation",
+                    "--observation-json",
+                    "-",
+                ],
+                stdin_text="{" + (" " * 65_536) + "}",
+            )
+            self.assertNotEqual(status, 0)
+            self.assertEqual(stdout, "")
+            self.assertIn("exceeds 65536 bytes", stderr)
+
+            status, stdout, stderr = run_cli(
+                home
+                + [
+                    "loop",
+                    "goal-driver-observe",
+                    "--loop",
+                    "bounded-observation",
+                    "--observation-json",
+                    str(duplicate),
+                ]
+            )
+            self.assertNotEqual(status, 0)
+            self.assertEqual(stdout, "")
+            self.assertIn("duplicate JSON key", stderr)
+
+            status, stdout, stderr = run_cli(
+                home
+                + [
+                    "loop",
+                    "goal-driver-observe",
+                    "--loop",
+                    "bounded-observation",
+                    "--observation-json",
+                    str(symlink),
+                ]
+            )
+            self.assertNotEqual(status, 0)
+            self.assertEqual(stdout, "")
+            self.assertIn("stable regular file", stderr)
+
     def test_loop_cli_start_feedback_permit_and_status(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
