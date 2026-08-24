@@ -94,6 +94,34 @@ All distribution tags share one non-cancelling concurrency group. The tap
 update cannot run before npm publication succeeds, and an older run cannot
 downgrade a newer tap formula.
 
+## Automated stable cadence
+
+`.github/workflows/auto-release.yml` keeps the package-manager channels
+tracking `main` without a human remembering to tag. Once a day (and on
+manual dispatch) it checks whether the `main` tip has moved past the tag of
+the current `pyproject.toml` version. When it has, the workflow bumps every
+version surface to the next patch release with
+`tools/package_manager/bump_version.py` (pyproject, `src/omh/version.py`,
+the plugin manifest, and `.release-channel` back to `stable`), runs the full
+test suite on the bumped tree, pushes the commit and `vX.Y.Z` tag to `main`
+atomically, and dispatches the distribution workflow for that tag.
+
+Boundaries of the automation:
+
+- It cuts stable patch releases only. When the version in `pyproject.toml`
+  has no tag yet, a manual release (stable or beta) is staged and the
+  automation skips without touching anything.
+- The cadence is daily, not per-merge, because the protected `npm`
+  environment requires one human deployment approval per release run. Each
+  automated release still pauses at that approval before anything publishes.
+- The bump commit and tag are pushed with the workflow's `GITHUB_TOKEN`, so
+  they do not trigger the tag-push path of the distribution workflow or a CI
+  run on `main`; the auto-release job runs the full suite itself before
+  pushing, and it starts the distribution workflow through
+  `workflow_dispatch` with the new tag.
+- Pause the cadence by disabling the Auto Release workflow in the Actions
+  UI, never by reverting a bump commit.
+
 ## Resume and rollback
 
 The workflow is safe to resume with `workflow_dispatch` and the existing tag
