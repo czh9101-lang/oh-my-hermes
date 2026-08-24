@@ -182,6 +182,11 @@ class AutoReleaseWorkflowTests(unittest.TestCase):
             self.workflow,
         )
         self.assertIn("uv run python -m compileall -q src tests", self.workflow)
+        # The full suite includes the npm/Bun launcher tests, so the gate job
+        # needs the same toolchain CI installs.
+        self.assertIn("actions/setup-node@", self.workflow)
+        self.assertIn("oven-sh/setup-bun@", self.workflow)
+        self.assertIn('bun-version: "1.3.14"', self.workflow)
 
     def test_push_is_atomic_and_commit_is_signed_off(self) -> None:
         self.assertIn("git commit -s -m", self.workflow)
