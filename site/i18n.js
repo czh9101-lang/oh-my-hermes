@@ -500,10 +500,10 @@ window.OMH_I18N = {
       zh: "按工作类型指定模型。"
     },
     "route.lead": {
-      en: "Eight editable categories. Missing models are skipped, not fatal.",
-      ko: "편집 가능한 8개 카테고리. 없는 모델은 건너뛸 뿐, 설치를 막지 않습니다.",
-      ja: "編集可能な 8 カテゴリ。持っていないモデルはスキップされ、失敗にはなりません。",
-      zh: "八个可编辑类别。缺少的模型只会被跳过，不会导致失败。"
+      en: "Nine editable categories. Missing models are skipped, not fatal.",
+      ko: "편집 가능한 9개 카테고리. 없는 모델은 건너뛸 뿐, 설치를 막지 않습니다.",
+      ja: "編集可能な 9 カテゴリ。持っていないモデルはスキップされ、失敗にはなりません。",
+      zh: "九个可编辑类别。缺少的模型只会被跳过，不会导致失败。"
     },
     "route.edit.tag": { en: "Editable", ko: "편집 가능", ja: "編集可能", zh: "可编辑" },
     "route.edit.title": {
@@ -589,6 +589,51 @@ window.OMH_I18N = {
       ja: "ルーティング設定ガイドを読む",
       zh: "阅读路由设置指南"
     },
+    /* --------------------------------------------------------------- chains */
+    "chain.kicker": { en: "Recommended chains", ko: "추천 체인", ja: "推奨チェーン", zh: "推荐候选链" },
+    "chain.title": {
+      en: "Nine categories, in the order we ship.",
+      ko: "9개 카테고리, 기본 제공 순서 그대로.",
+      ja: "9 つのカテゴリを、同梱の順序のまま。",
+      zh: "九个类别，按内置顺序呈现。"
+    },
+    "chain.lead": {
+      en: "OMH ships with these editable, ordered recommendation chains. Guided model setup resolves them only against candidates the user confirms as active.",
+      ko: "OMH는 편집 가능한 순서형 추천 체인을 이렇게 기본 제공합니다. 가이드형 모델 설정은 사용자가 활성으로 확인한 후보에 대해서만 이 체인을 해석합니다.",
+      ja: "OMH はこれらの編集可能な順序付き推奨チェーンを同梱します。ガイド付きモデル設定は、利用者が有効と確認した候補に対してのみチェーンを解決します。",
+      zh: "OMH 内置这些可编辑的有序推荐链。引导式模型设置只会针对用户确认为活跃的候选来解析它们。"
+    },
+    "chain.head.category": { en: "Category", ko: "카테고리", ja: "カテゴリ", zh: "类别" },
+    "chain.head.purpose": { en: "Purpose", ko: "용도", ja: "用途", zh: "用途" },
+    "chain.head.order": { en: "Shipped order", ko: "기본 순서", ja: "同梱の順序", zh: "内置顺序" },
+    "chain.head.effort": { en: "Effort", ko: "추론 강도", ja: "推論強度", zh: "推理强度" },
+    "chain.ultrabrain": { en: "Deepest reasoning", ko: "가장 깊은 추론", ja: "最も深い推論", zh: "最深度的推理" },
+    "chain.deep": { en: "Strong default tier", ko: "강력한 기본 등급", ja: "強力な既定ティア", zh: "强力默认档" },
+    "chain.architect": {
+      en: "Architecture and system design",
+      ko: "아키텍처와 시스템 설계",
+      ja: "アーキテクチャとシステム設計",
+      zh: "架构与系统设计"
+    },
+    "chain.unspecified-high": { en: "Default working model", ko: "기본 작업 모델", ja: "既定の作業モデル", zh: "默认工作模型" },
+    "chain.unspecified-low": { en: "Cheaper fallback", ko: "더 저렴한 대안", ja: "より安価なフォールバック", zh: "更省钱的回退" },
+    "chain.quick": { en: "Short tasks", ko: "짧은 작업", ja: "短いタスク", zh: "短任务" },
+    "chain.writing": { en: "Prose and docs", ko: "산문과 문서", ja: "文章とドキュメント", zh: "文案与文档" },
+    "chain.visual-engineering": { en: "Frontend and visual", ko: "프런트엔드와 비주얼", ja: "フロントエンドとビジュアル", zh: "前端与视觉" },
+    "chain.artistry": { en: "Unconventional work", ko: "관습을 벗어난 작업", ja: "型にはまらない作業", zh: "非常规工作" },
+    "chain.note": {
+      en: "The result is prepared routing configuration, not provider availability, credential, dispatch, or execution evidence.",
+      ko: "그 결과물은 준비된 라우팅 설정일 뿐이며, 제공자 가용성·자격 증명·디스패치·실행의 증거가 아닙니다.",
+      ja: "その結果は準備されたルーティング設定であり、プロバイダの可用性・認証情報・ディスパッチ・実行の証拠ではありません。",
+      zh: "其结果是准备好的路由配置，而非提供方可用性、凭据、派发或执行的证据。"
+    },
+    "chain.edit": {
+      en: 'Every chain is yours to reorder. Edit <code>~/.omh/routing/model-chains.json</code>, then run <code>omh model-chains show</code> to print what is in effect.',
+      ko: '모든 체인은 직접 순서를 바꿀 수 있습니다. <code>~/.omh/routing/model-chains.json</code>을 편집한 뒤 <code>omh model-chains show</code>로 현재 적용된 내용을 출력하세요.',
+      ja: 'どのチェーンも自分で並べ替えられます。<code>~/.omh/routing/model-chains.json</code> を編集し、<code>omh model-chains show</code> で現在有効な内容を出力してください。',
+      zh: '每条链都可以由你重新排序。编辑 <code>~/.omh/routing/model-chains.json</code>，再运行 <code>omh model-chains show</code> 打印当前生效的配置。'
+    },
+
     "install.routing.note": {
       en: "Setup records which models are reachable here. Routing order stays editable afterwards.",
       ko: "설치 과정에서 이 컴퓨터에서 쓸 수 있는 모델이 기록됩니다. 라우팅 순서는 그 뒤에도 계속 편집할 수 있습니다.",

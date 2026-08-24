@@ -65,7 +65,12 @@ class RecommendationCatalogTests(unittest.TestCase):
             "ja": Path("README.ja.md").read_text(encoding="utf-8"),
             "zh": Path("README.zh.md").read_text(encoding="utf-8"),
             "site": Path("site/docs/model-routing/index.html").read_text(encoding="utf-8"),
+            "home": Path("site/index.html").read_text(encoding="utf-8"),
         }
+        # Both HTML surfaces put one category per source line and key the row
+        # on a bare ``<span>{category}</span>``; the markdown READMEs use a
+        # table row instead.
+        html_surfaces = {"site", "home"}
         categories = SHIPPED_MODEL_RECOMMENDATIONS["categories"]
         assert isinstance(categories, dict)
 
@@ -74,7 +79,7 @@ class RecommendationCatalogTests(unittest.TestCase):
             aliases = [str(candidate["model_alias"]) for candidate in chain]
             for surface, text in docs.items():
                 with self.subTest(category=name, surface=surface):
-                    if surface == "site":
+                    if surface in html_surfaces:
                         row = next(
                             line for line in text.splitlines() if f"<span>{name}</span>" in line
                         )

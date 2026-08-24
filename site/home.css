@@ -963,7 +963,8 @@
   overflow-x: auto;
 }
 
-.fam-table {
+.fam-table,
+.chain-table {
   width: 100%;
   min-width: 720px;
   border-collapse: collapse;
@@ -971,14 +972,17 @@
 }
 
 .fam-table th,
-.fam-table td {
+.fam-table td,
+.chain-table th,
+.chain-table td {
   padding: 17px 18px;
   text-align: left;
   vertical-align: top;
   border-bottom: 1px solid var(--glass-edge);
 }
 
-.fam-table thead th {
+.fam-table thead th,
+.chain-table thead th {
   color: var(--quiet);
   font-size: 11px;
   font-weight: 700;
@@ -986,16 +990,31 @@
   text-transform: uppercase;
 }
 
+/* Latin tracking and casing are no-ops or damaging on Hangul/Kana/Han. */
+:lang(ko) .fam-table thead th,
+:lang(ja) .fam-table thead th,
+:lang(zh) .fam-table thead th,
+:lang(ko) .chain-table thead th,
+:lang(ja) .chain-table thead th,
+:lang(zh) .chain-table thead th {
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
 .fam-table tbody tr:last-child th,
-.fam-table tbody tr:last-child td {
+.fam-table tbody tr:last-child td,
+.chain-table tbody tr:last-child th,
+.chain-table tbody tr:last-child td {
   border-bottom: 0;
 }
 
-.fam-table tbody tr {
+.fam-table tbody tr,
+.chain-table tbody tr {
   transition: background-color 300ms var(--ease-out);
 }
 
-.fam-table tbody tr:hover {
+.fam-table tbody tr:hover,
+.chain-table tbody tr:hover {
   background: rgba(76, 194, 255, 0.055);
 }
 
@@ -1011,7 +1030,8 @@
   font-size: 15px;
 }
 
-.fam-table td code {
+.fam-table td code,
+.chain-table td code {
   display: inline-block;
   margin: 0 5px 5px 0;
   padding: 3px 8px;
@@ -1025,6 +1045,74 @@
 .fam-table tbody td:last-child {
   color: var(--muted);
   line-height: 1.6;
+}
+
+/* ---------------------------------------------------------------- chains */
+
+.chain-table tbody th {
+  width: 19%;
+}
+
+/* The category alias is the row key, so it carries the same monospace chip
+   treatment the rest of the page gives aliases. */
+.chain-table tbody th span {
+  display: inline-block;
+  padding: 4px 10px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 999px;
+  background: rgba(76, 194, 255, 0.09);
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.chain-table tbody td {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.chain-table .chain-order {
+  width: 46%;
+}
+
+.chain-table .chain-order code {
+  margin-right: 0;
+  font-family: var(--font-mono);
+}
+
+.chain-arrow {
+  display: inline-block;
+  margin: 0 7px 5px;
+  color: var(--quiet);
+  font-size: 11.5px;
+}
+
+.chain-effort {
+  width: 12%;
+}
+
+.chain-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--quiet);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+#chains .ev-note code {
+  padding: 2px 7px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--accent-strong);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 /* ---------------------------------------------------------------- memory */
