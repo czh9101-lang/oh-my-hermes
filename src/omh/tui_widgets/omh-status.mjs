@@ -29,9 +29,10 @@ export default function register(sdk) {
   // Colours still resolve only through the active theme, never literals.
   const SEPARATOR = ' │ '
   // The classic REPL frames the composer with horizontal rules; the modern
-  // TUI draws none. These docks sit exactly above and below the composer, so
-  // they carry the frame: a themed rule closes the top dock and opens the
-  // bottom one, and the input reads like classic Hermes again.
+  // TUI draws none. OMH keeps all of its variable-height chrome below the
+  // composer so a submitted prompt remains adjacent to the input. Themed
+  // rules open and close that single dock, and the input reads like classic
+  // Hermes again without a tall plan separating it from the transcript.
   // Host cols include the dock's side margins, so a full-cols rule wraps by
   // two cells. The rules sit tight against the composer, exactly like the
   // classic REPL's frame -- padding was tried at one and two rows against
@@ -303,7 +304,6 @@ export default function register(sdk) {
     return h(
       Box,
       { flexDirection: 'column', width: '100%' },
-      h(Rule, { columns, t }),
       h(
         Text,
         { wrap: 'truncate-end' },
@@ -341,11 +341,11 @@ export default function register(sdk) {
   // ACTIVE item's characters (the text itself never moves — each character
   // dims as the wave passes and brightens back), and a walking ellipsis on
   // the [Plan] header. An idle or all-done plan stays byte-stable and
-  // drag-copyable; while active, the TOP dock deliberately trades selection
-  // stability for the motion cue. The bottom [OMH] dock stays static. The
-  // SDK shimmer clock is mount-bounded, so thirty minutes caps one
-  // continuous wave; guarded access keeps hosts without the hook rendering
-  // a static line instead of crashing the widget.
+  // drag-copyable; while active, the plan rows in the combined bottom dock
+  // deliberately trade selection stability for the motion cue. The SDK
+  // shimmer clock is mount-bounded, so thirty minutes caps one continuous
+  // wave; guarded access keeps hosts without the hook rendering a static
+  // line instead of crashing the widget.
   const shimmerFrame = () =>
     typeof sdk.useShimmerPhase === 'function' ? sdk.useShimmerPhase(1_800_000) : 0
 
@@ -401,8 +401,8 @@ export default function register(sdk) {
         h(
           Text,
           { wrap: 'truncate-end' },
-          // Same grammar as the status line below the prompt, so the two
-          // surfaces read as one product.
+          // Same grammar as the status line above it in the combined dock, so
+          // the two surfaces read as one product.
           h(Text, { bold: true, color: t.color.primary }, '[Plan]'),
           title ? h(Text, { color: t.color.muted }, ` ${title}`) : null,
           h(Text, { color: t.color.border }, SEPARATOR),
@@ -509,7 +509,7 @@ export default function register(sdk) {
           h(
             Text,
             { key: `todo-${groupIndex}-${index}`, wrap: 'truncate-end' },
-            itemNode(item, '  '.repeat(depthOf(item))),
+            itemNode(item, '  '.repeat(depthOf(item) + (group.phase ? 1 : 0))),
           ),
         )
       }
@@ -535,7 +535,7 @@ export default function register(sdk) {
 
   const app = defineWidgetApp({
     id: 'omh-status',
-    help: 'OMH workflow and subagent status',
+    help: 'OMH workflow, plan, and subagent status',
     mode: 'ambient',
     zone: 'dock-bottom',
     init: () => ({ payload: null, receivedAt: 0, tick: 0 }),
@@ -543,29 +543,25 @@ export default function register(sdk) {
       input.kind === 'snapshot'
         ? { ...state, payload: input.payload, receivedAt: Date.now(), tick: state.tick + 1 }
         : state,
-    render: ({ cols, rows, state, t }) => h(Hud, {
-      columns: Math.max(20, cols),
-      state,
-      t,
-      viewportRows: Math.max(1, rows),
-    }),
-  })
-
-  const todoApp = defineWidgetApp({
-    id: 'omh-todo',
-    help: 'OMH plan todo checklist above the prompt input',
-    mode: 'ambient',
-    zone: 'dock-top',
-    init: () => ({ payload: null, receivedAt: 0, tick: 0 }),
-    reduce: (state, input) =>
-      input.kind === 'snapshot'
-        ? { ...state, payload: input.payload, receivedAt: Date.now(), tick: state.tick + 1 }
-        : state,
-    render: ({ cols, state, t }) => h(TodoPanel, { columns: Math.max(20, cols), state, t }),
+    render: ({ cols, rows, state, t }) => {
+      if (!state.payload || state.payload.error || state.payload.privacy !== 'metadata_only') return null
+      const columns = Math.max(20, cols)
+      return h(
+        Box,
+        { flexDirection: 'column', width: '100%' },
+        h(Rule, { columns, t }),
+        h(Hud, {
+          columns,
+          state,
+          t,
+          viewportRows: Math.max(1, rows),
+        }),
+        h(TodoPanel, { columns, state, t }),
+      )
+    },
   })
 
   openWidget(app, app.init(''))
-  openWidget(todoApp, todoApp.init(''))
   // Render quiescence is what makes the docks drag-copyable: every repaint of
   // these lines clears an in-progress terminal selection over them, so an
   // unchanged snapshot must produce NO updateWidget call at all. The reader
@@ -605,9 +601,7 @@ export default function register(sdk) {
     lastSnapshot = serialized
     lastStructural = structural
     lastPaintAt = Date.now()
-    for (const target of [app, todoApp]) {
-      updateWidget(target, state => ({ ...state, payload, receivedAt: Date.now(), tick: state.tick + 1 }))
-    }
+    updateWidget(app, state => ({ ...state, payload, receivedAt: Date.now(), tick: state.tick + 1 }))
   }
   const timerKey = Symbol.for('omh.hermes-tui-widget.refresh')
   const generationKey = Symbol.for('omh.hermes-tui-widget.generation')

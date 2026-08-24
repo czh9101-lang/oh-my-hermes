@@ -172,7 +172,7 @@ OMH 워크플로가 도는 동안 터미널이 보여주는 것:
   자기승인 없이 교차 검증되고, 각 lane이 turn·cost·cache 지표가 붙은 HUD
   행으로 보입니다.
 - **Phase-structured TODO** — 작업은 시작 전에 phase와 task로 선언되고
-  (`todo init`), 프롬프트 위 체크리스트로 렌더됩니다: 활성 항목 하나,
+  (`todo init`), 프롬프트 아래 체크리스트로 렌더됩니다: 활성 항목 하나,
   서브태스크 중첩, 7행 초과 시 접기.
 
 <br>
@@ -273,7 +273,7 @@ OMH는 모델 선택과 코딩 소유권을 서로 다른 결정으로 다루며
 | 인텔리전스 | OMH가 더하는 것 |
 | --- | --- |
 | 🧭 **Mixture-of-models 라우팅** | 위임되는 lane마다 카테고리(모델 + 추론 강도)를 dispatch 단위로 적용하고, provider가 모델을 거부하면 편집 가능한 fallback chain을 따라 전진합니다 — 일을 하지 않은 자식은 정직하게 `failed`로 표시됩니다. |
-| 🖥️ **네이티브 TUI 표면** | OMH HUD(카테고리·턴·비용·캐시가 붙은 실시간 delegation 행), 프롬프트 위 phase todo 체크리스트, `parallel shot ×N` 표시, full-row diff 밴드, 관리형 스킨 — 모두 Hermes 옆에 설치되며 Hermes를 패치하지 않습니다. |
+| 🖥️ **네이티브 TUI 표면** | OMH HUD(카테고리·턴·비용·캐시가 붙은 실시간 delegation 행), 프롬프트 아래 phase todo 체크리스트, `parallel shot ×N` 표시, full-row diff 밴드, 관리형 스킨 — 모두 Hermes 옆에 설치되며 Hermes를 패치하지 않습니다. |
 | 📋 **Phase 구조 플랜** | `todo init`이 엔진 작업 전에 phase와 task를 선언해, 실행이 열린 추론 루프가 아니라 유한한 체크리스트를 걷게 합니다. |
 | ⚡ **관측 가능한 병렬 작업** | 독립적인 작업을 소유권이 분리된 fanout unit으로 나누고, 진행 상황과 verification gate를 관측합니다. |
 | 🎼 **Maestro handoff** | 숨은 executor가 되거나 준비를 실행으로 취급하지 않으면서 명시적인 코딩 owner와 runtime profile을 위한 handoff를 준비합니다. |

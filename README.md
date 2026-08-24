@@ -247,7 +247,7 @@ What the terminal shows while OMH workflows run:
   subagents whose findings are cross-checked instead of self-approved, each
   visible as its own HUD row with turn, cost, and cache metrics.
 - **Phase-structured TODO** — work is declared up front as phases with tasks
-  (`todo init`), rendered as the checklist above the prompt: one active item,
+  (`todo init`), rendered as the checklist below the prompt: one active item,
   subtask nesting, and fold lines once the plan grows past seven rows.
 
 <br>
@@ -368,7 +368,7 @@ generated catalog, triggers, harnesses, and evidence rules live in
 | Intelligence | What OMH adds |
 | --- | --- |
 | 🧭 **Mixture-of-models routing** | Routes each delegated lane onto a category (model + reasoning effort) applied per dispatch, with editable fallback chains that advance when a provider rejects a model — and honest `failed` rows when a child did no work. |
-| 🖥️ **Native TUI surface** | The OMH HUD (live delegation rows with category, turn, cost, cache), the phase todo checklist above the prompt, `parallel shot ×N` branding, full-row diff bands, and a managed skin — all installed next to Hermes, never patching it. |
+| 🖥️ **Native TUI surface** | The OMH HUD (live delegation rows with category, turn, cost, cache), the phase todo checklist below the prompt, `parallel shot ×N` branding, full-row diff bands, and a managed skin — all installed next to Hermes, never patching it. |
 | 📋 **Phase-structured plans** | `todo init` declares phases and tasks before engine work so runs walk a bounded checklist instead of an open-ended reasoning loop. |
 | ⚡ **Observed parallel work** | Splits independent work into explicit fanout units with isolated ownership, progress observation, and verification gates. |
 | 🎼 **Maestro handoffs** | Prepares handoffs to explicit coding owners and runtime profiles without becoming a hidden executor or treating preparation as execution. |
