@@ -1201,10 +1201,17 @@ def _todo_summary(home: Path) -> dict[str, Any]:
     summary["updated_at"] = strip_control_characters(record.get("updated_at", ""))[:40]
     summary["items"] = items
     phases: list[str] = []
+    item_phases: list[str] = []
+    inherited_phase = ""
     for item in items:
         name = item.get("phase", "")
+        if name:
+            inherited_phase = name
+        elif int(item.get("depth", 0) or 0) == 0:
+            inherited_phase = ""
         if name and name not in phases:
             phases.append(name)
+        item_phases.append(inherited_phase)
     counts = {
         "total": len(items),
         "done": sum(1 for item in items if item["state"] == "done"),
@@ -1236,14 +1243,18 @@ def _todo_summary(home: Path) -> dict[str, Any]:
     display_pool = items
     if phases:
         current_phase = next(
-            (item.get("phase", "") for item in items if item["state"] == "active" and item.get("phase")),
-            "",
-        ) or next(
-            (item.get("phase", "") for item in items if item["state"] == "pending" and item.get("phase")),
-            phases[-1],
+            (phase for item, phase in zip(items, item_phases, strict=True) if item["state"] == "active"),
+            None,
         )
+        if current_phase is None:
+            current_phase = next(
+                (phase for item, phase in zip(items, item_phases, strict=True) if item["state"] == "pending"),
+                phases[-1],
+            )
         summary["display_phase"] = current_phase
-        display_pool = [item for item in items if item.get("phase", "") == current_phase]
+        display_pool = [
+            item for item, phase in zip(items, item_phases, strict=True) if phase == current_phase
+        ]
     summary["display_items"] = _collapse_todo_items(display_pool)
     # "+N more" counts hidden remaining work only (later phases included);
     # hidden done items are already summarized by the header's done/total.
@@ -1283,16 +1294,22 @@ def _hud_todo_lines(todo: dict[str, Any], *, preset: str = "focused") -> list[st
         last_phase = None
         for item in shown:
             phase = item.get("phase", "")
+            depth = int(item.get("depth", 0) or 0)
             if phase and phase != last_phase:
                 lines.append(phase)
                 last_phase = phase
-            lines.append(f"{'  ' * int(item.get('depth', 0) or 0)}{marker[item['state']]} {item['text']}")
+            elif not phase and depth == 0:
+                last_phase = ""
+            indent_depth = depth + (1 if last_phase else 0)
+            lines.append(f"{'  ' * indent_depth}{marker[item['state']]} {item['text']}")
     else:
         display_phase = str(todo.get("display_phase", ""))
         if display_phase:
             lines.append(display_phase)
+        base_depth = 1 if display_phase else 0
         lines.extend(
-            f"{'  ' * int(item.get('depth', 0) or 0)}{marker[item['state']]} {item['text']}" for item in shown
+            f"{'  ' * (base_depth + int(item.get('depth', 0) or 0))}{marker[item['state']]} {item['text']}"
+            for item in shown
         )
     more = 0 if full else int(todo.get("more_count", 0) or 0)
     if more > 0:

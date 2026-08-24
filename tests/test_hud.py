@@ -1012,6 +1012,109 @@ class TodoHudTests(unittest.TestCase):
             )
             self.assertIn("Todo items are plan declarations", payload["evidence_boundary"])
 
+    def test_hud_indents_multiple_tasks_beneath_their_phase_header(self) -> None:
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            items = [
+                {"text": "Edit source", "state": "active", "phase": "Implementation"},
+                {"text": "Run tests", "state": "pending", "phase": "Implementation"},
+            ]
+            self._write_todo(root / ".omh", self._record(items=items))
+
+            payload = read_omh_hud(root / ".omh", root / ".hermes")
+
+            self.assertEqual(
+                payload["display"]["todo_lines"],
+                [
+                    "Todo · Foundation   0/2",
+                    "Implementation",
+                    "  [•] Edit source",
+                    "  [ ] Run tests",
+                ],
+            )
+
+    def test_hud_inherits_phase_for_unphased_nested_tasks(self) -> None:
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            items = [
+                {"text": "Verify", "state": "active", "phase": "Verification"},
+                {"text": "Usability", "state": "pending", "depth": 1},
+            ]
+            self._write_todo(root / ".omh", self._record(items=items))
+
+            focused = read_omh_hud(root / ".omh", root / ".hermes")
+            full = read_omh_hud(root / ".omh", root / ".hermes", preset="full")
+
+            expected_lines = [
+                "Todo · Foundation   0/2",
+                "Verification",
+                "  [•] Verify",
+                "    [ ] Usability",
+            ]
+            self.assertEqual(
+                [item["text"] for item in focused["todo"]["display_items"]],
+                ["Verify", "Usability"],
+            )
+            self.assertEqual(focused["display"]["todo_lines"], expected_lines)
+            self.assertEqual(full["display"]["todo_lines"], expected_lines)
+
+    def test_hud_keeps_unphased_root_tasks_outside_neighboring_phases(self) -> None:
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        phase_item = {"text": "Phase task", "state": "pending", "phase": "Implementation"}
+        root_item = {"text": "Standalone", "state": "active"}
+        scenarios = (
+            ([phase_item, root_item], ["Implementation", "  [ ] Phase task", "[•] Standalone"]),
+            ([root_item, phase_item], ["[•] Standalone", "Implementation", "  [ ] Phase task"]),
+        )
+
+        for items, full_rows in scenarios:
+            with self.subTest(items=items), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                self._write_todo(root / ".omh", self._record(items=items))
+
+                focused = read_omh_hud(root / ".omh", root / ".hermes")
+                full = read_omh_hud(root / ".omh", root / ".hermes", preset="full")
+
+                self.assertEqual(focused["todo"].get("display_phase", ""), "")
+                self.assertEqual(
+                    focused["display"]["todo_lines"],
+                    ["Todo · Foundation   0/2", "[•] Standalone   +1 more"],
+                )
+                self.assertEqual(
+                    full["display"]["todo_lines"],
+                    ["Todo · Foundation   0/2", *full_rows],
+                )
+
+    def test_hud_full_keeps_consecutive_root_tasks_under_their_phase(self) -> None:
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            items = [
+                {"text": "First phased", "state": "active", "phase": "Implementation"},
+                {"text": "Second phased", "state": "pending", "phase": "Implementation"},
+                {"text": "Standalone", "state": "pending"},
+            ]
+            self._write_todo(root / ".omh", self._record(items=items))
+
+            payload = read_omh_hud(root / ".omh", root / ".hermes", preset="full")
+
+            self.assertEqual(
+                payload["display"]["todo_lines"],
+                [
+                    "Todo · Foundation   0/3",
+                    "Implementation",
+                    "  [•] First phased",
+                    "  [ ] Second phased",
+                    "[ ] Standalone",
+                ],
+            )
+
     def test_hud_todo_lines_respect_minimal_and_full_presets(self) -> None:
         from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
 

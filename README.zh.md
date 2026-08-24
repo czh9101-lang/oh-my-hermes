@@ -173,7 +173,7 @@ OMH 工作流运行时,终端会展示:
 - **Parallel Evals** — 评审与验证 lane 作为独立子代理调度,交叉核验而非
   自我批准,每条 lane 都是一个带 turn、cost、cache 指标的 HUD 行。
 - **Phase-structured TODO** — 工作在开始前以 phase 和 task 声明
-  (`todo init`),渲染为提示符上方的清单:单一活动项、子任务嵌套、超过
+  (`todo init`),渲染为提示符下方的清单:单一活动项、子任务嵌套、超过
   七行后折叠。
 
 <br>
@@ -273,7 +273,7 @@ OMH 把模型选择和编码所有权作为两个独立决策，并且绝不把�
 | 智能层 | OMH 提供什么 |
 | --- | --- |
 | 🧭 **Mixture-of-models 路由** | 每条委派 lane 按类别(模型 + 推理强度)在每次 dispatch 时应用,provider 拒绝某个模型时沿可编辑的 fallback chain 前进 — 没有做任何工作的子代理会诚实地标记为 `failed`。 |
-| 🖥️ **原生 TUI 表面** | OMH HUD(带类别、轮次、成本、缓存的实时 delegation 行)、提示符上方的 phase todo 清单、`parallel shot ×N` 标注、整行 diff 色带、受管理的皮肤 — 全部安装在 Hermes 旁边,绝不修改 Hermes 本体。 |
+| 🖥️ **原生 TUI 表面** | OMH HUD(带类别、轮次、成本、缓存的实时 delegation 行)、提示符下方的 phase todo 清单、`parallel shot ×N` 标注、整行 diff 色带、受管理的皮肤 — 全部安装在 Hermes 旁边,绝不修改 Hermes 本体。 |
 | 📋 **Phase 结构化计划** | `todo init` 在引擎工作开始前声明 phase 和 task,让运行沿有界清单推进,而不是陷入开放式推理循环。 |
 | ⚡ **可观测的并行工作** | 把独立工作拆成所有权隔离的 fanout unit,并观测进度和 verification gate。 |
 | 🎼 **Maestro handoff** | 在不成为隐藏 executor、也不把准备当作执行的前提下,为明确的 coding owner 和 runtime profile 准备 handoff。 |

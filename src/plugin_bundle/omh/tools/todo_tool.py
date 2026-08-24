@@ -18,7 +18,7 @@ OMH_TODO_SCHEMA = {
     "name": "omh_todo",
     "description": (
         "Declare, clear, or read the metadata-only plan todo list that OMH HUD surfaces render "
-        "above the Hermes prompt input. Initialize it BEFORE starting engine work (todo init): "
+        "below the Hermes prompt input. Initialize it BEFORE starting engine work (todo init): "
         "declare phases with their tasks so the run walks a bounded checklist instead of an "
         "open-ended reasoning loop, keep exactly one item active, and update states as work "
         "completes. Todo items are plan declarations, never execution evidence."

@@ -241,16 +241,29 @@ class TuiWidgetPackTests(unittest.TestCase):
             self.assertEqual(unrelated.read_text(encoding="utf-8"), "personal\n")
             self.assertEqual(json.loads(stdout)["tui_widget"]["status"], "removed")
 
+    def test_widget_docks_all_omh_chrome_below_the_prompt_input(self) -> None:
+        widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
+
+        self.assertEqual(widget.count("defineWidgetApp({"), 1)
+        self.assertEqual(widget.count("zone: 'dock-bottom'"), 1)
+        self.assertNotIn("zone: 'dock-top'", widget)
+        self.assertNotIn("id: 'omh-todo'", widget)
+        self.assertIn("h(TodoPanel", widget)
+        self.assertIn(
+            "if (!state.payload || state.payload.error || state.payload.privacy !== 'metadata_only') return null",
+            widget,
+        )
+
     def test_widget_is_bottom_docked_and_omits_host_status_fields(self) -> None:
         widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
 
         self.assertIn("zone: 'dock-bottom'", widget)
         self.assertNotIn("zone: 'top-right'", widget)
-        # The todo checklist is the one dock-top app; the status app stays
-        # dock-bottom so the panel renders above the prompt input and the
-        # activity rows below it.
-        self.assertEqual(widget.count("zone: 'dock-top'"), 1)
-        self.assertIn("id: 'omh-todo'", widget)
+        # Status, activity, and todo rows share one vertical dock below the
+        # composer. A variable-height dock-top panel would separate newly
+        # submitted transcript text from the prompt input.
+        self.assertEqual(widget.count("zone: 'dock-top'"), 0)
+        self.assertNotIn("id: 'omh-todo'", widget)
         self.assertIn("TodoPanel", widget)
         self.assertIn("truncateCells(item.text", widget)
         self.assertIn("safeText(todo.title)", widget)
@@ -316,7 +329,8 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertIn("' '.repeat(phaseColumn - cellWidth(label) + 1)", widget)
         self.assertIn("const TODO_DISPLAY_ROWS = 7", widget)
         self.assertIn("depthOf", widget)
-        self.assertIn("'  '.repeat(depthOf(item))", widget)
+        self.assertIn("(!phase && depthOf(item) > 0)", widget)
+        self.assertIn("'  '.repeat(depthOf(item) + (group.phase ? 1 : 0))", widget)
         self.assertIn("task${count === 1 ? '' : 's'}", widget)
         self.assertIn("'todo-earlier'", widget)
         self.assertIn("'todo-later'", widget)
@@ -410,9 +424,10 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertIn("generation !== globalThis[generationKey]", widget)
         self.assertIn("clearTimeout(", widget)
         self.assertNotIn("payload ? { payload } : state", widget)
-        # One immutable snapshot-apply helper feeds both widget apps, and both
-        # the initial read and the refresh timer go through it; each applied
-        # snapshot stamps receivedAt so running rows can tick elapsed live.
+        # One immutable snapshot-apply helper feeds the combined dock app, and
+        # both the initial read and the refresh timer go through it; each
+        # applied snapshot stamps receivedAt so running rows can tick elapsed
+        # live.
         self.assertEqual(
             widget.count("{ ...state, payload, receivedAt: Date.now(), tick: state.tick + 1 }"), 1
         )
