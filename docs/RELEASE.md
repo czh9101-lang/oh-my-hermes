@@ -93,6 +93,22 @@ Advanced one-shot setup compatibility smoke:
 curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh | OMH_RUN_SETUP=1 OMH_PROFILE_PACKS=cto-loop OMH_RUN_DOCTOR=0 sh
 ```
 
+## Version Bump Surfaces
+
+The release bump commit must move every current-version surface together.
+`src/omh/version.py` (`__version__`) is canonical; the others must match it:
+
+| Surface | Why it must move |
+| --- | --- |
+| `pyproject.toml` `version` | wheel and package metadata |
+| `src/plugin_bundle/omh/plugin.yaml` `version` | the installed Hermes plugin manifest — `hermes plugins doctor` and the plugin listing report this value, so leaving it behind under-reports every install (issue #1079: it sat at 1.0.5 through the 1.0.6 and 1.0.7 releases) |
+
+`VersionSurfaceParityTests` in `tests/test_release_smoke.py` gates both: a bump
+commit that misses one fails the suite instead of shipping the drift. Version
+strings quoted in README/docs prose and CLI help examples are illustrative and
+deliberately not parity-gated — update them in the bump commit, but a stale
+example is a docs nit, not a diagnostics lie.
+
 ## Required Checks
 
 Run before tagging:
