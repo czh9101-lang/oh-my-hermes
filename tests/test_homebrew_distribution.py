@@ -462,6 +462,39 @@ class DistributionReleaseContractTests(unittest.TestCase):
         self.assertNotIn("tr -d '\"' || true", workflow)
         self.assertIn('npm publish "$OMH_TARBALL"', workflow)
 
+    def test_channel_arrays_expand_safely_on_bash_3_2(self) -> None:
+        """The stable path leaves both channel arrays empty.
+
+        The release job runs on macos-latest, whose /bin/bash is 3.2, where
+        `set -u` rejects a bare "${a[@]}" for an empty array. Only the beta
+        path appends to these arrays, so the bug stayed invisible through
+        v1.0.7 (beta) and broke v1.0.8, the first stable cut, before it could
+        create the GitHub release.
+        """
+
+        workflow = (
+            PROJECT_ROOT / ".github" / "workflows" / "release.yml"
+        ).read_text()
+        for array in ("extra", "tag_args"):
+            with self.subTest(array=array):
+                self.assertIn(
+                    '${%s[@]+"${%s[@]}"}' % (array, array),
+                    workflow,
+                )
+                self.assertNotIn(f'"${{{array}[@]}}"\n', workflow)
+        if not Path("/bin/bash").is_file():
+            self.skipTest("no /bin/bash to execute the expansion against")
+        for channel, expected in (("stable", ""), ("beta", "--prerelease")):
+            with self.subTest(channel=channel):
+                script = (
+                    "set -euo pipefail\n"
+                    "extra=()\n"
+                    f'if [ "{channel}" = "beta" ]; then extra+=(--prerelease); fi\n'
+                    'printf "%s" "${extra[@]+"${extra[@]}"}"\n'
+                )
+                result = run(["/bin/bash", "-c", script])
+                self.assertEqual(result.stdout, expected)
+
     def test_npm_template_has_no_published_placeholder_version(self) -> None:
         template = NPM_PACKAGE_SOURCE / "package.template.json"
         self.assertTrue(template.is_file(), "npm package template missing")
