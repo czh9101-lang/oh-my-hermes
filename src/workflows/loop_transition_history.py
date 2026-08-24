@@ -36,14 +36,14 @@ def validate_loop_phase_history(cycle: Mapping[str, object]) -> list[str]:
                 f"{label}.generation-aware history cannot return to legacy rows"
             )
         if has_generation:
-            if modern_started and previous is not None:
+            if previous is not None:
                 if previous.get("to_phase") != transition.get("from_phase"):
                     errors.append(
                         f"{label}.phase transition chain is disconnected"
                     )
-                if previous.get("to_phase_generation") != transition.get(
-                    "from_phase_generation"
-                ):
+                if modern_started and previous.get(
+                    "to_phase_generation"
+                ) != transition.get("from_phase_generation"):
                     errors.append(
                         f"{label}.phase generation chain is disconnected"
                     )

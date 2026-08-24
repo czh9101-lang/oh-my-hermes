@@ -224,6 +224,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - After Hermes accepts `/goal`, ingest metadata-only activation plus same-session contiguous turn evidence with `omh loop goal-driver-observe`; prepared text and isolated turn claims do not advance the loop.
   - Treat ticks as preparation only. Advance one legal role phase through loop_phase_transition/v1 only after its named gate has observed evidence.
   - Treat a judge `done` verdict, a turn-ceiling pause, or a gate-retry pause as narration; completion still requires the linked goal ledger completion gate and observed evidence.
+  - Treat any future change to the default as a maintainer-reviewed product decision, not a runtime phase or automatic loop outcome.
+  - Compare only observed outcomes under matched task, model/provider, permissions, turn budget, and verification surface; unresolved evidence keeps the current default.
+  - Keep promotion governance separate from goal-ledger completion and ordinary measured-loop keep/discard decisions; do not invent subjective scorers, fixed numeric thresholds, minimum run counts, weighted percentages, or per-turn artifact quotas.
   - Name the one element gating this loop from the `loop_constraint_assessment/v1` block before choosing the next action; if none is binding, say so from the recorded reason rather than assuming.
   - When the goal is measurable, declare the evaluation contract before the first attempt - exact command, metric name, direction, and the rule that the loop may not modify the scoring harness - and bind every keep or discard decision to it; when no such contract exists, say the goal is unmeasured instead of scoring it by judgement.
   - Run a measurable cycle as attempt, commit, measure, then keep or reset; a reset is the normal discard, and rewinding to an older commit is for a run of discards that traces to one bad ancestor.

@@ -14,6 +14,7 @@ from omh.workflows.loop_phase_transitions import (
     phase_target,
     transition_loop_phase,
     validate_loop_goal_driver_observation,
+    validate_loop_phase_history,
     validate_loop_phase_transition,
 )
 
@@ -133,6 +134,34 @@ class PhaseGraphTests(unittest.TestCase):
         errors = validate_loop_phase_transition(_transition(evidence_refs=[]))
 
         self.assertIn("evidence_refs must contain observed-progress evidence", errors)
+
+    def test_legacy_to_generation_aware_history_must_remain_connected(self) -> None:
+        legacy = _transition()
+        legacy.pop("from_phase_generation")
+        legacy.pop("to_phase_generation")
+        modern = _transition(
+            transition_id="phase-transition-2",
+            sequence=2,
+            from_phase="research",
+            to_phase="handoff",
+            from_phase_generation=0,
+            to_phase_generation=1,
+            phase_gate="research_evidence_observed",
+        )
+        errors = validate_loop_phase_history(
+            {
+                "loop_id": "loop-release",
+                "phase": "handoff",
+                "phase_generation": 1,
+                "phase_transitions": [legacy, modern],
+                "goal_driver_observations": [],
+            }
+        )
+
+        self.assertIn(
+            "phase_transitions[1].phase transition chain is disconnected",
+            errors,
+        )
 
 
 class GoalDriverObservationTests(unittest.TestCase):

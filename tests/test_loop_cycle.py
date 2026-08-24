@@ -15,6 +15,7 @@ load_local_package()
 import omh.goal_loop as goal_loop_module
 from omh.goal_ledger import create_goal_ledger
 from omh.goal_loop import (
+    LOOP_ACTIONS,
     LOOP_CYCLE_SCHEMA,
     LOOP_GOAL_DRIVER_HANDOFF_SCHEMA,
     LOOP_START_CARD_SCHEMA,
@@ -513,6 +514,72 @@ class GoalLoopTests(unittest.TestCase):
                 self.assertEqual(before_stale["phase"], "plan")
                 self.assertEqual(result["phase"], "plan")
                 self.assertEqual(stale["phase_transition_status"], "superseded")
+
+    def test_superseded_queue_observation_preserves_wait_and_permission_state(self) -> None:
+        for observer_name in ("wrapper", "codex"):
+            for stop_kind in ("external_wait", "permission"):
+                with (
+                    self.subTest(observer=observer_name, stop=stop_kind),
+                    TemporaryDirectory() as tmp,
+                ):
+                    paths = resolve_paths(
+                        Path(tmp) / ".omh", Path(tmp) / ".hermes"
+                    )
+                    cycle = create_loop_cycle(
+                        paths,
+                        loop_id=f"stale-stop-{observer_name}-{stop_kind}",
+                        goal_summary="Preserve authoritative loop stops",
+                        goal_reframe="Stale queue evidence cannot remove a wait or permission stop.",
+                        success_criteria=["Superseded work leaves the stop state unchanged"],
+                        permission_profile="full_loop",
+                    )
+                    item = tick_loop_runtime(
+                        paths, cycle["loop_id"], trigger="manual"
+                    )["runtime"]["queue"][-1]
+                    if stop_kind == "external_wait":
+                        stopped = record_loop_feedback(
+                            paths,
+                            cycle["loop_id"],
+                            external_wait="Await the external release signal.",
+                        )
+                    else:
+                        stopped = update_loop_permission(
+                            paths,
+                            cycle["loop_id"],
+                            forbid_actions=LOOP_ACTIONS,
+                        )
+
+                    if observer_name == "codex":
+                        result = observe_codex_loop_queue_item(
+                            paths,
+                            cycle["loop_id"],
+                            str(item["queue_id"]),
+                            codex_log_text=(
+                                '{"type":"tool_call","tool":"read","args":"stale"}\n'
+                                '{"role":"assistant","content":"Observed stale evidence."}'
+                            ),
+                            evidence_refs=["codex-jsonl:stale"],
+                            codex_log_ref="codex-session-log:stale",
+                        )
+                    else:
+                        result = observe_loop_queue_item(
+                            paths,
+                            cycle["loop_id"],
+                            str(item["queue_id"]),
+                            evidence_refs=["wrapper:stale-observation"],
+                        )
+
+                    stale = result["runtime"]["queue"][0]
+                    self.assertEqual(
+                        stale["phase_transition_status"], "superseded"
+                    )
+                    self.assertEqual(result["phase"], stopped["phase"])
+                    self.assertEqual(
+                        result["wait_reason"], stopped["wait_reason"]
+                    )
+                    self.assertEqual(
+                        result["next_action"], stopped["next_action"]
+                    )
 
     def test_goal_driver_observation_cannot_bypass_executor_dispatch_permission(self) -> None:
         with TemporaryDirectory() as tmp:

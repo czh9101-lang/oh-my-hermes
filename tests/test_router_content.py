@@ -2999,6 +2999,26 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("goal-driver-observe", skills["loop"].content)
         self.assertIn("same-session contiguous turn evidence", skills["loop"].content)
         self.assertNotIn("ulw-goal-experiment", skills["loop"].content)
+        self.assertIn(
+            "maintainer-reviewed product decision",
+            skills["loop"].content,
+        )
+        self.assertIn(
+            "matched task, model/provider, permissions, turn budget, and verification surface",
+            skills["loop"].content,
+        )
+        self.assertIn(
+            "unresolved evidence keeps the current default",
+            skills["loop"].content,
+        )
+        self.assertIn(
+            "not a runtime phase or automatic loop outcome",
+            skills["loop"].content,
+        )
+        self.assertNotIn("subjective 0-5", skills["loop"].content)
+        self.assertNotIn("five-run", skills["loop"].content)
+        self.assertNotIn("20% threshold", skills["loop"].content)
+        self.assertNotIn("one artifact per turn", skills["loop"].content)
         self.assertIn("judge `done` verdict", skills["loop"].content)
         self.assertIn("## Constraint Discipline", skills["loop"].content)
         self.assertIn("loop_constraint_assessment/v1", skills["loop"].content)

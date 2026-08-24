@@ -178,7 +178,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # observation and evidence-backed phase-transition contracts (+905 chars:
 # schema names, same-session turn evidence, prepared-versus-observed guidance,
 # and generated output/artifact pointers); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 712692
+# 712692 -> 713238: the loop skill gained future-default promotion governance
+# (+546 chars: maintainer ownership, matched observed comparison conditions,
+# unresolved-evidence fallback, and separation from runtime/completion and
+# measured-loop keep/discard decisions); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 713238
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

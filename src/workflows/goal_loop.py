@@ -1602,8 +1602,13 @@ def observe_codex_loop_queue_item(
                 evidence_refs=all_refs,
                 observed_at=observed_at,
             )
-        cycle["wait_reason"] = "none"
-        cycle["next_action"] = "record_feedback" if cycle["phase"] == "feedback" else "continue_loop"
+        if item.get("phase_transition_status") != "superseded":
+            cycle["wait_reason"] = "none"
+            cycle["next_action"] = (
+                "record_feedback"
+                if cycle["phase"] == "feedback"
+                else "continue_loop"
+            )
         cycle["updated_at"] = utc_now()
         return cycle
 
@@ -1716,8 +1721,13 @@ def observe_loop_queue_item(
                 evidence_refs=aggregate_refs,
                 observed_at=observed_at,
             )
-        cycle["wait_reason"] = "none"
-        cycle["next_action"] = "record_feedback" if cycle["phase"] == "feedback" else "continue_loop"
+        if item.get("phase_transition_status") != "superseded":
+            cycle["wait_reason"] = "none"
+            cycle["next_action"] = (
+                "record_feedback"
+                if cycle["phase"] == "feedback"
+                else "continue_loop"
+            )
         cycle["updated_at"] = utc_now()
         return cycle
 
