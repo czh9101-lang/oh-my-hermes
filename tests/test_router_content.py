@@ -3423,7 +3423,10 @@ class RouterContentTests(unittest.TestCase):
             ):
                 self.assertNotIn(image, localized_readme)
             self.assertIn("friren-agent-omh-callout.png", localized_readme)
-            self.assertIn("hermes-omh-terminal-orchestration.png", localized_readme)
+            # hermes-omh-terminal-orchestration.png was retired from every
+            # README by owner decision (2026-08-25); it must not come back
+            # through a localization sync.
+            self.assertNotIn("hermes-omh-terminal-orchestration.png", localized_readme)
         self.assertIn("## Command Audience", agent_contract)
         self.assertIn("day-to-day OMH workflow", agent_contract)
         for command in ("`omh setup`", "`omh update`", "`omh doctor`"):

@@ -77,10 +77,6 @@
 > </p>
 >
 > <p align="center">
->   <img src="assets/hermes-omh-terminal-orchestration.png" alt="Hermes Agent and OH-MY-HERMES working side by side" width="1080">
-> </p>
->
-> <p align="center">
 >   <img src="assets/friren-agent-omh-callout.png" alt="Friren Agent explaining OMH in Art&Engine" width="720">
 > </p>
 ## クイックスタート
@@ -283,7 +279,11 @@ OMH は、モデル選択とコーディングの所有者を別の判断とし�
 | 🧠 **コンテキストインテリジェンス** | 隠れた記憶を捏造したり選択済み route を密かに変えたりせず、レビュー済み repository context をコンパクトに投影します。 |
 | 📚 **JIT learning** | 現在の blocker に最も価値のある学習対象を選び、学習済みと主張せずに、情報源に基づく即時適用可能なガイダンスを準備します。 |
 | 🔍 **証拠に基づく delivery** | coding・review・CI・merge 全体で、準備された意図、観測された runtime 活動、検証済み結果を分離します。 |
-| 📦 **決定的なスキルカタログ** | 100 個超のインストール可能な workflow スキル、バイト単位で検証される生成カタログ、否定ケースを含む routing precision コーパス、一文字のドリフトでも CI を失敗させる drift gate。 |
+| 🔎 **構造的コード検索** | 実測に基づく `ast-grep` プレイブック — 28 言語の構造クエリ、body-capture の禁止、grep フォールバック — を executor がコードを検索する場面に注入します。OMH はバイナリの存在だけを検知し、自分では実行しません。 |
+| 🗄️ **プロジェクトメモリシステム** | Hermes がロードできる決定的なファイルベース memory provider、レビュー型プロジェクトメモリコマンド(inspect・pack・domain capture)、consolidation スケジューリング brief、メモリレビュー用スキル — Hermes の不透明な内部メモリは読みも書きもしません。 |
+| 🛠️ **コーディングハーネス & ガードレール** | executor readiness probe、準備済み handoff に付く capability snapshot と owner-fit レポート、`execute_code` 結果への code-mode discipline、ルール違反の tool call をルール本文で遮断するユーザー作成 toolcall rules。 |
+| ♾️ **ウルトラワークフローエンジン** | 所有権を分離した並列デリバリーレーン、ledger と実際の完了 gate で回る計測ループ、エンジン実行前に意図を明確化する decision-frontier インタビュー — 8 つのエンジンは下のウルトラスキル節に一覧があります。 |
+| 📦 **決定的なスキルカタログ** | 120 個超のインストール可能な workflow スキル、バイト単位で検証される生成カタログ、否定ケースを含む routing precision コーパス、一文字のドリフトでも CI を失敗させる drift gate。 |
 
 ## 主張より証拠
 
