@@ -1846,6 +1846,49 @@ def _reject_near_miss_key(payload: dict[str, object], expected: str) -> None:
             raise OmhError(f"unknown key {key!r} in fanout units payload; did you mean {expected!r}?")
 
 
+def cmd_coding_commit_plan(args: argparse.Namespace) -> int:
+    import subprocess as _subprocess
+
+    from ..coding.commit_planning import (
+        CommitPlanError,
+        build_commit_plan,
+        parse_status_porcelain_z,
+    )
+
+    def _read_source(path_text: str) -> str:
+        return sys.stdin.read() if path_text == "-" else Path(path_text).expanduser().read_text(encoding="utf-8")
+
+    try:
+        if args.status_file:
+            status_payload = _read_source(args.status_file)
+        else:
+            repo_root = Path(args.repo_root).expanduser().resolve()
+            if not (repo_root / ".git").exists():
+                raise OmhError(f"--repo-root is not a git checkout root: {repo_root}")
+            # Read-only metadata probes, same class as the worktree observation
+            # ledger reads: nothing is staged, committed, or mutated.
+            status = _subprocess.run(
+                ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if status.returncode != 0:
+                raise OmhError(f"git status failed in {repo_root}: {status.stderr.strip()}")
+            status_payload = status.stdout
+        files = parse_status_porcelain_z(status_payload)
+        if not files:
+            raise OmhError("nothing to plan: the working tree has no changed files")
+        plan = build_commit_plan(files)
+    except CommitPlanError as exc:
+        raise OmhError(str(exc)) from exc
+    except (OSError, ValueError, _subprocess.TimeoutExpired) as exc:
+        raise OmhError(f"could not gather commit-plan inputs: {exc}") from exc
+    _print_json(plan)
+    return 0
+
+
 def _add_coding_commands(sub) -> None:
     coding = sub.add_parser("coding", help="Prepare executor-neutral or tracked coding handoff artifacts.")
     coding_sub = coding.add_subparsers(dest="coding_command", required=True)
@@ -2122,6 +2165,18 @@ def _add_coding_commands(sub) -> None:
     show_quality_harness = quality_harness_sub.add_parser("show")
     show_quality_harness.add_argument("--family", choices=PRODUCT_FAMILIES, required=True)
     show_quality_harness.set_defaults(func=cmd_coding_quality_harness_show)
+
+    commit_plan = coding_sub.add_parser(
+        "commit-plan",
+        help="Prepare a deterministic commit-split plan from observed working-tree metadata (read-only; never commits).",
+    )
+    commit_plan.add_argument("--repo-root", default=".", help="Git checkout root to read status metadata from.")
+    commit_plan.add_argument(
+        "--status-file",
+        default="",
+        help="Pre-captured `git status --porcelain=v1 -z` output ('-' for stdin) instead of probing --repo-root.",
+    )
+    commit_plan.set_defaults(func=cmd_coding_commit_plan)
 
     _add_dynamic_workflow_command(coding_sub)
     _add_capability_snapshot_commands(coding_sub)
