@@ -689,7 +689,7 @@ def _standalone_hook_payload_fields(name: str) -> list[str]:
             "redacted",
         ]
     if name == "pre_tool_call":
-        return ["context"]
+        return ["context", "action", "message"]
     if name == "on_session_end":
         return ["session_summary", "metadata_only"]
     if name == "pre_verify":

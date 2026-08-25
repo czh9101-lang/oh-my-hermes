@@ -78,7 +78,7 @@ class HookManifestTests(unittest.TestCase):
         self.assertIn("omh_route_hint", hooks["pre_llm_call"]["payload_fields"])
         self.assertIn("bounded_status_context", hooks["pre_llm_call"]["payload_fields"])
         self.assertNotIn("omh_generic_tool_checkpoint", hooks["pre_tool_call"]["payload_fields"])
-        self.assertEqual(hooks["pre_tool_call"]["payload_fields"], ["context"])
+        self.assertEqual(hooks["pre_tool_call"]["payload_fields"], ["context", "action", "message"])
         self.assertIn("executor_opened", events)
         self.assertIn("selected_executor_profile", events["executor_opened"]["payload_fields"])
         self.assertIn("native_command_registered", events)

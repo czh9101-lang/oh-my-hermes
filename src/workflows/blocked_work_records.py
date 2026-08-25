@@ -88,12 +88,16 @@ never rendered as attempted or completed" into an enforceable invariant over
 Enforcing versus observing
 --------------------------
 
-The Hermes plugin hook contract has no deny channel. `pre_tool_call` returns
-injected context or None, and `pre_verify`'s only action value is `"continue"`.
-A hook can therefore mint a record *about* a block that something else
-performed, and can never claim OMH stopped anything. `DECISION_SOURCES` is split
-into `ENFORCING_SOURCES` and `OBSERVING_SOURCES` for that reason, an observing
-source is pinned to `declared_not_enforced` with a stated blocker, and
+The Hermes plugin host does honor a `pre_tool_call` deny channel
+(`hermes_cli/plugins.py`, `_get_pre_tool_call_directive_details`: a returned
+`{"action": "block", "message": ...}` vetoes the call and the message becomes
+the tool result), and OMH's toolcall rules use it. That does not move
+`plugin_hook_observation` into the enforcing set: returning a block directive
+is not evidence the host received, honored, or surfaced it — hook invocation
+is host-owned and unobserved from here. A hook can mint a record *about* a
+block, and cannot prove one happened. `DECISION_SOURCES` therefore stays split
+into `ENFORCING_SOURCES` and `OBSERVING_SOURCES`, an observing source is
+pinned to `declared_not_enforced` with a stated blocker, and
 `build_blocked_work_record` refuses the combination that would lie.
 
 What actually produces and reads these records today
@@ -195,11 +199,11 @@ CLAIM_BOUNDARY: Final[str] = (
 
 # Sources that can actually stop work, and sources that can only watch it stop.
 #
-# The split is not stylistic. The Hermes plugin hook contract has no deny
-# channel -- `pre_tool_call` returns injected context or None, `pre_verify`'s
-# only action value is "continue" -- so a record minted from a hook is a report
-# about someone else's block. Collapsing the two would ship an outcome that
-# implies OMH blocked a tool call it has no way to block.
+# The split is not stylistic. The host does honor a `pre_tool_call` block
+# directive (see the module docstring), but returning one is a request whose
+# receipt OMH cannot observe -- so a record minted from a hook remains a
+# report, never proof OMH stopped anything. Collapsing the two would ship an
+# outcome that implies OMH verified a block it has no way to verify.
 ENFORCING_SOURCES: Final[tuple[str, ...]] = (
     "safety_preflight",
     "action_gate",
