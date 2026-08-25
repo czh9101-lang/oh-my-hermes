@@ -84,10 +84,6 @@
 > </p>
 >
 > <p align="center">
->   <img src="assets/hermes-omh-terminal-orchestration.png" alt="Hermes Agent and OH-MY-HERMES working side by side" width="1080">
-> </p>
->
-> <p align="center">
 >   <img src="assets/friren-agent-omh-callout.png" alt="Friren Agent explaining OMH in Art&Engine" width="720">
 > </p>
 
@@ -380,7 +376,11 @@ generated catalog, triggers, harnesses, and evidence rules live in
 | 🧠 **Context intelligence** | Projects compact, reviewed repository context without inventing hidden memory or silently changing the selected route. |
 | 📚 **Just-in-time learning** | Selects the highest-value learning target for the current blocker and prepares source-backed, application-first guidance without claiming learning already happened. |
 | 🔍 **Evidence-bound delivery** | Separates prepared intent, observed runtime activity, and verified outcomes across coding, review, CI, and merge work. |
-| 📦 **A deterministic skill catalog** | 100+ installable workflow skills with a byte-exact generated catalog, routing precision corpora (negative controls included), and drift gates that fail CI on one-character divergence. |
+| 🔎 **Structural code search** | A measured `ast-grep` playbook — structural queries across 28 languages, body-capture bans, grep fallback — injected where executors search code; OMH detects the binary and never runs it. |
+| 🗄️ **Project memory system** | A deterministic file-backed memory provider Hermes can load, reviewed project-memory commands (inspect, pack, domain capture), consolidation-scheduling briefs, and memory review skills — never reading or patching Hermes' opaque internal memory. |
+| 🛠️ **Coding harnesses & guardrails** | Executor readiness probes, capability snapshots and owner-fit reports on prepared handoffs, code-mode discipline on `execute_code` results, and user-authored toolcall rules that block an off-script tool call with your rule text. |
+| ♾️ **Ultra workflow engines** | Parallel delivery lanes with disjoint ownership, measured goal loops with ledgers and real completion gates, and decision-frontier interviews that clarify intent before any engine runs — the eight engines are listed in Ultra-Skills below. |
+| 📦 **A deterministic skill catalog** | 120+ installable workflow skills with a byte-exact generated catalog, routing precision corpora (negative controls included), and drift gates that fail CI on one-character divergence. |
 
 <br>
 

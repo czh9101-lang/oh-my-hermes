@@ -77,10 +77,6 @@
 > </p>
 >
 > <p align="center">
->   <img src="assets/hermes-omh-terminal-orchestration.png" alt="Hermes Agent and OH-MY-HERMES working side by side" width="1080">
-> </p>
->
-> <p align="center">
 >   <img src="assets/friren-agent-omh-callout.png" alt="Friren Agent explaining OMH in Art&Engine" width="720">
 > </p>
 ## 빠른 시작
@@ -281,7 +277,11 @@ OMH는 모델 선택과 코딩 소유권을 서로 다른 결정으로 다루며
 | 🧠 **컨텍스트 인텔리전스** | 숨은 기억을 지어내거나 선택된 route를 몰래 바꾸지 않고, 검토된 저장소 컨텍스트를 간결하게 투영합니다. |
 | 📚 **JIT 학습** | 현재 blocker에 가장 가치 있는 학습 목표를 고르고, 이미 학습했다고 주장하지 않으면서 출처 기반의 즉시 적용 가능한 지침을 준비합니다. |
 | 🔍 **증거 기반 전달** | 코딩·review·CI·merge 전반에서 준비된 의도, 관측된 runtime 활동, 검증된 결과를 분리합니다. |
-| 📦 **결정적 스킬 카탈로그** | 100개 이상의 설치형 workflow 스킬, byte 단위로 검증되는 생성 카탈로그, 부정 케이스를 포함한 routing precision 코퍼스, 한 글자 드리프트에도 CI가 실패하는 drift gate. |
+| 🔎 **구조적 코드 검색** | 측정 기반 `ast-grep` 플레이북 — 28개 언어 구조 쿼리, body-capture 금지, grep 폴백 — 을 executor가 코드를 검색하는 지점에 주입합니다. OMH는 바이너리 존재만 감지하며 직접 실행하지 않습니다. |
+| 🗄️ **프로젝트 메모리 시스템** | Hermes가 로드할 수 있는 결정적 파일 기반 memory provider, 검토형 프로젝트 메모리 명령(inspect·pack·domain capture), consolidation 스케줄링 brief, 메모리 리뷰 스킬 — Hermes의 불투명한 내부 메모리는 읽지도 고치지도 않습니다. |
+| 🛠️ **코딩 하네스 & 가드레일** | executor readiness probe, 준비된 handoff에 붙는 capability snapshot과 owner-fit 리포트, `execute_code` 결과에 붙는 code-mode discipline, 규칙을 어긴 tool call을 규칙 텍스트로 차단하는 사용자 작성 toolcall rules. |
+| ♾️ **울트라 워크플로 엔진** | 소유권이 분리된 병렬 전달 레인, ledger와 실제 완료 gate로 도는 측정 루프, 엔진 실행 전에 의도를 명확히 하는 decision-frontier 인터뷰 — 8개 엔진 목록은 아래 울트라 스킬 섹션에 있습니다. |
+| 📦 **결정적 스킬 카탈로그** | 120개 이상의 설치형 workflow 스킬, byte 단위로 검증되는 생성 카탈로그, 부정 케이스를 포함한 routing precision 코퍼스, 한 글자 드리프트에도 CI가 실패하는 drift gate. |
 
 ## 주장보다 증거
 
