@@ -7,6 +7,7 @@ touches the imported/ category because imports live in their own manifest.
 """
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -190,6 +191,7 @@ class SecurityHardeningTest(unittest.TestCase):
             self.assertEqual(result["written"], [])
             self.assertFalse((ws.skills_dir / "imported" / "leak").exists())
 
+    @unittest.skipIf(os.name == "nt", "Windows cannot create control-character filenames, so the refusal path is unreachable there")
     def test_control_character_filenames_refuse_the_import(self):
         with _Workspace() as ws:
             rules_dir = ws.repo / ".cursor" / "rules"
