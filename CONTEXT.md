@@ -115,17 +115,49 @@ _Avoid_: task list as evidence, TodoWrite (that is another product's tool name)
 
 ### Coding delegation
 
+**Default coding lane (Hermes harness)**:
+Absent an explicit coding-owner choice, coding work runs inside the Hermes
+harness and no external coding CLI is selected. This is the default and the
+normal path — most coding work in chat is this lane, and none of the
+Maestro/handoff machinery below participates in it. The nine-term contract in
+`src/coding/orchestration_vocabulary.py` pins this wording.
+_Avoid_: coding handoff (that is the Maestro lane), assuming an external
+executor by default, reading handoff modules as the main coding path
+
 **Coding owner**:
 The executor selected to perform coding work for a run: Codex, Claude Code, a
 Hermes runtime/handoff path, or a generic executor profile. OMH language,
 schemas, and reports stay neutral across all of them.
 _Avoid_: defaulting to Codex in wording, the agent
 
+**Maestro**:
+The operator lane by which an external coding CLI becomes the coding owner
+after an explicit user choice — `src/coding/maestro/` prepares a handoff for
+the chosen CLI and never runs it. Its facade rejects the `hermes` profile
+(`HermesNativeSelectionError`), so the default lane and Maestro never blur in
+code; keep them separate in prose too. Prepared handoffs, executor capability
+snapshots, executor prompting contracts, throughput overlays, and the handoff
+sections of `wrapper-routing.md` all belong to this lane, not to the default
+lane.
+_Avoid_: treating Maestro surfaces as the default coding path, legacy (it is
+current, just not default), "coding delegation" as a synonym for all coding
+work
+
 **Fanout dispatch**:
 OMH's one sanctioned execution surface — the explicit, operator-invoked
 `omh coding fanout dispatch` that spawns local agent CLIs as subprocesses.
 Nothing else in OMH executes anything.
 _Avoid_: implicit execution, background dispatch
+
+**Programmatic tool calling (`execute_code`)**:
+Hermes Agent's own tool: the model writes a Python script that calls a
+sandboxed subset of Hermes tools over RPC, collapsing a multi-step tool chain
+into one inference turn; only the script's stdout returns to context. Part of
+the default coding lane and owned entirely by Hermes — OMH neither implements
+nor wraps it and may only describe it in awareness guidance.
+_Avoid_: fanout dispatch (OMH's separate opt-in surface), an OMH execution
+surface, code-mode batching (a Maestro-lane handoff instruction, currently
+inert)
 
 **Wrapper session**:
 The metadata record of a chat-surface interaction (Discord, Slack, hosted
