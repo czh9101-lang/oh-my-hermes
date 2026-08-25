@@ -389,7 +389,8 @@ before a generic tool, while image generation, file export, search retrieval,
 coding dispatch, review, CI, and merge remain observed-only claims.
 
 The managed plugin does not mirror this checkpoint from its `pre_tool_call`
-hook. That hook is limited to validating `delegate_task` role markers and
+hook. That hook enforces user-authored toolcall rules (returning the host's
+block directive on a match) and validates `delegate_task` role markers,
 warning when a requested OMH role is unknown; it does not copy raw tool input
 into injected context.
 

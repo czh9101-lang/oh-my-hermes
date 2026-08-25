@@ -474,6 +474,11 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
     ("src/commands/coding.py", ("rev-parse",)): (
         "resolves --base-ref to a commit sha inside `coding fanout dispatch`; read-only"
     ),
+    ("src/commands/coding.py", ("status",)): (
+        "`git status --porcelain=v1 -z` inside `coding commit-plan`, the metadata the "
+        "commit-split planner groups; read-only, names no remote, and the prepared plan "
+        "it feeds is never a commit"
+    ),
     ("src/coding/fanout_dispatch.py", ("add", ".")): (
         "`git add -N -- .` inside a FAILED unit's own isolated worktree, so the recovery probe can "
         "measure files that unit created. Not read-only: it writes intent-to-add entries to that "
