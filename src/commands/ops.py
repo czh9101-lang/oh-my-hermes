@@ -903,6 +903,7 @@ def _add_ops_commands(sub) -> None:
     from .plugin_risk_audit import add_ops_plugin_risk_audit_command
     from .provider_profile_posture import add_ops_provider_profile_posture_command
     from .prompt_compatibility import add_ops_prompt_compatibility_command
+    from .rules_import import add_ops_rules_import_command
     from .toolcall_rules import add_ops_toolcall_rules_command
 
     ops = sub.add_parser("ops", help="Create, inspect, validate, and export local operations artifacts.")
@@ -910,6 +911,7 @@ def _add_ops_commands(sub) -> None:
 
     add_ops_provider_profile_posture_command(ops_sub)
     add_ops_prompt_compatibility_command(ops_sub)
+    add_ops_rules_import_command(ops_sub)
     add_ops_plugin_risk_audit_command(ops_sub)
     add_ops_toolcall_rules_command(ops_sub)
 

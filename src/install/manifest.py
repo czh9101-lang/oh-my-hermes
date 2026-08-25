@@ -46,6 +46,14 @@ def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
     atomic_write_json(path, manifest)
 
 
+# The category directory `omh ops rules-import` writes under the skills dir.
+# The managed manifest must not record it: recording would mark every imported
+# skill as a managed artifact, and the next update's orphan pruning (imported
+# names are never in the catalog) would delete what the user just imported.
+# Provenance for these lives in the separate skills-import manifest instead.
+IMPORTED_SKILLS_DIR_NAME = "imported"
+
+
 def skill_records(skills_dir: Path, source: str) -> list[SkillRecord]:
     records: list[SkillRecord] = []
     if not skills_dir.exists():
@@ -59,6 +67,8 @@ def skill_records(skills_dir: Path, source: str) -> list[SkillRecord]:
     }
     for skill_file in sorted(skills_dir.rglob("SKILL.md")):
         rel = skill_file.relative_to(skills_dir)
+        if rel.parts and rel.parts[0] == IMPORTED_SKILLS_DIR_NAME:
+            continue
         directory = skill_file.parent.name
         records.append(
             SkillRecord(
