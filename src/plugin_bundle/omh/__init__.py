@@ -76,8 +76,8 @@ def register(ctx):
 
     _register_optional_surface(ctx, "register_memory_provider", OmhMemoryProvider())
 
-    from .hooks.diff_presentation import transform_tool_result
     from .hooks.llm_hooks import pre_llm_call
+    from .hooks.result_transforms import transform_tool_result
     from .hooks.session_hooks import on_session_end
     from .hooks.tool_hooks import pre_tool_call
     from .hooks.verify_hooks import pre_verify

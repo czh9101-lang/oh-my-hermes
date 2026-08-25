@@ -160,12 +160,13 @@ HOOK_REVIEWS: dict[str, dict[str, Any]] = {
         "capability": "the OMH served-surface verification nudge before a Hermes coding verification",
     },
     "transform_tool_result": {
-        "source_path": "hooks/diff_presentation.py",
+        "source_path": "hooks/result_transforms.py",
         "event_scope": ("transform_tool_result",),
         "reviewed_timeout_ms": 1000,
         "capability": (
-            "full-width diff band padding of tool-result diffs (trailing "
-            "whitespace only; non-diff results pass through untouched)"
+            "once-per-session code-mode discipline annotation of execute_code "
+            "results plus full-width diff band padding of tool-result diffs "
+            "(non-matching results pass through untouched)"
         ),
     },
 }
