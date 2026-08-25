@@ -151,7 +151,10 @@ HOOK_REVIEWS: dict[str, dict[str, Any]] = {
         "source_path": "hooks/tool_hooks.py",
         "event_scope": ("pre_tool_call",),
         "reviewed_timeout_ms": 1000,
-        "capability": "the OMH unknown-role warning before a Hermes delegation tool call",
+        "capability": (
+            "user-authored toolcall-rule block directives and the OMH "
+            "unknown-role warning before a Hermes tool call"
+        ),
     },
     "pre_verify": {
         "source_path": "hooks/verify_hooks.py",

@@ -5,11 +5,29 @@ import json
 from ..host_observation import observe_plugin_hook_call
 from ..omh_roles import extract_role_marker, resolve_role_name, role_aliases, role_names
 from ..tool_bursts import record_tool_call
+from ..toolcall_rules import toolcall_rule_directive
 
 
 def pre_tool_call(**kwargs) -> dict[str, object] | None:
     """Return only host-supported pre-tool directives or role warnings."""
     observe_plugin_hook_call("pre_tool_call", kwargs)
+    # User-authored toolcall rules intervene first: a block directive is the
+    # strongest host-supported response (hermes_cli/plugins.py,
+    # `_get_pre_tool_call_directive_details`: "``block`` vetoes the tool call
+    # outright (the message becomes the tool result the model sees)"). The
+    # host passes the tool arguments as ``args``; ``tool_input`` is accepted
+    # for bundle-internal callers and tests.
+    rule_directive = toolcall_rule_directive(
+        tool_name=kwargs.get("tool_name"),
+        tool_input=kwargs.get("tool_input") if "tool_input" in kwargs else kwargs.get("args"),
+        session_id=str(kwargs.get("session_id", "") or kwargs.get("task_id", "") or ""),
+        omh_home=str(kwargs.get("omh_home", "") or ""),
+    )
+    if rule_directive is not None:
+        # A blocked call never dispatches, so it must not tick the
+        # parallel-shot burst ledger (its claim boundary is "the host
+        # dispatched the calls as one batch").
+        return dict(rule_directive)
     # Tick the parallel-shot ledger: concurrent batch members start within
     # milliseconds of each other, and this is the only place OMH can see it.
     record_tool_call(kwargs.get("tool_name"), omh_home=str(kwargs.get("omh_home", "") or ""))

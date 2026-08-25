@@ -219,7 +219,8 @@ actions, generic-tool checkpoint rules, and boundaries; it does not include the
 raw user message or prove a workflow executed. For capability/catalog questions,
 the context brief adds `omh_catalog_question_hint/v1` so Hermes can show the
 workflow picker or capability summary without shell approval. The `pre_tool_call`
-hook is limited to validating delegate role markers and warning on unknown
+hook enforces user-authored toolcall rules (a matching rule returns the host's
+block directive) and validates delegate role markers, warning on unknown
 roles; it does not inject generic-tool checkpoint metadata or raw tool input.
 `omh hud`
 exposes the same status-line payload for local operator smoke tests. The HUD
@@ -1332,10 +1333,11 @@ completed" a property of the `OUTCOME_WORK_CLAIMS` table that something can
 violate, rather than an accidental absence of rows.
 
 `DECISION_SOURCES` is split into enforcing and observing sources. The Hermes
-plugin hook contract has no deny channel — `pre_tool_call` returns injected
-context or `None`, and `pre_verify`'s only action value is `"continue"` — so a
-hook can mint a record *about* a block something else performed and is pinned to
-`declared_not_enforced` with a stated blocker. It cannot mint an allow at all.
+plugin host honors a `pre_tool_call` block directive (`hermes_cli/plugins.py`),
+and OMH's user-authored toolcall rules return one — but a returned directive is
+a request whose receipt OMH cannot observe, so a hook-minted record stays
+pinned to `declared_not_enforced` with a stated blocker. It cannot mint an
+allow at all.
 
 **What is wired, as opposed to declared.** The vocabularies above are wider than
 the lanes that use them, and reading `DECISION_SOURCES` as a coverage claim would
