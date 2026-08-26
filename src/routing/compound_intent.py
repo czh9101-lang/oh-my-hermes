@@ -125,7 +125,7 @@ def distinct_complete_domain_signals(message: str) -> tuple[DomainRouteSignal, .
                 continue
             seen.add(signal.skill)
             signals.append(signal)
-    return tuple(signals) if len(signals) > 1 else ()
+    return tuple(signals)
 
 
 @lru_cache(maxsize=2048)

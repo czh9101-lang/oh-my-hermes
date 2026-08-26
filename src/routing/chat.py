@@ -1575,6 +1575,8 @@ def _route_chat_message_cached(
         return fast_explicit_skill_decision.to_dict()
     specialist_domain_signal = specialist_domain_route_signal(routing_message)
     compound_domain_signals = distinct_complete_domain_signals(routing_message)
+    if len(compound_domain_signals) == 1:
+        specialist_domain_signal = compound_domain_signals[0]
     specialist_operator_override = specialist_domain_operator_override(
         routing_message,
         specialist_domain_signal,
@@ -1686,7 +1688,7 @@ def _route_chat_message_cached(
         )
     ):
         return fast_product_shaping_decision.to_dict()
-    if compound_domain_signals and specialist_operator_override is None:
+    if len(compound_domain_signals) > 1 and specialist_operator_override is None:
         return _multiple_complete_domain_intents_decision(
             message,
             signals=compound_domain_signals,

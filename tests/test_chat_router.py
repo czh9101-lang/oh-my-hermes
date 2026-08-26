@@ -4350,6 +4350,43 @@ selected_workflow=ultraprocess
         self.assertEqual(decision["selected_skill"], "product-brief")
         self.assertFalse(decision["ambiguous"])
 
+    def test_mixed_positive_and_negated_domains_keep_finance_survivor(self) -> None:
+        decision = route_chat_message(
+            "Create a finance analysis and do not create a contract review",
+            source="discord",
+        )
+
+        self.assertEqual(decision["action"], "dispatch")
+        self.assertEqual(decision["selected_skill"], "finance-analysis")
+        self.assertFalse(decision["ambiguous"])
+
+    def test_mixed_positive_and_negated_domains_keep_legal_survivor(self) -> None:
+        decision = route_chat_message(
+            "Create a contract review and do not create a finance analysis",
+            source="discord",
+        )
+
+        self.assertEqual(decision["action"], "dispatch")
+        self.assertEqual(decision["selected_skill"], "legal-compliance-review")
+        self.assertFalse(decision["ambiguous"])
+
+    def test_trailing_negator_words_do_not_suppress_prior_specialist_intent(self) -> None:
+        cases = (
+            ("Prepare a finance analysis without delay", "finance-analysis"),
+            ("Create a product requirements document with no fluff", "product-brief"),
+            ("finance analysis with no surprises", "finance-analysis"),
+            ("finance analysis but exclude Q3", "finance-analysis"),
+            ("finance analysis except keep it short", "finance-analysis"),
+        )
+
+        for message, expected_skill in cases:
+            with self.subTest(message=message):
+                decision = route_chat_message(message, source="discord")
+
+                self.assertEqual(decision["action"], "dispatch")
+                self.assertEqual(decision["selected_skill"], expected_skill)
+                self.assertFalse(decision["ambiguous"])
+
     def test_distinct_complete_specialist_domains_require_clarification(self) -> None:
         decision = route_chat_message(
             "Create a hiring scorecard and a product requirements document",
@@ -4406,9 +4443,9 @@ selected_workflow=ultraprocess
 
     def test_specialist_domain_negation_window_is_four_normalized_tokens(self) -> None:
         exactly_four_before = specialist_domain_route_signal(
-            "Do not prepare another detailed finance analysis",
+            "Not today please prepare finance analysis",
         )
-        exactly_four_after = specialist_domain_route_signal(
+        trailing_negator = specialist_domain_route_signal(
             "Finance analysis should really truly not happen",
         )
         beyond_window = specialist_domain_route_signal(
@@ -4416,7 +4453,9 @@ selected_workflow=ultraprocess
         )
 
         self.assertIsNone(exactly_four_before)
-        self.assertIsNone(exactly_four_after)
+        self.assertIsNotNone(trailing_negator)
+        assert trailing_negator is not None
+        self.assertEqual(trailing_negator.skill, "finance-analysis")
         self.assertIsNotNone(beyond_window)
         assert beyond_window is not None
         self.assertEqual(beyond_window.skill, "finance-analysis")

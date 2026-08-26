@@ -385,7 +385,7 @@ _DOMAIN_NEGATORS = frozenset(
 )
 _INCLUSIVE_NEGATION_FOLLOWERS = frozenset({"just", "only"})
 _LOCAL_NEGATION_TOKEN_RANGE = 4
-_CLAUSE_SEPARATOR_PATTERN = re.compile(r"[,;.!?\n]+")
+_CLAUSE_SEPARATOR_PATTERN = re.compile(r"[,;.!?\n]+|\band\b")
 _ENGLISH_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
 
@@ -472,12 +472,12 @@ def _contains_positive_cue_phrase(message: str, cue: str) -> bool:
     cue_tokens = _english_tokens(cue)
     if not cue_tokens:
         return True
-    for clause in _CLAUSE_SEPARATOR_PATTERN.split(message):
+    for clause in _CLAUSE_SEPARATOR_PATTERN.split(_fold_for_match(message)):
         tokens = _english_tokens(clause)
         for start in range(len(tokens) - len(cue_tokens) + 1):
             if tokens[start : start + len(cue_tokens)] != cue_tokens:
                 continue
-            if not _locally_negated(tokens, start, len(cue_tokens)):
+            if not _locally_negated(tokens, start):
                 return True
     return False
 
@@ -488,10 +488,9 @@ def _english_tokens(value: str) -> tuple[str, ...]:
     return tuple(_ENGLISH_TOKEN_PATTERN.findall(normalized))
 
 
-def _locally_negated(tokens: tuple[str, ...], start: int, length: int) -> bool:
+def _locally_negated(tokens: tuple[str, ...], start: int) -> bool:
     lower = max(0, start - _LOCAL_NEGATION_TOKEN_RANGE)
-    upper = min(len(tokens), start + length + _LOCAL_NEGATION_TOKEN_RANGE)
-    for index in range(lower, upper):
+    for index in range(lower, start):
         if tokens[index] not in _DOMAIN_NEGATORS:
             continue
         if (
