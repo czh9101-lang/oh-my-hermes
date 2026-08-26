@@ -214,13 +214,43 @@ _FRONTMATTER_TRIGGER_LIMIT = 8
 _FRONTMATTER_SAFE_TRIGGER = re.compile(r"^[0-9A-Za-z가-힣][0-9A-Za-z가-힣 _.-]*$")
 
 
-def _frontmatter_trigger_tail(definition: SkillDefinition | None) -> str:
-    if definition is None:
-        return ""
+# Why a trigger defined in the catalog never reaches the picker description.
+# The set is closed: every omission the emission rule below can produce maps
+# to exactly one of these, so a reviewer never sees an unexplained loss.
+ROUTER_CARVE_OUT = "router_carve_out"
+UNSAFE_FOR_FRONTMATTER = "unsafe_for_frontmatter"
+DUPLICATE_OF_ALIAS = "duplicate_of_alias"
+BUDGET_OVERFLOW = "budget_overflow"
+
+
+def frontmatter_trigger_emission(definition: SkillDefinition) -> tuple[list[str], list[tuple[str, str]]]:
+    """Split a definition's triggers into what the picker sees and what it loses.
+
+    Returned as `(emitted, [(trigger, reason), ...])`. `_frontmatter_trigger_tail()`
+    renders from the same call, so the review report can never describe an
+    emission rule the renderer no longer applies.
+    """
+    safe_aliases = _safe_aliases(definition)
     # The router describes plumbing, not an intent; surfacing its `omh`
     # tokens would also collide with the substring-trap detectors.
     if definition.name == "oh-my-hermes":
-        return ""
+        return [], [(trigger, ROUTER_CARVE_OUT) for trigger in definition.triggers]
+    safe_alias_keys = {alias.casefold() for alias in safe_aliases}
+    emitted: list[str] = []
+    omitted: list[tuple[str, str]] = []
+    for trigger in definition.triggers:
+        if not _FRONTMATTER_SAFE_TRIGGER.fullmatch(trigger):
+            omitted.append((trigger, UNSAFE_FOR_FRONTMATTER))
+        elif trigger.casefold() in safe_alias_keys:
+            omitted.append((trigger, DUPLICATE_OF_ALIAS))
+        elif len(emitted) >= _FRONTMATTER_TRIGGER_LIMIT:
+            omitted.append((trigger, BUDGET_OVERFLOW))
+        else:
+            emitted.append(trigger)
+    return emitted, omitted
+
+
+def _safe_aliases(definition: SkillDefinition) -> list[str]:
     safe_aliases = [
         alias
         for alias in definition.aliases
@@ -229,18 +259,18 @@ def _frontmatter_trigger_tail(definition: SkillDefinition | None) -> str:
     if len(safe_aliases) != len(definition.aliases):
         invalid = sorted(set(definition.aliases) - set(safe_aliases))
         raise ValueError(f"unsafe picker aliases for {definition.name}: {', '.join(invalid)}")
-    safe_alias_keys = {alias.casefold() for alias in safe_aliases}
-    safe_triggers = [
-        trigger
-        for trigger in definition.triggers
-        if _FRONTMATTER_SAFE_TRIGGER.fullmatch(trigger) and trigger.casefold() not in safe_alias_keys
-    ]
+    return safe_aliases
+
+
+def _frontmatter_trigger_tail(definition: SkillDefinition | None) -> str:
+    if definition is None:
+        return ""
+    safe_aliases = _safe_aliases(definition)
+    if definition.name == "oh-my-hermes":
+        return ""
+    emitted, _ = frontmatter_trigger_emission(definition)
     alias_tail = " Aliases: " + ", ".join(safe_aliases) + "." if safe_aliases else ""
-    trigger_tail = (
-        " Use when the user says: " + ", ".join(safe_triggers[:_FRONTMATTER_TRIGGER_LIMIT]) + "."
-        if safe_triggers
-        else ""
-    )
+    trigger_tail = " Use when the user says: " + ", ".join(emitted) + "." if emitted else ""
     return alias_tail + trigger_tail
 
 

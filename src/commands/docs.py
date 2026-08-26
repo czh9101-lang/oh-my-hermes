@@ -135,6 +135,15 @@ def _sync_ulw_region(*, path: Path, check: bool, label: str, site: bool = False)
     return 0
 
 
+def cmd_docs_skill_trigger_report(args: argparse.Namespace) -> int:
+    from ..skills.trigger_review import skill_trigger_review_payload
+
+    if args.format != "json":
+        raise OmhError(f"unsupported skill-trigger-report format: {args.format}")
+    _print_json(skill_trigger_review_payload())
+    return 0
+
+
 def cmd_docs_skill_context_cost(args: argparse.Namespace) -> int:
     if args.json:
         _print_json(skill_context_cost_payload())
@@ -253,6 +262,21 @@ def _add_docs_commands(sub) -> None:
         help="Print the machine-readable omh_skill_context_cost/v1 payload.",
     )
     docs_skill_context_cost.set_defaults(func=cmd_docs_skill_context_cost)
+
+    docs_skill_trigger_report = docs_sub.add_parser(
+        "skill-trigger-report",
+        help=(
+            "Report which defined triggers reached picker frontmatter, why the rest did not, "
+            "and which normalized trigger identities are shared across skills."
+        ),
+    )
+    docs_skill_trigger_report.add_argument(
+        "--format",
+        default="json",
+        choices=("json",),
+        help="Output format for the skill_trigger_review/v1 payload.",
+    )
+    docs_skill_trigger_report.set_defaults(func=cmd_docs_skill_trigger_report)
 
 
 def _add_harness_commands(sub) -> None:
