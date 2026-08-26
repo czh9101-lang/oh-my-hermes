@@ -182,7 +182,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # (+546 chars: maintainer ownership, matched observed comparison conditions,
 # unresolved-evidence fallback, and separation from runtime/completion and
 # measured-loop keep/discard decisions); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 713238
+# 713238 -> 714446: the deep-interview skill gained the answer-options
+# contract (+1208 chars: the candidate-list block with a free-input entry,
+# the bare-number collision rule, the mid-interview option shape, and one
+# quality-bar bullet), replacing free-text-only replies with an
+# AskUserQuestion-shaped numbered list; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 714446
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

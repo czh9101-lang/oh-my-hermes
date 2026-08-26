@@ -411,6 +411,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Why: The required facts are already available, so more questions would slow the workflow.
 - Quality bar:
   - Ask exactly one blocking question per turn unless the wrapper explicitly supports a structured batch.
+  - Offer two to four candidate answers plus a free-input option with every question, and accept free text over the list at any time.
   - Tie each question to a missing decision that changes the plan, handoff, or stop condition.
   - Emit a clarified brief with non-goals and acceptance criteria before planning or delegation.
 - Completion checklist:
@@ -8999,6 +9000,7 @@ Clarify intent and boundaries one question at a time before planning or executio
 - Quality bar:
   - Name the missing decision, why it matters, and the smallest answer that would unblock the next step.
   - Ask one blocking question tied to a missing decision.
+  - Offer two to four candidate answers plus a free-input entry with every question, and accept free text over the list.
   - Use discovered facts before asking the user for information already available locally.
   - Produce a clarified brief with non-goals, acceptance criteria, and remaining unknowns before planning or handoff.
 - Inputs:
@@ -9036,7 +9038,7 @@ Clarify intent and boundaries one question at a time before planning or executio
 - Overclaim guards:
   - A clarification question is not a plan approval.
   - Do not start a handoff while the blocking decision is unanswered.
-- Fallback: If structured question UI is unavailable, ask one direct question in the current surface.
+- Fallback: If structured question UI is unavailable, ask one direct question in the current surface, with its candidate answers as a numbered list ending in a free-input entry.
 
 ### decision-frontier
 

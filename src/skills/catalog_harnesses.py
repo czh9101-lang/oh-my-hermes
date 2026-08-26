@@ -2070,7 +2070,7 @@ _HARNESSES = [
             "the round budget is exhausted or the user asked to stop",
         ),
         ("pressure-test assumptions", "capture transcript or summary"),
-        "If structured question UI is unavailable, ask one direct question in the current surface.",
+        "If structured question UI is unavailable, ask one direct question in the current surface, with its candidate answers as a numbered list ending in a free-input entry.",
         ("interview_started", "question_asked", "clarity_recorded"),
         "Record a delegated interviewer only when Hermes exposes that lane; otherwise record sequential clarification.",
         "metadata_only",
@@ -2078,6 +2078,7 @@ _HARNESSES = [
         quality_bar=(
             "Name the missing decision, why it matters, and the smallest answer that would unblock the next step.",
             "Ask one blocking question tied to a missing decision.",
+            "Offer two to four candidate answers plus a free-input entry with every question, and accept free text over the list.",
             "Use discovered facts before asking the user for information already available locally.",
             "Produce a clarified brief with non-goals, acceptance criteria, and remaining unknowns before planning or handoff.",
         ),
