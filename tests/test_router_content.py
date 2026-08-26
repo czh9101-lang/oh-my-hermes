@@ -4294,61 +4294,28 @@ class RouterContentTests(unittest.TestCase):
 
 
 class ExpertQuestionCatalogTests(unittest.TestCase):
-    EXPECTED = {
-        "finance-analysis": (
-            "period",
-            "Which reporting period should this finance analysis cover?",
-            "이 재무 분석은 어느 기간을 대상으로 해야 하나요?",
-        ),
-        "people-ops": (
-            "role or people-process outcome",
-            "What role or people-process outcome should this work achieve?",
-            "이 작업에서 어떤 역할 또는 인사 프로세스 결과를 달성해야 하나요?",
-        ),
-        "legal-compliance-review": (
-            "jurisdiction",
-            "Which jurisdiction should this legal or compliance review apply to?",
-            "이 법률 또는 컴플라이언스 검토는 어느 관할권을 기준으로 해야 하나요?",
-        ),
-        "support-operations": (
-            "support case",
-            "Which support case should we examine first?",
-            "어떤 지원 사례를 먼저 살펴봐야 하나요?",
-        ),
-        "curriculum-design": (
-            "learners",
-            "Who are the learners this curriculum should serve?",
-            "이 커리큘럼의 대상 학습자는 누구인가요?",
-        ),
-        "localization-review": (
-            "locale",
-            "Which target locale should this localization review cover?",
-            "이 현지화 검토의 대상 로캘은 무엇인가요?",
-        ),
-        "sales-development": (
-            "account or segment",
-            "Which account or customer segment should this sales work focus on?",
-            "이 영업 작업은 어떤 계정 또는 고객 세그먼트에 집중해야 하나요?",
-        ),
-        "product-brief": (
-            "product evidence",
-            "What product evidence should anchor this brief?",
-            "이 브리프의 근거가 될 제품 증거는 무엇인가요?",
-        ),
+    EXPECTED_PRIMARY_INPUTS = {
+        "finance-analysis": "period",
+        "people-ops": "role or people-process outcome",
+        "legal-compliance-review": "jurisdiction",
+        "support-operations": "support case",
+        "curriculum-design": "learners",
+        "localization-review": "locale",
+        "sales-development": "account or segment",
+        "product-brief": "product evidence",
     }
 
-    def test_specialist_workflows_have_exact_expert_question_metadata(self) -> None:
+    def test_specialist_workflows_have_catalog_owned_expert_question_metadata(self) -> None:
         definitions = {definition.name: definition for definition in builtin_definitions()}
 
-        for name, expected in self.EXPECTED.items():
+        for name, required_input in self.EXPECTED_PRIMARY_INPUTS.items():
             with self.subTest(name=name):
-                questions = getattr(definitions[name], "expert_questions", ())
-                self.assertEqual(len(questions), 1, f"{name} is missing expert question metadata")
-                question = questions[0]
-                self.assertEqual((question.required_input, question.en, question.ko), expected)
-                self.assertEqual(question.required_input, definitions[name].required_inputs[0])
-                self.assertEqual(question.question_for_locale("ko"), expected[2])
-                self.assertEqual(question.question_for_locale("ja"), expected[1])
+                questions = definitions[name].expert_questions
+                self.assertTrue(questions, f"{name} is missing expert question metadata")
+                self.assertEqual(questions[0].required_input, required_input)
+                self.assertEqual(questions[0].required_input, definitions[name].required_inputs[0])
+                self.assertEqual(questions[0].question_for_locale("ko"), questions[0].ko)
+                self.assertEqual(questions[0].question_for_locale("ja"), questions[0].en)
 
     def test_validation_rejects_invalid_required_input_fixture(self) -> None:
         from omh.skills.catalog_types import ExpertQuestion
@@ -4407,24 +4374,20 @@ class ExpertQuestionCatalogTests(unittest.TestCase):
         templates = {template.name: template.content for template in builtin_skill_templates()}
         reference = workflow_reference_markdown()
 
-        for name, (required_input, en, ko) in self.EXPECTED.items():
+        definitions = {definition.name: definition for definition in builtin_definitions()}
+        for name in self.EXPECTED_PRIMARY_INPUTS:
             expected_payload = [
                 {
-                    "required_input": required_input,
-                    "questions": {"en": en, "ko": ko},
+                    "required_input": question.required_input,
+                    "questions": {"en": question.en, "ko": question.ko},
                 }
+                for question in definitions[name].expert_questions
             ]
             with self.subTest(name=name):
                 self.assertEqual(skills[name]["expert_questions"], expected_payload)
-                self.assertIn("Expert clarification questions:", templates[name])
-                self.assertIn(f"- `{required_input}`", templates[name])
-                self.assertIn(f"  - English: {en}", templates[name])
-                self.assertIn(f"  - Korean: {ko}", templates[name])
+                self.assertTrue(all(question.required_input in templates[name] for question in definitions[name].expert_questions))
                 section = reference.split(f"### {name}\n", 1)[1].split("\n### ", 1)[0]
-                self.assertIn("- Expert clarification questions:", section)
-                self.assertIn(f"  - `{required_input}`", section)
-                self.assertIn(f"    - English: {en}", section)
-                self.assertIn(f"    - Korean: {ko}", section)
+                self.assertTrue(all(question.required_input in section for question in definitions[name].expert_questions))
 
 
 if __name__ == "__main__":

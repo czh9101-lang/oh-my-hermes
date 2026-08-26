@@ -16,7 +16,7 @@ This is a Hermes-native `sales-development` workflow skill.
 
 ## Why This Exists
 
-`sales-development` prepares account-level discovery and qualification guidance without turning research hypotheses or draft outreach into sales execution claims.
+`sales-development` prepares evidence-bounded discovery and qualification guidance without claiming sales execution.
 
 ## Do Not Use When
 
@@ -106,6 +106,8 @@ Safety rules:
 
 - Treat unsupported company and competitor information as evidence gaps, not facts.
 - Do not claim prospect contact, CRM mutation, meeting booking, opportunity creation, revenue, or progress.
+
+Procedure: load `references/procedure.md`.
 
 ## Runtime Evidence
 

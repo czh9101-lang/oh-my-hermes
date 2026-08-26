@@ -16,7 +16,7 @@ This is a Hermes-native `finance-analysis` workflow skill.
 
 ## Why This Exists
 
-`finance-analysis` turns bounded accounting and finance context into a decision brief without presenting a prepared calculation as an authoritative financial action.
+`finance-analysis` prepares a source-bounded decision brief without claiming an authoritative financial action.
 
 ## Do Not Use When
 
@@ -106,6 +106,8 @@ Safety rules:
 
 - State source and calculation assumptions before presenting a variance.
 - Do not imply an ERP, bank, ledger, tax, payment, or filing action occurred.
+
+Procedure: load `references/procedure.md`.
 
 ## Runtime Evidence
 

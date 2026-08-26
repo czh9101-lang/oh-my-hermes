@@ -16,7 +16,7 @@ This is a Hermes-native `legal-compliance-review` workflow skill.
 
 ## Why This Exists
 
-`legal-compliance-review` surfaces scoped legal and compliance issues before a human legal decision without pretending Hermes is counsel or an external filing surface.
+`legal-compliance-review` prepares scoped issues for human legal review without claiming counsel or filing authority.
 
 ## Do Not Use When
 
@@ -106,6 +106,8 @@ Safety rules:
 
 - Distinguish supplied authority from legal interpretation and final advice.
 - Do not claim sign-off, certification, filing, execution, or regulator communication.
+
+Procedure: load `references/procedure.md`.
 
 ## Runtime Evidence
 

@@ -3,11 +3,12 @@ from __future__ import annotations
 from .catalog import SkillDefinition
 
 
-def expert_questions_markdown(definition: SkillDefinition) -> str:
-    if not definition.expert_questions:
+def expert_questions_markdown(definition: SkillDefinition, *, limit: int | None = None) -> str:
+    questions = definition.expert_questions if limit is None else definition.expert_questions[:limit]
+    if not questions:
         return ""
     lines = ["Expert clarification questions:"]
-    for question in definition.expert_questions:
+    for question in questions:
         lines.extend(
             [
                 f"- `{question.required_input}`",

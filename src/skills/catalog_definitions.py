@@ -35,6 +35,7 @@ from .catalog_types import (
     ENGINE_FIT_RECOMMENDATION_RULE,
     ENGINE_INTERJECTION_RESUME_RULE,
     ExpertQuestion,
+    ProcedureStep,
     SkillDefinition,
     SkillExample,
     _HERMES_SETUP_FIVE_STEP_BAR,
@@ -1691,12 +1692,58 @@ _DEFINITIONS = [
                 en="Which reporting period should this finance analysis cover?",
                 ko="이 재무 분석은 어느 기간을 대상으로 해야 하나요?",
             ),
+            ExpertQuestion(
+                required_input="supplied finance source",
+                en="Which supplied finance source should anchor the analysis?",
+                ko="어떤 제공된 재무 자료를 분석의 근거로 삼아야 하나요?",
+            ),
+            ExpertQuestion(
+                required_input="decision question",
+                en="Which decision should this finance analysis support?",
+                ko="이 재무 분석은 어떤 의사결정을 지원해야 하나요?",
+            ),
+            ExpertQuestion(
+                required_input="calculation assumptions",
+                en="Which calculation assumptions should be applied or challenged?",
+                ko="어떤 계산 가정을 적용하거나 검토해야 하나요?",
+            ),
         ),
         expected_outputs=(
             "period and source-boundary statement",
             "actual-versus-plan and variance narrative with calculation/assumption gaps",
             "cash, close, control, or decision-risk register",
             "decision questions and next route such as strategy-brief, data-analysis, or human finance review",
+        ),
+        procedure_checks=(
+            "finance_source_boundary_check",
+            "finance_calculation_reconciliation_check",
+            "finance_assumption_traceability_check",
+            "finance_decision_risk_check",
+        ),
+        procedure_steps=(
+            ProcedureStep(
+                "finance_scope_sources", "analysis", ("period", "supplied finance source"),
+                ("period and source-boundary statement",), ("finance_source_boundary_check",),
+                "Fix the period and source boundary before interpreting any amount, and label unavailable records explicitly.",
+            ),
+            ProcedureStep(
+                "finance_analyze_variances", "analysis", ("supplied finance source", "calculation assumptions"),
+                ("actual-versus-plan and variance narrative with calculation/assumption gaps",),
+                ("finance_calculation_reconciliation_check", "finance_assumption_traceability_check"),
+                "Reconcile comparable figures, calculate material variances, and keep supplied values separate from assumptions.",
+            ),
+            ProcedureStep(
+                "finance_register_risks", "production", ("supplied finance source", "decision question"),
+                ("cash, close, control, or decision-risk register",), ("finance_decision_risk_check",),
+                "Record the cash, close, control, and decision risks supported by the bounded evidence.",
+            ),
+            ProcedureStep(
+                "finance_validate_brief", "validation",
+                ("period", "supplied finance source", "decision question", "calculation assumptions"),
+                ("decision questions and next route such as strategy-brief, data-analysis, or human finance review",),
+                ("finance_source_boundary_check", "finance_calculation_reconciliation_check", "finance_assumption_traceability_check", "finance_decision_risk_check"),
+                "Validate source and assumption traceability, then name unresolved decision questions and the appropriate review route.",
+            ),
         ),
         artifact_expectations=("prepared finance analysis brief when a wrapper captures it",),
         safety_rules=(
@@ -1708,7 +1755,7 @@ _DEFINITIONS = [
             "Separate supplied numbers, assumptions, and missing finance evidence.",
             "Keep decision and escalation questions explicit.",
         ),
-        why_this_exists="`finance-analysis` turns bounded accounting and finance context into a decision brief without presenting a prepared calculation as an authoritative financial action.",
+        why_this_exists="`finance-analysis` prepares a source-bounded decision brief without claiming an authoritative financial action.",
         do_not_use_when=(
             "The request is for a current quote, exchange rate, crypto price, or other live market lookup; use `live-info-operator`.",
             "The user wants generic exploration of a supplied CSV or table without accounting periods, controls, or finance decision framing; use `data-analysis`.",
@@ -1801,12 +1848,58 @@ _DEFINITIONS = [
                 en="Which jurisdiction should this legal or compliance review apply to?",
                 ko="이 법률 또는 컴플라이언스 검토는 어느 관할권을 기준으로 해야 하나요?",
             ),
+            ExpertQuestion(
+                required_input="document or process version",
+                en="Which document or process version is in scope for review?",
+                ko="어떤 문서 또는 프로세스 버전을 검토 범위로 삼아야 하나요?",
+            ),
+            ExpertQuestion(
+                required_input="supplied authority",
+                en="Which supplied authority should inform this review?",
+                ko="어떤 제공된 근거 자료를 이 검토에 반영해야 하나요?",
+            ),
+            ExpertQuestion(
+                required_input="review objective",
+                en="Which review objective or decision should the issue matrix support?",
+                ko="이슈 매트릭스는 어떤 검토 목표 또는 의사결정을 지원해야 하나요?",
+            ),
         ),
         expected_outputs=(
             "jurisdiction, document/version, authority, and evidence-boundary statement",
             "clause/control/requirement matrix with issue, rationale, owner, and open question",
             "risk-ranked negotiation, remediation, or counsel-escalation brief",
             "review checklist that distinguishes supplied evidence from legal interpretation",
+        ),
+        procedure_checks=(
+            "legal_jurisdiction_authority_check", "legal_version_traceability_check",
+            "legal_issue_matrix_completeness_check", "legal_counsel_escalation_check",
+        ),
+        procedure_steps=(
+            ProcedureStep(
+                "legal_scope_authority", "analysis", ("jurisdiction", "document or process version", "supplied authority"),
+                ("jurisdiction, document/version, authority, and evidence-boundary statement",),
+                ("legal_jurisdiction_authority_check", "legal_version_traceability_check"),
+                "Fix the jurisdiction, version, supplied authority, and evidence boundary before identifying issues.",
+            ),
+            ProcedureStep(
+                "legal_map_requirements", "analysis", ("document or process version", "supplied authority", "review objective"),
+                ("clause/control/requirement matrix with issue, rationale, owner, and open question",),
+                ("legal_issue_matrix_completeness_check",),
+                "Map each relevant clause, control, or requirement to its supported rationale, owner, and unresolved question.",
+            ),
+            ProcedureStep(
+                "legal_rank_escalations", "production", ("jurisdiction", "review objective"),
+                ("risk-ranked negotiation, remediation, or counsel-escalation brief",),
+                ("legal_counsel_escalation_check",),
+                "Rank supported issues by decision impact and separate remediation options from questions requiring counsel.",
+            ),
+            ProcedureStep(
+                "legal_validate_review", "validation",
+                ("jurisdiction", "document or process version", "supplied authority", "review objective"),
+                ("review checklist that distinguishes supplied evidence from legal interpretation",),
+                ("legal_jurisdiction_authority_check", "legal_version_traceability_check", "legal_issue_matrix_completeness_check", "legal_counsel_escalation_check"),
+                "Validate version and authority traceability, matrix completeness, and the boundary between supplied evidence and interpretation.",
+            ),
         ),
         artifact_expectations=("prepared legal and compliance issue matrix when a wrapper captures it",),
         safety_rules=(
@@ -1818,7 +1911,7 @@ _DEFINITIONS = [
             "Name jurisdiction, authority, document version, and unresolved questions.",
             "Rank issues and preserve the counsel-escalation boundary.",
         ),
-        why_this_exists="`legal-compliance-review` surfaces scoped legal and compliance issues before a human legal decision without pretending Hermes is counsel or an external filing surface.",
+        why_this_exists="`legal-compliance-review` prepares scoped issues for human legal review without claiming counsel or filing authority.",
         do_not_use_when=(
             "The user needs a final jurisdiction-specific legal opinion, legal representation, or authoritative filing decision; prepare the issue and counsel brief instead.",
             "The review is about code, secrets, permissions, prompt injection, dependencies, or unsafe tool behavior; use `security-safety-review`.",
@@ -1911,12 +2004,57 @@ _DEFINITIONS = [
                 en="Who are the learners this curriculum should serve?",
                 ko="이 커리큘럼의 대상 학습자는 누구인가요?",
             ),
+            ExpertQuestion(
+                required_input="learning goal",
+                en="Which observable learning goal should the curriculum achieve?",
+                ko="이 커리큘럼은 어떤 관찰 가능한 학습 목표를 달성해야 하나요?",
+            ),
+            ExpertQuestion(
+                required_input="prerequisites",
+                en="Which learner prerequisites should the sequence assume?",
+                ko="학습 순서는 어떤 선수 지식을 전제로 해야 하나요?",
+            ),
+            ExpertQuestion(
+                required_input="constraints",
+                en="Which delivery, time, accessibility, or resource constraints apply?",
+                ko="어떤 운영, 시간, 접근성 또는 자원 제약이 적용되나요?",
+            ),
         ),
         expected_outputs=(
             "learner/audience, prerequisite, outcome, and constraint brief",
             "scope-and-sequence with modules/lessons and activity rationale",
             "formative/summative assessment rubric and completion evidence",
             "accessibility, adaptation, and source/rights questions plus next route",
+        ),
+        procedure_checks=(
+            "curriculum_learner_alignment_check", "curriculum_outcome_assessment_alignment_check",
+            "curriculum_prerequisite_constraint_check", "curriculum_accessibility_rights_check",
+        ),
+        procedure_steps=(
+            ProcedureStep(
+                "curriculum_frame_learners", "analysis", ("learners", "learning goal", "prerequisites", "constraints"),
+                ("learner/audience, prerequisite, outcome, and constraint brief",),
+                ("curriculum_learner_alignment_check", "curriculum_prerequisite_constraint_check"),
+                "Define observable outcomes against the learners, prerequisites, delivery setting, and known constraints.",
+            ),
+            ProcedureStep(
+                "curriculum_sequence_learning", "production", ("learners", "learning goal", "prerequisites"),
+                ("scope-and-sequence with modules/lessons and activity rationale",),
+                ("curriculum_learner_alignment_check",),
+                "Order modules and activities so each stage builds the prerequisite knowledge needed for the next outcome.",
+            ),
+            ProcedureStep(
+                "curriculum_design_assessment", "production", ("learning goal", "constraints"),
+                ("formative/summative assessment rubric and completion evidence",),
+                ("curriculum_outcome_assessment_alignment_check",),
+                "Design formative and summative evidence that directly demonstrates each observable learning outcome.",
+            ),
+            ProcedureStep(
+                "curriculum_validate_design", "validation", ("learners", "learning goal", "prerequisites", "constraints"),
+                ("accessibility, adaptation, and source/rights questions plus next route",),
+                ("curriculum_learner_alignment_check", "curriculum_outcome_assessment_alignment_check", "curriculum_prerequisite_constraint_check", "curriculum_accessibility_rights_check"),
+                "Validate learner, outcome, assessment, accessibility, adaptation, and source-rights alignment before packaging or LMS work.",
+            ),
         ),
         artifact_expectations=("prepared curriculum design brief when a wrapper captures it",),
         safety_rules=(
@@ -1928,7 +2066,7 @@ _DEFINITIONS = [
             "Tie outcomes to scope, sequence, activities, assessments, and completion evidence.",
             "Keep instructional design distinct from exported materials or LMS actions.",
         ),
-        why_this_exists="`curriculum-design` makes instructional outcomes, sequence, assessment, and learner constraints reviewable before materials, LMS, or grading work.",
+        why_this_exists="`curriculum-design` makes outcomes, sequence, assessment, and constraints reviewable before materials or LMS work.",
         do_not_use_when=(
             "The user wants an explanation of a supplied academic paper rather than a teachable sequence; use `paper-learning`.",
             "The user needs a deck, workbook, PDF, or other exported learning artifact; route packaging to `materials-package` after the curriculum is accepted.",
@@ -2021,12 +2159,56 @@ _DEFINITIONS = [
                 en="Which account or customer segment should this sales work focus on?",
                 ko="이 영업 작업은 어떤 계정 또는 고객 세그먼트에 집중해야 하나요?",
             ),
+            ExpertQuestion(
+                required_input="available evidence",
+                en="Which available account or market evidence should anchor this sales work?",
+                ko="어떤 계정 또는 시장 근거 자료를 이 영업 작업의 기반으로 삼아야 하나요?",
+            ),
+            ExpertQuestion(
+                required_input="buyer hypothesis",
+                en="Which buyer hypothesis should discovery test?",
+                ko="발견 과정에서 어떤 구매자 가설을 검증해야 하나요?",
+            ),
+            ExpertQuestion(
+                required_input="sales objective",
+                en="Which sales objective should the next-step plan support?",
+                ko="다음 단계 계획은 어떤 영업 목표를 지원해야 하나요?",
+            ),
         ),
         expected_outputs=(
             "account/segment, buyer, problem, and evidence-gap brief",
             "discovery-question and qualification framework",
             "value narrative, objection hypotheses, and outreach-draft outline",
             "next-step/owner plan with CRM, approval, and source gaps explicit",
+        ),
+        procedure_checks=(
+            "sales_evidence_hypothesis_separation_check", "sales_qualification_coverage_check",
+            "sales_outreach_non_execution_check", "sales_next_step_ownership_check",
+        ),
+        procedure_steps=(
+            ProcedureStep(
+                "sales_scope_opportunity", "analysis", ("account or segment", "available evidence", "buyer hypothesis", "sales objective"),
+                ("account/segment, buyer, problem, and evidence-gap brief",),
+                ("sales_evidence_hypothesis_separation_check",),
+                "Separate observed account evidence from buyer and problem hypotheses, and name the gaps that discovery must test.",
+            ),
+            ProcedureStep(
+                "sales_plan_discovery", "production", ("account or segment", "buyer hypothesis", "sales objective"),
+                ("discovery-question and qualification framework",), ("sales_qualification_coverage_check",),
+                "Build discovery and qualification questions that test the buyer hypothesis against the stated objective.",
+            ),
+            ProcedureStep(
+                "sales_shape_narrative", "production", ("available evidence", "buyer hypothesis", "sales objective"),
+                ("value narrative, objection hypotheses, and outreach-draft outline",),
+                ("sales_evidence_hypothesis_separation_check", "sales_outreach_non_execution_check"),
+                "Draft an evidence-bounded value narrative and objection hypotheses without presenting outreach as sent.",
+            ),
+            ProcedureStep(
+                "sales_validate_next_steps", "validation", ("account or segment", "available evidence", "buyer hypothesis", "sales objective"),
+                ("next-step/owner plan with CRM, approval, and source gaps explicit",),
+                ("sales_evidence_hypothesis_separation_check", "sales_qualification_coverage_check", "sales_outreach_non_execution_check", "sales_next_step_ownership_check"),
+                "Validate evidence and qualification coverage, then assign an owner and approval boundary to each non-executing next step.",
+            ),
         ),
         artifact_expectations=("prepared sales development brief when a wrapper captures it",),
         safety_rules=(
@@ -2038,7 +2220,7 @@ _DEFINITIONS = [
             "Separate account evidence, buyer hypotheses, qualification questions, and next-step ownership.",
             "Keep outreach drafts and CRM actions explicitly non-executing.",
         ),
-        why_this_exists="`sales-development` prepares account-level discovery and qualification guidance without turning research hypotheses or draft outreach into sales execution claims.",
+        why_this_exists="`sales-development` prepares evidence-bounded discovery and qualification guidance without claiming sales execution.",
         do_not_use_when=(
             "The user needs a company-level positioning, market-entry, or strategic-options decision rather than account-level discovery; use `strategy-brief`.",
             "The user only wants a polished social post, newsletter, or one-off outbound-copy rewrite; use `content-operator`.",

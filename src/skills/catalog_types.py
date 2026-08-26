@@ -611,6 +611,16 @@ class ExpertQuestion:
 
 
 @dataclass(frozen=True)
+class ProcedureStep:
+    step_id: str
+    kind: str
+    input_refs: tuple[str, ...]
+    output_refs: tuple[str, ...]
+    check_ids: tuple[str, ...]
+    instruction: str
+
+
+@dataclass(frozen=True)
 class SkillDefinition:
     name: str
     description: str
@@ -652,6 +662,10 @@ class SkillDefinition:
     # Catalog-owned clarification wording. The ordered first row is the stable
     # high-value question; consumers do not infer that its input is missing.
     expert_questions: tuple[ExpertQuestion, ...] = ()
+    # Procedures are opt-in machine contracts. Input and output refs resolve
+    # against this definition; check IDs resolve against procedure_checks.
+    procedure_checks: tuple[str, ...] = ()
+    procedure_steps: tuple[ProcedureStep, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "description", omh_description(self.description))

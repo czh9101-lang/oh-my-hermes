@@ -1178,7 +1178,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Lifecycle stage: `canonical`
 - Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
 - Handoff policy: Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, implementation, review, CI, or merge claim. Prepare a connector, file, coding, or human-review handoff only when the user explicitly accepts that next step; report it only from observed evidence. Calculations are only as authoritative as supplied or observed sources and methods; no ERP, bank, ledger, tax, payment, or filing action is implied.
-- Why this exists: `finance-analysis` turns bounded accounting and finance context into a decision brief without presenting a prepared calculation as an authoritative financial action.
+- Why this exists: `finance-analysis` prepares a source-bounded decision brief without claiming an authoritative financial action.
 - Use when: Use when supplied ledger, budget, forecast, revenue, expense, cash-flow, or close context needs a bounded analysis and decision brief.
 - Do not use when:
   - The request is for a current quote, exchange rate, crypto price, or other live market lookup; use `live-info-operator`.
@@ -1213,6 +1213,15 @@ These surfaces are generated command references, not installed Hermes workflow s
   - `period`
     - English: Which reporting period should this finance analysis cover?
     - Korean: 이 재무 분석은 어느 기간을 대상으로 해야 하나요?
+  - `supplied finance source`
+    - English: Which supplied finance source should anchor the analysis?
+    - Korean: 어떤 제공된 재무 자료를 분석의 근거로 삼아야 하나요?
+  - `decision question`
+    - English: Which decision should this finance analysis support?
+    - Korean: 이 재무 분석은 어떤 의사결정을 지원해야 하나요?
+  - `calculation assumptions`
+    - English: Which calculation assumptions should be applied or challenged?
+    - Korean: 어떤 계산 가정을 적용하거나 검토해야 하나요?
 - Expected outputs:
   - period and source-boundary statement
   - actual-versus-plan and variance narrative with calculation/assumption gaps
@@ -1223,6 +1232,32 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Safety rules:
   - State source and calculation assumptions before presenting a variance.
   - Do not imply an ERP, bank, ledger, tax, payment, or filing action occurred.
+- Procedure checks:
+  - `finance_source_boundary_check`
+  - `finance_calculation_reconciliation_check`
+  - `finance_assumption_traceability_check`
+  - `finance_decision_risk_check`
+- Procedure steps:
+  - `finance_scope_sources` (`analysis`)
+    - Input refs: `period`, `supplied finance source`
+    - Output refs: `period and source-boundary statement`
+    - Check IDs: `finance_source_boundary_check`
+    - Instruction: Fix the period and source boundary before interpreting any amount, and label unavailable records explicitly.
+  - `finance_analyze_variances` (`analysis`)
+    - Input refs: `supplied finance source`, `calculation assumptions`
+    - Output refs: `actual-versus-plan and variance narrative with calculation/assumption gaps`
+    - Check IDs: `finance_calculation_reconciliation_check`, `finance_assumption_traceability_check`
+    - Instruction: Reconcile comparable figures, calculate material variances, and keep supplied values separate from assumptions.
+  - `finance_register_risks` (`production`)
+    - Input refs: `supplied finance source`, `decision question`
+    - Output refs: `cash, close, control, or decision-risk register`
+    - Check IDs: `finance_decision_risk_check`
+    - Instruction: Record the cash, close, control, and decision risks supported by the bounded evidence.
+  - `finance_validate_brief` (`validation`)
+    - Input refs: `period`, `supplied finance source`, `decision question`, `calculation assumptions`
+    - Output refs: `decision questions and next route such as strategy-brief, data-analysis, or human finance review`
+    - Check IDs: `finance_source_boundary_check`, `finance_calculation_reconciliation_check`, `finance_assumption_traceability_check`, `finance_decision_risk_check`
+    - Instruction: Validate source and assumption traceability, then name unresolved decision questions and the appropriate review route.
 
 ### people-ops
 
@@ -1302,7 +1337,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Lifecycle stage: `canonical`
 - Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
 - Handoff policy: Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, implementation, review, CI, or merge claim. Prepare a connector, file, coding, or human-review handoff only when the user explicitly accepts that next step; report it only from observed evidence. The result is a prepared review and escalation aid, not legal advice, counsel sign-off, compliance certification, contract execution, filing, or regulator communication.
-- Why this exists: `legal-compliance-review` surfaces scoped legal and compliance issues before a human legal decision without pretending Hermes is counsel or an external filing surface.
+- Why this exists: `legal-compliance-review` prepares scoped issues for human legal review without claiming counsel or filing authority.
 - Use when: Use when supplied contract, policy, product, process, or regulatory context needs a scoped issue matrix, assumptions, and counsel/escalation brief.
 - Do not use when:
   - The user needs a final jurisdiction-specific legal opinion, legal representation, or authoritative filing decision; prepare the issue and counsel brief instead.
@@ -1337,6 +1372,15 @@ These surfaces are generated command references, not installed Hermes workflow s
   - `jurisdiction`
     - English: Which jurisdiction should this legal or compliance review apply to?
     - Korean: 이 법률 또는 컴플라이언스 검토는 어느 관할권을 기준으로 해야 하나요?
+  - `document or process version`
+    - English: Which document or process version is in scope for review?
+    - Korean: 어떤 문서 또는 프로세스 버전을 검토 범위로 삼아야 하나요?
+  - `supplied authority`
+    - English: Which supplied authority should inform this review?
+    - Korean: 어떤 제공된 근거 자료를 이 검토에 반영해야 하나요?
+  - `review objective`
+    - English: Which review objective or decision should the issue matrix support?
+    - Korean: 이슈 매트릭스는 어떤 검토 목표 또는 의사결정을 지원해야 하나요?
 - Expected outputs:
   - jurisdiction, document/version, authority, and evidence-boundary statement
   - clause/control/requirement matrix with issue, rationale, owner, and open question
@@ -1347,6 +1391,32 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Safety rules:
   - Distinguish supplied authority from legal interpretation and final advice.
   - Do not claim sign-off, certification, filing, execution, or regulator communication.
+- Procedure checks:
+  - `legal_jurisdiction_authority_check`
+  - `legal_version_traceability_check`
+  - `legal_issue_matrix_completeness_check`
+  - `legal_counsel_escalation_check`
+- Procedure steps:
+  - `legal_scope_authority` (`analysis`)
+    - Input refs: `jurisdiction`, `document or process version`, `supplied authority`
+    - Output refs: `jurisdiction, document/version, authority, and evidence-boundary statement`
+    - Check IDs: `legal_jurisdiction_authority_check`, `legal_version_traceability_check`
+    - Instruction: Fix the jurisdiction, version, supplied authority, and evidence boundary before identifying issues.
+  - `legal_map_requirements` (`analysis`)
+    - Input refs: `document or process version`, `supplied authority`, `review objective`
+    - Output refs: `clause/control/requirement matrix with issue, rationale, owner, and open question`
+    - Check IDs: `legal_issue_matrix_completeness_check`
+    - Instruction: Map each relevant clause, control, or requirement to its supported rationale, owner, and unresolved question.
+  - `legal_rank_escalations` (`production`)
+    - Input refs: `jurisdiction`, `review objective`
+    - Output refs: `risk-ranked negotiation, remediation, or counsel-escalation brief`
+    - Check IDs: `legal_counsel_escalation_check`
+    - Instruction: Rank supported issues by decision impact and separate remediation options from questions requiring counsel.
+  - `legal_validate_review` (`validation`)
+    - Input refs: `jurisdiction`, `document or process version`, `supplied authority`, `review objective`
+    - Output refs: `review checklist that distinguishes supplied evidence from legal interpretation`
+    - Check IDs: `legal_jurisdiction_authority_check`, `legal_version_traceability_check`, `legal_issue_matrix_completeness_check`, `legal_counsel_escalation_check`
+    - Instruction: Validate version and authority traceability, matrix completeness, and the boundary between supplied evidence and interpretation.
 
 ### support-operations
 
@@ -1426,7 +1496,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Lifecycle stage: `canonical`
 - Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
 - Handoff policy: Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, implementation, review, CI, or merge claim. Prepare a connector, file, coding, or human-review handoff only when the user explicitly accepts that next step; report it only from observed evidence. Hermes designs an instructional plan; it does not create an LMS course, enroll learners, grade submissions, certify learning, publish materials, or claim learning outcomes occurred.
-- Why this exists: `curriculum-design` makes instructional outcomes, sequence, assessment, and learner constraints reviewable before materials, LMS, or grading work.
+- Why this exists: `curriculum-design` makes outcomes, sequence, assessment, and constraints reviewable before materials or LMS work.
 - Use when: Use when an educator or enablement owner needs outcomes, scope and sequence, lesson/module design, assessment criteria, and differentiation assumptions.
 - Do not use when:
   - The user wants an explanation of a supplied academic paper rather than a teachable sequence; use `paper-learning`.
@@ -1461,6 +1531,15 @@ These surfaces are generated command references, not installed Hermes workflow s
   - `learners`
     - English: Who are the learners this curriculum should serve?
     - Korean: 이 커리큘럼의 대상 학습자는 누구인가요?
+  - `learning goal`
+    - English: Which observable learning goal should the curriculum achieve?
+    - Korean: 이 커리큘럼은 어떤 관찰 가능한 학습 목표를 달성해야 하나요?
+  - `prerequisites`
+    - English: Which learner prerequisites should the sequence assume?
+    - Korean: 학습 순서는 어떤 선수 지식을 전제로 해야 하나요?
+  - `constraints`
+    - English: Which delivery, time, accessibility, or resource constraints apply?
+    - Korean: 어떤 운영, 시간, 접근성 또는 자원 제약이 적용되나요?
 - Expected outputs:
   - learner/audience, prerequisite, outcome, and constraint brief
   - scope-and-sequence with modules/lessons and activity rationale
@@ -1471,6 +1550,32 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Safety rules:
   - Make learner prerequisites, accessibility, adaptation, and source-rights gaps explicit.
   - Do not claim LMS mutation, enrollment, grading, certification, publication, or learning outcomes.
+- Procedure checks:
+  - `curriculum_learner_alignment_check`
+  - `curriculum_outcome_assessment_alignment_check`
+  - `curriculum_prerequisite_constraint_check`
+  - `curriculum_accessibility_rights_check`
+- Procedure steps:
+  - `curriculum_frame_learners` (`analysis`)
+    - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
+    - Output refs: `learner/audience, prerequisite, outcome, and constraint brief`
+    - Check IDs: `curriculum_learner_alignment_check`, `curriculum_prerequisite_constraint_check`
+    - Instruction: Define observable outcomes against the learners, prerequisites, delivery setting, and known constraints.
+  - `curriculum_sequence_learning` (`production`)
+    - Input refs: `learners`, `learning goal`, `prerequisites`
+    - Output refs: `scope-and-sequence with modules/lessons and activity rationale`
+    - Check IDs: `curriculum_learner_alignment_check`
+    - Instruction: Order modules and activities so each stage builds the prerequisite knowledge needed for the next outcome.
+  - `curriculum_design_assessment` (`production`)
+    - Input refs: `learning goal`, `constraints`
+    - Output refs: `formative/summative assessment rubric and completion evidence`
+    - Check IDs: `curriculum_outcome_assessment_alignment_check`
+    - Instruction: Design formative and summative evidence that directly demonstrates each observable learning outcome.
+  - `curriculum_validate_design` (`validation`)
+    - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
+    - Output refs: `accessibility, adaptation, and source/rights questions plus next route`
+    - Check IDs: `curriculum_learner_alignment_check`, `curriculum_outcome_assessment_alignment_check`, `curriculum_prerequisite_constraint_check`, `curriculum_accessibility_rights_check`
+    - Instruction: Validate learner, outcome, assessment, accessibility, adaptation, and source-rights alignment before packaging or LMS work.
 
 ### localization-review
 
@@ -1550,7 +1655,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Lifecycle stage: `canonical`
 - Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
 - Handoff policy: Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, implementation, review, CI, or merge claim. Prepare a connector, file, coding, or human-review handoff only when the user explicitly accepts that next step; report it only from observed evidence. Hermes prepares research, discovery, and message guidance; it does not research unobserved facts as facts, contact prospects, create opportunities, change CRM data, book meetings, or claim revenue or progress.
-- Why this exists: `sales-development` prepares account-level discovery and qualification guidance without turning research hypotheses or draft outreach into sales execution claims.
+- Why this exists: `sales-development` prepares evidence-bounded discovery and qualification guidance without claiming sales execution.
 - Use when: Use when a seller or business-development owner needs account context, buyer hypotheses, qualification questions, value narrative, partner/outreach plan, and a non-executing next-step sequence.
 - Do not use when:
   - The user needs a company-level positioning, market-entry, or strategic-options decision rather than account-level discovery; use `strategy-brief`.
@@ -1585,6 +1690,15 @@ These surfaces are generated command references, not installed Hermes workflow s
   - `account or segment`
     - English: Which account or customer segment should this sales work focus on?
     - Korean: 이 영업 작업은 어떤 계정 또는 고객 세그먼트에 집중해야 하나요?
+  - `available evidence`
+    - English: Which available account or market evidence should anchor this sales work?
+    - Korean: 어떤 계정 또는 시장 근거 자료를 이 영업 작업의 기반으로 삼아야 하나요?
+  - `buyer hypothesis`
+    - English: Which buyer hypothesis should discovery test?
+    - Korean: 발견 과정에서 어떤 구매자 가설을 검증해야 하나요?
+  - `sales objective`
+    - English: Which sales objective should the next-step plan support?
+    - Korean: 다음 단계 계획은 어떤 영업 목표를 지원해야 하나요?
 - Expected outputs:
   - account/segment, buyer, problem, and evidence-gap brief
   - discovery-question and qualification framework
@@ -1595,6 +1709,32 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Safety rules:
   - Treat unsupported company and competitor information as evidence gaps, not facts.
   - Do not claim prospect contact, CRM mutation, meeting booking, opportunity creation, revenue, or progress.
+- Procedure checks:
+  - `sales_evidence_hypothesis_separation_check`
+  - `sales_qualification_coverage_check`
+  - `sales_outreach_non_execution_check`
+  - `sales_next_step_ownership_check`
+- Procedure steps:
+  - `sales_scope_opportunity` (`analysis`)
+    - Input refs: `account or segment`, `available evidence`, `buyer hypothesis`, `sales objective`
+    - Output refs: `account/segment, buyer, problem, and evidence-gap brief`
+    - Check IDs: `sales_evidence_hypothesis_separation_check`
+    - Instruction: Separate observed account evidence from buyer and problem hypotheses, and name the gaps that discovery must test.
+  - `sales_plan_discovery` (`production`)
+    - Input refs: `account or segment`, `buyer hypothesis`, `sales objective`
+    - Output refs: `discovery-question and qualification framework`
+    - Check IDs: `sales_qualification_coverage_check`
+    - Instruction: Build discovery and qualification questions that test the buyer hypothesis against the stated objective.
+  - `sales_shape_narrative` (`production`)
+    - Input refs: `available evidence`, `buyer hypothesis`, `sales objective`
+    - Output refs: `value narrative, objection hypotheses, and outreach-draft outline`
+    - Check IDs: `sales_evidence_hypothesis_separation_check`, `sales_outreach_non_execution_check`
+    - Instruction: Draft an evidence-bounded value narrative and objection hypotheses without presenting outreach as sent.
+  - `sales_validate_next_steps` (`validation`)
+    - Input refs: `account or segment`, `available evidence`, `buyer hypothesis`, `sales objective`
+    - Output refs: `next-step/owner plan with CRM, approval, and source gaps explicit`
+    - Check IDs: `sales_evidence_hypothesis_separation_check`, `sales_qualification_coverage_check`, `sales_outreach_non_execution_check`, `sales_next_step_ownership_check`
+    - Instruction: Validate evidence and qualification coverage, then assign an owner and approval boundary to each non-executing next step.
 
 ### product-brief
 

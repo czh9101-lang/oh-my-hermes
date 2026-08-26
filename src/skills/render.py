@@ -30,6 +30,12 @@ from .expert_question_rendering import (
     expert_question_reference_lines,
     expert_questions_markdown,
 )
+from .procedure_rendering import (
+    copy_procedure_check_payloads,
+    copy_procedure_step_payloads,
+    procedure_reference_lines,
+    procedure_step_payloads,
+)
 from ..catalogs.awesome_hermes_agent import awesome_hermes_catalog
 from ..plugin_bundle.omh.awareness import (
     awareness_shared_context_markdown,
@@ -392,7 +398,10 @@ def _quality_rubric_sections(definition: SkillDefinition) -> str:
 
 def _skill_metadata_block(definition: SkillDefinition) -> str:
     required_inputs = _tuple_list(definition.required_inputs)
-    expert_questions = expert_questions_markdown(definition)
+    expert_questions = expert_questions_markdown(
+        definition,
+        limit=1 if definition.procedure_steps else None,
+    )
     if expert_questions:
         required_inputs = f"{required_inputs}\n\n{expert_questions}"
     return f"""Category: `{definition.category}`
@@ -423,7 +432,11 @@ Artifact expectations:
 
 Safety rules:
 
-{_tuple_list(definition.safety_rules)}"""
+{_tuple_list(definition.safety_rules)}{_procedure_skill_suffix(definition)}"""
+
+
+def _procedure_skill_suffix(definition: SkillDefinition) -> str:
+    return "\n\nProcedure: load `references/procedure.md`." if definition.procedure_steps else ""
 
 
 def _executor_readiness_skill_note(definition: SkillDefinition) -> str:
@@ -2327,6 +2340,7 @@ def _workflow_reference_markdown_cached() -> str:
                 *[f"  - {item}" for item in definition.artifact_expectations],
                 "- Safety rules:",
                 *[f"  - {item}" for item in definition.safety_rules],
+                *procedure_reference_lines(definition),
                 "",
             ]
         )
@@ -2411,6 +2425,9 @@ def _copy_skill_payload(payload: dict[str, object]) -> dict[str, object]:
     copied["good_example"] = dict(payload["good_example"])
     copied["bad_example"] = dict(payload["bad_example"])
     copied["expert_questions"] = copy_expert_question_payloads(payload["expert_questions"])
+    if "procedure_checks" in payload:
+        copied["procedure_checks"] = copy_procedure_check_payloads(payload["procedure_checks"])
+        copied["procedure_steps"] = copy_procedure_step_payloads(payload["procedure_steps"])
     return copied
 
 
@@ -2469,6 +2486,14 @@ def _skill_payload(definition: SkillDefinition) -> dict[str, object]:
         "recovery_notes": list(definition.recovery_notes),
         "required_inputs": list(definition.required_inputs),
         "expert_questions": expert_question_payloads(definition),
+        **(
+            {
+                "procedure_checks": list(definition.procedure_checks),
+                "procedure_steps": procedure_step_payloads(definition),
+            }
+            if definition.procedure_steps
+            else {}
+        ),
         "expected_outputs": list(definition.expected_outputs),
         "artifact_expectations": list(definition.artifact_expectations),
         "safety_rules": list(definition.safety_rules),

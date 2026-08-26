@@ -16,7 +16,7 @@ This is a Hermes-native `curriculum-design` workflow skill.
 
 ## Why This Exists
 
-`curriculum-design` makes instructional outcomes, sequence, assessment, and learner constraints reviewable before materials, LMS, or grading work.
+`curriculum-design` makes outcomes, sequence, assessment, and constraints reviewable before materials or LMS work.
 
 ## Do Not Use When
 
@@ -106,6 +106,8 @@ Safety rules:
 
 - Make learner prerequisites, accessibility, adaptation, and source-rights gaps explicit.
 - Do not claim LMS mutation, enrollment, grading, certification, publication, or learning outcomes.
+
+Procedure: load `references/procedure.md`.
 
 ## Runtime Evidence
 
