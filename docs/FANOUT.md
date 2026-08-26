@@ -102,12 +102,20 @@ Rules:
   one rate-limited provider is not hammered by the whole pool; owners not
   named there are governed by the global pool alone. A gated owner's units
   hold pool slots while they wait for a lane, so many same-owner units
-  queued ahead can delay another owner's units in the same wave — size
+  queued ahead can delay another owner's ready units — size
   `per_owner` with that trade in mind. An install written before this
   block existed resolves to the same defaults without showing the block;
   re-running `omh setup` writes it out, and rewrites the whole profile
   while doing so. `lane_budget_default` is advisory context for
   Hermes-native lanes — OMH never enforces a lane count inside Hermes.
+- **Admission is dependency-frontier, not wave-barrier.** A unit starts the
+  moment every unit it depends on has completed and a pool slot is free —
+  never because a wave boundary was reached — so an unrelated slow sibling
+  cannot starve ready dependents (OMO's DAG scheduler discipline). The
+  wave grouping in `merge_order` is informational; merge order itself is
+  unchanged. A seeded chaos bench (`tests/test_fanout_chaos.py`, replay
+  with `SEED=<n>`) drives random DAGs, outcomes, pool widths, and owner
+  lanes through the real engine and holds the scheduler invariants.
 - **Units are process groups; interrupts are honest.** The default runner
   spawns each unit as its own session/process group and records the leader
   pid in the unit's inflight marker. A timeout kills the whole group (no

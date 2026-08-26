@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import FIRST_COMPLETED
 from concurrent.futures import CancelledError as FuturesCancelledError
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from concurrent.futures import wait as futures_wait
 from hashlib import sha256
 import json
 import os
@@ -11,6 +13,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -961,8 +964,8 @@ def dispatch_fanout(
     # semaphore — the global pool alone governs everyone else. The gate
     # wraps the unit's WHOLE lifecycle (readiness probe, worktree, spawn,
     # and local verification when requested), so an over-subscribed owner
-    # holds a pool slot while it waits and can delay other owners' units
-    # queued behind it in the same wave; with the pool sized to the global
+    # holds a pool slot while it waits and can delay other owners' ready
+    # units queued behind it; with the pool sized to the global
     # ceiling that is the same trade OMO's global permit makes.
     owner_gates = {
         owner: threading.BoundedSemaphore(int(width))
@@ -1006,50 +1009,65 @@ def dispatch_fanout(
 
             previous_term = signal.signal(signal.SIGTERM, _on_sigterm)
             installed_term = True
+        # Dependency-frontier admission, learned from OMO's DAG scheduler: a
+        # unit is admitted the moment EVERY unit it depends on completed —
+        # never because a wave boundary was reached — so an unrelated slow
+        # sibling cannot starve ready dependents behind a barrier the
+        # contract never promised. `merge_order`'s wave grouping is
+        # informational from here on; admission is per-completion.
+        def _submit(unit_id: str) -> None:
+            futures[unit_id] = pool.submit(
+                _dispatch_with_owner_gate,
+                units[unit_id],
+                goal_text=goal_text,
+                repo_root=repo_root,
+                base_sha=base_sha,
+                source_ref=source_ref,
+                timeout=timeout,
+                dry_run=dry_run,
+                run_verification=run_verification,
+                runner=runner,
+                readiness=readiness,
+                current_catalog_digest=current_catalog_digest,
+                fanout_id=fanout_id,
+                discoveries=discoveries,
+                capability_precheck=capability_prechecks[unit_id],
+            )
+
+        def _admit_frontier() -> None:
+            # Blocking on a failed dependency is safe to do eagerly here:
+            # unit failure is terminal in this engine (no revive), unlike the
+            # OMO scheduler whose quiescence-gated cascade protects revivable
+            # nodes. The no-progress fallback below still catches a pending
+            # set that can neither run nor block (validated cycles aside).
+            for unit_id in list(pending):
+                if unit_id in futures:
+                    continue
+                if any(_dependency_failed(results.get(dep)) for dep in units[unit_id].get("depends_on", [])):
+                    results[unit_id] = _blocked(units[unit_id], results)
+                    pending.remove(unit_id)
+            for unit_id in list(pending):
+                if unit_id in futures:
+                    continue
+                if all(_dependency_satisfied(results.get(dep)) for dep in units[unit_id].get("depends_on", [])):
+                    _submit(unit_id)
+
+        _admit_frontier()
         while pending:
-            ready = [
-                unit_id
-                for unit_id in pending
-                if all(_dependency_satisfied(results.get(dep)) for dep in units[unit_id].get("depends_on", []))
-            ]
-            blocked = [
-                unit_id
-                for unit_id in pending
-                if any(_dependency_failed(results.get(dep)) for dep in units[unit_id].get("depends_on", []))
-            ]
-            for unit_id in blocked:
-                results[unit_id] = _blocked(units[unit_id], results)
-                pending.remove(unit_id)
-            ready = [unit_id for unit_id in ready if unit_id in pending]
-            if not ready:
-                if pending and not blocked:
-                    for unit_id in list(pending):
-                        results[unit_id] = _blocked(units[unit_id], results)
-                        pending.remove(unit_id)
-                continue
-            futures = {
-                unit_id: pool.submit(
-                    _dispatch_with_owner_gate,
-                    units[unit_id],
-                    goal_text=goal_text,
-                    repo_root=repo_root,
-                    base_sha=base_sha,
-                    source_ref=source_ref,
-                    timeout=timeout,
-                    dry_run=dry_run,
-                    run_verification=run_verification,
-                    runner=runner,
-                    readiness=readiness,
-                    current_catalog_digest=current_catalog_digest,
-                    fanout_id=fanout_id,
-                    discoveries=discoveries,
-                    capability_precheck=capability_prechecks[unit_id],
-                )
-                for unit_id in ready
-            }
-            for unit_id, future in futures.items():
-                results[unit_id] = future.result()
-                pending.remove(unit_id)
+            inflight = {unit_id: futures[unit_id] for unit_id in pending if unit_id in futures}
+            if not inflight:
+                # Nothing running and nothing admissible: the remainder can
+                # only be waiting on units that will never complete.
+                for unit_id in list(pending):
+                    results[unit_id] = _blocked(units[unit_id], results)
+                    pending.remove(unit_id)
+                break
+            done, _ = futures_wait(inflight.values(), return_when=FIRST_COMPLETED)
+            for unit_id, future in inflight.items():
+                if future in done:
+                    results[unit_id] = future.result()
+                    pending.remove(unit_id)
+            _admit_frontier()
         pool.shutdown(wait=True)
     except (KeyboardInterrupt, SystemExit) as exc:
         # Ctrl-C or a handled SIGTERM: stop admitting work, kill every live
@@ -1090,7 +1108,11 @@ def dispatch_fanout(
     finally:
         # Idempotent after the success/interrupt shutdowns; without it, a
         # worker exception re-raised by future.result() leaks live pool
-        # threads that the interpreter then joins at exit.
+        # threads that the interpreter then joins at exit. A plain exception
+        # unwinding here (not the handled interrupt) must also not orphan
+        # live agent groups — the same hazard the signal path closes.
+        if sys.exc_info()[0] is not None and interrupted_by is None:
+            terminate_live_unit_groups()
         pool.shutdown(wait=False, cancel_futures=True)
         if installed_term:
             signal.signal(signal.SIGTERM, previous_term)
@@ -2159,10 +2181,13 @@ def _dependency_failed(result: dict[str, Any] | None) -> bool:
 
 def _blocked(unit: Mapping[str, Any], results: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
     entry = _skipped(unit, "blocked_by_dependency")
-    entry["blocked_on"] = [
-        str(dep)
-        for dep in unit.get("depends_on", []) or []
-        if _dependency_failed(results.get(str(dep)))
+    deps = [str(dep) for dep in unit.get("depends_on", []) or []]
+    failed = [dep for dep in deps if _dependency_failed(results.get(dep))]
+    # A dependency stuck in a non-terminal verdict (for example
+    # model_choice_required) is neither satisfied nor failed; the entry must
+    # still name what it was waiting on rather than blocking on nothing.
+    entry["blocked_on"] = failed or [
+        dep for dep in deps if not _dependency_satisfied(results.get(dep))
     ]
     return entry
 
