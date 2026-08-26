@@ -25,7 +25,11 @@ from __future__ import annotations
 
 import hashlib
 
-from .domain_signals import RELEVANCE_POLICY, clarification_relevance_skills
+from .domain_signals import (
+    RELEVANCE_POLICY,
+    ClarificationRelevance,
+    classify_clarification_relevance,
+)
 from .input_language import SUPPORT_MODEL_SELECTION_REQUIRED
 from ..skills.catalog import routable_definitions
 from ..workflows.hermes_planning import is_coding_shaped_task
@@ -158,9 +162,9 @@ def _domain_candidate(skill: str) -> dict[str, object] | None:
 
 def _relevant_candidates(
     candidates: list[dict[str, object]],
-    message: str,
+    relevance: ClarificationRelevance,
 ) -> list[dict[str, object]]:
-    relevant_skills = clarification_relevance_skills(message)
+    relevant_skills = relevance.skills
     if relevant_skills is None:
         return candidates
     by_skill = {str(candidate.get("skill") or ""): candidate for candidate in candidates}
@@ -218,10 +222,17 @@ def candidate_handoff_digest(candidates: list[dict[str, object]], reasons: tuple
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def build_candidate_handoff(route: dict[str, object], message: str = "") -> dict[str, object] | None:
+def build_candidate_handoff(
+    route: dict[str, object],
+    message: str = "",
+    *,
+    relevance: ClarificationRelevance | None = None,
+) -> dict[str, object] | None:
     """Build the model-selection handoff, or None when the route is decidable."""
+    if relevance is None:
+        relevance = classify_clarification_relevance(message)
     reasons = candidate_handoff_reasons(route)
-    if not reasons and clarification_relevance_skills(message) is not None:
+    if not reasons and relevance.applies:
         reasons = ("domain_relevance_required",)
     if not reasons:
         return None
@@ -233,7 +244,7 @@ def build_candidate_handoff(route: dict[str, object], message: str = "") -> dict
         candidates = _coding_lane()
         reasons = (*reasons, "implementation_shaped_request")
 
-    candidates = _relevant_candidates(candidates, message)
+    candidates = _relevant_candidates(candidates, relevance)
     selection_mode = "candidate_selection" if candidates else "open_clarification"
     payload: dict[str, object] = {
         "schema_version": CANDIDATE_HANDOFF_SCHEMA_VERSION,
@@ -258,7 +269,7 @@ def build_candidate_handoff(route: dict[str, object], message: str = "") -> dict
             "Which of these workflows fits the request? Choose one, say why in one line, "
             "and carry its evidence boundary forward. If none fit, ask one clarifying question."
         )
-    elif clarification_relevance_skills(message) is not None:
+    elif relevance.applies:
         payload["question"] = (
             "No relevant candidate shares a canonical domain signal with this request. "
             "Ask what outcome the user wants, or present the workflow picker without naming a skill."

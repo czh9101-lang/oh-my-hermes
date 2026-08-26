@@ -1,5 +1,8 @@
+from dataclasses import dataclass
+import re
+
 from ..plugin_bundle.omh.domain_signals import (
-    _contains_cue_phrase as contains_domain_cue_phrase,
+    _fold_for_match,
     DomainOperatorOverride,
     DomainRouteSignal,
     specialist_domain_operator_override,
@@ -47,29 +50,59 @@ _UNOWNED_SPECIALIST_CUES = (
 )
 
 
-def clarification_relevance_skills(message: str) -> tuple[str, ...] | None:
-    """Return relevant candidate skills, or None when this policy does not apply.
+@dataclass(frozen=True)
+class ClarificationRelevance:
+    skills: tuple[str, ...] | None
 
-    An empty tuple is meaningful: specialist vocabulary was recognized, but no
-    catalog candidate owns a sufficiently shared canonical signal.
-    """
+    @property
+    def applies(self) -> bool:
+        return self.skills is not None
+
+
+def _relevance_pattern(cue: str) -> re.Pattern[str]:
+    phrase = _fold_for_match(cue)
+    pattern = re.escape(phrase).replace(r"\ ", r"[\s_-]+")
+    return re.compile(rf"(?<![a-z0-9]){pattern}(?![a-z0-9])")
+
+
+_RELEVANCE_ONLY_PATTERNS = tuple(
+    (skill, tuple(_relevance_pattern(cue) for cue in cues))
+    for skill, cues in _RELEVANCE_ONLY_CUES
+)
+_UNOWNED_SPECIALIST_PATTERNS = tuple(_relevance_pattern(cue) for cue in _UNOWNED_SPECIALIST_CUES)
+
+
+def _normalized_relevance_message(message: str) -> str:
+    return _fold_for_match(message)
+
+
+def classify_clarification_relevance(message: str) -> ClarificationRelevance:
+    """Classify request relevance after exactly one request normalization."""
+    normalized = _normalized_relevance_message(message)
     matched = tuple(
         skill
-        for skill, cues in _RELEVANCE_ONLY_CUES
-        if any(contains_domain_cue_phrase(message, cue) for cue in cues)
+        for skill, patterns in _RELEVANCE_ONLY_PATTERNS
+        if any(pattern.search(normalized) is not None for pattern in patterns)
     )
     if matched:
-        return matched
-    if any(contains_domain_cue_phrase(message, cue) for cue in _UNOWNED_SPECIALIST_CUES):
-        return ()
-    return None
+        return ClarificationRelevance(matched)
+    if any(pattern.search(normalized) is not None for pattern in _UNOWNED_SPECIALIST_PATTERNS):
+        return ClarificationRelevance(())
+    return ClarificationRelevance(None)
+
+
+def clarification_relevance_skills(message: str) -> tuple[str, ...] | None:
+    """Compatibility projection for callers that do not retain classification."""
+    return classify_clarification_relevance(message).skills
 
 
 __all__ = (
+    "ClarificationRelevance",
     "DomainOperatorOverride",
     "DomainRouteSignal",
     "RELEVANCE_POLICY",
     "clarification_relevance_skills",
+    "classify_clarification_relevance",
     "specialist_domain_operator_override",
     "specialist_domain_route_signal",
 )

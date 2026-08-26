@@ -21,7 +21,7 @@ from .candidate_handoff import build_candidate_handoff
 from .decision_contract import build_route_decision_contract
 from .domain_signals import (
     DomainRouteSignal,
-    clarification_relevance_skills,
+    classify_clarification_relevance,
     specialist_domain_operator_override,
     specialist_domain_route_signal,
 )
@@ -1376,6 +1376,21 @@ def route_chat_message(
     return _enriched_route(message, source, limit, min_confidence, skill_policy=skill_policy)
 
 
+def _route_has_direct_domain_signal(route: dict[str, object]) -> bool:
+    recommendations = route.get("recommendations")
+    if not isinstance(recommendations, list):
+        return False
+    for recommendation in recommendations:
+        if not isinstance(recommendation, dict):
+            continue
+        matched = recommendation.get("matched")
+        if isinstance(matched, (list, tuple)) and any(
+            isinstance(signal, str) and signal.startswith("domain:") for signal in matched
+        ):
+            return True
+    return False
+
+
 def _enriched_route(
     message: str,
     source: str,
@@ -1398,11 +1413,11 @@ def _enriched_route(
     # Attach the input script here rather than at each ChatRouteDecision site so
     # every route -- fast path, catalog path, and full scoring -- reports it.
     route["input_language"] = routing_input_language(message)
-    relevance_skills = clarification_relevance_skills(message)
+    relevance = classify_clarification_relevance(message)
     if (
         route.get("action") == "dispatch"
-        and relevance_skills is not None
-        and specialist_domain_route_signal(message) is None
+        and relevance.applies
+        and not _route_has_direct_domain_signal(route)
     ):
         route.update(
             {
@@ -1419,10 +1434,10 @@ def _enriched_route(
         )
     # An undecidable route carries only domain-relevant candidates forward for
     # model selection instead of naming a scorer collision.
-    candidate_handoff = build_candidate_handoff(route, message)
+    candidate_handoff = build_candidate_handoff(route, message, relevance=relevance)
     if candidate_handoff:
         route["candidate_handoff"] = candidate_handoff
-    if candidate_handoff and relevance_skills is not None:
+    if candidate_handoff and relevance.applies:
         candidate_rows = candidate_handoff.get("candidates")
         candidates = (
             [candidate for candidate in candidate_rows if isinstance(candidate, dict)]

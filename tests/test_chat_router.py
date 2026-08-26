@@ -21,6 +21,7 @@ from omh.routing.policy import (
     explicit_skill_invocation,
 )
 from omh.routing import chat as chat_router_impl
+from omh.routing import domain_signals as domain_signals_impl
 from omh.routing.candidate_handoff import build_candidate_handoff
 from omh.routing.domain_signals import specialist_domain_route_signal
 from omh.routing.localization import normalized_phrase
@@ -4333,6 +4334,26 @@ selected_workflow=ultraprocess
                 decision = route_chat_message(message, source="discord")
                 self.assertEqual(decision["selected_skill"], expected_skill)
                 self.assertEqual(decision["action"], "fallback" if expected_skill == "oh-my-hermes" else "dispatch")
+
+    def test_relevance_classification_and_normalization_run_once_per_request(self) -> None:
+        for message in ("DSO revenue cutoff", "four-fifths rule"):
+            with self.subTest(message=message):
+                with (
+                    mock.patch.object(
+                        chat_router_impl,
+                        "classify_clarification_relevance",
+                        wraps=domain_signals_impl.classify_clarification_relevance,
+                    ) as classify,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_normalized_relevance_message",
+                        wraps=domain_signals_impl._normalized_relevance_message,
+                    ) as normalize,
+                ):
+                    route_chat_message(message, source="discord")
+
+                self.assertEqual(classify.call_count, 1)
+                self.assertEqual(normalize.call_count, 1)
 
     def test_o013_unrelated_clarification_candidates_are_forbidden(self) -> None:
         cases = (
