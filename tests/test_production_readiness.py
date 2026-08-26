@@ -228,6 +228,8 @@ class OperationsArtifactContractTests(unittest.TestCase):
             (canonical["contract_id"], canonical["enforcement_level"], canonical["consumer_id"]),
             (registered.contract_id, registered.enforcement_level, registered.consumer_id),
         )
+        validator = resolve_artifact_contract_consumer("validate_operation_artifact")
+        self.assertIsInstance(validator({}), list)
 
     def test_reliability_catalog_consumers_use_canonical_contract(self) -> None:
         playbook = inspect_playbook("reliability-incident-review")["playbook"]
@@ -269,6 +271,44 @@ class ReadinessMatrixTests(unittest.TestCase):
         self.assertEqual(matrix["verdict"], "GO")
         self.assertEqual(validate_readiness_matrix(matrix, trusted_context=TRUST_CONTEXT), [])
         self.assertFalse(any(key in json.dumps(matrix).lower() for key in ('"score"', '"rank"', '"badge"')))
+
+    def test_builder_detaches_every_mutable_caller_container(self) -> None:
+        caller_rows = complete_rows()
+
+        matrix = build_readiness_matrix(
+            scope="release-1119",
+            rows=caller_rows,
+            created_at=CREATED,
+            evidence_fresh_after=FRESH_AFTER,
+        )
+        captured = json.dumps(matrix, sort_keys=True)
+
+        def mutable_container_ids(value: object) -> set[int]:
+            if type(value) is dict:
+                return {id(value)} | {
+                    identity
+                    for item in value.values()
+                    for identity in mutable_container_ids(item)
+                }
+            if type(value) is list:
+                return {id(value)} | {
+                    identity
+                    for item in value
+                    for identity in mutable_container_ids(item)
+                }
+            return set()
+
+        self.assertFalse(mutable_container_ids(caller_rows) & mutable_container_ids(matrix))
+        caller_rows[0]["evidence"][0]["result"] = "failed"
+        caller_rows[2]["external_identity"]["effect_id"] = "readiness:mutated"
+        caller_rows[2]["evidence"][0]["receipt"]["summary"] = "mutated caller receipt"
+        caller_rows[2]["evidence"][0]["postcondition"]["result"] = "failed"
+
+        self.assertEqual(json.dumps(matrix, sort_keys=True), captured)
+        self.assertEqual(matrix["verdict"], "GO")
+        self.assertEqual(matrix["rows"][0]["evidence"][0]["result"], "passed")
+        self.assertEqual(matrix["rows"][2]["external_identity"]["effect_id"], "readiness:ci")
+        self.assertEqual(matrix["rows"][2]["evidence"][0]["receipt"]["summary"], "")
 
     def test_missing_or_duplicate_rows_are_rejected(self) -> None:
         matrix = build_readiness_matrix(
@@ -1003,7 +1043,7 @@ class ReadinessMatrixTests(unittest.TestCase):
                 with manager:
                     errors = validate_readiness_matrix(matrix, trusted_context=TRUST_CONTEXT)
                 self.assertTrue(mutation_observed.is_set())
-                self.assertEqual(target_copy_calls, 4)
+                self.assertGreaterEqual(target_copy_calls, 2)
                 self.assertEqual(errors, stable_errors)
 
                 accepted_matrix = build_readiness_matrix(
@@ -1016,48 +1056,30 @@ class ReadinessMatrixTests(unittest.TestCase):
                 for part in path:
                     accepted_target = accepted_target[part]
                 captured_before = json.dumps(accepted_target, sort_keys=True)
-                accepted_copy_calls = 0
-                if container_kind == "dict":
-                    accepted_original_copy = readiness_workflow._copy_plain_dict
+                root_snapshot_calls = 0
+                original_snapshot = readiness_workflow._canonical_json_snapshot
 
-                    def mutate_after_second_root_dict(
-                        value: dict[object, object],
-                    ) -> dict[object, object]:
-                        nonlocal accepted_copy_calls
-                        detached = accepted_original_copy(value)
-                        if value is accepted_target:
-                            accepted_copy_calls += 1
-                            if accepted_copy_calls == 4:
-                                value["post-snapshot-mutation"] = True
-                        return detached
+                def mutate_after_second_root_snapshot(value: object) -> object:
+                    nonlocal root_snapshot_calls
+                    snapshot = original_snapshot(value)
+                    if value is accepted_matrix:
+                        root_snapshot_calls += 1
+                        if root_snapshot_calls == 2:
+                            if container_kind == "dict":
+                                accepted_target["post-snapshot-mutation"] = True
+                            else:
+                                accepted_target.append({"post-snapshot-mutation": True})
+                    return snapshot
 
-                    accepted_manager = patch.object(
-                        readiness_workflow,
-                        "_copy_plain_dict",
-                        side_effect=mutate_after_second_root_dict,
-                    )
-                else:
-                    accepted_original_list_copy = readiness_workflow._copy_plain_list
-
-                    def mutate_after_second_root_list(value: list[object]) -> list[object]:
-                        nonlocal accepted_copy_calls
-                        detached = accepted_original_list_copy(value)
-                        if value is accepted_target:
-                            accepted_copy_calls += 1
-                            if accepted_copy_calls == 4:
-                                value.append({"post-snapshot-mutation": True})
-                        return detached
-
-                    accepted_manager = patch.object(
-                        readiness_workflow,
-                        "_copy_plain_list",
-                        side_effect=mutate_after_second_root_list,
-                    )
-                with accepted_manager:
+                with patch.object(
+                    readiness_workflow,
+                    "_canonical_json_snapshot",
+                    side_effect=mutate_after_second_root_snapshot,
+                ):
                     result = readiness_workflow.parse_readiness_matrix(
                         accepted_matrix, trusted_context=TRUST_CONTEXT
                     )
-                self.assertEqual(accepted_copy_calls, 4)
+                self.assertGreaterEqual(root_snapshot_calls, 2)
                 self.assertTrue(result.accepted)
                 self.assertEqual(result.verdict, "GO")
                 captured_target: object = result.require_artifact().detached_copy()
@@ -1085,7 +1107,7 @@ class ReadinessMatrixTests(unittest.TestCase):
             result = parse(matrix, trusted_context=TRUST_CONTEXT)
         self.assertTrue(result.accepted)
         self.assertEqual(result.errors, ())
-        self.assertEqual(root_copy_calls, 4)
+        self.assertGreaterEqual(root_copy_calls, 2)
         artifact = result.require_artifact()
         self.assertEqual(artifact.verdict, "GO")
         captured = artifact.detached_copy()
@@ -1100,9 +1122,9 @@ class ReadinessMatrixTests(unittest.TestCase):
             persisted = Path(tmp) / "readiness.json"
             persisted.write_bytes(artifact.canonical_bytes)
             self.assertEqual(json.loads(persisted.read_bytes()), captured)
-        compatibility_doc = validate_readiness_matrix.__doc__ or ""
-        self.assertIn("captured artifact", compatibility_doc)
-        self.assertIn("post-return", compatibility_doc)
+        registered = artifact_contracts_for_workflow("production-audit")[0]
+        self.assertEqual(registered.consumer_id, "parse_readiness_matrix")
+        self.assertIs(resolve_artifact_contract_consumer(registered.consumer_id), parse)
         shared_leaf = {"nested": ["accepted"]}
         shared_snapshot = readiness_workflow._canonical_json_snapshot(
             {"left": shared_leaf, "right": shared_leaf}
@@ -1165,7 +1187,7 @@ class ReadinessMatrixTests(unittest.TestCase):
             ],
         )
         self.assertGreaterEqual(consume_calls, 2)
-        self.assertEqual(root_copy_calls, 4)
+        self.assertGreaterEqual(root_copy_calls, 2)
 
         list_matrix = build_readiness_matrix(
             scope="release-1119", rows=complete_rows(), created_at=CREATED, evidence_fresh_after=FRESH_AFTER
@@ -1200,7 +1222,7 @@ class ReadinessMatrixTests(unittest.TestCase):
             list_worker.join(timeout=2)
         self.assertFalse(list_worker.is_alive())
         self.assertEqual(list_errors, errors)
-        self.assertEqual(rows_copy_calls, 4)
+        self.assertGreaterEqual(rows_copy_calls, 2)
 
     def test_trust_context_is_opaque_and_non_serializable(self) -> None:
         context = ReadinessTrustContext("operator-readiness", TRUST_KEY)

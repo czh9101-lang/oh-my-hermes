@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Callable, Literal, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
+
+if TYPE_CHECKING:
+    from .production_readiness import ReadinessValidationResult
 
 EnforcementLevel = Literal["executable_validated", "shared_operation_validated", "guidance_only"]
 ENFORCEMENT_LEVELS: tuple[EnforcementLevel, ...] = (
@@ -47,10 +50,30 @@ class OperationsArtifactContract:
         return self.ref.consumer_id
 
 
+ValidatorConsumerId = Literal[
+    "validate_agent_operator_productivity_card",
+    "validate_ops_service_quality_board",
+    "validate_operation_artifact",
+    "validate_readiness_matrix",
+]
+ReadinessConsumerId = Literal["parse_readiness_matrix"]
+
+
+class ValidatorConsumer(Protocol):
+    def __call__(self, record: dict[str, object]) -> list[str]: ...
+
+
+class ReadinessConsumer(Protocol):
+    def __call__(
+        self, record: dict[str, object], *, trusted_context: object | None = None
+    ) -> ReadinessValidationResult: ...
+
+
 _CONSUMER_IMPORTS = {
     "validate_agent_operator_productivity_card": "omh.operator_productivity:validate_agent_operator_productivity_card",
     "validate_ops_service_quality_board": "omh.ops_service_quality:validate_ops_service_quality_board",
     "validate_operation_artifact": "omh.operations:validate_operation_artifact",
+    "validate_readiness_matrix": "omh.production_readiness:validate_readiness_matrix",
     "parse_readiness_matrix": "omh.production_readiness:parse_readiness_matrix",
 }
 
@@ -97,7 +120,23 @@ def artifact_contracts_for_workflow(workflow_id: str) -> tuple[ArtifactContractR
     return (item.ref,) if item else ()
 
 
-def resolve_artifact_contract_consumer(consumer_id: str) -> Callable[[dict[str, object]], object]:
+@overload
+def resolve_artifact_contract_consumer(consumer_id: ReadinessConsumerId) -> ReadinessConsumer: ...
+
+
+@overload
+def resolve_artifact_contract_consumer(consumer_id: ValidatorConsumerId) -> ValidatorConsumer: ...
+
+
+@overload
+def resolve_artifact_contract_consumer(
+    consumer_id: str,
+) -> ValidatorConsumer | ReadinessConsumer: ...
+
+
+def resolve_artifact_contract_consumer(
+    consumer_id: str,
+) -> ValidatorConsumer | ReadinessConsumer:
     import_path = _CONSUMER_IMPORTS.get(consumer_id)
     if import_path is None:
         raise LookupError(f"unknown artifact contract consumer: {consumer_id}")
@@ -105,7 +144,27 @@ def resolve_artifact_contract_consumer(consumer_id: str) -> Callable[[dict[str, 
     consumer = getattr(import_module(module_name), attribute, None)
     if not callable(consumer):
         raise LookupError(f"artifact contract consumer is not callable: {consumer_id}")
-    return cast(Callable[[dict[str, object]], object], consumer)
+    if consumer_id == "parse_readiness_matrix":
+        return cast(ReadinessConsumer, consumer)
+    return cast(ValidatorConsumer, consumer)
+
+
+if TYPE_CHECKING:
+    _typed_readiness_consumer: ReadinessConsumer = resolve_artifact_contract_consumer(
+        "parse_readiness_matrix"
+    )
+    _typed_agent_validator: ValidatorConsumer = resolve_artifact_contract_consumer(
+        "validate_agent_operator_productivity_card"
+    )
+    _typed_quality_validator: ValidatorConsumer = resolve_artifact_contract_consumer(
+        "validate_ops_service_quality_board"
+    )
+    _typed_operation_validator: ValidatorConsumer = resolve_artifact_contract_consumer(
+        "validate_operation_artifact"
+    )
+    _typed_readiness_validator: ValidatorConsumer = resolve_artifact_contract_consumer(
+        "validate_readiness_matrix"
+    )
 
 
 def validate_operations_artifact_contracts() -> list[str]:
