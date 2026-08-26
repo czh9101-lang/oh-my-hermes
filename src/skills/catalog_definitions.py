@@ -652,6 +652,7 @@ _DEFINITIONS = [
         quality_tier="clarity-gated",
         quality_bar=(
             "Ask exactly one blocking question per turn unless the wrapper explicitly supports a structured batch.",
+            "Offer two to four candidate answers plus a free-input option with every question, and accept free text over the list at any time.",
             "Tie each question to a missing decision that changes the plan, handoff, or stop condition.",
             "Emit a clarified brief with non-goals and acceptance criteria before planning or delegation.",
         ),

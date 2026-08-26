@@ -86,6 +86,60 @@ class DeepInterviewProtocolTest(unittest.TestCase):
         # of the English term, which reads as broken Korean.
         self.assertIn("Translate those terms, never transliterate them.", _unwrapped_body())
 
+    def test_every_question_offers_candidate_answers_plus_free_input(self) -> None:
+        # Live ulw-interview runs forced free-text-only replies; the OMH-native equivalent of
+        # a structured question UI is a numbered candidate list ending in a free-input entry
+        # (the same shape the model-chains interview already uses).
+        body = _skill_body()
+        self.assertIn("**Answer options — every question ships with candidates.**", body)
+        unwrapped = _unwrapped_body()
+        self.assertIn("two to four real candidates, then one final free-input entry.", unwrapped)
+        # English is the canonical rendering; Korean is the localized illustration.
+        self.assertIn("Something else — type your answer", body)
+        self.assertIn("기타 — 직접 입력", body)
+        self.assertIn("free text is always accepted, even when it matches no option.", unwrapped)
+        self.assertIn("Never re-ask because the reply was not a listed option.", unwrapped)
+        # A candidate whose text is a bare number would make a numeric reply undecidable
+        # between "option 3" and "the literal answer 3".
+        self.assertIn("never a candidate whose text is itself a bare number", unwrapped)
+        # The candidate list must not read as extra questions, or it would collide with the
+        # one-question-per-round rule the header advertises.
+        self.assertIn("it does not break the one-question rule.", unwrapped)
+        # "no numbered sub-questions" (not the old "sub-parts") is what keeps the numbered
+        # answer list from contradicting the voice rules.
+        self.assertIn("no numbered sub-questions.", unwrapped)
+        self.assertNotIn("no numbered sub-parts", body)
+
+    def test_option_block_sits_between_voice_rules_and_the_soft_check(self) -> None:
+        body = _skill_body()
+        self.assertLess(body.index("**Voice —"), body.index("**Answer options —"))
+        self.assertLess(body.index("**Answer options —"), body.index("**Mid-interview check"))
+
+    def test_mid_interview_check_uses_the_same_option_shape(self) -> None:
+        self.assertIn(
+            "with the same option shape: keep going / plan now / free input.",
+            _unwrapped_body(),
+        )
+
+    def test_catalog_quality_bar_names_the_option_contract(self) -> None:
+        bar = _definition().quality_bar
+        self.assertTrue(
+            any("free-input option" in item and "free text" in item for item in bar),
+            bar,
+        )
+
+    def test_harness_fallback_and_quality_bar_carry_the_option_contract(self) -> None:
+        # The harness fallback used to prescribe the pre-change behavior (a bare direct
+        # question); a runtime reading both surfaces must not get contradictory shapes.
+        from omh.skills.catalog import builtin_harnesses
+
+        harness = next(item for item in builtin_harnesses() if item.name == "deep-interview")
+        self.assertIn("numbered list ending in a free-input entry", harness.fallback)
+        self.assertTrue(
+            any("free-input entry" in item and "free text" in item for item in harness.quality_bar),
+            harness.quality_bar,
+        )
+
     def test_soft_check_is_not_a_stop_rule_and_does_not_consume_a_round(self) -> None:
         body = _skill_body()
         self.assertIn("**Mid-interview check — this is not a stop rule.**", body)
