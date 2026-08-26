@@ -767,6 +767,8 @@ def capture_project_memory_candidate(
     tags: list[str] | tuple[str, ...] | None = None,
     ttl_days: int | None = None,
     stale_after_days: int | None = None,
+    stale_after: str = "",
+    expires_at: str = "",
     retention_class: str = "standard",
     derived_from: list[str] | tuple[str, ...] | None = None,
     observer: str | None = None,
@@ -783,6 +785,30 @@ def capture_project_memory_candidate(
             "reason": "project_memory_disabled",
             "claim_boundary": "Memory capture is disabled by OMH project policy; Hermes global or internal memory is not mutated.",
         }
+    # Absolute deadlines: "the contract ends on the 18th" is a date, not a
+    # day count, and forcing the captor to do the subtraction moved the
+    # anchor to whenever they happened to run the command. Each absolute
+    # form is mutually exclusive with its day-count twin. The class gates
+    # live HERE, not only in argparse: this function is the plugin-bundle
+    # and wrapper-facing API, and a guard that lives only at the CLI is the
+    # exact failure mode `_validated_day_count` already documents -- which
+    # is how a durable candidate once reached approval carrying a TTL.
+    stale_after = str(stale_after or "").strip()
+    expires_at = str(expires_at or "").strip()
+    if stale_after and stale_after_days is not None:
+        raise ValueError("pass at most one of stale_after and stale_after_days")
+    if expires_at and ttl_days is not None:
+        raise ValueError("pass at most one of expires_at and ttl_days")
+    if retention_class == "volatile" and (stale_after or expires_at):
+        raise ValueError("volatile memory keeps its 1-7 day TTL; absolute deadlines do not apply")
+    if retention_class == "volatile" and stale_after_days is not None:
+        raise ValueError("volatile memory cannot set stale_after_days")
+    if retention_class == "durable" and expires_at:
+        raise ValueError("durable memory cannot set expires_at")
+    if retention_class == "durable" and ttl_days is not None:
+        raise ValueError("durable memory cannot set ttl_days")
+    stale_after_value = _absolute_deadline(stale_after, field="stale_after")
+    expires_at_value = _absolute_deadline(expires_at, field="expires_at")
     candidate = _build_project_memory_candidate(
         summary,
         content=content,
@@ -794,6 +820,8 @@ def capture_project_memory_candidate(
         tags=tags or [],
         ttl_days=ttl_days,
         stale_after_days=stale_after_days,
+        stale_after_at=stale_after_value,
+        expires_at_value=expires_at_value,
         retention_class=retention_class,
         derived_from=_normalize_derived_from(paths, derived_from),
         perspective=_normalize_perspective(observer, observed),
@@ -810,13 +838,31 @@ def capture_project_memory_candidate(
     duplicate_of = _find_duplicate_record(paths, str(candidate.get("summary", "")))
     if duplicate_of:
         candidate["duplicate_of"] = duplicate_of
+    # Relative-time prose is detected on the summary as it will be STORED
+    # (post-redaction), because that is the text that will lie later. The
+    # verdict rides on the candidate for the review card, and it suppresses
+    # auto-approval below: a fact with a hidden expiry needs a human to
+    # either accept the rot or restate it with an absolute date.
+    relative_phrase = _relative_time_phrase(str(candidate.get("summary", "")))
+    if relative_phrase:
+        candidate["time_sensitivity"] = {
+            "relative_phrase": relative_phrase,
+            "detail": (
+                "The summary contains a relative-time phrase whose anchor (the moment of capture) "
+                "is not part of the stored content, so it will read wrong once time passes."
+            ),
+            "next_action": (
+                "Restate the fact with an absolute date, or set the deadline structurally "
+                "(--stale-after YYYY-MM-DD / --stale-after-days N) and approve as-is."
+            ),
+        }
     _write_project_memory_candidate(paths, candidate)
     auto_approved = False
     record: dict[str, object] = {}
     # force_review keeps derived aggregates (e.g. rollup episodes) on the
     # review path even under auto-safe: derived content is a curation act,
     # not a captured observation.
-    if bool(policy.get("auto_approve_safe")) and candidate.get("safety", {}).get("status") == "safe" and not duplicate_of and not force_review:
+    if bool(policy.get("auto_approve_safe")) and candidate.get("safety", {}).get("status") == "safe" and not duplicate_of and not force_review and not relative_phrase:
         approved = approve_project_memory_candidate(paths, str(candidate["candidate_id"]), approved_by="auto-safe")
         record = approved.get("record", {}) if isinstance(approved.get("record"), dict) else {}
         candidate = approved.get("candidate", candidate) if isinstance(approved.get("candidate"), dict) else candidate
@@ -871,6 +917,11 @@ def build_project_memory_review_card(candidate: dict[str, Any]) -> dict[str, obj
         "tags": _string_list(candidate.get("tags", [])),
         "created_at": str(candidate.get("created_at", "")),
         **({"duplicate_of": str(candidate["duplicate_of"])} if candidate.get("duplicate_of") else {}),
+        **(
+            {"time_sensitivity": candidate["time_sensitivity"]}
+            if isinstance(candidate.get("time_sensitivity"), dict)
+            else {}
+        ),
         "safety": safety,
         "recommended_action": recommended_action,
         "actions": [
@@ -1208,6 +1259,7 @@ def memory_recall_pack_for_handoff(
     executor_target: str = "generic",
     session_id: str = "",
     limit: int = 5,
+    query_intent: str | None = None,
 ) -> dict[str, object] | None:
     # The executor target is the handoff's perspective lens: unscoped records
     # pass as always, and records observed for this executor join them --
@@ -1222,6 +1274,10 @@ def memory_recall_pack_for_handoff(
         scope_ref=pack_scope["ref"],
         limit=limit,
         observed=_handoff_perspective_lens(executor_target),
+        # Per the routing-language policy the cue table stays English-only;
+        # a caller that read the message and knows the user asked for the
+        # latest -- in any language -- states it here instead.
+        query_intent=query_intent,
     )
     # A pack with no eligible records but a freshness warning still travels.
     # Dropping it here was the silent failure: the handoff went out with no
@@ -2055,6 +2111,7 @@ def confirm_project_memory_record(
     *,
     confirmed_by: str = "operator",
     stale_after_days: int | None = None,
+    stale_after: str = "",
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Reset one approved record's review deadline after a human confirmed it.
@@ -2076,6 +2133,9 @@ def confirm_project_memory_record(
     normalized_id = str(record_id).strip()
     if not _SAFE_REF.match(normalized_id):
         raise ValueError(f"unsafe memory record id: {record_id!r}")
+    stale_after = str(stale_after or "").strip()
+    if stale_after and stale_after_days is not None:
+        raise ValueError("pass at most one of stale_after and stale_after_days")
     days = _validated_day_count(stale_after_days, field="stale_after_days")
     # The actor claim is bounded and redacted exactly like the attention
     # reason: operator prose must never become an unbounded stored field, and
@@ -2085,6 +2145,10 @@ def confirm_project_memory_record(
     actor = _redact(str(confirmed_by or "operator"))[:_MEMORY_ATTENTION_REASON_LIMIT]
     stamp = _attention_stamp(now)
     moment = _parse_utc(stamp) or datetime.now(timezone.utc)
+    # An absolute date confirms a record TO a date -- the shape a
+    # contract-pinned deadline needs, which a day-count fallback would
+    # silently push past the date it was pinned to.
+    absolute_deadline = _absolute_deadline(stale_after, field="stale_after", now=moment)
     with file_lock(paths.memory_index_path, private=True):
         record, error = read_json_object_result(_memory_record_path(paths, normalized_id))
         if error:
@@ -2104,19 +2168,27 @@ def confirm_project_memory_record(
         previous_due = str(staleness.get("review_due_at", "") or "")
         if not previous_due:
             return _refused_confirmation(normalized_id, "no_review_deadline")
-        if days is None:
-            # No explicit cadence: honour the one stored on the record (set
-            # at capture or by an earlier confirm), so `--all-due` cannot
-            # silently pull a record confirmed at 180 days back to the
-            # default -- then the policy's default cadence, then the
-            # built-in 90 days.
-            stored_days = record.get("staleness", {}).get("stale_after_days") if isinstance(record.get("staleness"), dict) else None
-            if isinstance(stored_days, int) and not isinstance(stored_days, bool) and stored_days > 0:
-                days = stored_days
-            else:
-                days = _cadence_value(read_project_memory_policy(paths), "stale_after_days_default") or _REVIEW_DEFAULT_DAYS
+        cadence_reset = False
+        if absolute_deadline:
+            new_deadline = absolute_deadline
+            days = None
+        else:
+            if days is None:
+                # No explicit cadence: honour the one stored on the record
+                # (set at capture or by an earlier confirm), so `--all-due`
+                # cannot silently pull a record confirmed at 180 days back
+                # to the default -- then the policy's default cadence, then
+                # the built-in 90 days. A record with no stored day count
+                # (an absolute-date cadence, or a legacy record) falls back
+                # to a relative cadence; `cadence_reset` says so out loud.
+                stored_days = record.get("staleness", {}).get("stale_after_days") if isinstance(record.get("staleness"), dict) else None
+                if isinstance(stored_days, int) and not isinstance(stored_days, bool) and stored_days > 0:
+                    days = stored_days
+                else:
+                    days = _cadence_value(read_project_memory_policy(paths), "stale_after_days_default") or _REVIEW_DEFAULT_DAYS
+                    cadence_reset = True
+            new_deadline = _days_after(stamp, days)
         revalidation = record.get("revalidation") if isinstance(record.get("revalidation"), dict) else {}
-        new_deadline = _days_after(stamp, days)
         updated_revalidation = {
             **revalidation,
             "deadline": new_deadline,
@@ -2142,6 +2214,7 @@ def confirm_project_memory_record(
         "reason_code": "confirmed",
         "was_stale": state == "stale",
         "shortened": shortened,
+        "cadence_reset": cadence_reset,
         "previous_review_due_at": previous_due,
         "review_due_at": new_deadline,
         "stale_after_days": days,
@@ -2151,6 +2224,12 @@ def confirm_project_memory_record(
         "next_action": (
             f"The record recalls normally until {new_deadline}; confirm, correct, or retire it again by then."
             + (f" Note: this moved the deadline earlier than {previous_due}." if shortened else "")
+            + (
+                " Note: the record had no day-count cadence (an absolute or legacy deadline); this confirm"
+                " re-anchored it to a relative cadence -- pass --stale-after DATE to pin a date instead."
+                if cadence_reset
+                else ""
+            )
         ),
         "claim_boundary": _MEMORY_CONFIRMATION_CLAIM_BOUNDARY,
     }
@@ -3104,6 +3183,8 @@ def _build_project_memory_candidate(
     perspective: dict[str, str] | None = None,
     default_stale_after_days: int | None = None,
     episode_ttl_days: int | None = None,
+    stale_after_at: str = "",
+    expires_at_value: str = "",
 ) -> dict[str, object]:
     normalized_type = _normalize_record_type(record_type)
     scope = _scope_for_project_memory(scope_kind, scope_ref)
@@ -3111,20 +3192,33 @@ def _build_project_memory_candidate(
     content_text = str(content or "")
     safety = _project_memory_safety(summary, content_text, tags=normalized_tags)
     now = utc_now()
-    ttl = _ttl_metadata(ttl_days, record_type=normalized_type, created_at=now, episode_ttl_days=episode_ttl_days)
+    if expires_at_value:
+        # An absolute expiry carries no day count -- the date IS the policy.
+        ttl: dict[str, object] = {"ttl_days": None, "expires_at": expires_at_value}
+    else:
+        ttl = _ttl_metadata(ttl_days, record_type=normalized_type, created_at=now, episode_ttl_days=episode_ttl_days)
     # `cadence_source` records whether the captor chose the cadence or the
     # default supplied it -- the one fact an approval-time re-class needs to
-    # honour an explicit deadline without freezing a defaulted one.
-    staleness = {
-        **_staleness_metadata(
-            stale_after_days,
-            record_type=normalized_type,
-            retention_class=retention_class,
-            created_at=now,
-            default_days=default_stale_after_days,
-        ),
-        "cadence_source": "explicit" if stale_after_days is not None else "default",
-    }
+    # honour an explicit deadline without freezing a defaulted one. An
+    # absolute review date is explicit by definition.
+    if stale_after_at:
+        staleness: dict[str, object] = {
+            "stale_after_days": None,
+            "stale_after": stale_after_at,
+            "review_due_at": stale_after_at,
+            "cadence_source": "explicit",
+        }
+    else:
+        staleness = {
+            **_staleness_metadata(
+                stale_after_days,
+                record_type=normalized_type,
+                retention_class=retention_class,
+                created_at=now,
+                default_days=default_stale_after_days,
+            ),
+            "cadence_source": "explicit" if stale_after_days is not None else "default",
+        }
     candidate_id = "cand_" + os.urandom(8).hex()
     status = "blocked_review_required" if safety["status"] == "blocked" else "pending_review"
     # Digest the ref exactly as it will be stored, not as it was passed:
@@ -3203,11 +3297,18 @@ def _record_from_candidate(
     # Approval must not silently extend the deadline shown to the reviewer.
     # `utc_now` is second-truncated, so deriving it again from `approved_at`
     # made this record expire one second later whenever review crossed a clock
-    # boundary. The candidate's stored deadline is the authoritative value.
-    # An overridden class skips the carry-over on purpose: that deadline was
-    # minted for the class the reviewer just rejected.
+    # boundary. The candidate's stored deadline is the authoritative value --
+    # including an absolute `expires_at` captured without a day count, which
+    # `build_retention` cannot re-derive (there is no ttl_days to hand it) and
+    # which would otherwise vanish at approval. An overridden class skips the
+    # carry-over on purpose: that deadline was minted for the class the
+    # reviewer just rejected.
+    # A durable record must never gain an expiry through the carry-over: the
+    # class exists to say "this does not expire", the workflow gate refuses
+    # durable+ttl at capture, and a legacy candidate that slipped one in is
+    # exactly the record this guard must not resurrect a deadline onto.
     candidate_ttl = candidate.get("ttl")
-    if override is None and "expires_at" in retention and isinstance(candidate_ttl, dict) and candidate_ttl.get("expires_at"):
+    if override is None and requested_class != "durable" and isinstance(candidate_ttl, dict) and candidate_ttl.get("expires_at"):
         retention["expires_at"] = str(candidate_ttl["expires_at"])
     record_id = "mem_" + os.urandom(8).hex()
     scope = _normalize_scope(candidate.get("scope", _scope("project", "default")))
@@ -3215,7 +3316,14 @@ def _record_from_candidate(
     staleness_days = _candidate_stale_after_days(candidate)
     if override is not None:
         candidate_staleness = candidate.get("staleness") if isinstance(candidate.get("staleness"), dict) else {}
-        explicit_cadence = str(candidate_staleness.get("cadence_source", "") or "") == "explicit" and staleness_days is not None
+        # Explicit is explicit in either shape: a day count (staleness_days)
+        # or an absolute review date, which mints no day count but does mint
+        # a revalidation deadline. Requiring the day count made the absolute
+        # form strictly weaker -- a re-class silently dropped a date the
+        # reviewer saw on the card.
+        explicit_cadence = str(candidate_staleness.get("cadence_source", "") or "") == "explicit" and (
+            staleness_days is not None or bool(_candidate_revalidation(candidate))
+        )
         if explicit_cadence:
             # A cadence the captor explicitly chose survives the re-class:
             # `_staleness_metadata` is explicit that durable makes the
@@ -3760,14 +3868,24 @@ def _record_staleness(
     # host-local and move this window by up to +/-14 hours.
     expiry = _parse_utc_naive_as_utc(expires_at)
     expiry_window = due_soon_days if due_soon_days is not None else _EXPIRES_SOON_DAYS
+    # A notice window longer than half the record's own life is not advance
+    # notice, it is a permanent banner: a 7-day volatile record would warn
+    # from the moment it was approved. Scale the window down to half the
+    # record's lifespan (never below one day) so short-lived records warn
+    # near the end, which is when the warning means something. The span
+    # comes from ttl_days when there is one, else from the distance between
+    # creation and the absolute expiry date -- an absolute two-day deadline
+    # must not warn from birth either.
     ttl_days_value = ttl.get("ttl_days")
+    span_days: int | None = None
     if isinstance(ttl_days_value, int) and not isinstance(ttl_days_value, bool) and ttl_days_value > 0:
-        # A notice window longer than half the record's own life is not
-        # advance notice, it is a permanent banner: a 7-day volatile record
-        # would warn from the moment it was approved. Scale the window down
-        # to half the TTL (never below one day) so short-lived records warn
-        # near the end, which is when the warning means something.
-        expiry_window = min(expiry_window, max(ttl_days_value // 2, 1))
+        span_days = ttl_days_value
+    elif expiry is not None:
+        created = _parse_utc_naive_as_utc(str(record.get("created_at", "") or ""))
+        if created is not None and expiry > created:
+            span_days = max(int((expiry - created).total_seconds() // 86400), 1)
+    if span_days is not None:
+        expiry_window = min(expiry_window, max(span_days // 2, 1))
     if expiry and expiry - now <= timedelta(days=expiry_window):
         return {"state": "fresh", "reason": "expires_soon", **fields}
     if deadline and deadline - now <= timedelta(days=due_soon_days if due_soon_days is not None else _REVIEW_DUE_SOON_DAYS):
@@ -3857,6 +3975,35 @@ def _project_memory_safety(summary: str, content: str, *, tags: list[str]) -> di
         "review_reasons": [] if status == "safe" else [status],
         "protected_inputs": ["credentials", "raw_logs", "full_transcripts", "temporary_task_progress"],
     }
+
+
+# Relative-time prose in a stored summary is a fact with a hidden expiry:
+# "계약 만료는 3주 뒤" is true for exactly one day and then lies, and nothing in
+# the store can tell, because the phrase's anchor -- the moment of writing --
+# is not part of the record's content. This is a content-quality lint on what
+# the store accepts, not a language trigger table: matches only force review
+# (never block, never auto-fix), so a false positive costs one review click
+# and a false negative is the status quo. Patterns are deliberately tight --
+# bare "후/전" ("리뷰 후 머지") never match; a number-plus-unit or an
+# unambiguous deictic word must be present.
+_RELATIVE_TIME_PATTERN = re.compile(
+    r"(?<!\d)\d{1,4}\s*(?:일|주|개월|달|년|시간|분)\s*(?:뒤|후|이내|안에|내로)"
+    # Deictic words may carry an ordinary particle (내일부터, 오늘은) -- the
+    # idiomatic majority -- but a following non-particle hangul syllable
+    # (오늘의집, 내일정) means a compound, not a time reference.
+    r"|(?<![가-힣])(?:그저께|어제|오늘|내일|모레|다음\s*주|다음\s*달|이번\s*주)(?:은|는|이|가|에|에는|부터|까지|도|만)?(?![가-힣])"
+    r"|\b(?:yesterday|today|tomorrow|next\s+(?:week|month|year)|in\s+\d{1,4}\s+(?:days?|weeks?|months?|years?|hours?|minutes?))\b"
+    r"|(?<!\d)\d{1,4}\s*(?:日|週間|ヶ月|か月|年)\s*(?:後|以内)"
+    r"|(?<!\d)\d{1,4}\s*(?:天|周|個月|个月|年)\s*(?:后|後|以内|以內|内|內)"
+    r"|明日|昨日|来週|来月|明天|昨天|下周(?!期)|下個月|下个月",
+    re.IGNORECASE,
+)
+
+
+def _relative_time_phrase(value: str) -> str:
+    """The first relative-time phrase in stored prose, or ""."""
+    match = _RELATIVE_TIME_PATTERN.search(value)
+    return match.group(0) if match else ""
 
 
 def _looks_like_raw_log(value: str) -> bool:
@@ -3977,6 +4124,41 @@ def _staleness_metadata(
         "stale_after": deadline,
         "review_due_at": deadline,
     }
+
+
+def _absolute_deadline(value: str, *, field: str, now: datetime | None = None) -> str:
+    """Normalize an absolute deadline: a future UTC instant, fail-closed.
+
+    A bare date (`YYYY-MM-DD`) means the START of that UTC day -- the
+    conservative reading: a record whose deadline is "the 18th" goes
+    review-due or expires the moment the 18th begins, never quietly late on
+    the 18th's last second. A full ISO timestamp is taken exactly (naive
+    reads as UTC, matching every other deadline in this module). The past is
+    refused rather than stored: a deadline that has already happened is a
+    statement for `correct` or `retire`, not for capture.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    moment = now if now is not None else datetime.now(timezone.utc)
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        try:
+            parsed: datetime | None = datetime(int(raw[:4]), int(raw[5:7]), int(raw[8:10]), tzinfo=timezone.utc)
+        except ValueError:
+            parsed = None
+    else:
+        parsed = _parse_utc_naive_as_utc(raw)
+    if parsed is None:
+        raise ValueError(f"{field} must be YYYY-MM-DD or an ISO timestamp; got {value!r}")
+    # Truncate BEFORE the future check: the stored value is the truncated
+    # one, and a sub-second future instant would otherwise be accepted and
+    # then stored already past.
+    parsed = parsed.replace(microsecond=0)
+    if parsed <= moment:
+        raise ValueError(f"{field} must be in the future; got {value!r}")
+    if parsed - moment > timedelta(days=MAX_RETENTION_DAYS):
+        raise ValueError(f"{field} must be within {MAX_RETENTION_DAYS} days; got {value!r}")
+    return parsed.isoformat().replace("+00:00", "Z")
 
 
 def _days_after(created_at: str, days: int | None) -> str:

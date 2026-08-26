@@ -106,6 +106,8 @@ def cmd_memory_capture(args: argparse.Namespace) -> int:
             tags=args.tag or [],
             ttl_days=args.ttl_days,
             stale_after_days=args.stale_after_days,
+            stale_after=args.stale_after,
+            expires_at=args.expires_at,
             retention_class=args.retention_class,
             derived_from=args.derived_from or [],
             observer=args.observer,
@@ -257,6 +259,8 @@ def cmd_memory_confirm(args: argparse.Namespace) -> int:
         raise OmhError("pass exactly one of <record-id> or --all-due")
     try:
         if args.all_due:
+            if args.stale_after:
+                raise OmhError("--stale-after pins one record to one date; --all-due takes --stale-after-days")
             payload = confirm_due_project_memory_records(
                 _paths(args),
                 confirmed_by=args.confirmed_by,
@@ -268,6 +272,7 @@ def cmd_memory_confirm(args: argparse.Namespace) -> int:
                 args.record_id,
                 confirmed_by=args.confirmed_by,
                 stale_after_days=args.stale_after_days,
+                stale_after=args.stale_after,
             )
     except (OSError, ValueError) as exc:
         raise OmhError(str(exc)) from exc

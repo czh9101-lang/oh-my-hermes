@@ -34,7 +34,10 @@ class MemoryParserTests(unittest.TestCase):
             (["memory", "recall", "query", "--observer", "operator", "--observed", "codex"], "cmd_memory_recall"),
             (["memory", "confirm", "record-one"], "cmd_memory_confirm"),
             (["memory", "confirm", "--all-due", "--stale-after-days", "120"], "cmd_memory_confirm"),
+            (["memory", "confirm", "record-one", "--stale-after", "2027-01-15"], "cmd_memory_confirm"),
             (["memory", "approve", "cand-one", "--retention-class", "durable"], "cmd_memory_approve"),
+            (["memory", "capture", "summary", "--stale-after", "2027-01-15"], "cmd_memory_capture"),
+            (["memory", "capture", "summary", "--expires-at", "2027-01-15T09:00:00Z"], "cmd_memory_capture"),
             (["memory", "demote"], "cmd_memory_demote"),
             (["memory", "demote", "--file", "USER.md", "--max", "3", "--stage"], "cmd_memory_demote"),
         )

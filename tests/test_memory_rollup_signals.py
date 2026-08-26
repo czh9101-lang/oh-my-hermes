@@ -283,6 +283,20 @@ class RecallSignalTests(unittest.TestCase):
         for query in ("what changed yesterday", "most recent deploy failure", "deploys from last week"):
             self.assertEqual(_recall_query_intent(query), "temporal", query)
 
+    def test_handoff_packs_accept_caller_stated_intent(self) -> None:
+        # The cue table stays English-only by policy; the handoff surface is
+        # where a caller that read the message -- in any language -- states
+        # the intent instead. Auto stays default for Korean on purpose.
+        from omh.workflows.memory import memory_recall_pack_for_handoff
+
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            _approve_capture(paths, "배포는 금요일에 하지 않는다")
+            stated = memory_recall_pack_for_handoff(paths, "배포 결정", executor_target="codex", query_intent="temporal")
+            self.assertEqual(stated["query_intent"], "temporal")
+            auto = memory_recall_pack_for_handoff(paths, "배포 결정", executor_target="codex")
+            self.assertEqual(auto["query_intent"], "default")
+
     def test_validator_rejects_malformed_query_intent(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
