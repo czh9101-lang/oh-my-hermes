@@ -39,6 +39,20 @@ from typing import Final
 
 EVIDENCE_LABELS_SCHEMA_VERSION: Final[str] = "omh_evidence_labels/v1"
 
+# Orthogonal skill-load probe labels. These describe protocol capability and
+# inventory comparison; they never inherit routing or child-success wording.
+SKILL_LOAD_PROBE_LABELS: Final[dict[str, str]] = {
+    "observed": "machine inventory observed",
+    "unsupported": "machine inventory unsupported",
+    "probe_error": "machine inventory probe failed",
+}
+SKILL_LOAD_STATE_LABELS: Final[dict[str, str]] = {
+    "all_loaded": "all expected skills loaded",
+    "partially_loaded": "some expected skills missing",
+    "none_loaded": "no expected skills loaded",
+    "not_applicable": "no skills expected",
+}
+
 # The separator between the two axes. U+00B7 rather than an em dash because the
 # status board already joins its own fields with " — "; an em dash here would
 # make a six-field row read as seven. Already shipping elsewhere in this repo

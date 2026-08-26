@@ -146,6 +146,10 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
         "operator-only, explicitly confirmed `ask_before_dispatch` seam for one bounded local "
         "`hermes --oneshot --model` child; suppresses recursion and cleans its process group."
     ),
+    "src/coding/skill_load_observation.py": (
+        "operator-only `omh coding hermes-child skill-load-probe --confirm-dispatch`; runs one "
+        "bounded local machine-inventory command, never a model or skill body."
+    ),
     "src/coding/_hermes_child_process.py": (
         "private lifecycle helper for the explicitly confirmed Hermes child seam; relays signals, "
         "escalates SIGTERM to SIGKILL, and verifies that the child process group is absent."
