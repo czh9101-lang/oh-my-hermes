@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 
+from .domain_signals import RELEVANCE_POLICY, clarification_relevance_skills
 from .input_language import SUPPORT_MODEL_SELECTION_REQUIRED
 from ..skills.catalog import routable_definitions
 from ..workflows.hermes_planning import is_coding_shaped_task
@@ -135,6 +136,42 @@ def _coding_lane() -> list[dict[str, object]]:
     return lane[:MAX_CANDIDATES]
 
 
+def _domain_candidate(skill: str) -> dict[str, object] | None:
+    definition = next((item for item in routable_definitions() if item.name == skill), None)
+    if definition is None:
+        return None
+    return {
+        "skill": definition.name,
+        "description": definition.description,
+        "reasoning_demand": definition.reasoning_demand,
+        "why_it_matched": "The request and candidate share a canonical specialist-domain signal.",
+        "matched": [f"domain:{definition.name}"],
+        "score": 0,
+        "confidence": "low",
+        "next_action": None,
+        "evidence_boundary": (
+            "A relevant candidate is routing input only; nothing has been planned, dispatched, "
+            "implemented, or verified."
+        ),
+    }
+
+
+def _relevant_candidates(
+    candidates: list[dict[str, object]],
+    message: str,
+) -> list[dict[str, object]]:
+    relevant_skills = clarification_relevance_skills(message)
+    if relevant_skills is None:
+        return candidates
+    by_skill = {str(candidate.get("skill") or ""): candidate for candidate in candidates}
+    relevant: list[dict[str, object]] = []
+    for skill in relevant_skills:
+        candidate = by_skill.get(skill) or _domain_candidate(skill)
+        if candidate is not None:
+            relevant.append(candidate)
+    return relevant[:MAX_CANDIDATES]
+
+
 def _candidate(recommendation: dict[str, object]) -> dict[str, object]:
     return {
         "skill": recommendation.get("skill"),
@@ -184,6 +221,8 @@ def candidate_handoff_digest(candidates: list[dict[str, object]], reasons: tuple
 def build_candidate_handoff(route: dict[str, object], message: str = "") -> dict[str, object] | None:
     """Build the model-selection handoff, or None when the route is decidable."""
     reasons = candidate_handoff_reasons(route)
+    if not reasons and clarification_relevance_skills(message) is not None:
+        reasons = ("domain_relevance_required",)
     if not reasons:
         return None
 
@@ -194,8 +233,12 @@ def build_candidate_handoff(route: dict[str, object], message: str = "") -> dict
         candidates = _coding_lane()
         reasons = (*reasons, "implementation_shaped_request")
 
+    candidates = _relevant_candidates(candidates, message)
+    selection_mode = "candidate_selection" if candidates else "open_clarification"
     payload: dict[str, object] = {
         "schema_version": CANDIDATE_HANDOFF_SCHEMA_VERSION,
+        "selection_mode": selection_mode,
+        "relevance_policy": RELEVANCE_POLICY,
         "reasons": list(reasons),
         "candidates": candidates,
         "candidate_count": len(candidates),
@@ -215,11 +258,12 @@ def build_candidate_handoff(route: dict[str, object], message: str = "") -> dict
             "Which of these workflows fits the request? Choose one, say why in one line, "
             "and carry its evidence boundary forward. If none fit, ask one clarifying question."
         )
+    elif clarification_relevance_skills(message) is not None:
+        payload["question"] = (
+            "No relevant candidate shares a canonical domain signal with this request. "
+            "Ask what outcome the user wants, or present the workflow picker without naming a skill."
+        )
     else:
-        # Scoring found nothing at all, which is the normal outcome for a script
-        # the trigger tables do not cover. Point at the installed shortlist rather
-        # than inventing candidates; `references/catalog-index.md` carries one line
-        # per skill and is exactly what meta-router already tells the model to read.
         payload["question"] = (
             "No deterministic candidate matched this request. Shortlist from the installed "
             "`references/catalog-index.md`, confirm with a bounded `omh recommend` query, and "

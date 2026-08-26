@@ -21,6 +21,7 @@ from .candidate_handoff import build_candidate_handoff
 from .decision_contract import build_route_decision_contract
 from .domain_signals import (
     DomainRouteSignal,
+    clarification_relevance_skills,
     specialist_domain_operator_override,
     specialist_domain_route_signal,
 )
@@ -1397,11 +1398,57 @@ def _enriched_route(
     # Attach the input script here rather than at each ChatRouteDecision site so
     # every route -- fast path, catalog path, and full scoring -- reports it.
     route["input_language"] = routing_input_language(message)
-    # An undecidable route carries its shortlist forward for model selection
-    # instead of stopping at a picker or a bare fallback.
+    relevance_skills = clarification_relevance_skills(message)
+    if (
+        route.get("action") == "dispatch"
+        and relevance_skills is not None
+        and specialist_domain_route_signal(message) is None
+    ):
+        route.update(
+            {
+                "action": "clarify",
+                "selected_skill": _ROUTER_SKILL,
+                "selected_harness": primary_harness_for_skill(_ROUTER_SKILL),
+                "confidence": "low",
+                "ambiguous": False,
+                "reason": (
+                    "Specialist vocabulary is relevant for clarification only; "
+                    "it is not a direct-dispatch signal."
+                ),
+            }
+        )
+    # An undecidable route carries only domain-relevant candidates forward for
+    # model selection instead of naming a scorer collision.
     candidate_handoff = build_candidate_handoff(route, message)
     if candidate_handoff:
         route["candidate_handoff"] = candidate_handoff
+    if candidate_handoff and relevance_skills is not None:
+        candidate_rows = candidate_handoff.get("candidates")
+        candidates = (
+            [candidate for candidate in candidate_rows if isinstance(candidate, dict)]
+            if isinstance(candidate_rows, list)
+            else []
+        )
+        route["recommendations"] = [dict(candidate) for candidate in candidates]
+        if candidates:
+            candidate_skill = str(candidates[0].get("skill") or "")
+            route["candidate_skill"] = candidate_skill
+            route["candidate_harness"] = primary_harness_for_skill(candidate_skill)
+            route["clarification"] = f"Ask whether to use `{candidate_skill}` for the requested outcome."
+            route["routing_prompt"] = (
+                "Use the `oh-my-hermes` router before dispatching to the relevant candidate.\n\n"
+                f"Routing reason: {route.get('reason', '')}"
+            )
+        else:
+            route["candidate_skill"] = ""
+            route["candidate_harness"] = ""
+            route["clarification"] = (
+                "Ask what outcome the user wants, or present the workflow picker without naming a skill."
+            )
+            route["routing_prompt"] = (
+                "Use the `oh-my-hermes` router and ask one open clarification question without naming a skill.\n\n"
+                f"Routing reason: {route.get('reason', '')}"
+            )
     route["route_decision"] = build_route_decision_contract(route)
     return _apply_skill_governance(route, skill_policy)
 
@@ -1969,6 +2016,9 @@ def _copy_public_route_payload(payload: dict[str, object]) -> dict[str, object]:
     learning_candidate_card = route.get("learning_candidate_card")
     if isinstance(learning_candidate_card, dict):
         route["learning_candidate_card"] = _clone_jsonish(learning_candidate_card)
+    candidate_handoff = route.get("candidate_handoff")
+    if isinstance(candidate_handoff, dict):
+        route["candidate_handoff"] = _clone_jsonish(candidate_handoff)
     return route
 
 

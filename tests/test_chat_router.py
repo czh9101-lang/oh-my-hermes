@@ -21,6 +21,7 @@ from omh.routing.policy import (
     explicit_skill_invocation,
 )
 from omh.routing import chat as chat_router_impl
+from omh.routing.candidate_handoff import build_candidate_handoff
 from omh.routing.domain_signals import specialist_domain_route_signal
 from omh.routing.localization import normalized_phrase
 from omh.routing.recommend import recommend_skills
@@ -4332,6 +4333,113 @@ selected_workflow=ultraprocess
                 decision = route_chat_message(message, source="discord")
                 self.assertEqual(decision["selected_skill"], expected_skill)
                 self.assertEqual(decision["action"], "fallback" if expected_skill == "oh-my-hermes" else "dispatch")
+
+    def test_o013_unrelated_clarification_candidates_are_forbidden(self) -> None:
+        cases = (
+            ("DSO revenue cutoff", "visual-qa"),
+            ("ASC 606 model", "model-setup"),
+            ("indemnity liability cap", "model-setup"),
+            ("GDPR Article 35 DPIA", "agent-board"),
+            ("MEDDPICC", "content-operator"),
+            ("four-fifths rule", "rules-distill"),
+            ("Bloom backward design", "curriculum-design"),
+            ("burn multiple NRR", "agent-board"),
+        )
+
+        for message, forbidden_skill in cases:
+            with self.subTest(message=message, forbidden_skill=forbidden_skill):
+                handoff = build_candidate_handoff(
+                    {
+                        "action": "clarify",
+                        "confidence": "low",
+                        "recommendations": [
+                            {
+                                "skill": forbidden_skill,
+                                "description": "Unrelated scored candidate",
+                                "score": 5,
+                                "confidence": "low",
+                            }
+                        ],
+                    },
+                    message,
+                )
+
+                assert handoff is not None
+                self.assertIn(
+                    handoff["selection_mode"],
+                    {"candidate_selection", "open_clarification"},
+                )
+                self.assertEqual(handoff["relevance_policy"], "shared_domain_signal/v1")
+                self.assertNotIn(
+                    forbidden_skill,
+                    [candidate["skill"] for candidate in handoff["candidates"]],
+                )
+
+    def test_shared_domain_signals_preserve_relevant_clarification_candidates(self) -> None:
+        cases = (
+            ("DSO revenue cutoff", "finance-analysis"),
+            ("GDPR Article 35 DPIA", "legal-compliance-review"),
+            ("MEDDPICC qualification", "sales-development"),
+        )
+
+        for message, skill in cases:
+            with self.subTest(message=message, skill=skill):
+                handoff = build_candidate_handoff(
+                    {
+                        "action": "clarify",
+                        "confidence": "low",
+                        "recommendations": [
+                            {
+                                "skill": skill,
+                                "description": "Canonical domain candidate",
+                                "score": 5,
+                                "confidence": "low",
+                            }
+                        ],
+                    },
+                    message,
+                )
+
+                assert handoff is not None
+                self.assertEqual(handoff["selection_mode"], "candidate_selection")
+                self.assertEqual(handoff["relevance_policy"], "shared_domain_signal/v1")
+                self.assertEqual([candidate["skill"] for candidate in handoff["candidates"]], [skill])
+
+    def test_missing_or_malformed_specialist_candidates_fail_open_without_a_name(self) -> None:
+        routes = (
+            {"action": "clarify", "confidence": "low", "recommendations": []},
+            {"action": "clarify", "confidence": "low", "recommendations": [{"score": 5}]},
+        )
+
+        for route in routes:
+            with self.subTest(route=route):
+                handoff = build_candidate_handoff(route, "four-fifths rule")
+
+                assert handoff is not None
+                self.assertEqual(handoff["selection_mode"], "open_clarification")
+                self.assertEqual(handoff["candidate_count"], 0)
+                self.assertEqual(handoff["candidates"], [])
+                self.assertNotIn("`", handoff["question"])
+
+    def test_relevance_only_vocabulary_cannot_direct_dispatch_and_unknown_rule_stays_open(self) -> None:
+        cases = (
+            "ASC 606 model",
+            "GDPR Article 35 DPIA",
+            "MEDDPICC qualification",
+            "four-fifths rule",
+        )
+
+        for message in cases:
+            with self.subTest(message=message):
+                decision = route_chat_message(message, source="discord")
+                handoff = decision["candidate_handoff"]
+
+                self.assertNotEqual(decision["action"], "dispatch")
+                self.assertEqual(handoff["relevance_policy"], "shared_domain_signal/v1")
+                if message == "four-fifths rule":
+                    self.assertEqual(handoff["selection_mode"], "open_clarification")
+                    self.assertEqual(handoff["candidates"], [])
+                    self.assertNotIn("rules-distill", decision["clarification"])
 
     def test_specialist_domain_action_requests_keep_operator_precedence(self) -> None:
         self.assertFalse(hasattr(specialist_domain_route_signal, "cache_info"))
