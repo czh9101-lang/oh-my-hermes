@@ -11,6 +11,7 @@ from _local_package import load_local_package
 load_local_package()
 
 from omh.coding import skill_load_observation as observation  # noqa: E402
+from omh.coding import skill_load_process  # noqa: E402
 from omh.coding._hermes_child_process import (  # noqa: E402
     process_absent,
     terminate_process_group,
@@ -45,7 +46,7 @@ class SkillLoadProcessCleanupTests(unittest.TestCase):
 
             # When: setup raises synchronously after the child has been created.
             try:
-                with patch.object(observation, "start_pipe_drainers", fail_setup):
+                with patch.object(skill_load_process, "start_pipe_drainers", fail_setup):
                     payload = observation.probe_skill_load(request, confirmed=True)
                 self.assertTrue(setup_entered.wait(1.0))
 
