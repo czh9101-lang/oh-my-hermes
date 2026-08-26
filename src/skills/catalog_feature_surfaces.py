@@ -1883,15 +1883,13 @@ _FEATURE_SURFACE_SKILLS = (
         good_prompt="skill-health show the OMH skill portfolio dashboard with stale surfaces, failure patterns, pending amendments, and top improvement actions.",
         bad_prompt="skill-health claim every skill is working and patch the failures automatically without observed signals or review.",
         expected_outputs=(
-            "skill_portfolio_health_dashboard/v1",
-            "skill_failure_pattern_clusters/v1 when observed",
-            "pending_skill_amendment_review/v1",
-            "skill_health_action_plan/v1",
+            "catalog, generated, reference, harness, and capability-surface status",
+            "observed failure signals, or an explicit statement that none were supplied",
+            "pending amendment review slots and top safe actions with owner lane and verification path",
         ),
         artifact_expectations=(
-            "skill_portfolio_health_dashboard/v1 with catalog, generated, reference, harness, and capability-surface status",
-            "skill_failure_pattern_clusters/v1 only from supplied traces, tests, reviews, missed routes, or wrapper observations",
-            "skill_health_action_plan/v1 with top actions, owner lane, verification path, and non-mutation boundary",
+            "skill-health/v1 metadata-only wrapper card recording surface status, observed-only failure signals, "
+            "pending amendments, and the non-mutation boundary",
         ),
         final_checklist=(
             "Dashboard scope, source surfaces, stale/duplicate criteria, and stop condition are explicit.",

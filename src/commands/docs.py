@@ -143,6 +143,22 @@ def cmd_docs_skill_context_cost(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_docs_skill_lint(args: argparse.Namespace) -> int:
+    """Return one structural pass/fail verdict for every tracked skill.
+
+    Exit codes are the contract: 0 pass, 1 violations, 2 invocation or internal
+    error. The unsupported-format branch raises `OmhError` so it exits 2 through
+    the same path every other invocation error uses.
+    """
+    from ..quality.skill_governance import skill_structure_lint_report
+
+    if args.format != "json":
+        raise OmhError(f"unsupported skill-lint format: {args.format}")
+    report = skill_structure_lint_report()
+    _print_json(report)
+    return 0 if report["ok"] else 1
+
+
 def _default_capability_families_path() -> Path:
     from ..plugin_bundle.omh import tools as plugin_tools
 
@@ -253,6 +269,22 @@ def _add_docs_commands(sub) -> None:
         help="Print the machine-readable omh_skill_context_cost/v1 payload.",
     )
     docs_skill_context_cost.set_defaults(func=cmd_docs_skill_context_cost)
+
+    docs_skill_lint = docs_sub.add_parser(
+        "skill-lint",
+        help=(
+            "Check every tracked skill for structure only: parsed frontmatter, machine-consumed "
+            "fields, resolvable harness, generated parity, trigger format, executable consumers, "
+            "and the context budget. Offline and pass/fail; never scores, ranks, or reviews wording."
+        ),
+    )
+    docs_skill_lint.add_argument(
+        "--format",
+        default="json",
+        choices=("json",),
+        help="Output format for the omh_skill_structure_lint/v1 report.",
+    )
+    docs_skill_lint.set_defaults(func=cmd_docs_skill_lint)
 
 
 def _add_harness_commands(sub) -> None:

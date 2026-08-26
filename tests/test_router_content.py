@@ -606,7 +606,7 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("skill_scout_recommendation/v1", recommend_module._SKILL_POLICIES["skill-scout"].wrapper_guidance)
         self.assertIn("external source trust", recommend_module._SKILL_POLICIES["skill-scout"].evidence_boundary)
         self.assertEqual(recommend_module._SKILL_POLICIES["skill-health"].next_action, "prepare_skill_health")
-        self.assertIn("skill_portfolio_health_dashboard/v1", recommend_module._SKILL_POLICIES["skill-health"].wrapper_guidance)
+        self.assertIn("skill health card", recommend_module._SKILL_POLICIES["skill-health"].wrapper_guidance)
         self.assertIn("future routing is fixed", recommend_module._SKILL_POLICIES["skill-health"].evidence_boundary)
         self.assertEqual(recommend_module._SKILL_POLICIES["agent-debug"].next_action, "prepare_agent_debug")
         self.assertIn("agent_debug_report/v1", recommend_module._SKILL_POLICIES["agent-debug"].wrapper_guidance)
