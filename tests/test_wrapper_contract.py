@@ -3514,7 +3514,7 @@ class WrapperContractTests(unittest.TestCase):
         self.assertEqual(payload["next_action"], "prepare_visual_qa")
         self.assertEqual(response["kind"], "visual_qa")
         self.assertEqual(state["artifact_schema"], "web_visual_qa_prepared_preview/v1")
-        self.assertEqual(state["package_schema"], "web_visual_qa_package/v1")
+        self.assertEqual(state["package_schema"], "web_visual_qa_package/v2")
         self.assertEqual(state["visual_qa_plan_schema"], "visual_qa_plan/v1")
         self.assertEqual(state["capture_model"], "web_visual_qa_package.captures[]")
         self.assertEqual(state["criteria_result_model"], "web_visual_qa_package.criteria_results[]")

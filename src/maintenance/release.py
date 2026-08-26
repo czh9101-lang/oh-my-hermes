@@ -192,7 +192,10 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # HUD-panel wording, and the rewrite-on-evidence-gap step) and the bounded
 # in-plan research stage rule with its dossier-recording obligation, minus
 # one subsumed recovery note (net +809 chars); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 715255
+# 715255 -> 715864: visual-qa replaced timestamp freshness prose with exact
+# source-lineage and required-viewport contracts (+609 chars across the
+# generated skill body); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 715864
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
