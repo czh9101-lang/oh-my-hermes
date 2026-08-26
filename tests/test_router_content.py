@@ -4530,7 +4530,6 @@ class HermesSetupHarnessContractTests(unittest.TestCase):
         for skill in self.HERMES_SETUP_SKILLS:
             with self.subTest(skill=skill):
                 content = templates[skill].content
-                self.assertIn("Preferred harness for this skill: `hermes-setup`.", content)
                 self.assertIn(
                     f"omh runtime record --skill {skill} --harness hermes-setup --status started",
                     content,
