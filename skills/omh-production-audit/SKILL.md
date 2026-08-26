@@ -106,7 +106,7 @@ Artifact contracts:
 
 This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
 
-- contract_id: `readiness_matrix/v1`; enforcement_level: `executable_validated`; consumer_id: `validate_readiness_matrix`
+- contract_id: `readiness_matrix/v1`; enforcement_level: `executable_validated`; consumer_id: `parse_readiness_matrix`
 
 Safety rules:
 

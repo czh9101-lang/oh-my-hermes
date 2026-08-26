@@ -5,6 +5,7 @@ import hmac
 import json
 import math
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final, NoReturn, cast
 
@@ -49,6 +50,43 @@ READINESS_CANONICAL_JSON_MAX_DEPTH: Final = 16
 READINESS_CANONICAL_JSON_MAX_NODES: Final = 2_048
 READINESS_CANONICAL_JSON_MAX_BYTES: Final = 65_536
 _CANONICAL_JSON_REJECTED: Final = object()
+_READINESS_CAPTURE_ERRORS: Final = (
+    "readiness_matrix signed data is not safely bounded canonical JSON",
+    "external readiness evidence is unauthenticated",
+    "verdict must match derived verdict HOLD",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedReadinessArtifact:
+    """Immutable authority for one accepted canonical readiness artifact."""
+
+    canonical_bytes: bytes
+    verdict: str
+
+    def detached_copy(self) -> dict[str, Any]:
+        value = json.loads(self.canonical_bytes)
+        if type(value) is not dict:
+            raise RuntimeError("validated readiness artifact is not an object")
+        return cast(dict[str, Any], value)
+
+
+@dataclass(frozen=True, slots=True)
+class ReadinessValidationResult:
+    """Typed outcome of capturing and validating caller-owned readiness data."""
+
+    errors: tuple[str, ...]
+    verdict: str
+    artifact: ValidatedReadinessArtifact | None
+
+    @property
+    def accepted(self) -> bool:
+        return self.artifact is not None and not self.errors
+
+    def require_artifact(self) -> ValidatedReadinessArtifact:
+        if self.artifact is None:
+            raise ValueError("; ".join(self.errors))
+        return self.artifact
 
 
 class ReadinessAuthenticationError(Exception):
@@ -314,26 +352,39 @@ def build_readiness_matrix(
         ],
         "rollback_contract": dict(READINESS_MATRIX_ROLLBACK_CONTRACT),
     }
-    errors = validate_readiness_matrix(record, trusted_context=trusted_context)
+    result = parse_readiness_matrix(record, trusted_context=trusted_context)
+    return result.require_artifact().detached_copy()
+
+
+def parse_readiness_matrix(
+    value: object, *, trusted_context: ReadinessTrustContext | None = None
+) -> ReadinessValidationResult:
+    """Capture caller data twice and validate only one matching detached snapshot."""
+    if not isinstance(value, dict):
+        return ReadinessValidationResult(("readiness_matrix must be an object",), "HOLD", None)
+    first = _canonical_json_snapshot(value)
+    second = _canonical_json_snapshot(value)
+    if first is None or second is None or first[1] != second[1]:
+        return ReadinessValidationResult(_READINESS_CAPTURE_ERRORS, "HOLD", None)
+    record = cast(dict[str, Any], first[0])
+    errors, derived_verdict = _validate_readiness_snapshot(record, trusted_context=trusted_context)
     if errors:
-        raise ValueError("; ".join(errors))
-    return record
+        return ReadinessValidationResult(tuple(errors), derived_verdict, None)
+    artifact = ValidatedReadinessArtifact(first[1], derived_verdict)
+    return ReadinessValidationResult((), derived_verdict, artifact)
 
 
 def validate_readiness_matrix(
     record: dict[str, Any], *, trusted_context: ReadinessTrustContext | None = None
 ) -> list[str]:
+    """Validate a captured artifact; no errors do not promise caller post-return stability."""
+    return list(parse_readiness_matrix(record, trusted_context=trusted_context).errors)
+
+
+def _validate_readiness_snapshot(
+    record: dict[str, Any], *, trusted_context: ReadinessTrustContext | None = None
+) -> tuple[list[str], str]:
     errors: list[str] = []
-    if not isinstance(record, dict):
-        return ["readiness_matrix must be an object"]
-    snapshot = _canonical_json_snapshot(record)
-    if snapshot is None:
-        return [
-            "readiness_matrix signed data is not safely bounded canonical JSON",
-            "external readiness evidence is unauthenticated",
-            "verdict must match derived verdict HOLD",
-        ]
-    record = snapshot[0]
     if record.get("schema_version") != READINESS_MATRIX_SCHEMA_VERSION:
         errors.append("schema_version must be readiness_matrix/v1")
     scope = str(record.get("scope", ""))
@@ -508,7 +559,7 @@ def validate_readiness_matrix(
     derived_missing = [str(row.get("category", "")) for row in derived_rows if row.get("evidence_state") != "observed"]
     if record.get("missing_categories") != derived_missing:
         errors.append("missing_categories must match non-observed rows")
-    return errors
+    return errors, derived_verdict
 
 
 def _matrix_identity_and_time_errors(
@@ -1081,7 +1132,7 @@ def _canonical_contract_ref() -> dict[str, Any]:
     return {
         "contract_id": READINESS_MATRIX_SCHEMA_VERSION,
         "enforcement_level": "executable_validated",
-        "consumer_id": "validate_readiness_matrix",
+        "consumer_id": "parse_readiness_matrix",
         "category_policy": {
             "schema_version": READINESS_CATEGORY_POLICY_SCHEMA_VERSION,
             "categories": [

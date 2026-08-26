@@ -51,7 +51,7 @@ _CONSUMER_IMPORTS = {
     "validate_agent_operator_productivity_card": "omh.operator_productivity:validate_agent_operator_productivity_card",
     "validate_ops_service_quality_board": "omh.ops_service_quality:validate_ops_service_quality_board",
     "validate_operation_artifact": "omh.operations:validate_operation_artifact",
-    "validate_readiness_matrix": "omh.production_readiness:validate_readiness_matrix",
+    "parse_readiness_matrix": "omh.production_readiness:parse_readiness_matrix",
 }
 
 # This is the complete operations classification. Enforcement level describes
@@ -73,7 +73,7 @@ OPERATIONS_ARTIFACT_CONTRACTS = (
     ),
     OperationsArtifactContract(
         "production-audit",
-        ArtifactContractRef("readiness_matrix/v1", "executable_validated", "validate_readiness_matrix"),
+        ArtifactContractRef("readiness_matrix/v1", "executable_validated", "parse_readiness_matrix"),
     ),
     OperationsArtifactContract(
         "build-failure-triage", ArtifactContractRef("build_failure_triage_plan/v1", "guidance_only", "")
@@ -97,7 +97,7 @@ def artifact_contracts_for_workflow(workflow_id: str) -> tuple[ArtifactContractR
     return (item.ref,) if item else ()
 
 
-def resolve_artifact_contract_consumer(consumer_id: str) -> Callable[[dict[str, object]], list[str]]:
+def resolve_artifact_contract_consumer(consumer_id: str) -> Callable[[dict[str, object]], object]:
     import_path = _CONSUMER_IMPORTS.get(consumer_id)
     if import_path is None:
         raise LookupError(f"unknown artifact contract consumer: {consumer_id}")
@@ -105,7 +105,7 @@ def resolve_artifact_contract_consumer(consumer_id: str) -> Callable[[dict[str, 
     consumer = getattr(import_module(module_name), attribute, None)
     if not callable(consumer):
         raise LookupError(f"artifact contract consumer is not callable: {consumer_id}")
-    return cast(Callable[[dict[str, object]], list[str]], consumer)
+    return cast(Callable[[dict[str, object]], object], consumer)
 
 
 def validate_operations_artifact_contracts() -> list[str]:

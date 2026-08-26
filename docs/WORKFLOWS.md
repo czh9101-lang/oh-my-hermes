@@ -2631,7 +2631,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - rollback_and_monitoring_plan/v1 with health signals, owner, threshold, and recovery path
 - Artifact contract enforcement:
   - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
-  - contract_id: `readiness_matrix/v1`; enforcement_level: `executable_validated`; consumer_id: `validate_readiness_matrix`
+  - contract_id: `readiness_matrix/v1`; enforcement_level: `executable_validated`; consumer_id: `parse_readiness_matrix`
 - Safety rules:
   - Do not claim production deploy, security scan, live traffic, monitoring health, rollback readiness, or support readiness without observed evidence.
   - Do not perform deploy, infra, credential, production, or external-platform actions from the audit lane.

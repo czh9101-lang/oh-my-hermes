@@ -8,9 +8,10 @@ import logging
 import pickle
 import threading
 import unittest
-from dataclasses import asdict
-from unittest.mock import patch
+from dataclasses import FrozenInstanceError, asdict
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from _local_package import load_local_package
 
@@ -20,6 +21,7 @@ from omh.external_effect_receipts import build_external_effect_receipt
 from omh.operations_contracts import (
     OPERATIONS_ARTIFACT_CONTRACTS,
     ArtifactContractRef,
+    artifact_contracts_for_workflow,
     resolve_artifact_contract_consumer,
     validate_operations_artifact_contracts,
 )
@@ -218,6 +220,14 @@ class OperationsArtifactContractTests(unittest.TestCase):
             refs = definitions[item.workflow_id].artifact_contracts
             self.assertEqual(refs, (item.ref,))
             self.assertFalse(hasattr(refs[0], "evidence_state"))
+
+    def test_production_audit_contract_ref_matches_registry_shared_fields(self) -> None:
+        registered = artifact_contracts_for_workflow("production-audit")[0]
+        canonical = readiness_workflow._canonical_contract_ref()
+        self.assertEqual(
+            (canonical["contract_id"], canonical["enforcement_level"], canonical["consumer_id"]),
+            (registered.contract_id, registered.enforcement_level, registered.consumer_id),
+        )
 
     def test_reliability_catalog_consumers_use_canonical_contract(self) -> None:
         playbook = inspect_playbook("reliability-incident-review")["playbook"]
@@ -928,6 +938,180 @@ class ReadinessMatrixTests(unittest.TestCase):
         self.assertEqual(HostileDict.item_calls, 0)
         self.assertEqual(HostileList.iteration_calls, 0)
 
+    def test_post_child_snapshot_mutations_cannot_escape_root_authority(self) -> None:
+        stable_errors = [
+            "readiness_matrix signed data is not safely bounded canonical JSON",
+            "external readiness evidence is unauthenticated",
+            "verdict must match derived verdict HOLD",
+        ]
+        cases = (
+            ("receipt", ("rows", 2, "evidence", 0, "receipt"), "dict"),
+            ("postcondition", ("rows", 2, "evidence", 0, "postcondition"), "dict"),
+            ("row", ("rows", 2), "dict"),
+            ("external_identity", ("rows", 2, "external_identity"), "dict"),
+            ("evidence_list", ("rows", 2, "evidence"), "list"),
+        )
+        for name, path, container_kind in cases:
+            with self.subTest(window=name):
+                matrix = build_readiness_matrix(
+                    scope="release-1119",
+                    rows=complete_rows(),
+                    created_at=CREATED,
+                    evidence_fresh_after=FRESH_AFTER,
+                )
+                target: object = matrix
+                for part in path:
+                    target = target[part]
+                mutation_observed = threading.Event()
+                target_copy_calls = 0
+                if container_kind == "dict":
+                    original_copy = readiness_workflow._copy_plain_dict
+
+                    def controlled_dict_copy(value: dict[object, object]) -> dict[object, object]:
+                        nonlocal target_copy_calls
+                        detached = original_copy(value)
+                        if value is target:
+                            target_copy_calls += 1
+                            if target_copy_calls == 2:
+                                value["post-snapshot-mutation"] = True
+                                mutation_observed.set()
+                        return detached
+
+                    manager = patch.object(
+                        readiness_workflow,
+                        "_copy_plain_dict",
+                        side_effect=controlled_dict_copy,
+                    )
+                else:
+                    original_list_copy = readiness_workflow._copy_plain_list
+
+                    def controlled_list_copy(value: list[object]) -> list[object]:
+                        nonlocal target_copy_calls
+                        detached = original_list_copy(value)
+                        if value is target:
+                            target_copy_calls += 1
+                            if target_copy_calls == 2:
+                                value.append({"post-snapshot-mutation": True})
+                                mutation_observed.set()
+                        return detached
+
+                    manager = patch.object(
+                        readiness_workflow,
+                        "_copy_plain_list",
+                        side_effect=controlled_list_copy,
+                    )
+                with manager:
+                    errors = validate_readiness_matrix(matrix, trusted_context=TRUST_CONTEXT)
+                self.assertTrue(mutation_observed.is_set())
+                self.assertEqual(target_copy_calls, 4)
+                self.assertEqual(errors, stable_errors)
+
+                accepted_matrix = build_readiness_matrix(
+                    scope="release-1119",
+                    rows=complete_rows(),
+                    created_at=CREATED,
+                    evidence_fresh_after=FRESH_AFTER,
+                )
+                accepted_target: object = accepted_matrix
+                for part in path:
+                    accepted_target = accepted_target[part]
+                captured_before = json.dumps(accepted_target, sort_keys=True)
+                accepted_copy_calls = 0
+                if container_kind == "dict":
+                    accepted_original_copy = readiness_workflow._copy_plain_dict
+
+                    def mutate_after_second_root_dict(
+                        value: dict[object, object],
+                    ) -> dict[object, object]:
+                        nonlocal accepted_copy_calls
+                        detached = accepted_original_copy(value)
+                        if value is accepted_target:
+                            accepted_copy_calls += 1
+                            if accepted_copy_calls == 4:
+                                value["post-snapshot-mutation"] = True
+                        return detached
+
+                    accepted_manager = patch.object(
+                        readiness_workflow,
+                        "_copy_plain_dict",
+                        side_effect=mutate_after_second_root_dict,
+                    )
+                else:
+                    accepted_original_list_copy = readiness_workflow._copy_plain_list
+
+                    def mutate_after_second_root_list(value: list[object]) -> list[object]:
+                        nonlocal accepted_copy_calls
+                        detached = accepted_original_list_copy(value)
+                        if value is accepted_target:
+                            accepted_copy_calls += 1
+                            if accepted_copy_calls == 4:
+                                value.append({"post-snapshot-mutation": True})
+                        return detached
+
+                    accepted_manager = patch.object(
+                        readiness_workflow,
+                        "_copy_plain_list",
+                        side_effect=mutate_after_second_root_list,
+                    )
+                with accepted_manager:
+                    result = readiness_workflow.parse_readiness_matrix(
+                        accepted_matrix, trusted_context=TRUST_CONTEXT
+                    )
+                self.assertEqual(accepted_copy_calls, 4)
+                self.assertTrue(result.accepted)
+                self.assertEqual(result.verdict, "GO")
+                captured_target: object = result.require_artifact().detached_copy()
+                for part in path:
+                    captured_target = captured_target[part]
+                self.assertEqual(json.dumps(captured_target, sort_keys=True), captured_before)
+                self.assertNotEqual(json.dumps(accepted_target, sort_keys=True), captured_before)
+
+    def test_typed_parse_result_is_the_only_accepted_artifact_authority(self) -> None:
+        parse = getattr(readiness_workflow, "parse_readiness_matrix", None)
+        self.assertTrue(callable(parse))
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=complete_rows(), created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        root_copy_calls = 0
+        original_copy = readiness_workflow._copy_plain_dict
+
+        def count_root_copies(value: dict[object, object]) -> dict[object, object]:
+            nonlocal root_copy_calls
+            if value is matrix:
+                root_copy_calls += 1
+            return original_copy(value)
+
+        with patch.object(readiness_workflow, "_copy_plain_dict", side_effect=count_root_copies):
+            result = parse(matrix, trusted_context=TRUST_CONTEXT)
+        self.assertTrue(result.accepted)
+        self.assertEqual(result.errors, ())
+        self.assertEqual(root_copy_calls, 4)
+        artifact = result.require_artifact()
+        self.assertEqual(artifact.verdict, "GO")
+        captured = artifact.detached_copy()
+        matrix["verdict"] = "HOLD"
+        matrix["rows"][2]["evidence_state"] = "missing"
+        self.assertEqual(artifact.verdict, "GO")
+        self.assertEqual(artifact.detached_copy(), captured)
+        self.assertIsNot(artifact.detached_copy(), artifact.detached_copy())
+        with self.assertRaises(FrozenInstanceError):
+            artifact.verdict = "HOLD"
+        with TemporaryDirectory() as tmp:
+            persisted = Path(tmp) / "readiness.json"
+            persisted.write_bytes(artifact.canonical_bytes)
+            self.assertEqual(json.loads(persisted.read_bytes()), captured)
+        compatibility_doc = validate_readiness_matrix.__doc__ or ""
+        self.assertIn("captured artifact", compatibility_doc)
+        self.assertIn("post-return", compatibility_doc)
+        shared_leaf = {"nested": ["accepted"]}
+        shared_snapshot = readiness_workflow._canonical_json_snapshot(
+            {"left": shared_leaf, "right": shared_leaf}
+        )
+        self.assertIsNotNone(shared_snapshot)
+        detached_dag = shared_snapshot[0]
+        self.assertEqual(detached_dag["left"], detached_dag["right"])
+        self.assertIsNot(detached_dag["left"], detached_dag["right"])
+
     def test_concurrent_builtin_container_mutation_fails_closed_without_retry(self) -> None:
         rows = complete_rows()
         rows[2] = external_row("ci", external_evidence("ci"))
@@ -981,7 +1165,7 @@ class ReadinessMatrixTests(unittest.TestCase):
             ],
         )
         self.assertGreaterEqual(consume_calls, 2)
-        self.assertEqual(root_copy_calls, 2)
+        self.assertEqual(root_copy_calls, 4)
 
         list_matrix = build_readiness_matrix(
             scope="release-1119", rows=complete_rows(), created_at=CREATED, evidence_fresh_after=FRESH_AFTER
@@ -1016,7 +1200,7 @@ class ReadinessMatrixTests(unittest.TestCase):
             list_worker.join(timeout=2)
         self.assertFalse(list_worker.is_alive())
         self.assertEqual(list_errors, errors)
-        self.assertEqual(rows_copy_calls, 2)
+        self.assertEqual(rows_copy_calls, 4)
 
     def test_trust_context_is_opaque_and_non_serializable(self) -> None:
         context = ReadinessTrustContext("operator-readiness", TRUST_KEY)
