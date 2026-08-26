@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import re
 from datetime import datetime
 from typing import Any, Final, NoReturn
@@ -32,6 +33,10 @@ _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _HMAC_RE = re.compile(r"^[0-9a-f]{64}$")
 _MIN_HMAC_KEY_BYTES = 32
 _MAX_HMAC_KEY_BYTES = 4_096
+
+
+class ReadinessAuthenticationError(Exception):
+    """Raised when structurally unsafe data cannot be authenticated."""
 
 
 class ReadinessTrustContext:
@@ -122,6 +127,10 @@ def authenticate_external_readiness_evidence(
         requires_external_observation=True,
         external_identity=external_identity,
     )
+    if payload is None:
+        raise ReadinessAuthenticationError(
+            "external readiness signed data is not canonical JSON and cannot be authenticated"
+        )
     tag = trusted_context._sign(payload)
     return {
         **evidence,
@@ -258,6 +267,12 @@ def validate_readiness_matrix(
     errors: list[str] = []
     if not isinstance(record, dict):
         return ["readiness_matrix must be an object"]
+    if not _is_canonical_json_data(record):
+        return [
+            "readiness_matrix signed data is not canonical JSON",
+            "external readiness evidence is unauthenticated",
+            "verdict must match derived verdict HOLD",
+        ]
     if record.get("schema_version") != READINESS_MATRIX_SCHEMA_VERSION:
         errors.append("schema_version must be readiness_matrix/v1")
     scope = str(record.get("scope", ""))
@@ -466,7 +481,8 @@ def _evidence_errors(
 
 def _observed_check_errors(evidence: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    if evidence.get("result") not in {"passed", "failed"}:
+    result = evidence.get("result")
+    if not isinstance(result, str) or result not in ("passed", "failed"):
         errors.append("observed_check_result result must be passed or failed")
     for field in ("check_id", "evidence_ref"):
         if not _valid_ref(evidence.get(field)):
@@ -511,7 +527,8 @@ def _external_evidence_errors(
         return [*errors, "external observed success requires observed_postcondition/v1"]
     if postcondition.get("schema_version") != OBSERVED_POSTCONDITION_SCHEMA_VERSION:
         errors.append("postcondition schema_version must be observed_postcondition/v1")
-    if postcondition.get("result") not in {"satisfied", "failed"}:
+    postcondition_result = postcondition.get("result")
+    if not isinstance(postcondition_result, str) or postcondition_result not in ("satisfied", "failed"):
         errors.append("postcondition result must be satisfied or failed")
     for field in ("receipt_id", "effect_id", "run_id", "task_id", "revision", "external_ref", "observation_id"):
         if not _valid_ref(postcondition.get(field)):
@@ -596,6 +613,8 @@ def _external_authenticity_error(
         requires_external_observation=requires_external_observation,
         external_identity=external_identity,
     )
+    if payload is None:
+        return "external readiness signed data is not canonical JSON and is unauthenticated"
     if not trusted_context._verify(payload, candidate):
         return "external readiness authenticity tag does not match trusted context"
     return ""
@@ -616,28 +635,39 @@ def _external_authenticity_payload(
     evidence_fresh_after: str,
     requires_external_observation: bool,
     external_identity: dict[str, Any],
-) -> bytes:
+) -> bytes | None:
     unsigned_evidence = {key: value for key, value in evidence.items() if key != "authenticity"}
-    return json.dumps(
-        {
-            "schema_version": "external_readiness_authenticity_payload/v1",
-            "matrix_schema_version": matrix_schema_version,
-            "matrix_id": matrix_id,
-            "contract_ref": contract_ref,
-            "context_id": context_id,
-            "scope": scope,
-            "category": category,
-            "task_id": task_id,
-            "revision": revision,
-            "created_at": created_at,
-            "evidence_fresh_after": evidence_fresh_after,
-            "requires_external_observation": requires_external_observation,
-            "external_identity": external_identity,
-            "evidence": unsigned_evidence,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
+    payload = {
+        "schema_version": "external_readiness_authenticity_payload/v1",
+        "matrix_schema_version": matrix_schema_version,
+        "matrix_id": matrix_id,
+        "contract_ref": contract_ref,
+        "context_id": context_id,
+        "scope": scope,
+        "category": category,
+        "task_id": task_id,
+        "revision": revision,
+        "created_at": created_at,
+        "evidence_fresh_after": evidence_fresh_after,
+        "requires_external_observation": requires_external_observation,
+        "external_identity": external_identity,
+        "evidence": unsigned_evidence,
+    }
+    if not _is_canonical_json_data(payload):
+        return None
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
+def _is_canonical_json_data(value: object) -> bool:
+    if value is None or isinstance(value, (str, bool, int)):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, list):
+        return all(_is_canonical_json_data(item) for item in value)
+    if isinstance(value, dict):
+        return all(isinstance(key, str) and _is_canonical_json_data(item) for key, item in value.items())
+    return False
 
 
 def _trusted_context_usable(context: ReadinessTrustContext | None) -> bool:

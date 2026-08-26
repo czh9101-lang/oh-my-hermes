@@ -678,6 +678,49 @@ class ReadinessMatrixTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(validate_readiness_matrix(mutate(path, value), trusted_context=TRUST_CONTEXT))
 
+        signed_paths = (
+            ("schema_version",),
+            ("matrix_id",),
+            ("contract_ref",),
+            ("scope",),
+            ("task_id",),
+            ("revision",),
+            ("created_at",),
+            ("evidence_fresh_after",),
+            ("rows", 2, "category"),
+            ("rows", 2, "requires_external_observation"),
+            ("rows", 2, "external_identity"),
+            ("rows", 2, "evidence", 0, "schema_version"),
+            *(("rows", 2, "evidence", 0, "receipt", field) for field in original["rows"][2]["evidence"][0]["receipt"]),
+            *(("rows", 2, "evidence", 0, "postcondition", field) for field in original["rows"][2]["evidence"][0]["postcondition"]),
+        )
+        adversarial_values = (
+            None,
+            False,
+            7,
+            1.5,
+            [],
+            {},
+            {"nested": []},
+            set(),
+            ("tuple",),
+            b"bytes",
+            float("nan"),
+            {"string-key": "value", 1: "mixed-key"},
+        )
+        for path in signed_paths:
+            for value in adversarial_values:
+                with self.subTest(adversarial_signed_path=path, value_type=type(value).__name__):
+                    errors = validate_readiness_matrix(mutate(path, value), trusted_context=TRUST_CONTEXT)
+                    rendered = "; ".join(errors)
+                    self.assertTrue(errors)
+                    self.assertIn("verdict must match derived verdict HOLD", rendered)
+                    self.assertTrue(
+                        "external readiness authenticity" in rendered
+                        or "readiness_matrix signed data is not canonical JSON" in rendered
+                    )
+                    self.assertNotIn(TRUST_KEY.decode(), rendered)
+
     def test_trust_context_is_opaque_and_non_serializable(self) -> None:
         context = ReadinessTrustContext("operator-readiness", TRUST_KEY)
         operations = (
