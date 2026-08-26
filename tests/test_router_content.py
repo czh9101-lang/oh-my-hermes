@@ -1154,6 +1154,16 @@ class RouterContentTests(unittest.TestCase):
         quality_bar = tuple(contract["quality_bar"])
         self.assertIn(DELEGATE_PROMPT_DISPLAY_RULE, quality_bar)
         self.assertIn(DELEGATE_MODEL_LABEL_RULE, quality_bar)
+        # An unexposed reasoning effort renders as `(model)` alone; the old rule's
+        # "write the literal `unknown`" fallback put placeholder words next to a
+        # known model ("(gpt-…, 노력 unknown)" in a live Korean lane status).
+        self.assertIn("show the model alone as `(model)`", DELEGATE_MODEL_LABEL_RULE)
+        self.assertNotIn("write the literal", DELEGATE_MODEL_LABEL_RULE)
+        # These two clauses keep the common rail from contradicting the running-work
+        # board's observed-or-literal-unknown column doctrine, and keep a directly
+        # asked figure answered instead of silently omitted.
+        self.assertIn("keeps its own `unknown` cell", DELEGATE_MODEL_LABEL_RULE)
+        self.assertIn("say it was not observed", DELEGATE_MODEL_LABEL_RULE)
         self.assertIn(DELEGATE_RESUMABLE_SESSION_RULE, quality_bar)
         self.assertIn(DELEGATE_PERMISSION_PREFLIGHT_RULE, quality_bar)
         # The shared common rail carries the same rules plus the follow-on engine gate.
