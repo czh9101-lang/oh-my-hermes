@@ -277,6 +277,15 @@ _NEGATION_SENSITIVE_OPERATOR_SKILLS = {
     "workspace-file-operator",
 }
 
+_DOMAIN_NEGATORS = frozenset(
+    {"avoid", "except", "exclude", "excluded", "excluding", "never", "no", "not", "without"}
+)
+_INCLUSIVE_NEGATION_FOLLOWERS = frozenset({"just", "only"})
+_LOCAL_NEGATION_TOKEN_RANGE = 4
+_CLAUSE_SEPARATOR_PATTERN = re.compile(r"[,;.!?\n]+|\band\b")
+_ENGLISH_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+
+
 _STRUCTURED_OPERATOR_ACTIONS: tuple[
     tuple[str, dict[str, tuple[str, ...]]],
     ...,
@@ -366,6 +375,33 @@ _STRUCTURED_OPERATOR_ACTIONS: tuple[
         },
     ),
 )
+
+
+def normalized_domain_cue_is_positive(
+    normalized_message: str,
+    cue_pattern: re.Pattern[str],
+) -> bool:
+    """Apply canonical local-negation semantics to an already-folded request."""
+    for clause in _CLAUSE_SEPARATOR_PATTERN.split(normalized_message):
+        for match in cue_pattern.finditer(clause):
+            tokens = tuple(_ENGLISH_TOKEN_PATTERN.findall(clause))
+            start = len(_ENGLISH_TOKEN_PATTERN.findall(clause[: match.start()]))
+            lower = max(0, start - _LOCAL_NEGATION_TOKEN_RANGE)
+            negated = False
+            for index in range(lower, start):
+                if tokens[index] not in _DOMAIN_NEGATORS:
+                    continue
+                if (
+                    tokens[index] == "not"
+                    and index + 1 < len(tokens)
+                    and tokens[index + 1] in _INCLUSIVE_NEGATION_FOLLOWERS
+                ):
+                    continue
+                negated = True
+                break
+            if not negated:
+                return True
+    return False
 
 
 def specialist_domain_route_signal(message: str) -> DomainRouteSignal | None:

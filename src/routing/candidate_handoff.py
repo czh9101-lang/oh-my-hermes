@@ -31,6 +31,7 @@ from .domain_signals import (
     classify_clarification_relevance,
 )
 from .input_language import SUPPORT_MODEL_SELECTION_REQUIRED
+from .recommend import recommendation_for_definition
 from ..skills.catalog import routable_definitions
 from ..workflows.hermes_planning import is_coding_shaped_task
 
@@ -140,29 +141,24 @@ def _coding_lane() -> list[dict[str, object]]:
     return lane[:MAX_CANDIDATES]
 
 
-def _domain_candidate(skill: str) -> dict[str, object] | None:
+def _domain_candidate(skill: str, message: str) -> dict[str, object] | None:
     definition = next((item for item in routable_definitions() if item.name == skill), None)
     if definition is None:
         return None
-    return {
-        "skill": definition.name,
-        "description": definition.description,
-        "reasoning_demand": definition.reasoning_demand,
-        "why_it_matched": "The request and candidate share a canonical specialist-domain signal.",
-        "matched": [f"domain:{definition.name}"],
-        "score": 0,
-        "confidence": "low",
-        "next_action": None,
-        "evidence_boundary": (
-            "A relevant candidate is routing input only; nothing has been planned, dispatched, "
-            "implemented, or verified."
-        ),
-    }
+    recommendation = recommendation_for_definition(
+        definition,
+        message,
+        matched=(f"domain:{definition.name}",),
+        score=0,
+        why="The request and candidate share a canonical specialist-domain signal.",
+    )
+    return _candidate(recommendation)
 
 
 def _relevant_candidates(
     candidates: list[dict[str, object]],
     relevance: ClarificationRelevance,
+    message: str,
 ) -> list[dict[str, object]]:
     relevant_skills = relevance.skills
     if relevant_skills is None:
@@ -170,7 +166,7 @@ def _relevant_candidates(
     by_skill = {str(candidate.get("skill") or ""): candidate for candidate in candidates}
     relevant: list[dict[str, object]] = []
     for skill in relevant_skills:
-        candidate = by_skill.get(skill) or _domain_candidate(skill)
+        candidate = by_skill.get(skill) or _domain_candidate(skill, message)
         if candidate is not None:
             relevant.append(candidate)
     return relevant[:MAX_CANDIDATES]
@@ -232,7 +228,11 @@ def build_candidate_handoff(
     if relevance is None:
         relevance = classify_clarification_relevance(message)
     reasons = candidate_handoff_reasons(route)
-    if not reasons and relevance.applies:
+    if (
+        not reasons
+        and relevance.applies
+        and str(route.get("action") or "") in _UNDECIDED_ACTIONS
+    ):
         reasons = ("domain_relevance_required",)
     if not reasons:
         return None
@@ -244,7 +244,7 @@ def build_candidate_handoff(
         candidates = _coding_lane()
         reasons = (*reasons, "implementation_shaped_request")
 
-    candidates = _relevant_candidates(candidates, relevance)
+    candidates = _relevant_candidates(candidates, relevance, message)
     selection_mode = "candidate_selection" if candidates else "open_clarification"
     payload: dict[str, object] = {
         "schema_version": CANDIDATE_HANDOFF_SCHEMA_VERSION,

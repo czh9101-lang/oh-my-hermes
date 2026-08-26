@@ -1376,21 +1376,6 @@ def route_chat_message(
     return _enriched_route(message, source, limit, min_confidence, skill_policy=skill_policy)
 
 
-def _route_has_direct_domain_signal(route: dict[str, object]) -> bool:
-    recommendations = route.get("recommendations")
-    if not isinstance(recommendations, list):
-        return False
-    for recommendation in recommendations:
-        if not isinstance(recommendation, dict):
-            continue
-        matched = recommendation.get("matched")
-        if isinstance(matched, (list, tuple)) and any(
-            isinstance(signal, str) and signal.startswith("domain:") for signal in matched
-        ):
-            return True
-    return False
-
-
 def _enriched_route(
     message: str,
     source: str,
@@ -1416,20 +1401,15 @@ def _enriched_route(
     relevance = classify_clarification_relevance(message)
     if (
         route.get("action") == "dispatch"
-        and relevance.applies
-        and not _route_has_direct_domain_signal(route)
+        and not route.get("explicit")
+        and route.get("selected_skill") in relevance.blocked_skills
     ):
         route.update(
             {
                 "action": "clarify",
                 "selected_skill": _ROUTER_SKILL,
                 "selected_harness": primary_harness_for_skill(_ROUTER_SKILL),
-                "confidence": "low",
-                "ambiguous": False,
-                "reason": (
-                    "Specialist vocabulary is relevant for clarification only; "
-                    "it is not a direct-dispatch signal."
-                ),
+                "reason": "Unowned specialist vocabulary requires open clarification.",
             }
         )
     # An undecidable route carries only domain-relevant candidates forward for
@@ -1437,7 +1417,11 @@ def _enriched_route(
     candidate_handoff = build_candidate_handoff(route, message, relevance=relevance)
     if candidate_handoff:
         route["candidate_handoff"] = candidate_handoff
-    if candidate_handoff and relevance.applies:
+    if (
+        candidate_handoff
+        and relevance.applies
+        and route.get("action") in {"clarify", "fallback"}
+    ):
         candidate_rows = candidate_handoff.get("candidates")
         candidates = (
             [candidate for candidate in candidate_rows if isinstance(candidate, dict)]

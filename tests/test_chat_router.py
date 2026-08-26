@@ -4335,6 +4335,83 @@ selected_workflow=ultraprocess
                 self.assertEqual(decision["selected_skill"], expected_skill)
                 self.assertEqual(decision["action"], "fallback" if expected_skill == "oh-my-hermes" else "dispatch")
 
+    def test_relevance_never_overrides_explicit_or_confident_route_authority(self) -> None:
+        explicit = route_chat_message("use finance-analysis for ASC 606 model", source="discord")
+        mixed = route_chat_message(
+            "ASC 606 model and create a product requirements document",
+            source="discord",
+        )
+        public_mixed = chat_router_impl.public_chat_route_payload(
+            "ASC 606 model and create a product requirements document",
+            source="discord",
+        )
+
+        self.assertEqual((explicit["action"], explicit["selected_skill"]), ("dispatch", "finance-analysis"))
+        self.assertTrue(explicit["explicit"])
+        self.assertNotIn("candidate_handoff", explicit)
+        for route in (mixed, public_mixed):
+            self.assertEqual((route["action"], route["selected_skill"]), ("dispatch", "product-brief"))
+            self.assertEqual(route["candidate_skill"], "product-brief")
+            self.assertEqual(route["recommendations"][0]["skill"], "product-brief")
+            self.assertNotIn("candidate_handoff", route)
+            self.assertNotIn("finance-analysis", str(route.get("clarification", "")))
+
+    def test_relevance_classification_respects_local_negation_and_segments(self) -> None:
+        cases = (
+            ("not asc 606", ()),
+            ("Do not assess ASC 606; create a product requirements document", ()),
+            ("Do not assess ASC 606; use MEDDPICC qualification", ("sales-development",)),
+            ("not only ASC 606 but revenue recognition", ("finance-analysis",)),
+        )
+
+        for message, expected in cases:
+            with self.subTest(message=message):
+                relevance = domain_signals_impl.classify_clarification_relevance(message)
+                self.assertEqual(relevance.skills or (), expected)
+
+    def test_synthesized_relevance_candidates_have_machine_next_actions(self) -> None:
+        for message in (
+            "ASC 606 model",
+            "indemnity liability cap",
+            "GDPR Article 35 DPIA",
+            "MEDDPICC",
+            "burn multiple NRR",
+        ):
+            with self.subTest(message=message):
+                handoff = route_chat_message(message, source="discord")["candidate_handoff"]
+                self.assertEqual(handoff["selection_mode"], "candidate_selection")
+                for candidate in handoff["candidates"]:
+                    self.assertIsInstance(candidate["next_action"], str)
+                    self.assertTrue(candidate["next_action"])
+
+    def test_relevance_separator_variants_use_shared_normalization(self) -> None:
+        for message in (
+            "four-fifths rule",
+            "four fifths rule",
+            "four_fifths rule",
+            "4/5 rule",
+            "4 / 5 rule",
+        ):
+            with self.subTest(message=message):
+                route = route_chat_message(message, source="discord")
+                handoff = route["candidate_handoff"]
+                self.assertEqual(handoff["selection_mode"], "open_clarification")
+                self.assertEqual(handoff["candidates"], [])
+                self.assertNotIn("rules-distill", route["clarification"])
+
+        for message in ("ASC 606 model", "ASC606 model"):
+            with self.subTest(message=message):
+                route = route_chat_message(message, source="discord")
+                self.assertNotEqual(route["action"], "dispatch")
+                self.assertEqual(
+                    [candidate["skill"] for candidate in route["candidate_handoff"]["candidates"]],
+                    ["finance-analysis"],
+                )
+
+        for message in ("14/5 rule", "ASC6060 model", "fourth fifths rule"):
+            with self.subTest(message=message):
+                self.assertFalse(domain_signals_impl.classify_clarification_relevance(message).applies)
+
     def test_relevance_classification_and_normalization_run_once_per_request(self) -> None:
         for message in ("DSO revenue cutoff", "four-fifths rule"):
             with self.subTest(message=message):
@@ -4349,11 +4426,17 @@ selected_workflow=ultraprocess
                         "_normalized_relevance_message",
                         wraps=domain_signals_impl._normalized_relevance_message,
                     ) as normalize,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_fold_for_match",
+                        wraps=domain_signals_impl._fold_for_match,
+                    ) as fold,
                 ):
                     route_chat_message(message, source="discord")
 
                 self.assertEqual(classify.call_count, 1)
                 self.assertEqual(normalize.call_count, 1)
+                self.assertEqual(fold.call_count, 1)
 
     def test_o013_unrelated_clarification_candidates_are_forbidden(self) -> None:
         cases = (
