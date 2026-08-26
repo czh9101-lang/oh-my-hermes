@@ -1648,7 +1648,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             run_verification=bool(args.run_verification),
         )
         _print_json(summary)
-        return 0
+        return 130 if summary.get("interrupted") else 0
     resolved = _subprocess.run(
         ["git", "rev-parse", args.base_ref],
         cwd=str(repo_root),
@@ -1680,7 +1680,25 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
     _print_json(summary)
-    return 0
+    return 130 if summary.get("interrupted") else 0
+
+
+def cmd_coding_fanout_reap(args: argparse.Namespace) -> int:
+    from ..coding.fanout_reap import reap_fanout_units
+
+    paths = _paths(args)
+    report = reap_fanout_units(paths, args.fanout_id, pids=args.pid or None)
+    _print_json(report)
+    if report.get("status") != "observed":
+        return 1
+    # A candidate that survived or could not be signalled is a failed
+    # remediation; exiting 0 would let `reap && rm -rf <worktree>` proceed
+    # against a live agent.
+    failed = any(
+        row.get("status") in {"still_alive", "refused_permission"}
+        for row in report.get("candidates", [])
+    )
+    return 1 if failed else 0
 
 
 def cmd_coding_fanout_migrate_legacy(args: argparse.Namespace) -> int:
@@ -1997,6 +2015,23 @@ def _add_coding_commands(sub) -> None:
     )
     fanout_status.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
     fanout_status.set_defaults(func=cmd_coding_fanout_status)
+
+    fanout_reap = fanout_sub.add_parser(
+        "reap",
+        help=(
+            "Terminate marker-named unit process groups for one fanout. Verify the dispatcher is dead "
+            "first — a live dispatcher's running units are equally marker-named. Refuses any pid the "
+            "markers do not name; never kills by process name."
+        ),
+    )
+    fanout_reap.add_argument("fanout_id", help="Fanout id whose inflight markers name the candidate pids.")
+    fanout_reap.add_argument(
+        "--pid",
+        type=int,
+        action="append",
+        help="Restrict to specific marker-named pids; default reaps every marker-named pid.",
+    )
+    fanout_reap.set_defaults(func=cmd_coding_fanout_reap)
 
     model_route = coding_sub.add_parser(
         "model-route",
