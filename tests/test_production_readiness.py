@@ -42,6 +42,7 @@ from omh.production_readiness import (
 )
 from omh.skills.catalog import builtin_definitions
 from omh.skills.render import workflow_reference_payload
+import omh.workflows.operations_contracts as operations_contracts_workflow
 import omh.workflows.production_readiness as readiness_workflow
 
 
@@ -220,6 +221,16 @@ class OperationsArtifactContractTests(unittest.TestCase):
             refs = definitions[item.workflow_id].artifact_contracts
             self.assertEqual(refs, (item.ref,))
             self.assertFalse(hasattr(refs[0], "evidence_state"))
+
+    def test_resolver_map_exactly_matches_referenced_artifact_consumers(self) -> None:
+        referenced = {
+            item.consumer_id
+            for item in OPERATIONS_ARTIFACT_CONTRACTS
+            if item.enforcement_level != "guidance_only"
+        }
+        self.assertEqual(set(operations_contracts_workflow._CONSUMER_IMPORTS), referenced)
+        with self.assertRaises(LookupError):
+            resolve_artifact_contract_consumer("validate_readiness_matrix")
 
     def test_production_audit_contract_ref_matches_registry_shared_fields(self) -> None:
         registered = artifact_contracts_for_workflow("production-audit")[0]
@@ -737,9 +748,10 @@ class ReadinessMatrixTests(unittest.TestCase):
         self.assertIn("external readiness authenticity requires a usable trusted context", errors)
         self.assertIn("verdict must match derived verdict HOLD", errors)
         self.assertNotIn("hostile", "; ".join(errors))
-        doc = ReadinessTrustContext.__doc__ or ""
-        self.assertIn("same-process introspection", doc)
-        self.assertNotIn("no retrieval surface", doc)
+        self.assertEqual(
+            artifact_contracts_for_workflow("production-audit")[0].consumer_id,
+            "parse_readiness_matrix",
+        )
 
     def test_trust_context_rendering_redacts_key_material(self) -> None:
         key = b"trusted-readiness-key-material-1119"

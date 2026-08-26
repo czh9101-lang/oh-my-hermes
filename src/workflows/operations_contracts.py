@@ -5,7 +5,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Literal, Protocol, cast, overload
 
 if TYPE_CHECKING:
-    from .production_readiness import ReadinessValidationResult
+    from .production_readiness import ReadinessValidationResult, validate_readiness_matrix
 
 EnforcementLevel = Literal["executable_validated", "shared_operation_validated", "guidance_only"]
 ENFORCEMENT_LEVELS: tuple[EnforcementLevel, ...] = (
@@ -54,7 +54,6 @@ ValidatorConsumerId = Literal[
     "validate_agent_operator_productivity_card",
     "validate_ops_service_quality_board",
     "validate_operation_artifact",
-    "validate_readiness_matrix",
 ]
 ReadinessConsumerId = Literal["parse_readiness_matrix"]
 
@@ -73,7 +72,6 @@ _CONSUMER_IMPORTS = {
     "validate_agent_operator_productivity_card": "omh.operator_productivity:validate_agent_operator_productivity_card",
     "validate_ops_service_quality_board": "omh.ops_service_quality:validate_ops_service_quality_board",
     "validate_operation_artifact": "omh.operations:validate_operation_artifact",
-    "validate_readiness_matrix": "omh.production_readiness:validate_readiness_matrix",
     "parse_readiness_matrix": "omh.production_readiness:parse_readiness_matrix",
 }
 
@@ -162,9 +160,7 @@ if TYPE_CHECKING:
     _typed_operation_validator: ValidatorConsumer = resolve_artifact_contract_consumer(
         "validate_operation_artifact"
     )
-    _typed_readiness_validator: ValidatorConsumer = resolve_artifact_contract_consumer(
-        "validate_readiness_matrix"
-    )
+    _typed_direct_readiness_validator: ValidatorConsumer = validate_readiness_matrix
 
 
 def validate_operations_artifact_contracts() -> list[str]:
