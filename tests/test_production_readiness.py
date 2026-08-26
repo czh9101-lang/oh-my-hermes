@@ -20,7 +20,7 @@ from omh.operations import operation_artifact_compatibility, validate_operation_
 from omh.production_readiness import (
     READINESS_CATEGORIES,
     READINESS_MATRIX_ROLLBACK_CONTRACT,
-    build_readiness_matrix,
+    build_readiness_matrix as _build_readiness_matrix,
     validate_readiness_matrix,
 )
 from omh.skills.catalog import builtin_definitions
@@ -29,6 +29,13 @@ from omh.skills.render import workflow_reference_payload
 
 CREATED = "2026-08-26T12:00:00Z"
 FRESH_AFTER = "2026-08-26T11:00:00Z"
+TASK_ID = "task-1119"
+REVISION = "abc123def456"
+RUN_ID = "run-1119"
+
+
+def build_readiness_matrix(*, task_id: str = TASK_ID, revision: str = REVISION, **kwargs: object) -> dict[str, object]:
+    return _build_readiness_matrix(task_id=task_id, revision=revision, **kwargs)
 
 
 def observed_check(category: str, *, observed_at: str = CREATED) -> dict[str, object]:
@@ -46,6 +53,12 @@ def external_evidence(
     *,
     effect_id: str | None = None,
     post_effect_id: str | None = None,
+    run_id: str = RUN_ID,
+    post_run_id: str | None = None,
+    task_id: str = TASK_ID,
+    post_task_id: str | None = None,
+    revision: str = REVISION,
+    post_revision: str | None = None,
     receipt_observed_at: str = CREATED,
     postcondition_observed_at: str = CREATED,
 ) -> dict[str, object]:
@@ -55,8 +68,9 @@ def external_evidence(
         action="ci_run",
         acting_surface="runtime_ci_record",
         observed_result="succeeded",
-        run_id="run-1119",
+        run_id=run_id,
         external_ref=f"external-{category}",
+        evidence_refs=(f"task:{task_id}", f"revision:{revision}"),
         observed_at=receipt_observed_at,
     )
     return {
@@ -64,12 +78,25 @@ def external_evidence(
         "receipt": receipt,
         "postcondition": {
             "schema_version": "observed_postcondition/v1",
+            "receipt_id": receipt["receipt_id"],
             "effect_id": post_effect_id or effect,
+            "run_id": post_run_id or run_id,
+            "task_id": post_task_id or task_id,
+            "revision": post_revision or revision,
             "external_ref": f"external-{category}",
             "result": "satisfied",
             "observed_at": postcondition_observed_at,
             "observation_id": f"postcondition-{category}",
         },
+    }
+
+
+def external_row(category: str, evidence: dict[str, object], *, effect_id: str | None = None, run_id: str = RUN_ID) -> dict[str, object]:
+    return {
+        "category": category,
+        "requires_external_observation": True,
+        "external_identity": {"effect_id": effect_id or f"readiness:{category}", "run_id": run_id},
+        "evidence": [evidence],
     }
 
 
@@ -206,11 +233,7 @@ class ReadinessMatrixTests(unittest.TestCase):
 
     def test_external_success_requires_matching_receipt_and_postcondition(self) -> None:
         rows = complete_rows()
-        rows[2] = {
-            "category": "ci",
-            "requires_external_observation": True,
-            "evidence": [external_evidence("ci")],
-        }
+        rows[2] = external_row("ci", external_evidence("ci"))
         matrix = build_readiness_matrix(
             scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
         )
@@ -230,7 +253,7 @@ class ReadinessMatrixTests(unittest.TestCase):
         evidence = external_evidence("ci")
         evidence.pop("postcondition")
         rows = complete_rows()
-        rows[2] = {"category": "ci", "requires_external_observation": True, "evidence": [evidence]}
+        rows[2] = external_row("ci", evidence)
         with self.assertRaisesRegex(ValueError, "requires observed_postcondition/v1"):
             build_readiness_matrix(
                 scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
@@ -238,34 +261,39 @@ class ReadinessMatrixTests(unittest.TestCase):
 
     def test_receipt_postcondition_mismatch_does_not_observe(self) -> None:
         rows = complete_rows()
-        rows[2] = {
-            "category": "ci",
-            "requires_external_observation": True,
-            "evidence": [external_evidence("ci", post_effect_id="readiness:other")],
-        }
+        rows[2] = external_row("ci", external_evidence("ci", post_effect_id="readiness:other"))
         with self.assertRaisesRegex(ValueError, "effect_id must match"):
             build_readiness_matrix(
                 scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
             )
 
-    def test_stale_or_future_evidence_does_not_observe(self) -> None:
-        for observed_at in ("2026-08-26T10:59:59Z", "2026-08-26T12:00:01Z"):
-            with self.subTest(observed_at=observed_at):
-                rows = complete_rows()
-                rows[0]["evidence"] = [observed_check("build", observed_at=observed_at)]
-                matrix = build_readiness_matrix(
-                    scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
-                )
-                self.assertEqual(matrix["rows"][0]["evidence_state"], "missing")
-                self.assertEqual(matrix["verdict"], "HOLD")
+    def test_stale_evidence_holds_and_future_evidence_is_rejected(self) -> None:
+        stale_rows = complete_rows()
+        stale_rows[0]["evidence"] = [observed_check("build", observed_at="2026-08-26T10:59:59Z")]
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=stale_rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        self.assertEqual(matrix["rows"][0]["evidence_state"], "missing")
+        self.assertEqual(matrix["verdict"], "HOLD")
+
+        future_rows = complete_rows()
+        future_rows[0]["evidence"] = [observed_check("build", observed_at="2026-08-26T12:00:01Z")]
+        with self.assertRaisesRegex(ValueError, "must not be after matrix created_at"):
+            build_readiness_matrix(
+                scope="release-1119", rows=future_rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+            )
 
     def test_stale_receipt_or_postcondition_does_not_observe(self) -> None:
         for evidence in (
             external_evidence("ci", receipt_observed_at="2026-08-26T10:59:59Z"),
-            external_evidence("ci", postcondition_observed_at="2026-08-26T10:59:59Z"),
+            external_evidence(
+                "ci",
+                receipt_observed_at="2026-08-26T10:59:59Z",
+                postcondition_observed_at="2026-08-26T10:59:59Z",
+            ),
         ):
             rows = complete_rows()
-            rows[2] = {"category": "ci", "requires_external_observation": True, "evidence": [evidence]}
+            rows[2] = external_row("ci", evidence)
             matrix = build_readiness_matrix(
                 scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
             )
@@ -285,6 +313,117 @@ class ReadinessMatrixTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "unsupported readiness evidence schema"):
                     build_readiness_matrix(
                         scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+                    )
+
+    def test_external_binding_is_exact_across_matrix_row_receipt_and_postcondition(self) -> None:
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci"))
+        matrix = build_readiness_matrix(
+            scope="release-1119",
+            task_id=TASK_ID,
+            revision=REVISION,
+            rows=rows,
+            created_at=CREATED,
+            evidence_fresh_after=FRESH_AFTER,
+        )
+        self.assertEqual(matrix["verdict"], "GO")
+        self.assertEqual(validate_readiness_matrix(matrix), [])
+
+    def test_otherwise_valid_unrelated_receipt_cannot_produce_go(self) -> None:
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci", run_id="run-unrelated"))
+        with self.assertRaisesRegex(ValueError, "receipt run_id must match external_identity.run_id"):
+            build_readiness_matrix(
+                scope="release-1119",
+                task_id=TASK_ID,
+                revision=REVISION,
+                rows=rows,
+                created_at=CREATED,
+                evidence_fresh_after=FRESH_AFTER,
+            )
+
+    def test_external_binding_rejects_absent_mismatched_and_forged_associations(self) -> None:
+        cases = {
+            "absent": external_row("ci", external_evidence("ci")),
+            "task": external_row("ci", external_evidence("ci", post_task_id="task-other")),
+            "receipt_task": external_row("ci", external_evidence("ci", task_id="task-other")),
+            "revision": external_row("ci", external_evidence("ci", post_revision="revision-other")),
+            "receipt_revision": external_row("ci", external_evidence("ci", revision="revision-other")),
+            "run": external_row("ci", external_evidence("ci", post_run_id="run-other")),
+            "receipt": external_row("ci", external_evidence("ci")),
+        }
+        cases["absent"].pop("external_identity")
+        cases["receipt"]["evidence"][0]["postcondition"]["receipt_id"] = "receipt-forged"
+        for name, row in cases.items():
+            with self.subTest(name=name):
+                rows = complete_rows()
+                rows[2] = row
+                with self.assertRaises(ValueError):
+                    build_readiness_matrix(
+                        scope="release-1119",
+                        task_id=TASK_ID,
+                        revision=REVISION,
+                        rows=rows,
+                        created_at=CREATED,
+                        evidence_fresh_after=FRESH_AFTER,
+                    )
+
+    def test_duplicate_external_associations_are_rejected(self) -> None:
+        duplicate = external_evidence("ci")
+        rows = complete_rows()
+        row = external_row("ci", duplicate)
+        row["evidence"].append(copy.deepcopy(duplicate))
+        rows[2] = row
+        with self.assertRaisesRegex(ValueError, "exactly one external readiness association"):
+            build_readiness_matrix(
+                scope="release-1119",
+                task_id=TASK_ID,
+                revision=REVISION,
+                rows=rows,
+                created_at=CREATED,
+                evidence_fresh_after=FRESH_AFTER,
+            )
+
+    def test_duplicate_receipt_association_across_rows_is_rejected(self) -> None:
+        evidence = external_evidence("ci")
+        rows = complete_rows()
+        rows[2] = external_row("ci", evidence)
+        rows[3] = external_row("security_privacy", copy.deepcopy(evidence), effect_id="readiness:ci")
+        with self.assertRaisesRegex(ValueError, "duplicate external readiness receipt associations"):
+            build_readiness_matrix(
+                scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+            )
+
+    def test_duplicate_postcondition_association_across_rows_is_rejected(self) -> None:
+        first = external_evidence("ci")
+        second = external_evidence("security_privacy", effect_id="readiness:security")
+        second["postcondition"]["observation_id"] = first["postcondition"]["observation_id"]
+        rows = complete_rows()
+        rows[2] = external_row("ci", first)
+        rows[3] = external_row("security_privacy", second, effect_id="readiness:security")
+        with self.assertRaisesRegex(ValueError, "duplicate external readiness postcondition associations"):
+            build_readiness_matrix(
+                scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+            )
+
+    def test_timestamp_validation_rejects_naive_aware_orderings_without_crashing(self) -> None:
+        cases = (
+            ("2026-08-26T12:00:00", FRESH_AFTER, CREATED),
+            (CREATED, "2026-08-26T11:00:00", CREATED),
+            (CREATED, FRESH_AFTER, "2026-08-26T11:30:00"),
+        )
+        for observed_at, fresh_after, created_at in cases:
+            with self.subTest(observed_at=observed_at, fresh_after=fresh_after, created_at=created_at):
+                rows = complete_rows()
+                rows[0]["evidence"] = [observed_check("build", observed_at=observed_at)]
+                with self.assertRaisesRegex(ValueError, "timezone-aware ISO-8601 timestamp"):
+                    build_readiness_matrix(
+                        scope="release-1119",
+                        task_id=TASK_ID,
+                        revision=REVISION,
+                        rows=rows,
+                        created_at=created_at,
+                        evidence_fresh_after=fresh_after,
                     )
 
     def test_validator_rejects_each_invalid_top_level_state(self) -> None:
