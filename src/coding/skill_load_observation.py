@@ -20,6 +20,8 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
+import tempfile
 from threading import Lock
 from typing import Final, cast
 
@@ -142,24 +144,26 @@ def probe_skill_load(
     runtime_unavailable = hashlib.sha256(b"runtime-unavailable").hexdigest()
     unavailable_tool = hashlib.sha256(b"unresolved-executable").hexdigest()
     observed_at = _utc(now)
+    if nonce_ledger is not None and nonce_ledger.contains(nonce):
+        return _closed_observation(
+            "probe_error", "inventory_nonce_replayed", nonce, expected_digest,
+            unavailable_tool, runtime_unavailable, observed_at,
+        )
     env = _probe_environment(request.env)
     try:
-        tool = _resolve_tool(request.hermes, env)
+        tool = _snapshot_resolved_tool(request.hermes, env)
     except OSError:
         return _closed_observation(
             "probe_error", "inventory_executable_unavailable", nonce,
             expected_digest, unavailable_tool, runtime_unavailable, observed_at,
         )
     tool_fingerprint = tool.fingerprint
-    if nonce_ledger is not None and nonce_ledger.contains(nonce):
-        return _closed_observation(
-            "probe_error", "inventory_nonce_replayed", nonce, expected_digest,
-            tool_fingerprint, runtime_unavailable, observed_at,
+    try:
+        outcome = _run_inventory_process(
+            request, tool.executable, env, nonce, expected_digest, tool_fingerprint
         )
-
-    outcome = _run_inventory_process(
-        request, tool.executable, env, nonce, expected_digest, tool_fingerprint
-    )
+    finally:
+        tool.cleanup()
     if outcome.kind == "timeout":
         return _closed_observation(
             "probe_error", "inventory_timeout", nonce, expected_digest,
@@ -235,10 +239,14 @@ def probe_skill_load(
     return payload
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _ResolvedTool:
     executable: str
     fingerprint: str
+    _scratch: tempfile.TemporaryDirectory[str]
+
+    def cleanup(self) -> None:
+        self._scratch.cleanup()
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,11 +264,16 @@ def _run_inventory_process(
     expected_digest: str,
     tool_fingerprint: str,
 ) -> _ProcessOutcome:
+    protocol_argv = (
+        "--safe-mode", "--ignore-user-config", "--ignore-rules",
+        "skills", "inventory", "--protocol", HERMES_SKILL_INVENTORY_SCHEMA_VERSION,
+        "--nonce", nonce, "--expected-digest", expected_digest,
+        "--tool-fingerprint", tool_fingerprint,
+    )
     argv = (
-        executable, "--safe-mode", "--ignore-user-config", "--ignore-rules",
-        "skills", "inventory", "--protocol",
-        HERMES_SKILL_INVENTORY_SCHEMA_VERSION, "--nonce", nonce,
-        "--expected-digest", expected_digest, "--tool-fingerprint", tool_fingerprint,
+        (sys.executable, executable, *protocol_argv)
+        if os.name == "nt" and Path(executable).suffix.casefold() == ".py"
+        else (executable, *protocol_argv)
     )
     process: subprocess.Popen[bytes] | None = None
     drainers = None
@@ -495,7 +508,13 @@ def _probe_environment(source: Mapping[str, str] | None) -> dict[str, str]:
     return env
 
 
-def _resolve_tool(executable: str, env: Mapping[str, str]) -> _ResolvedTool:
+def _snapshot_resolved_tool(executable: str, env: Mapping[str, str]) -> _ResolvedTool:
+    """Copy one opened executable inode into a private per-probe snapshot.
+
+    Resolution happens once. The source descriptor supplies both fingerprint
+    bytes and snapshot bytes, so replacing or restoring its pathname cannot
+    alter what the later process consumes.
+    """
     has_separator = os.sep in executable or bool(os.altsep and os.altsep in executable)
     if has_separator or Path(executable).is_absolute():
         selected = Path(executable).expanduser()
@@ -505,25 +524,78 @@ def _resolve_tool(executable: str, env: Mapping[str, str]) -> _ResolvedTool:
             raise FileNotFoundError(executable)
         selected = Path(found)
     resolved = selected.resolve(strict=True)
-    before = resolved.stat()
-    if not stat.S_ISREG(before.st_mode) or not os.access(resolved, os.R_OK | os.X_OK):
-        raise PermissionError(executable)
-
-    digest = hashlib.sha256()
-    digest.update(b"omh-skill-load-tool/v1\0")
-    digest.update(os.fsencode(resolved))
-    digest.update(
-        f"\0{before.st_dev}\0{before.st_ino}\0{before.st_mode}\0{before.st_size}".encode("ascii")
+    source_fd = os.open(
+        resolved,
+        os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0),
     )
-    with resolved.open("rb") as stream:
-        while chunk := stream.read(64 * 1024):
-            digest.update(chunk)
-        after = os.fstat(stream.fileno())
-    identity_before = (before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_mtime_ns)
-    identity_after = (after.st_dev, after.st_ino, after.st_mode, after.st_size, after.st_mtime_ns)
-    if identity_after != identity_before:
-        raise OSError("executable changed during fingerprinting")
-    return _ResolvedTool(str(resolved), digest.hexdigest())
+    scratch: tempfile.TemporaryDirectory[str] | None = None
+    snapshot_fd: int | None = None
+    keep_snapshot = False
+    try:
+        source_identity = os.fstat(source_fd)
+        if not stat.S_ISREG(source_identity.st_mode):
+            raise PermissionError(executable)
+        if os.name != "nt" and source_identity.st_mode & 0o111 == 0:
+            raise PermissionError(executable)
+
+        scratch = tempfile.TemporaryDirectory(prefix="omh-skill-load-tool-")
+        snapshot = Path(scratch.name) / resolved.name
+        snapshot_fd = os.open(
+            snapshot,
+            os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+            0o500,
+        )
+        source_content = hashlib.sha256()
+        copied = 0
+        while chunk := os.read(source_fd, 64 * 1024):
+            source_content.update(chunk)
+            copied += len(chunk)
+            view = memoryview(chunk)
+            while view:
+                written = os.write(snapshot_fd, view)
+                if written <= 0:
+                    raise OSError("snapshot write did not advance")
+                view = view[written:]
+        if copied != source_identity.st_size:
+            raise OSError("executable size changed during snapshot")
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is None:
+            os.chmod(snapshot, 0o500)
+        else:
+            fchmod(snapshot_fd, 0o500)
+        os.fsync(snapshot_fd)
+        snapshot_identity = os.fstat(snapshot_fd)
+        if not stat.S_ISREG(snapshot_identity.st_mode) or snapshot_identity.st_size != copied:
+            raise OSError("executable snapshot is incomplete")
+        os.lseek(snapshot_fd, 0, os.SEEK_SET)
+        snapshot_content = hashlib.sha256()
+        while chunk := os.read(snapshot_fd, 64 * 1024):
+            snapshot_content.update(chunk)
+        if snapshot_content.digest() != source_content.digest():
+            raise OSError("executable snapshot bytes do not match source descriptor")
+        fingerprint = hashlib.sha256()
+        fingerprint.update(b"omh-skill-load-tool/v2\0")
+        fingerprint.update(os.fsencode(resolved))
+        fingerprint.update(
+            (
+                f"\0{source_identity.st_dev}\0{source_identity.st_ino}"
+                f"\0{source_identity.st_mode}\0{source_identity.st_size}\0"
+            ).encode("ascii")
+        )
+        fingerprint.update(snapshot_content.digest())
+        os.close(snapshot_fd)
+        snapshot_fd = None
+        os.close(source_fd)
+        source_fd = -1
+        keep_snapshot = True
+        return _ResolvedTool(str(snapshot), fingerprint.hexdigest(), scratch)
+    finally:
+        if snapshot_fd is not None:
+            os.close(snapshot_fd)
+        if source_fd >= 0:
+            os.close(source_fd)
+        if scratch is not None and not keep_snapshot:
+            scratch.cleanup()
 
 
 def _parse_time(value: object) -> datetime:

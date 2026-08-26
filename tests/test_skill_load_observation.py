@@ -13,6 +13,7 @@ from _local_package import load_local_package
 
 load_local_package()
 
+from omh.coding import skill_load_observation as skill_load_module  # noqa: E402
 from omh.coding.skill_load_observation import (  # noqa: E402
     InventoryNonceLedger,
     SkillLoadProbeRequest,
@@ -101,6 +102,17 @@ class SkillLoadObservationTests(unittest.TestCase):
         self.hermes.write_text(textwrap.dedent(_FAKE), encoding="utf-8")
         self.hermes.chmod(0o755)
 
+    def executable(self, path: Path, runtime_digit: str) -> Path:
+        path.write_text(
+            textwrap.dedent(_FAKE).replace(
+                '"runtime_fingerprint": "b" * 64',
+                f'"runtime_fingerprint": "{runtime_digit}" * 64',
+            ),
+            encoding="utf-8",
+        )
+        path.chmod(0o755)
+        return path
+
     def request(self, mode: str, expected: tuple[str, ...] = ("beta", "alpha"), **changes: object) -> SkillLoadProbeRequest:
         executable = self.root / f"{mode}.py"
         executable.write_bytes(self.hermes.read_bytes())
@@ -133,20 +145,118 @@ class SkillLoadObservationTests(unittest.TestCase):
                 self.assertEqual(payload["unexpected_skills"], list(unexpected))
                 self.assertEqual(validate_skill_load_observation(payload), [])
 
+    def test_atomic_replace_after_fingerprint_never_executes_unbound_bytes(self) -> None:
+        original = self.executable(self.root / "all.py", "1")
+        replacement = self.executable(self.root / "replacement.py", "9")
+        real_run = skill_load_module._run_inventory_process
+
+        def replace_then_run(*args: object, **kwargs: object):
+            os.replace(replacement, original)
+            return real_run(*args, **kwargs)  # type: ignore[arg-type]
+
+        request = SkillLoadProbeRequest(
+            expected_skills=("alpha", "beta"), hermes=str(original), timeout_seconds=5.0,
+            env={"PATH": os.defpath},
+        )
+        with patch.object(skill_load_module, "_run_inventory_process", replace_then_run):
+            payload = probe_skill_load(request, confirmed=True)
+        self.assertEqual(payload["probe_status"], "observed")
+        self.assertEqual(payload["runtime_fingerprint"], "1" * 64)
+
+    def test_atomic_replace_and_restore_cannot_evade_executable_binding(self) -> None:
+        original = self.executable(self.root / "all.py", "1")
+        replacement = self.executable(self.root / "replacement.py", "9")
+        backup = self.root / "original-backup.py"
+        real_run = skill_load_module._run_inventory_process
+
+        def swap_run_restore(*args: object, **kwargs: object):
+            os.replace(original, backup)
+            os.replace(replacement, original)
+            try:
+                return real_run(*args, **kwargs)  # type: ignore[arg-type]
+            finally:
+                os.replace(original, replacement)
+                os.replace(backup, original)
+
+        request = SkillLoadProbeRequest(
+            expected_skills=("alpha", "beta"), hermes=str(original), timeout_seconds=5.0,
+            env={"PATH": os.defpath},
+        )
+        with patch.object(skill_load_module, "_run_inventory_process", swap_run_restore):
+            payload = probe_skill_load(request, confirmed=True)
+        self.assertEqual(original.read_text(encoding="utf-8").count('"1" * 64'), 1)
+        self.assertEqual(payload["probe_status"], "observed")
+        self.assertEqual(payload["runtime_fingerprint"], "1" * 64)
+
+    def test_symlink_target_replace_after_fingerprint_never_executes_replacement(self) -> None:
+        target = self.executable(self.root / "all.py", "1")
+        replacement = self.executable(self.root / "replacement.py", "9")
+        link = self.root / "selected-hermes"
+        link.symlink_to(target)
+        real_run = skill_load_module._run_inventory_process
+
+        def replace_target_then_run(*args: object, **kwargs: object):
+            os.replace(replacement, target)
+            return real_run(*args, **kwargs)  # type: ignore[arg-type]
+
+        request = SkillLoadProbeRequest(
+            expected_skills=("alpha", "beta"), hermes=str(link), timeout_seconds=5.0,
+            env={"PATH": os.defpath},
+        )
+        with patch.object(skill_load_module, "_run_inventory_process", replace_target_then_run):
+            payload = probe_skill_load(request, confirmed=True)
+        self.assertEqual(payload["probe_status"], "observed")
+        self.assertEqual(payload["runtime_fingerprint"], "1" * 64)
+
+    def test_executable_snapshot_is_removed_after_success_timeout_and_error(self) -> None:
+        snapshots: list[Path] = []
+        real_run = skill_load_module._run_inventory_process
+
+        def capture_then_run(*args: object, **kwargs: object):
+            snapshots.append(Path(str(args[1])))
+            return real_run(*args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(skill_load_module, "_run_inventory_process", capture_then_run):
+            self.assertEqual(
+                probe_skill_load(self.request("all"), confirmed=True)["probe_status"],
+                "observed",
+            )
+            self.assertEqual(
+                probe_skill_load(self.request("error"), confirmed=True)["reason_code"],
+                "inventory_process_error",
+            )
+            sleeper = self.root / "sleep.py"
+            sleeper.write_text(
+                "#!/usr/bin/env python3\nimport time\ntime.sleep(60)\n",
+                encoding="utf-8",
+            )
+            sleeper.chmod(0o755)
+            timed_out = probe_skill_load(
+                self.request("all", hermes=str(sleeper), timeout_seconds=0.05),
+                confirmed=True,
+            )
+            self.assertEqual(timed_out["reason_code"], "inventory_timeout")
+
+        def capture_then_raise(*args: object, **_kwargs: object):
+            snapshots.append(Path(str(args[1])))
+            raise RuntimeError("synthetic process adapter failure")
+
+        with patch.object(skill_load_module, "_run_inventory_process", capture_then_raise):
+            with self.assertRaisesRegex(RuntimeError, "synthetic process adapter failure"):
+                probe_skill_load(self.request("all"), confirmed=True)
+
+        self.assertEqual(len(snapshots), 4)
+        for snapshot in snapshots:
+            self.assertFalse(snapshot.exists())
+            self.assertFalse(snapshot.parent.exists())
+
     def test_path_selected_executable_fingerprint_binds_the_binary_that_ran(self) -> None:
         fingerprints: list[str] = []
         for label, runtime_digit in (("first", "1"), ("second", "2")):
             binary_dir = self.root / label
             binary_dir.mkdir()
             executable = binary_dir / "hermes"
-            executable.write_text(
-                textwrap.dedent(_FAKE).replace(
-                    '"runtime_fingerprint": "b" * 64',
-                    f'"runtime_fingerprint": "{runtime_digit}" * 64',
-                ),
-                encoding="utf-8",
-            )
-            executable.chmod(0o755)
+            self.executable(executable, runtime_digit)
             payload = probe_skill_load(
                 SkillLoadProbeRequest(
                     expected_skills=("alpha", "beta"),
@@ -187,7 +297,7 @@ class SkillLoadObservationTests(unittest.TestCase):
         self.assertNotIn("observed_skills", missing)
 
         executable = self.request("all")
-        with patch("omh.coding.skill_load_observation.Path.open", side_effect=PermissionError):
+        with patch.object(skill_load_module.os, "read", side_effect=PermissionError):
             unreadable = probe_skill_load(executable, confirmed=True)
         self.assertEqual(
             (unreadable["probe_status"], unreadable["reason_code"]),
