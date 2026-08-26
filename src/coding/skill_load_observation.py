@@ -277,6 +277,8 @@ def _run_inventory_process(
     )
     process: subprocess.Popen[bytes] | None = None
     drainers = None
+    kind = "spawn_error"
+    cleanup_verified = True
     try:
         process = subprocess.Popen(
             argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -288,18 +290,27 @@ def _run_inventory_process(
             kind = "complete"
         except subprocess.TimeoutExpired:
             kind = "timeout"
-            terminate_process_group(process, request.termination_grace_seconds, signal.SIGTERM)
-        finally:
-            terminate_process_group(process, request.termination_grace_seconds, signal.SIGTERM)
-            for drainer in drainers:
-                drainer.done.wait(max(0.1, request.termination_grace_seconds))
-                drainer.thread.join(timeout=max(0.1, request.termination_grace_seconds))
-        stdout_capture = drainers[0].capture()
-        if stdout_capture.truncated:
-            return _ProcessOutcome("complete", process.returncode, b"")
-        return _ProcessOutcome(kind, process.returncode, stdout_capture.data)
     except OSError:
+        pass
+    finally:
+        if process is not None:
+            _signals, cleanup_verified = terminate_process_group(
+                process, request.termination_grace_seconds, signal.SIGTERM
+            )
+            if drainers is None:
+                for pipe in (process.stdout, process.stderr):
+                    if pipe is not None:
+                        pipe.close()
+            else:
+                for drainer in drainers:
+                    drainer.done.wait(max(0.1, request.termination_grace_seconds))
+                    drainer.thread.join(timeout=max(0.1, request.termination_grace_seconds))
+    if not cleanup_verified or process is None or drainers is None:
         return _ProcessOutcome("spawn_error", None, b"")
+    stdout_capture = drainers[0].capture()
+    if stdout_capture.truncated:
+        return _ProcessOutcome("complete", process.returncode, b"")
+    return _ProcessOutcome(kind, process.returncode, stdout_capture.data)
 
 
 def _validated_inventory_response(
