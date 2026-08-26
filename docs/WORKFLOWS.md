@@ -6536,7 +6536,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - observed failure signals, or an explicit statement that none were supplied
   - pending amendment review slots and top safe actions with owner lane and verification path
 - Artifact expectations:
-  - skill-health/v1 metadata-only wrapper card recording surface status, observed-only failure signals, pending amendments, and the non-mutation boundary
+  - skill_health_card/v1 metadata-only wrapper card recording surface status, observed-only failure signals, pending amendments, and the non-mutation boundary
 - Safety rules:
   - A skill health dashboard is not install/setup health, live skill execution success, automatic skill mutation, model training, verification, review, CI, or proof that future routing is fixed.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.

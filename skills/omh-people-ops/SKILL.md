@@ -1,6 +1,6 @@
 ---
-name: omh-people-ops
-description: [omh] Turn hiring and people context into a fair, structured recruiting or people-operations brief. Use when the user says: recruiting plan, interview scorecard, candidate debrief, 채용 계획, 면접 평가표, 후보자 비교.
+name: "omh-people-ops"
+description: "[omh] Turn hiring and people context into a fair, structured recruiting or people-operations brief. Use when the user says: recruiting plan, interview scorecard, candidate debrief, 채용 계획, 면접 평가표, 후보자 비교."
 metadata:
   hermes:
     tags: [workflow, oh-my-hermes, operations]

@@ -1888,7 +1888,7 @@ _FEATURE_SURFACE_SKILLS = (
             "pending amendment review slots and top safe actions with owner lane and verification path",
         ),
         artifact_expectations=(
-            "skill-health/v1 metadata-only wrapper card recording surface status, observed-only failure signals, "
+            "skill_health_card/v1 metadata-only wrapper card recording surface status, observed-only failure signals, "
             "pending amendments, and the non-mutation boundary",
         ),
         final_checklist=(

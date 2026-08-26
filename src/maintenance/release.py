@@ -204,7 +204,9 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # say-not-observed carve-out for directly asked figures (renders into all
 # three handoff-guide skill bodies; the common rail carries the same text but
 # sits outside this metric); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 716418
+# 716418 -> 716734: JSON-compatible YAML quoting now protects every emitted
+# frontmatter name and description from mapping, comment, and delimiter syntax.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 716734
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

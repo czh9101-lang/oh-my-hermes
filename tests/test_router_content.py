@@ -126,7 +126,7 @@ class RouterContentTests(unittest.TestCase):
 
         templates = {template.name: template.content for template in builtin_skill_templates()}
         self.assertIn("context", templates)
-        self.assertIn("name: ulw-context", templates["context"])
+        self.assertIn('name: "ulw-context"', templates["context"])
         references = {
             (template.skill_name, template.relative_path): template.content
             for template in builtin_skill_reference_templates()
@@ -762,7 +762,7 @@ class RouterContentTests(unittest.TestCase):
 
         templates = {template.name: template for template in builtin_skill_templates()}
         body = templates["buzz"].content
-        self.assertIn("name: omh-buzz", body)
+        self.assertIn('name: "omh-buzz"', body)
         self.assertIn("references/setup.md", body)
         self.assertIn("references/media.md", body)
         self.assertIn("references/self-host.md", body)
@@ -801,18 +801,18 @@ class RouterContentTests(unittest.TestCase):
         definitions = {definition.name: definition for definition in builtin_definitions()}
 
         ultrawork = templates["ultrawork"]
-        self.assertIn("\nname: ulw-work\n", ultrawork)
+        self.assertIn('\nname: "ulw-work"\n', ultrawork)
         self.assertIn("\n    category: execution\n", ultrawork)
         self.assertIn("\n    phase: parallel-delivery\n", ultrawork)
         self.assertIn("\n    role: handoff-guide\n", ultrawork)
         self.assertIn("\n    quality_tier: handoff-gated\n", ultrawork)
         self.assertIn("\n    tags: [workflow, oh-my-hermes, execution]\n", ultrawork)
 
-        self.assertIn("\nname: omh-routing\n", templates["oh-my-hermes"])
+        self.assertIn('\nname: "omh-routing"\n', templates["oh-my-hermes"])
 
         for name, content in templates.items():
             definition = definitions[name]
-            self.assertIn(f"\nname: {omh_skill_display_name(name)}\n", content)
+            self.assertIn(f'\nname: "{omh_skill_display_name(name)}"\n', content)
             self.assertIn(f"\n    category: {definition.category}\n", content)
             self.assertIn(f"\n    phase: {definition.phase}\n", content)
             self.assertIn(f"\n    role: {definition.hermes_role}\n", content)
@@ -2702,7 +2702,7 @@ class RouterContentTests(unittest.TestCase):
             self.assertIn(definition.delegation_boundary, {"default", "retained", "retained-catalog-intent"}, definition.name)
             self.assertTrue(definition.handoff_policy, definition.name)
         for template in builtin_skill_templates():
-            self.assertIn("description: [omh] ", template.content.split("---", 2)[1], template.name)
+            self.assertIn('description: "[omh] ', template.content.split("---", 2)[1], template.name)
 
     def test_g003_sibling_boundaries_are_reciprocal_and_outcome_shaped(self) -> None:
         definitions = {definition.name: definition for definition in builtin_definitions()}
