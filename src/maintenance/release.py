@@ -192,7 +192,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # HUD-panel wording, and the rewrite-on-evidence-gap step) and the bounded
 # in-plan research stage rule with its dossier-recording obligation, minus
 # one subsumed recovery note (net +809 chars); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 715255
+# 715255 -> 715434: the ultrawork skill's todo-init rule grew into a
+# plan-structure contract on owner direction (+179 chars: numbered phases in
+# delivery order, one implement/verify/deliver task per work unit,
+# independent review lanes, an evidence-and-cleanup close, one task per
+# observable outcome); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 715434
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

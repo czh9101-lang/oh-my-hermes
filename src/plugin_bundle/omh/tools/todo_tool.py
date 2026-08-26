@@ -18,10 +18,13 @@ OMH_TODO_SCHEMA = {
     "name": "omh_todo",
     "description": (
         "Declare, clear, or read the metadata-only plan todo list that OMH HUD surfaces render "
-        "below the Hermes prompt input. Initialize it BEFORE starting engine work (todo init): "
-        "declare phases with their tasks so the run walks a bounded checklist instead of an "
-        "open-ended reasoning loop, keep exactly one item active, and update states as work "
-        "completes. Todo items are plan declarations, never execution evidence."
+        "above the Hermes prompt input. Initialize it BEFORE starting engine work (todo init): "
+        "declare numbered phases in delivery order (e.g. 'I. Bootstrap' through 'VI. Evidence "
+        "and Cleanup') that cover the whole lifecycle — setup, one implement/verify/deliver "
+        "task per work unit, independent review lanes, and an evidence-and-cleanup close — "
+        "with one task per observable outcome, so the run walks a bounded checklist instead "
+        "of an open-ended reasoning loop. Keep exactly one item active and update states as "
+        "work completes. Todo items are plan declarations, never execution evidence."
     ),
     "parameters": {
         "type": "object",
@@ -50,9 +53,10 @@ OMH_TODO_SCHEMA = {
                         "phase": {
                             "type": "string",
                             "description": (
-                                "Optional phase label (e.g. 'Internal Context', 'Delivery'). "
-                                "Items sharing a phase render as one section; the HUD shows the "
-                                "current phase's checklist."
+                                "Optional phase label, numbered in delivery order (e.g. "
+                                "'I. Bootstrap', 'II. Wave One Delivery'). Items sharing a "
+                                "phase render as one section; the HUD shows the current "
+                                "phase's checklist."
                             ),
                         },
                         "depth": {

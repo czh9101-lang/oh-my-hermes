@@ -640,9 +640,9 @@ JSON.
 The HUD payload also carries a metadata-only plan todo list. When a todo is
 declared — by Hermes through the `omh_todo` plugin tool, or by an agent or
 operator through `omh runtime todo set` — the modern Hermes TUI
-(`hermes --tui`) renders it as a compact checklist below the prompt input,
-after the status and activity rows. The classic Python TUI does not load TUI
-widget files, so this panel is a modern-TUI-only surface.
+(`hermes --tui`) renders it as a compact checklist above the prompt input,
+with the status and activity rows below the input. The classic Python TUI
+does not load TUI widget files, so this panel is a modern-TUI-only surface.
 `omh runtime todo show` prints the todo projection the HUD payload carries
 (`todo` plus `display.todo_lines`), and `omh runtime todo clear` removes it. Todo items are plan declarations, never execution, review, CI, or
 merge evidence; an all-done list collapses to a single header line and a list

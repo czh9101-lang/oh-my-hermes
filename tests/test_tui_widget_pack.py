@@ -241,29 +241,49 @@ class TuiWidgetPackTests(unittest.TestCase):
             self.assertEqual(unrelated.read_text(encoding="utf-8"), "personal\n")
             self.assertEqual(json.loads(stdout)["tui_widget"]["status"], "removed")
 
-    def test_widget_docks_all_omh_chrome_below_the_prompt_input(self) -> None:
+    def test_widget_frames_the_composer_and_docks_the_plan_on_top(self) -> None:
+        # Changed on purpose (this used to pin a single dock-bottom app and
+        # forbid dock-top). The single bottom dock framed the OMH section
+        # instead of the chat input ('채팅창에 선 두개가 있어야지 왜 tui에
+        # 있어') and sank the plan the owner always read above the input
+        # ('투두가 왜 하단에 떠 기존에는 상단에 잘 떴었는데'). The layout is
+        # now: plan todo in dock-top, closed by the FrameRule directly above
+        # the input; the bottom dock opens with the rule below the input and
+        # carries status and activity rows with no closing rule.
         widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
 
-        self.assertEqual(widget.count("defineWidgetApp({"), 1)
+        self.assertEqual(widget.count("defineWidgetApp({"), 2)
         self.assertEqual(widget.count("zone: 'dock-bottom'"), 1)
-        self.assertNotIn("zone: 'dock-top'", widget)
-        self.assertNotIn("id: 'omh-todo'", widget)
-        self.assertIn("h(TodoPanel", widget)
-        self.assertIn(
-            "if (!state.payload || state.payload.error || state.payload.privacy !== 'metadata_only') return null",
-            widget,
+        self.assertEqual(widget.count("zone: 'dock-top'"), 1)
+        self.assertIn("id: 'omh-todo'", widget)
+        self.assertIn("id: 'omh-status'", widget)
+        # The todo panel renders only in the top dock, and every branch of it
+        # (no plan, all done, established) closes with the frame rule so the
+        # composer frame never blinks with the plan lifecycle.
+        self.assertEqual(widget.count("h(TodoPanel"), 1)
+        self.assertEqual(widget.count("h(FrameRule, { columns, payload, t })"), 3)
+        # Both apps gate on the same payload validity, so neither half of the
+        # frame renders on a host where the plugin does not answer.
+        self.assertEqual(
+            widget.count(
+                "if (!state.payload || state.payload.error || state.payload.privacy !== 'metadata_only') return null"
+            ),
+            2,
         )
+        # One snapshot pass feeds both docks; a second poller would let the
+        # two frame rules disagree about payload freshness.
+        self.assertEqual(widget.count("updateWidget(todoApp, apply)"), 1)
+        self.assertEqual(widget.count("openWidget(todoApp, todoApp.init(''))"), 1)
 
     def test_widget_is_bottom_docked_and_omits_host_status_fields(self) -> None:
         widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
 
         self.assertIn("zone: 'dock-bottom'", widget)
         self.assertNotIn("zone: 'top-right'", widget)
-        # Status, activity, and todo rows share one vertical dock below the
-        # composer. A variable-height dock-top panel would separate newly
-        # submitted transcript text from the prompt input.
-        self.assertEqual(widget.count("zone: 'dock-top'"), 0)
-        self.assertNotIn("id: 'omh-todo'", widget)
+        # Plan todo above the input, status and activity rows below it — the
+        # owner's placement, restored after the single-bottom-dock interim.
+        self.assertEqual(widget.count("zone: 'dock-top'"), 1)
+        self.assertIn("id: 'omh-todo'", widget)
         self.assertIn("TodoPanel", widget)
         self.assertIn("truncateCells(item.text", widget)
         self.assertIn("safeText(todo.title)", widget)
@@ -275,9 +295,13 @@ class TuiWidgetPackTests(unittest.TestCase):
         # The Rule frame replaced the marginTop spacer: the docks carry the
         # classic composer frame, rules sitting tight against the input --
         # padding was tried at one and two rows and the owner picked none.
+        # Exactly two plain-rule renders remain (the dock-bottom opener and
+        # the frame app's idle fallback): the closing rules that used to
+        # follow the plan panel framed the OMH section instead of the input
+        # and were removed on owner direction.
         self.assertIn("const Rule = ", widget)
         self.assertNotIn("Gap", widget)
-        self.assertEqual(widget.count("h(Rule, { columns, t })"), 4)
+        self.assertEqual(widget.count("h(Rule, { columns, t })"), 2)
         # Text, not chrome — changed on purpose a second time, by owner
         # direction after living with the bordered card: the OMH surface reads
         # like the host's own status line, dense text in the TUI's idiom. The
@@ -316,17 +340,17 @@ class TuiWidgetPackTests(unittest.TestCase):
         # above its checklist and the phase count next to done/total.
         self.assertIn("safeText(todo.display_phase)", widget)
         self.assertIn("` · ${phaseCount} phases`", widget)
-        # The todo panel renders the plan from todo.items: a single-task phase
-        # stays merged on one line, a dense phase renders a header with one
-        # item per row, subtasks (depth 1..3) indent beneath their parent, and
-        # past seven visible items the window anchors at current work with
-        # muted "... (N earlier/later tasks)" fold lines.
+        # The todo panel renders the plan from todo.items: every phase is a
+        # header row with its tasks indented one level beneath it — even a
+        # single-task phase; the old one-line merge collapsed the structure
+        # the owner reads ('[] 이거 탭한번쳐서 한개여도. 그 구조로 나오게').
+        # Subtasks (depth 1..3) indent further, and past seven visible items
+        # the window anchors at current work with muted
+        # "... (N earlier/later tasks)" fold lines.
         self.assertIn("Array.isArray(todo.items)", widget)
         self.assertIn("last.phase === phase", widget)
-        # Merged rows pad every phase label to one shared marker column so
-        # `[ ]` lines up regardless of phase-name width.
-        self.assertIn("const phaseColumn = Math.max(", widget)
-        self.assertIn("' '.repeat(phaseColumn - cellWidth(label) + 1)", widget)
+        self.assertNotIn("isMerged", widget)
+        self.assertNotIn("phaseColumn", widget)
         self.assertIn("const TODO_DISPLAY_ROWS = 7", widget)
         self.assertIn("depthOf", widget)
         self.assertIn("(!phase && depthOf(item) > 0)", widget)
@@ -399,9 +423,16 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertIn("PlanPulse", widget)
         self.assertIn("hasActive ? h(PlanPulse, { t }) : null", widget)
         self.assertNotIn("Number.MAX_SAFE_INTEGER", widget)
-        # A fresh concurrent tool-call batch is branded on the status line.
+        # Changed on purpose: the parallel-shot badge moved off the bottom
+        # status line onto the dock-top frame rule — the transcript's
+        # "Tool calls (N)" group is host-owned rendering OMH cannot decorate,
+        # and the rule directly under the newest transcript lines is the
+        # closest OMH-owned surface ('tool calling 옆에서 떠야지 하단에
+        # 뜨면 의미가없지'). The bottom dock renders no parallel-shot text.
         self.assertIn("parallel shot ×", widget)
         self.assertIn("payload.parallel_shot", widget)
+        self.assertNotIn("• parallel shot", widget)
+        self.assertIn("shot.status !== 'observed'", widget)
         self.assertIn("Math.min(3,", widget)
         self.assertNotIn("spinnerTimerKey", widget)
         self.assertIn("ActivityRow", widget)
