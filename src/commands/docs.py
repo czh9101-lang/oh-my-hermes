@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from pathlib import Path
 
 from ..catalogs.roles import roles_reference_markdown
@@ -149,14 +151,48 @@ def cmd_docs_skill_lint(args: argparse.Namespace) -> int:
     Exit codes are the contract: 0 pass, 1 violations, 2 invocation or internal
     error. The unsupported-format branch raises `OmhError` so it exits 2 through
     the same path every other invocation error uses.
+
+    An unexpected failure inside the lint is the third case, and it is caught
+    here rather than left to escape. Escaping is not neutral: the interpreter
+    would exit 1, which already means "this tree has structural violations", so
+    a crash would be indistinguishable from a real verdict to any caller reading
+    the exit code. The handler is deliberately at this one command boundary and
+    nowhere deeper, so the rest of the repository keeps its existing behavior.
     """
     from ..quality.skill_governance import skill_structure_lint_report
 
     if args.format != "json":
         raise OmhError(f"unsupported skill-lint format: {args.format}")
-    report = skill_structure_lint_report()
+    try:
+        report = skill_structure_lint_report()
+    except Exception as exc:
+        _print_internal_error(exc)
+        return 2
     _print_json(report)
     return 0 if report["ok"] else 1
+
+
+def _print_internal_error(exc: BaseException) -> None:
+    """Report a lint crash on the error channel as a classified result.
+
+    The exception *type* is surfaced because it is what makes the failure
+    triageable and is not attacker-influenced. The message is not: it is
+    arbitrary text that may carry a path, a token, or any other value the
+    failing code happened to be holding, and this command's whole contract is
+    deterministic machine-readable output.
+
+    Written to stderr so stdout carries only real reports; a caller parsing
+    stdout therefore never has to tell a verdict apart from a crash.
+    """
+    from ..skills.validation import SKILL_STRUCTURE_LINT_SCHEMA_VERSION
+
+    payload = {
+        "schema_version": SKILL_STRUCTURE_LINT_SCHEMA_VERSION,
+        "ok": False,
+        "status": "internal_error",
+        "error_type": type(exc).__name__,
+    }
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")), file=sys.stderr)
 
 
 def _default_capability_families_path() -> Path:

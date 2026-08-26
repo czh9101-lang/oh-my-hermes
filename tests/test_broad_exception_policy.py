@@ -221,6 +221,16 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "feeds the model must never break for an optional HUD observation. The handler records "
         "nothing, so an absent surface reads as an idle ledger, never as an observed state.",
     ),
+    ClassifiedSite(
+        "src/commands/docs.py",
+        "cmd_docs_skill_lint",
+        INTENTIONAL,
+        "Exit-code boundary for `omh docs skill-lint`. The command's contract is 0 pass, 1 "
+        "violations, 2 invocation or internal error. An escaping exception would exit 1 and "
+        "become indistinguishable from a real structural verdict, so the handler classifies the "
+        "failure as status=internal_error with the exception type on stderr and returns 2. The "
+        "failure is never relabeled as a pass or a violation, and stdout stays empty.",
+    ),
 )
 
 # Ruff reports one hit per handler; the inventory is keyed per enclosing
