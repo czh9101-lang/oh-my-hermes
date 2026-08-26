@@ -105,10 +105,10 @@ Safety rules:
 
 ## Runtime Evidence
 
-Preferred harness for this skill: `coding-handling`.
+Preferred harness for this skill: `hermes-setup`.
 
 ```sh
-omh runtime record --skill websearch-setup --harness coding-handling --status started
+omh runtime record --skill websearch-setup --harness hermes-setup --status started
 ```
 
 Record observed delegation results; otherwise return `not_available` or `not_observed`.
