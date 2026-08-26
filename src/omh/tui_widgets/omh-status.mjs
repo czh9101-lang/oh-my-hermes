@@ -403,7 +403,7 @@ export default function register(sdk) {
     // above the input renders unconditionally so the composer frame never
     // blinks with the plan lifecycle.
     if (todo.status !== 'established' && todo.status !== 'all_done') {
-      return h(FrameRule, { columns, payload, t })
+      return h(Rule, { columns, t })
     }
     const counts = todo.counts || {}
     const title = safeText(todo.title)
@@ -420,8 +420,9 @@ export default function register(sdk) {
           title ? h(Text, { color: t.color.muted }, ` ${title}`) : null,
           h(Text, { color: t.color.border }, SEPARATOR),
           h(Text, { color: t.color.ok }, `✓ ${counts.done ?? 0}/${counts.total ?? 0}`),
+          planShotBadge(payload, t),
         ),
-        h(FrameRule, { columns, payload, t }),
+        h(Rule, { columns, t }),
       )
     }
     // The whole plan by default, bounded at seven visible item rows. Every
@@ -519,37 +520,29 @@ export default function register(sdk) {
         h(Text, { color: t.color.border }, SEPARATOR),
         h(Text, { color: t.color.warn }, `${counts.done ?? 0}/${counts.total ?? 0}`),
         phaseCount > 1 ? h(Text, { color: t.color.muted }, ` · ${phaseCount} phases`) : null,
+        planShotBadge(payload, t),
         hasActive ? h(PlanPulse, { t }) : null,
       ),
       ...rows,
-      h(FrameRule, { columns, payload, t }),
+      h(Rule, { columns, t }),
     )
   }
 
-  // The upper half of the composer frame — the todo panel's closing line.
-  // It also carries the parallel-shot badge: a fresh concurrent tool-call
-  // batch (observed by the pre_tool_call hook) reads meaningfully only near
-  // the transcript's collapsed "Tool calls (N)" group, and that group is
-  // host-owned rendering OMH cannot decorate — this rule in the top dock is
-  // the closest OMH-owned surface to it, and the badge sat unread down in
-  // the bottom dock ('하단에 뜨면 의미가없지'). Idle bursts render a plain
-  // rule, so the frame stays byte-stable outside the 90s freshness window.
-  function FrameRule({ columns, payload, t }) {
-    const width = Math.max(1, columns - 2)
-    const shot = payload.parallel_shot
-    if (!shot || shot.status !== 'observed') {
-      return h(Rule, { columns, t })
-    }
-    const label = ` parallel shot ×${Number(shot.size) || 0} `
-    const lead = 3
-    return h(
-      Text,
-      { wrap: 'truncate-end' },
-      h(Text, { color: t.color.border }, '─'.repeat(lead)),
-      h(Text, { color: t.color.label }, label),
-      h(Text, { color: t.color.border }, '─'.repeat(Math.max(1, width - lead - cellWidth(label)))),
-    )
-  }
+  // The parallel-shot badge rides the [Plan] header — the owner moved it
+  // here from the frame rule ('parallel shot을 지금 위치에 두지말고 여기
+  // 위치 옆에 뜨게'), the line sitting directly under the host status rule.
+  // A fresh concurrent tool-call batch (observed by the pre_tool_call hook)
+  // is the only thing it brands, and the reader's seconds-scale freshness
+  // window makes it vanish right after the batch lands instead of lingering
+  // as standing chrome.
+  const planShotBadge = (payload, t) =>
+    payload.parallel_shot && payload.parallel_shot.status === 'observed'
+      ? h(
+          Text,
+          { color: t.color.label },
+          ` · parallel shot ×${Number(payload.parallel_shot.size) || 0}`,
+        )
+      : null
 
   const sharedInit = () => ({ payload: null, receivedAt: 0, tick: 0 })
   const sharedReduce = (state, input) =>
@@ -558,8 +551,8 @@ export default function register(sdk) {
       : state
 
   // The todo panel reads above the input, where the owner always looked for
-  // it; the panel itself ends with the FrameRule that tops the composer
-  // frame, so the dock never renders taller than the plan plus one line.
+  // it; the panel itself ends with the rule that tops the composer frame,
+  // so the dock never renders taller than the plan plus one line.
   const todoApp = defineWidgetApp({
     id: 'omh-todo',
     help: 'OMH plan todo and the composer frame above the prompt input',
