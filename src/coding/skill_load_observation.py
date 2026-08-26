@@ -270,11 +270,7 @@ def _run_inventory_process(
         "--nonce", nonce, "--expected-digest", expected_digest,
         "--tool-fingerprint", tool_fingerprint,
     )
-    argv = (
-        (sys.executable, executable, *protocol_argv)
-        if os.name == "nt" and Path(executable).suffix.casefold() == ".py"
-        else (executable, *protocol_argv)
-    )
+    argv = _inventory_argv(executable, protocol_argv, windows=os.name == "nt")
     process: subprocess.Popen[bytes] | None = None
     drainers = None
     kind = "spawn_error"
@@ -505,8 +501,14 @@ def _set_digest(values: Sequence[str]) -> str:
 
 def _probe_environment(source: Mapping[str, str] | None) -> dict[str, str]:
     values = os.environ if source is None else source
-    env = {name: values[name] for name in _SAFE_ENV_NAMES if values.get(name)}
-    env.setdefault("PATH", os.defpath)
+    folded = {name.casefold(): value for name, value in values.items()}
+    env = {
+        name: folded[name.casefold()]
+        for name in _SAFE_ENV_NAMES
+        if folded.get(name.casefold())
+    }
+    if source is None:
+        env.setdefault("PATH", os.defpath)
     env.update(
         {
             "HERMES_SAFE_MODE": "1",
@@ -519,6 +521,57 @@ def _probe_environment(source: Mapping[str, str] | None) -> dict[str, str]:
     return env
 
 
+def _inventory_argv(
+    executable: str,
+    protocol_argv: Sequence[str],
+    *,
+    windows: bool,
+) -> tuple[str, ...]:
+    if windows and Path(executable).suffix.casefold() == ".py":
+        return (sys.executable, executable, *protocol_argv)
+    return (executable, *protocol_argv)
+
+
+def _resolve_executable(
+    executable: str,
+    env: Mapping[str, str],
+    *,
+    windows: bool,
+) -> Path | None:
+    has_separator = "/" in executable or "\\" in executable
+    if has_separator or Path(executable).is_absolute():
+        return Path(executable).expanduser()
+    folded = {name.casefold(): value for name, value in env.items()}
+    path_value = folded.get("path", "")
+    if not windows:
+        found = shutil.which(executable, path=path_value)
+        return None if found is None else Path(found)
+    extensions = tuple(
+        extension if extension.startswith(".") else f".{extension}"
+        for extension in folded.get("pathext", ".COM;.EXE;.BAT;.CMD").split(";")
+        if extension
+    )
+    supplied_suffix = Path(executable).suffix.casefold()
+    names = (
+        (executable,)
+        if supplied_suffix in {extension.casefold() for extension in extensions}
+        else tuple(f"{executable}{extension}" for extension in extensions)
+    )
+    for directory_name in path_value.split(";"):
+        if not directory_name:
+            continue
+        directory = Path(directory_name)
+        try:
+            entries = {entry.name.casefold(): entry for entry in directory.iterdir()}
+        except OSError:
+            continue
+        for name in names:
+            selected = entries.get(name.casefold())
+            if selected is not None and selected.is_file():
+                return selected
+    return None
+
+
 def _snapshot_resolved_tool(executable: str, env: Mapping[str, str]) -> _ResolvedTool:
     """Copy one opened executable inode into a private per-probe snapshot.
 
@@ -526,14 +579,9 @@ def _snapshot_resolved_tool(executable: str, env: Mapping[str, str]) -> _Resolve
     bytes and snapshot bytes, so replacing or restoring its pathname cannot
     alter what the later process consumes.
     """
-    has_separator = os.sep in executable or bool(os.altsep and os.altsep in executable)
-    if has_separator or Path(executable).is_absolute():
-        selected = Path(executable).expanduser()
-    else:
-        found = shutil.which(executable, path=env.get("PATH"))
-        if found is None:
-            raise FileNotFoundError(executable)
-        selected = Path(found)
+    selected = _resolve_executable(executable, env, windows=os.name == "nt")
+    if selected is None:
+        raise FileNotFoundError(executable)
     resolved = selected.resolve(strict=True)
     source_fd = os.open(
         resolved,
