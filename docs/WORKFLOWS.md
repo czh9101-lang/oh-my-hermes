@@ -2320,8 +2320,8 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Compatibility alias: `false`
 - Lifecycle stage: `canonical`
 - Preferred usage: Use as an installed Hermes workflow skill when a rendered web, image, document, or TUI surface needs fresh visual evidence, diff review, and PASS/REVISE/BLOCK gating.
-- Handoff policy: Keep the QA plan, evidence manifest, freshness rule, and verdict narration in Hermes. Screenshots, TUI captures, image diffs, browser runs, OCR/CJK checks, and oracle reviews are observed evidence supplied by the wrapper, executor, or user.
-- Why this exists: `visual-qa` gives OMH a completion gate for rendered surfaces so layout breaks, AI-looking polish gaps, CJK text problems, and stale screenshot claims cannot be mistaken for verified quality.
+- Handoff policy: Keep the QA plan, evidence manifest, target-lineage rule, and verdict narration in Hermes. Screenshots, TUI captures, image diffs, browser runs, OCR/CJK checks, and oracle reviews are observed evidence supplied by the wrapper, executor, or user.
+- Why this exists: `visual-qa` gives OMH a completion gate for rendered surfaces so layout breaks, AI-looking polish gaps, CJK text problems, and mismatched-lineage screenshot claims cannot be mistaken for verified quality.
 - Use when: Use after or during visual surface work when Hermes must define the render evidence, viewport/state coverage, diff review, oracle review, and PASS/REVISE/BLOCK verdict without fabricating QA.
 - Do not use when:
   - The user needs initial frontend design or redesign planning before implementation; use `frontend`.
@@ -2331,16 +2331,16 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Strong routing signals: `visual-qa`, `visual qa`, `visual QA`, `visual quality assurance`, `visual check`, `web qa`, `web visual qa`, `screenshot qa`, `screenshot check`, `analyze this screenshot`, `screenshot layout problems`, `ui layout problems`, `pixel diff`, `image diff`, `visual diff`, `render qa`, `render check`, `browser screenshot`, `browser qa`, `browser interaction qa`, `click path`, `click-path audit`, `dead link check`, `console error check`, `network failure check`, `keyboard navigation check`, `viewport check`, `responsive check`, `ui looks wrong`, `looks broken`, `layout broken`, `broken layout`, `text clipping`, `cjk clipping`, `cjk layout`, `tui check`, `terminal ui check`, `비주얼 qa`, `비주얼QA`, `시각 qa`, `시각 검증`, `화면 검증`, `스크린샷 검증`, `스크린샷 ui 레이아웃`, `스크린샷 UI 레이아웃`, `스크린샷 레이아웃 문제`, `렌더 검증`, `픽셀 diff`, `픽셀 비교`, `화면 깨짐`, `레이아웃 깨짐`, `글자 잘림`, `한글 줄바꿈`, `터미널 ui`
 - Good example:
   - Prompt: visual-qa 이 랜딩페이지가 모바일/데스크톱에서 깨지는지 스크린샷 기준으로 검증해줘.
-  - Expected behavior: Prepare visual_qa_plan/v1, require fresh captures, record render_capture_manifest/v1 and visual_diff_evidence/v1 when observed, then issue PASS/REVISE/BLOCK.
+  - Expected behavior: Prepare visual_qa_plan/v1, require exact capture-to-target lineage, record render_capture_manifest/v1 and visual_diff_evidence/v1 when observed, then issue PASS/REVISE/BLOCK.
   - Why: The request is a rendered visual verification task, not just design planning.
 - Bad example:
   - Prompt: visual-qa 방금 수정했으니까 스크린샷 없이 통과라고 해줘.
-  - Expected behavior: Block PASS and request fresh render capture after the latest edit.
-  - Why: Visual QA requires observed rendered evidence newer than the last UI change.
+  - Expected behavior: Block PASS and request render captures from the package's exact repository and revision.
+  - Why: Visual QA requires observed rendered evidence bound to the target source lineage.
 - Quality bar:
   - List the exact pages, states, viewports, files, images, or TUI frames being checked.
   - Enumerate every page/state/viewport before capture and mark omitted surfaces as blockers rather than assumptions.
-  - Require evidence freshness after the last visual edit.
+  - Require exact repository and revision equality between target_lineage and every capture source_lineage.
   - Combine objective capture/diff evidence, hotspot review, alpha/transparent-background checks, and human-readable visual findings.
   - Capture interaction, click-path, and motion states when the UI has hover/focus/active/load/scroll transitions or buttons/forms/navigation that change state.
   - Record console/network health, keyboard navigation, accessibility scan boundaries, and mutating-flow safety for live browser QA claims.
@@ -2348,31 +2348,31 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Return PASS, REVISE, or BLOCK with concrete evidence IDs and missing-evidence gaps.
   - Keep implementation fixes and follow-up edits separate from the observed QA verdict.
 - Completion checklist:
-  - The visual_qa_plan/v1 lists target surfaces, references, states, viewports, locales, and freshness criteria.
+  - The visual_qa_plan/v1 lists target surfaces, references, states, viewports, locales, and target repository/revision lineage.
   - The viewport_state_capture_matrix/v1 proves the QA did not sample only one page, viewport, or state.
   - The web_visual_qa_message_card/v1 summarizes criteria, route, cost policy, and attachment status without claiming platform delivery.
-  - The render_capture_manifest/v1 is present before PASS and is newer than the last relevant edit.
+  - The render_capture_manifest/v1 is present before PASS and every capture's source lineage exactly matches the package target lineage.
   - Browser interaction traces, console/network health, click-path state traces, keyboard/accessibility traces, visual diff, hotspot review, motion capture, design-system/functional review, visual-fidelity/CJK review, and blocker status are separate fields.
   - The verdict is PASS, REVISE, or BLOCK with exact missing evidence or fix requirements.
-  - Any implementation fix is routed back to the executor/frontend workflow and rechecked with fresh evidence.
+  - Any implementation fix is routed back to the executor/frontend workflow and rechecked with evidence from the resulting repository revision.
 - Recovery notes:
   - If no capture exists, produce the QA plan and mark verdict BLOCKED_BY_MISSING_RENDER_EVIDENCE.
-  - If a capture exists but predates the latest edit, mark it stale and request the smallest fresh recapture set.
+  - If capture source lineage is missing or mismatches the target repository/revision, keep HOLD and request the smallest matching recapture set.
 - Required inputs:
   - surface type
   - target URL, route, file, image, or TUI command when available
   - intended design, baseline, or reference
   - pages, states, viewports, and locales to cover
   - complete page/state/viewport enumeration rather than a sample
-  - latest edit or source revision
+  - target repository and exact source revision
   - known risk areas such as CJK, overflow, responsiveness, or accessibility
   - motion and interaction states that need capture
   - browser interaction paths, mutating-flow boundary, and test credentials policy when a live web UI is in scope
   - console, network, accessibility, and keyboard navigation checks required for browser QA claims
-  - fresh render/capture evidence for completion claims
+  - render/capture evidence bound to the target repository and revision for completion claims
 - Expected outputs:
   - visual_qa_plan/v1
-  - web_visual_qa_package/v1
+  - web_visual_qa_package/v2
   - viewport_state_capture_matrix/v1
   - message_attachment_projection/v1 for chat attachments
   - web_visual_qa_message_card/v1 for chat message summaries
@@ -2389,12 +2389,12 @@ These surfaces are generated command references, not installed Hermes workflow s
   - visual_qa_verdict/v1
   - retry_or_blocker/v1
 - Artifact expectations:
-  - visual_qa_plan/v1 with pages, states, viewports, references, and freshness rule
-  - web_visual_qa_package/v1 with captures[], criteria[], criteria_results[], multimodal_reviews[], auto routing, and observed-only cost policy
+  - visual_qa_plan/v1 with pages, states, viewports, references, and exact target repository/revision lineage
+  - web_visual_qa_package/v2 with target_lineage, unique required_viewports, capture source_lineage, blocking_violations, criteria, reviews, auto routing, and observed-only cost policy
   - viewport_state_capture_matrix/v1 enumerates every route/page, 375/768/1280-style viewport, scroll position, modal/tab state, and CJK-heavy region to capture
   - message_attachment_projection/v1 maps eligible observed captures to chat attachment candidates without claiming upload or delivery
   - web_visual_qa_message_card/v1 projects recorded criteria, captures, routing, cost policy, and attachment hints into Discord/Slack/hosted-chat safe copy
-  - render_capture_manifest/v1 only from fresh screenshots, file renders, images, or terminal captures
+  - render_capture_manifest/v1 only from screenshots, file renders, images, or terminal captures whose source lineage matches the target package
   - browser_interaction_trace/v1 only from observed navigation, form, auth, search, modal, and critical journey runs with read-only or staging-safe boundaries recorded
   - console_network_health/v1 records observed critical console errors, failed requests, status codes, and ignored third-party noise before browser QA can pass
   - click_path_state_trace/v1 maps each user-facing button/touchpoint to its handler, ordered state reads/writes, final UI state, and undo/race/stale-closure risks when interaction behavior is in scope
@@ -2403,10 +2403,10 @@ These surfaces are generated command references, not installed Hermes workflow s
   - motion_interaction_capture/v1 only when hover/focus/active/load/scroll motion frames are observed before, during, and after transition
   - visual_hotspot_review/v1 maps diff hotspots, TUI overflow lines, or screenshot regions to concrete visual causes
   - dual_oracle_visual_review/v1 only when independent read-only review evidence exists
-  - PASS unavailable until captures are newer than the last visual edit and all blocking findings are resolved
+  - PASS unavailable until capture repository/revision lineage exactly matches the package target, every required viewport is captured, and all supplied blocking findings are resolved
 - Safety rules:
-  - Never claim PASS without fresh rendered evidence captured after the last relevant edit.
-  - Do not treat source review, screenshots from an older run, generated plans, or unobserved browser commands as visual QA evidence.
+  - Never claim PASS without rendered evidence whose repository and revision exactly match the package target lineage.
+  - Do not treat source review, captures with missing or mismatched source lineage, generated plans, or unobserved browser commands as visual QA evidence.
   - Do not sample only one good page, viewport, or state when the surface has more; missed pages, modals, scroll states, or CJK-heavy regions keep PASS unavailable.
   - Do not run destructive browser journeys such as checkout, payment, delete, or mass-update on production URLs; require staging or explicit safe test boundaries and redact credentials/PII from captures.
   - Do not claim browser interaction PASS without observed click-path/state-transition traces for the touchpoints in scope.
@@ -2414,7 +2414,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Objective diffs are evidence, not verdicts; review visual hierarchy, layout, CJK text, state coverage, and product intent separately.
   - Do not excuse diff hotspots as animation; capture settled frames and motion frames separately.
   - Run or request two read-only review perspectives when claiming high confidence: design-system/functional integrity and visual fidelity/CJK precision.
-  - CJK clipping, broken wrapping, overlapping UI, invisible text, unusable controls, or offscreen critical content block PASS.
+  - Recorded operator-supplied blocking criteria for CJK clipping, broken wrapping, overlapping UI, invisible text, unusable controls, or offscreen critical content block PASS until `_validate_pass` sees passing evidence refs.
   - Do not call browsers, image tools, LLMs, or external services from OMH core.
 
 ### build-failure-triage
@@ -7764,7 +7764,7 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
 - Use when: Use when Hermes must require fresh screenshots/renders/captures, objective diff evidence, dual read-only review, CJK/text precision checks, and a PASS/REVISE/BLOCK verdict.
 - Quality tier: `visual-qa-gated`
 - Quality bar:
-  - PASS requires fresh rendered evidence captured after the last relevant visual edit.
+  - PASS requires rendered evidence whose repository and revision exactly match the package target lineage.
   - Check pages, states, viewports, files, images, or TUI frames explicitly instead of sampling vaguely.
   - Pair objective capture/diff evidence, hotspot review, and alpha/transparent-background checks with visual design, layout, accessibility visibility, and CJK/text findings.
   - Capture hover/focus/active/load/scroll motion frames, browser interactions, and click-path state transitions when interaction or animation is part of the surface.
@@ -7778,15 +7778,15 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
   - intended design, baseline, or reference
   - pages, states, viewports, and locales to cover
   - complete page/state/viewport enumeration rather than a sample
-  - latest edit or source revision
+  - target repository and exact source revision
   - known risk areas such as CJK, overflow, responsiveness, or accessibility
   - motion and interaction states that need capture
   - browser interaction paths, mutating-flow boundary, and test credentials policy when a live web UI is in scope
   - console, network, accessibility, and keyboard navigation checks required for browser QA claims
-  - fresh render/capture evidence for completion claims
+  - render/capture evidence bound to the target repository and revision for completion claims
 - Outputs:
   - visual_qa_plan/v1
-  - web_visual_qa_package/v1
+  - web_visual_qa_package/v2
   - viewport_state_capture_matrix/v1
   - message_attachment_projection/v1 for chat attachments
   - web_visual_qa_message_card/v1 for chat message summaries
@@ -7803,7 +7803,7 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
   - visual_qa_verdict/v1
   - retry_or_blocker/v1
 - Stop conditions:
-  - QA target and freshness rule are named
+  - QA target repository and exact revision lineage are named
   - page/state/viewport coverage is enumerated before capture
   - capture manifest is present for PASS
   - browser interactions, console/network health, click-path state traces, and keyboard/accessibility evidence are recorded when browser QA is in scope
@@ -7813,11 +7813,11 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
   - verdict is PASS, REVISE, or BLOCK with evidence IDs
 - Verification:
   - validate visual_qa_plan/v1
-  - validate web_visual_qa_package/v1
+  - validate web_visual_qa_package/v2 target_lineage, required_viewports, capture source_lineage, and blocking_violations
   - check message_attachment_projection/v1 does not claim upload or platform delivery
   - check web_visual_qa_message_card/v1 separates message copy from platform delivery
   - check viewport_state_capture_matrix/v1 before PASS
-  - check capture freshness after the last relevant edit
+  - check exact repository and revision equality between target_lineage and every capture source_lineage
   - check render_capture_manifest/v1 before PASS
   - check browser_interaction_trace/v1 before browser interaction PASS
   - check console_network_health/v1 for critical console errors and failed requests
@@ -7827,7 +7827,7 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
   - check visual_hotspot_review/v1 for objective diff or TUI overflow findings
   - check motion_interaction_capture/v1 when transitions, hover, focus, active, load, or scroll states are in scope
   - check dual_oracle_visual_review/v1 when high confidence is claimed
-  - block PASS on CJK clipping, overlap, invisible text, unusable controls, or missing critical states
+  - treat recorded CJK, accessibility-visibility, overlap, unusable-control, and missing-critical-state findings as operator-supplied blocking criteria that `_validate_pass` enforces once recorded
 - Evidence ladder:
   - `visual_qa_scope_recorded`
   - `web_visual_qa_package_prepared`
@@ -7867,7 +7867,7 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
   - `message_attachment_projection_prepared`
   - `web_visual_qa_message_card_prepared`
   - `viewport_state_capture_matrix_prepared`
-  - `freshness_rule_recorded`
+  - `target_lineage_recorded`
   - `render_capture_manifest_observed`
   - `browser_interaction_trace_observed_when_available`
   - `console_network_health_observed_when_available`
@@ -7883,13 +7883,13 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
 - Privacy default: `metadata_only`
 - Overclaim guards:
   - A visual_qa_plan/v1 artifact is not rendered QA evidence.
-  - A web_visual_qa_package/v1 artifact is not browser capture, multimodal model execution, message upload, or platform delivery evidence.
-  - A stale screenshot, source review, or unobserved browser command cannot support PASS.
+  - A web_visual_qa_package/v2 artifact is not browser capture, multimodal model execution, message upload, or platform delivery evidence.
+  - A capture with missing or mismatched source lineage, source review, or unobserved browser command cannot support PASS.
   - A browser screenshot is not click-path, console/network, accessibility, or keyboard navigation evidence unless those observations are recorded separately.
   - An automated accessibility scan is not a full accessibility PASS without keyboard and focus-order evidence.
   - Visual diff output is not a verdict without visual hierarchy, layout, text, and product-intent review.
   - One successful viewport or state does not prove visual QA for unobserved pages, states, files, or CJK-heavy regions.
-- Fallback: If fresh captures are missing or stale, return BLOCKED_BY_MISSING_RENDER_EVIDENCE and request the smallest recapture set.
+- Fallback: If capture lineage is missing or mismatches the target repository/revision, return BLOCKED_BY_MISSING_RENDER_EVIDENCE and request the smallest matching recapture set.
 
 ### workspace-audit
 
