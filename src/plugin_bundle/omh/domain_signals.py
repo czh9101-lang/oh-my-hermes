@@ -20,6 +20,7 @@ class DomainOperatorOverride:
 SPECIALIST_DOMAIN_TRIGGERS: dict[str, tuple[str, ...]] = {
     "finance-analysis": (
         "finance analysis",
+        "budget variance",
         "budget vs actual",
         "month-end close",
         "재무 분석",
@@ -28,6 +29,7 @@ SPECIALIST_DOMAIN_TRIGGERS: dict[str, tuple[str, ...]] = {
     ),
     "people-ops": (
         "recruiting plan",
+        "hiring scorecard",
         "interview scorecard",
         "candidate debrief",
         "채용 계획",
@@ -36,6 +38,7 @@ SPECIALIST_DOMAIN_TRIGGERS: dict[str, tuple[str, ...]] = {
     ),
     "legal-compliance-review": (
         "contract review",
+        "contract liability clause",
         "regulatory analysis",
         "compliance review",
         "계약서 검토",
@@ -367,18 +370,62 @@ _STRUCTURED_OPERATOR_ACTIONS: tuple[
     ),
 )
 
+_DOMAIN_NEGATORS = frozenset(
+    {
+        "avoid",
+        "except",
+        "exclude",
+        "excluded",
+        "excluding",
+        "never",
+        "no",
+        "not",
+        "without",
+    }
+)
+_INCLUSIVE_NEGATION_FOLLOWERS = frozenset({"just", "only"})
+_LOCAL_NEGATION_TOKEN_RANGE = 4
+_CLAUSE_SEPARATOR_PATTERN = re.compile(r"[,;.!?\n]+")
+_ENGLISH_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+
 
 def specialist_domain_route_signal(message: str) -> DomainRouteSignal | None:
     """Return one catalog-domain cue pair without retaining the raw prompt."""
+    signals = specialist_domain_route_signals(message)
+    return signals[0] if signals else None
+
+
+def specialist_domain_route_signals(message: str) -> tuple[DomainRouteSignal, ...]:
+    """Return every positive catalog-domain signal in declaration order."""
+    matched_by_skill: dict[str, list[str]] = {}
     for skill, triggers in SPECIALIST_DOMAIN_TRIGGERS.items():
-        matched = tuple(trigger for trigger in triggers if _contains_cue_phrase(message, trigger))
+        matched = tuple(trigger for trigger in triggers if _contains_positive_cue_phrase(message, trigger))
         if matched:
-            return DomainRouteSignal(skill=skill, matched_cues=matched)
+            matched_by_skill.setdefault(skill, []).extend(matched)
     for skill, cue_groups in _DOMAIN_ROUTE_CUE_GROUPS:
         for cues in cue_groups:
-            if all(_contains_cue_phrase(message, cue) for cue in cues):
-                return DomainRouteSignal(skill=skill, matched_cues=cues)
-    return None
+            if all(_contains_positive_cue_phrase(message, cue) for cue in cues):
+                matched_by_skill.setdefault(skill, []).extend(cues)
+    return tuple(
+        DomainRouteSignal(skill=skill, matched_cues=tuple(dict.fromkeys(cues)))
+        for skill, cues in matched_by_skill.items()
+    )
+
+
+def excluded_specialist_domain_skills(message: str) -> frozenset[str]:
+    """Return domain skills whose only matching cues are locally negated."""
+    positive_skills = {signal.skill for signal in specialist_domain_route_signals(message)}
+    matched_skills = {
+        skill
+        for skill, triggers in SPECIALIST_DOMAIN_TRIGGERS.items()
+        if any(_contains_cue_phrase(message, trigger) for trigger in triggers)
+    }
+    matched_skills.update(
+        skill
+        for skill, cue_groups in _DOMAIN_ROUTE_CUE_GROUPS
+        if any(all(_contains_cue_phrase(message, cue) for cue in cues) for cues in cue_groups)
+    )
+    return frozenset(matched_skills - positive_skills)
 
 
 def specialist_domain_operator_override(
@@ -419,6 +466,44 @@ def _contains_cue_phrase(message: str, cue: str) -> bool:
     return phrase in text or _compact(phrase) in _compact(text)
 
 
+def _contains_positive_cue_phrase(message: str, cue: str) -> bool:
+    if not _contains_cue_phrase(message, cue):
+        return False
+    cue_tokens = _english_tokens(cue)
+    if not cue_tokens:
+        return True
+    for clause in _CLAUSE_SEPARATOR_PATTERN.split(message):
+        tokens = _english_tokens(clause)
+        for start in range(len(tokens) - len(cue_tokens) + 1):
+            if tokens[start : start + len(cue_tokens)] != cue_tokens:
+                continue
+            if not _locally_negated(tokens, start, len(cue_tokens)):
+                return True
+    return False
+
+
+def _english_tokens(value: str) -> tuple[str, ...]:
+    normalized = _fold_for_match(value).replace("’", "'")
+    normalized = re.sub(r"\b[a-z]+n't\b", "not", normalized)
+    return tuple(_ENGLISH_TOKEN_PATTERN.findall(normalized))
+
+
+def _locally_negated(tokens: tuple[str, ...], start: int, length: int) -> bool:
+    lower = max(0, start - _LOCAL_NEGATION_TOKEN_RANGE)
+    upper = min(len(tokens), start + length + _LOCAL_NEGATION_TOKEN_RANGE)
+    for index in range(lower, upper):
+        if tokens[index] not in _DOMAIN_NEGATORS:
+            continue
+        if (
+            tokens[index] == "not"
+            and index + 1 < len(tokens)
+            and tokens[index + 1] in _INCLUSIVE_NEGATION_FOLLOWERS
+        ):
+            continue
+        return True
+    return False
+
+
 def _fold_for_match(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).casefold()
     decomposed = unicodedata.normalize("NFKD", normalized)
@@ -431,7 +516,8 @@ def _compact(value: str) -> str:
 
 def _word_tokens(value: str) -> set[str]:
     tokens: set[str] = set()
-    for token in re.findall(r"[a-z0-9]+", _fold_for_match(value)):
+    raw_tokens: list[str] = re.findall(r"[a-z0-9]+", _fold_for_match(value))
+    for token in raw_tokens:
         tokens.add(token)
         if token.endswith("ies") and len(token) > 4:
             tokens.add(f"{token[:-3]}y")

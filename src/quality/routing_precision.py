@@ -545,6 +545,13 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_clarification",
         "",
     ),
+    RoutingPrecisionCase(
+        "negated-finance-mention",
+        "A negated finance mention does not dispatch the excluded domain",
+        "This is not a finance analysis request",
+        "answer_clarification",
+        "",
+    ),
 )
 
 
@@ -2247,6 +2254,42 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "ultrawork",
         "forward_plan_to_selected_workflow",
         "plan",
+    ),
+    RoutingInterventionCase(
+        "negated-finance-then-product-brief",
+        "A locally negated finance intent leaves the requested product brief",
+        "Not a finance analysis; create a product requirements document",
+        "dispatch",
+        "product-brief",
+        "prepare_product_brief",
+        "product_brief",
+    ),
+    RoutingInterventionCase(
+        "people-and-product-complete-intents",
+        "Distinct people and product outcomes require clarification",
+        "Create a hiring scorecard and a product requirements document",
+        "clarify",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+    ),
+    RoutingInterventionCase(
+        "finance-and-legal-complete-intents",
+        "Distinct finance and legal outcomes require clarification",
+        "Review the budget variance and the contract liability clause",
+        "clarify",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+    ),
+    RoutingInterventionCase(
+        "inclusive-negation-finance-analysis",
+        "Inclusive not-only language preserves the requested finance domain",
+        "Not only a finance analysis but a budget vs actual review",
+        "dispatch",
+        "finance-analysis",
+        "prepare_finance_analysis",
+        "finance_analysis",
     ),
 )
 

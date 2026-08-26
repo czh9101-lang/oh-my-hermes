@@ -4333,6 +4333,94 @@ selected_workflow=ultraprocess
                 self.assertEqual(decision["selected_skill"], expected_skill)
                 self.assertEqual(decision["action"], "fallback" if expected_skill == "oh-my-hermes" else "dispatch")
 
+    def test_specialist_domain_single_intent_route_is_preserved(self) -> None:
+        decision = route_chat_message("Create a product requirements document", source="discord")
+
+        self.assertEqual(decision["action"], "dispatch")
+        self.assertEqual(decision["selected_skill"], "product-brief")
+        self.assertFalse(decision["ambiguous"])
+
+    def test_negated_specialist_domain_does_not_dispatch_excluded_skill(self) -> None:
+        decision = route_chat_message(
+            "Not a finance analysis; create a product requirements document",
+            source="discord",
+        )
+
+        self.assertEqual(decision["action"], "dispatch")
+        self.assertEqual(decision["selected_skill"], "product-brief")
+        self.assertFalse(decision["ambiguous"])
+
+    def test_distinct_complete_specialist_domains_require_clarification(self) -> None:
+        decision = route_chat_message(
+            "Create a hiring scorecard and a product requirements document",
+            source="discord",
+        )
+
+        self.assertEqual(decision["action"], "clarify")
+        self.assertEqual(decision["selected_skill"], "oh-my-hermes")
+        self.assertTrue(decision["ambiguous"])
+        self.assertEqual(
+            decision["ambiguity_kind"],
+            "multiple_complete_domain_intents",
+        )
+        self.assertEqual(
+            {candidate["skill"] for candidate in decision["route_decision"]["candidates"]},
+            {"people-ops", "product-brief"},
+        )
+
+    def test_two_specialist_outcomes_do_not_dispatch_unrelated_code_review(self) -> None:
+        decision = route_chat_message(
+            "Review the budget variance and the contract liability clause",
+            source="discord",
+        )
+
+        self.assertEqual(decision["action"], "clarify")
+        self.assertNotEqual(decision["selected_skill"], "code-review")
+        self.assertTrue(decision["ambiguous"])
+        self.assertEqual(
+            decision["route_decision"]["ambiguity_kind"],
+            "multiple_complete_domain_intents",
+        )
+
+    def test_specialist_domain_negation_and_compound_controls_preserve_precision(self) -> None:
+        cases = (
+            ("Not only a finance analysis but a budget vs actual review", "finance-analysis", "dispatch"),
+            ("Not just a finance analysis but a budget vs actual review", "finance-analysis", "dispatch"),
+            ("Create an interview scorecard and a candidate debrief", "people-ops", "dispatch"),
+        )
+
+        for message, expected_skill, expected_action in cases:
+            with self.subTest(message=message):
+                decision = route_chat_message(message, source="discord")
+
+                self.assertEqual(decision["action"], expected_action)
+                self.assertEqual(decision["selected_skill"], expected_skill)
+                self.assertFalse(decision["ambiguous"])
+
+        mention_only = route_chat_message(
+            "This is not a finance analysis request",
+            source="discord",
+        )
+        self.assertNotEqual(mention_only["selected_skill"], "finance-analysis")
+        self.assertFalse(mention_only["ambiguous"])
+
+    def test_specialist_domain_negation_window_is_four_normalized_tokens(self) -> None:
+        exactly_four_before = specialist_domain_route_signal(
+            "Do not prepare another detailed finance analysis",
+        )
+        exactly_four_after = specialist_domain_route_signal(
+            "Finance analysis should really truly not happen",
+        )
+        beyond_window = specialist_domain_route_signal(
+            "Not today please prepare another detailed finance analysis",
+        )
+
+        self.assertIsNone(exactly_four_before)
+        self.assertIsNone(exactly_four_after)
+        self.assertIsNotNone(beyond_window)
+        assert beyond_window is not None
+        self.assertEqual(beyond_window.skill, "finance-analysis")
+
     def test_specialist_domain_action_requests_keep_operator_precedence(self) -> None:
         self.assertFalse(hasattr(specialist_domain_route_signal, "cache_info"))
         cases = (

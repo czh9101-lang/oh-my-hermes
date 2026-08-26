@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import re
 
+from .domain_signals import DomainRouteSignal, specialist_domain_route_signals
 from .localization import normalized_phrase, routing_tokens
 
 
@@ -109,6 +110,22 @@ class CompoundRequestSegments:
 def compound_request_segments(message: str) -> CompoundRequestSegments:
     """Split one request into the outcome fragments it asked for."""
     return _compound_request_segments_cached(message.strip())
+
+
+def distinct_complete_domain_signals(message: str) -> tuple[DomainRouteSignal, ...]:
+    """Return distinct specialist domains expressed as complete segments."""
+    segments = compound_request_segments(message)
+    if not segments.segmented:
+        return ()
+    signals: list[DomainRouteSignal] = []
+    seen: set[str] = set()
+    for segment in segments.segments:
+        for signal in specialist_domain_route_signals(segment):
+            if signal.skill in seen:
+                continue
+            seen.add(signal.skill)
+            signals.append(signal)
+    return tuple(signals) if len(signals) > 1 else ()
 
 
 @lru_cache(maxsize=2048)
