@@ -29,10 +29,15 @@ export default function register(sdk) {
   // Colours still resolve only through the active theme, never literals.
   const SEPARATOR = ' │ '
   // The classic REPL frames the composer with horizontal rules; the modern
-  // TUI draws none. OMH keeps all of its variable-height chrome below the
-  // composer so a submitted prompt remains adjacent to the input. Themed
-  // rules open and close that single dock, and the input reads like classic
-  // Hermes again without a tall plan separating it from the transcript.
+  // TUI draws none. An interim single-dock design put both rules AND the
+  // plan below the input, which framed the OMH section instead of the chat
+  // input and sank the todo the owner was used to reading up top ('투두가 왜
+  // 하단에 떠 기존에는 상단에 잘 떴었는데'). The frame is therefore split
+  // across the two composer-adjacent zones: the dock-top app renders the
+  // plan todo and closes with the rule above the input, the bottom dock
+  // opens with the rule below the input and renders status and activity
+  // with no closing rule of its own (the host's own status rule already
+  // bounds the screen edge).
   // Host cols include the dock's side margins, so a full-cols rule wraps by
   // two cells. The rules sit tight against the composer, exactly like the
   // classic REPL's frame -- padding was tried at one and two rows against
@@ -315,14 +320,21 @@ export default function register(sdk) {
         h(Text, { color: t.color.border }, SEPARATOR),
         h(Text, { color: active ? t.color.warn : t.color.ok }, hudStateLabel(active, agents)),
         h(Text, { color: t.color.muted }, `${metrics.cost ? ` • ${metrics.cost}` : ''} • ${metrics.ctx}`),
-        // A fresh concurrent tool-call batch (observed by the pre_tool_call
-        // hook) gets branded on the status line: the transcript's collapsed
-        // "Tool calls (N)" group never says whether the batch ran parallel.
-        payload.parallel_shot && payload.parallel_shot.status === 'observed'
+        // Shift+Tab yolo state, as last observed by the plugin's turn and
+        // tool-call hooks (the host keeps the flag in process memory only).
+        // ON warns in the theme's yellow; OFF rests in the label blue —
+        // colours resolve through the active theme, never literals. An
+        // unobserved or stale ledger renders nothing rather than a guess.
+        payload.yolo && payload.yolo.status === 'observed'
           ? h(
               Text,
-              { color: t.color.label },
-              ` • parallel shot ×${Number(payload.parallel_shot.size) || 0}`,
+              {},
+              h(Text, { color: t.color.muted }, ' • yolo mode: '),
+              h(
+                Text,
+                { bold: true, color: payload.yolo.enabled ? t.color.warn : t.color.label },
+                payload.yolo.enabled ? 'on' : 'off',
+              ),
             )
           : null,
       ),
@@ -387,10 +399,11 @@ export default function register(sdk) {
     // subagent activity, and the reader's 24h staleness rule bounds it. The
     // READER always projects the focused preset, which display_items encode.
     const todo = payload.todo || {}
-    // The closing rule renders even with no plan: the frame around the
-    // composer is constant chrome, the todo lines are the variable content.
+    // With no plan the panel is only the constant frame chrome: the rule
+    // above the input renders unconditionally so the composer frame never
+    // blinks with the plan lifecycle.
     if (todo.status !== 'established' && todo.status !== 'all_done') {
-      return h(Rule, { columns, t })
+      return h(FrameRule, { columns, payload, t })
     }
     const counts = todo.counts || {}
     const title = safeText(todo.title)
@@ -408,15 +421,16 @@ export default function register(sdk) {
           h(Text, { color: t.color.border }, SEPARATOR),
           h(Text, { color: t.color.ok }, `✓ ${counts.done ?? 0}/${counts.total ?? 0}`),
         ),
-        h(Rule, { columns, t }),
+        h(FrameRule, { columns, payload, t }),
       )
     }
-    // The whole plan by default, bounded at seven visible item rows. A phase
-    // whose single top-level task fits on one line stays merged
-    // (`Research [•] task`); a phase with several tasks — or with indented
-    // subtasks (depth 1..3) — renders its name as a header with one item per
-    // row beneath it, which is the owner's layout for dense phases. When the
-    // plan exceeds seven items the window anchors just before the first
+    // The whole plan by default, bounded at seven visible item rows. Every
+    // phase renders its name as a header row with one indented item per row
+    // beneath it — even a phase with a single task. The old space-saving
+    // merge (`Research [•] task`) collapsed exactly the structure the owner
+    // wants to read ('[] 이거 탭한번쳐서 한개여도. 그 구조로 나오게'), so a
+    // lone task indents under its header like any other. When the plan
+    // exceeds seven items the window anchors just before the first
     // remaining item so current work is always on screen, and hidden
     // neighbours fold into muted `... (N earlier/later tasks)` lines.
     const shown = Array.isArray(todo.items) ? todo.items : []
@@ -460,14 +474,6 @@ export default function register(sdk) {
         { key, wrap: 'truncate-end' },
         h(Text, { color: t.color.muted }, `... (${count} ${side} task${count === 1 ? '' : 's'})`),
       )
-    const isMerged = group => group.phase && group.items.length === 1 && depthOf(group.items[0]) === 0
-    // Merged rows share one marker column: phase names differ in width
-    // (Discovery vs Implementation), so each phase pads to the widest merged
-    // label and every `[ ]` starts at the same cell.
-    const phaseColumn = Math.max(
-      0,
-      ...groups.filter(isMerged).map(group => cellWidth(truncateCells(group.phase, budget))),
-    )
     // The active item's text carries the colour wave; its marker, indent and
     // every other item stay static.
     const itemNode = (item, indent) =>
@@ -482,19 +488,6 @@ export default function register(sdk) {
     const rows = []
     if (start > 0) rows.push(foldLine('todo-earlier', start, 'earlier'))
     groups.forEach((group, groupIndex) => {
-      if (isMerged(group)) {
-        const item = group.items[0]
-        const label = truncateCells(group.phase, budget)
-        rows.push(
-          h(
-            Text,
-            { key: `todo-${groupIndex}`, wrap: 'truncate-end' },
-            h(Text, phaseProps(group.phase), `${label}${' '.repeat(phaseColumn - cellWidth(label) + 1)}`),
-            itemNode(item, ''),
-          ),
-        )
-        return
-      }
       if (group.phase) {
         rows.push(
           h(
@@ -529,20 +522,64 @@ export default function register(sdk) {
         hasActive ? h(PlanPulse, { t }) : null,
       ),
       ...rows,
-      h(Rule, { columns, t }),
+      h(FrameRule, { columns, payload, t }),
     )
   }
 
+  // The upper half of the composer frame — the todo panel's closing line.
+  // It also carries the parallel-shot badge: a fresh concurrent tool-call
+  // batch (observed by the pre_tool_call hook) reads meaningfully only near
+  // the transcript's collapsed "Tool calls (N)" group, and that group is
+  // host-owned rendering OMH cannot decorate — this rule in the top dock is
+  // the closest OMH-owned surface to it, and the badge sat unread down in
+  // the bottom dock ('하단에 뜨면 의미가없지'). Idle bursts render a plain
+  // rule, so the frame stays byte-stable outside the 90s freshness window.
+  function FrameRule({ columns, payload, t }) {
+    const width = Math.max(1, columns - 2)
+    const shot = payload.parallel_shot
+    if (!shot || shot.status !== 'observed') {
+      return h(Rule, { columns, t })
+    }
+    const label = ` parallel shot ×${Number(shot.size) || 0} `
+    const lead = 3
+    return h(
+      Text,
+      { wrap: 'truncate-end' },
+      h(Text, { color: t.color.border }, '─'.repeat(lead)),
+      h(Text, { color: t.color.label }, label),
+      h(Text, { color: t.color.border }, '─'.repeat(Math.max(1, width - lead - cellWidth(label)))),
+    )
+  }
+
+  const sharedInit = () => ({ payload: null, receivedAt: 0, tick: 0 })
+  const sharedReduce = (state, input) =>
+    input.kind === 'snapshot'
+      ? { ...state, payload: input.payload, receivedAt: Date.now(), tick: state.tick + 1 }
+      : state
+
+  // The todo panel reads above the input, where the owner always looked for
+  // it; the panel itself ends with the FrameRule that tops the composer
+  // frame, so the dock never renders taller than the plan plus one line.
+  const todoApp = defineWidgetApp({
+    id: 'omh-todo',
+    help: 'OMH plan todo and the composer frame above the prompt input',
+    mode: 'ambient',
+    zone: 'dock-top',
+    init: sharedInit,
+    reduce: sharedReduce,
+    render: ({ cols, state, t }) => {
+      if (!state.payload || state.payload.error || state.payload.privacy !== 'metadata_only') return null
+      return h(TodoPanel, { columns: Math.max(20, cols), state, t })
+    },
+  })
+
   const app = defineWidgetApp({
     id: 'omh-status',
-    help: 'OMH workflow, plan, and subagent status',
+    help: 'OMH workflow and subagent status below the prompt input',
     mode: 'ambient',
     zone: 'dock-bottom',
-    init: () => ({ payload: null, receivedAt: 0, tick: 0 }),
-    reduce: (state, input) =>
-      input.kind === 'snapshot'
-        ? { ...state, payload: input.payload, receivedAt: Date.now(), tick: state.tick + 1 }
-        : state,
+    init: sharedInit,
+    reduce: sharedReduce,
     render: ({ cols, rows, state, t }) => {
       if (!state.payload || state.payload.error || state.payload.privacy !== 'metadata_only') return null
       const columns = Math.max(20, cols)
@@ -556,11 +593,11 @@ export default function register(sdk) {
           t,
           viewportRows: Math.max(1, rows),
         }),
-        h(TodoPanel, { columns, state, t }),
       )
     },
   })
 
+  openWidget(todoApp, todoApp.init(''))
   openWidget(app, app.init(''))
   // Render quiescence is what makes the docks drag-copyable: every repaint of
   // these lines clears an in-progress terminal selection over them, so an
@@ -601,7 +638,12 @@ export default function register(sdk) {
     lastSnapshot = serialized
     lastStructural = structural
     lastPaintAt = Date.now()
-    updateWidget(app, state => ({ ...state, payload, receivedAt: Date.now(), tick: state.tick + 1 }))
+    // Both docks paint from the one snapshot pass, so the quiet-dock
+    // compare above gates them together and the two frame rules never
+    // disagree about payload freshness.
+    const apply = state => ({ ...state, payload, receivedAt: Date.now(), tick: state.tick + 1 })
+    updateWidget(todoApp, apply)
+    updateWidget(app, apply)
   }
   const timerKey = Symbol.for('omh.hermes-tui-widget.refresh')
   const generationKey = Symbol.for('omh.hermes-tui-widget.generation')

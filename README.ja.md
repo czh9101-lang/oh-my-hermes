@@ -171,8 +171,9 @@ OMH ワークフローの実行中にターミナルが表示するもの:
   dispatch され、自己承認なしで相互検証されます。各 lane は turn・cost・cache
   指標付きの HUD 行として見えます。
 - **Phase-structured TODO** — 作業は開始前に phase と task として宣言され
-  (`todo init`)、プロンプト下のチェックリストとして描画されます: アクティブ
-  項目は常に一つ、サブタスクのネスト、7 行を超えると折りたたみ。
+  (`todo init`)、プロンプト上のチェックリストとして描画されます: アクティブ
+  項目は常に一つ、各 phase ヘッダー下にインデントされた task、サブタスクの
+  ネスト、7 行を超えると折りたたみ。
 
 <br>
 
@@ -273,7 +274,7 @@ OMH は、モデル選択とコーディングの所有者を別の判断とし�
 | インテリジェンス | OMH が追加するもの |
 | --- | --- |
 | 🧭 **Mixture-of-models ルーティング** | 委譲される lane ごとにカテゴリ(モデル + 推論強度)を dispatch 単位で適用し、provider がモデルを拒否したら編集可能な fallback chain に沿って前進します — 仕事をしなかった子は正直に `failed` と表示されます。 |
-| 🖥️ **ネイティブ TUI サーフェス** | OMH HUD(カテゴリ・ターン・コスト・キャッシュ付きのライブ delegation 行)、プロンプト下の phase todo チェックリスト、`parallel shot ×N` 表示、full-row diff バンド、管理されたスキン — すべて Hermes の隣にインストールされ、Hermes 本体にはパッチしません。 |
+| 🖥️ **ネイティブ TUI サーフェス** | OMH HUD(カテゴリ・ターン・コスト・キャッシュ付きのライブ delegation 行)、プロンプト上の phase todo チェックリスト、`parallel shot ×N` 表示、full-row diff バンド、管理されたスキン — すべて Hermes の隣にインストールされ、Hermes 本体にはパッチしません。 |
 | 📋 **Phase 構造のプラン** | `todo init` がエンジン作業の前に phase と task を宣言し、実行を開かれた推論ループではなく有界のチェックリストにします。 |
 | ⚡ **観測可能な並列作業** | 独立した作業を所有権の分かれた fanout unit に分割し、進行状況と verification gate を観測します。 |
 | 🎼 **Maestro handoff** | 隠れた executor にならず、準備を実行として扱わずに、明示的な coding owner と runtime profile への handoff を準備します。 |
