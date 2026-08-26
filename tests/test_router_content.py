@@ -50,6 +50,10 @@ from omh.skills.catalog import (
     primary_harness_for_skill,
     retained_delegation_skill_names,
 )
+from omh.skills.expert_question_rendering import (
+    expert_question_reference_lines,
+    expert_questions_markdown,
+)
 from omh.skills.render import frontmatter_description, workflow_reference_markdown, workflow_reference_payload, workflow_skill
 from omh.snippet import WORKSPACE_SNIPPET
 from omh.use_cases import USE_CASES, list_use_cases
@@ -4305,6 +4309,18 @@ class ExpertQuestionCatalogTests(unittest.TestCase):
         "product-brief": "product evidence",
     }
 
+    def assert_expert_question_block_rendered(self, definition: SkillDefinition, rendered: str) -> None:
+        block = expert_questions_markdown(
+            definition,
+            limit=1 if definition.procedure_steps else None,
+        )
+        self.assertTrue(block, f"{definition.name} has no expert question block")
+        self.assertIn(
+            block,
+            rendered,
+            f"{definition.name} rendered output is missing its expert question block",
+        )
+
     def test_specialist_workflows_have_catalog_owned_expert_question_metadata(self) -> None:
         definitions = {definition.name: definition for definition in builtin_definitions()}
 
@@ -4385,9 +4401,29 @@ class ExpertQuestionCatalogTests(unittest.TestCase):
             ]
             with self.subTest(name=name):
                 self.assertEqual(skills[name]["expert_questions"], expected_payload)
-                self.assertTrue(all(question.required_input in templates[name] for question in definitions[name].expert_questions))
+                self.assert_expert_question_block_rendered(definitions[name], templates[name])
                 section = reference.split(f"### {name}\n", 1)[1].split("\n### ", 1)[0]
-                self.assertTrue(all(question.required_input in section for question in definitions[name].expert_questions))
+                self.assertIn(
+                    "\n".join(expert_question_reference_lines(definitions[name])),
+                    section,
+                )
+
+        from omh.skills import packaging
+
+        definition = definitions["finance-analysis"]
+        packaging._builtin_skill_templates_cached.cache_clear()
+        try:
+            with patch("omh.skills.render.expert_questions_markdown", return_value=""):
+                mutated_templates = {
+                    template.name: template.content for template in builtin_skill_templates()
+                }
+            with self.assertRaisesRegex(AssertionError, "missing its expert question block"):
+                self.assert_expert_question_block_rendered(
+                    definition,
+                    mutated_templates[definition.name],
+                )
+        finally:
+            packaging._builtin_skill_templates_cached.cache_clear()
 
 
 if __name__ == "__main__":

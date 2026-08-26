@@ -8,10 +8,11 @@ from _local_package import load_local_package
 
 load_local_package()
 from omh.skills.catalog import builtin_definitions
-from omh.skills.catalog_types import ExpertQuestion, ProcedureStep
+from omh.skills.catalog_types import ExpertQuestion, ProcedureCheck, ProcedureStep, SkillDefinition
 from omh.skills.packaging import builtin_skill_reference_templates
 from omh.skills.procedure_validation import procedure_violation_ids
 from omh.skills.render import builtin_skill_templates, workflow_reference_payload
+from omh.skills.validation import validate_skill_definition_contract
 
 
 TARGETS = frozenset(
@@ -244,28 +245,106 @@ class SpecialistProcedureContractTests(unittest.TestCase):
                 for check_id, required_fields in expected["checks"].items():
                     self.assertEqual(set(checks[check_id].required_result_fields), required_fields)
 
-    def test_check_result_field_mutations_fail_independently(self) -> None:
-        first = self.finance.procedure_checks[0]
+    def test_check_value_mutations_fail_independently(self) -> None:
+        first_check = self.finance.procedure_checks[0]
+        first_step = self.finance.procedure_steps[0]
+
+        def with_check(check: ProcedureCheck) -> SkillDefinition:
+            return replace(
+                self.finance,
+                procedure_checks=(check, *self.finance.procedure_checks[1:]),
+            )
+
         fixtures = (
             (
-                replace(first, required_result_fields=()),
+                with_check(replace(first_check, required_result_fields=())),
                 "procedure_check_result_fields_required",
             ),
             (
-                replace(
-                    first,
-                    required_result_fields=(first.required_result_fields[0], first.required_result_fields[0]),
+                with_check(
+                    replace(
+                        first_check,
+                        required_result_fields=(
+                            first_check.required_result_fields[0],
+                            first_check.required_result_fields[0],
+                        ),
+                    )
                 ),
                 "procedure_duplicate_or_invalid_check_result_field",
             ),
+            (
+                with_check(replace(first_check, instruction="TODO")),
+                "procedure_placeholder_check_instruction",
+            ),
+            (
+                with_check(replace(first_check, instruction="  todo: add criterion")),
+                "procedure_placeholder_check_instruction",
+            ),
+            (
+                with_check(replace(first_check, instruction="\tTbD - choose criterion")),
+                "procedure_placeholder_check_instruction",
+            ),
+            (
+                replace(
+                    self.finance,
+                    procedure_steps=(
+                        replace(first_step, instruction=" TBD "),
+                        *self.finance.procedure_steps[1:],
+                    ),
+                ),
+                "procedure_placeholder_step_instruction",
+            ),
+            (
+                replace(
+                    self.finance,
+                    procedure_steps=(
+                        replace(first_step, instruction="todo: implement this step"),
+                        *self.finance.procedure_steps[1:],
+                    ),
+                ),
+                "procedure_placeholder_step_instruction",
+            ),
+            (
+                with_check(replace(first_check, required_result_fields=("todo",))),
+                "procedure_placeholder_check_result_field",
+            ),
+            (
+                with_check(replace(first_check, required_result_fields=("ToDo_status",))),
+                "procedure_placeholder_check_result_field",
+            ),
+            (
+                with_check(replace(first_check, required_result_fields=("  tBd_owner  ",))),
+                "procedure_placeholder_check_result_field",
+            ),
         )
+
         for mutated, expected in fixtures:
-            with self.subTest(expected=expected):
-                checks = (mutated, *self.finance.procedure_checks[1:])
-                self.assertEqual(
-                    procedure_violation_ids(replace(self.finance, procedure_checks=checks)),
-                    [expected],
+            with self.subTest(expected=expected, mutation=mutated):
+                self.assertEqual(procedure_violation_ids(mutated), [expected])
+                self.assertIn(
+                    f"skill finance-analysis {expected}",
+                    validate_skill_definition_contract(mutated),
                 )
+
+        valid = replace(
+            self.finance,
+            procedure_checks=(
+                replace(
+                    first_check,
+                    instruction="Track TODO items reported by the supplied source without inventing values.",
+                    required_result_fields=("methodology_status",),
+                ),
+                *self.finance.procedure_checks[1:],
+            ),
+            procedure_steps=(
+                replace(
+                    first_step,
+                    instruction="Record whether the supplied system has a TODO queue.",
+                ),
+                *self.finance.procedure_steps[1:],
+            ),
+        )
+        self.assertEqual(procedure_violation_ids(valid), [])
 
     def test_machine_payload_and_shipped_target_bytes_match_catalog(self) -> None:
         payloads = {item["name"]: item for item in workflow_reference_payload()["skills"]}

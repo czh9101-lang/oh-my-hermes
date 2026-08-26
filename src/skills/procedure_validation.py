@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import re
+from typing import cast
 
 from .catalog_types import SkillDefinition
 
 
 PROCEDURE_STEP_KINDS = frozenset({"analysis", "production", "validation"})
 _STEP_ID_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
+_PLACEHOLDER_PREFIX_PATTERN = re.compile(r"^\s*(?:todo|tbd)(?=$|[^a-z0-9])", re.IGNORECASE)
+
+
+def _has_placeholder_prefix(value: object) -> bool:
+    return isinstance(value, str) and _PLACEHOLDER_PREFIX_PATTERN.match(value) is not None
 
 
 def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
@@ -35,6 +41,11 @@ def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
                 declared_checks.add(check_id)
             if not isinstance(result_fields, (tuple, list)) or not result_fields:
                 violations.append("procedure_check_result_fields_required")
+            elif any(
+                _has_placeholder_prefix(field)
+                for field in cast(tuple[object, ...] | list[object], result_fields)
+            ):
+                violations.append("procedure_placeholder_check_result_field")
             elif (
                 len(set(result_fields)) != len(result_fields)
                 or any(not isinstance(field, str) or not _STEP_ID_PATTERN.fullmatch(field) for field in result_fields)
@@ -42,6 +53,8 @@ def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
                 violations.append("procedure_duplicate_or_invalid_check_result_field")
             if not isinstance(instruction, str) or not instruction.strip():
                 violations.append("procedure_check_instruction_required")
+            elif _has_placeholder_prefix(instruction):
+                violations.append("procedure_placeholder_check_instruction")
 
     required_inputs = set(definition.required_inputs)
     expected_outputs = set(definition.expected_outputs)
@@ -94,6 +107,8 @@ def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
 
         if not isinstance(instruction, str) or not instruction.strip():
             violations.append("procedure_instruction_required")
+        elif _has_placeholder_prefix(instruction):
+            violations.append("procedure_placeholder_step_instruction")
 
     if not required_inputs.issubset(referenced_inputs):
         violations.append("procedure_missing_required_input_ref")
