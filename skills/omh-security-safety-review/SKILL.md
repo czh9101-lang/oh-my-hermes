@@ -106,6 +106,12 @@ Artifact expectations:
 - safe_action_policy/v1 with allowed, confirmation-gated, blocked, and observed-only actions
 - plugin_risk_audit/v1 with bounded aggregate local risk categories and no source disclosure
 
+Artifact contracts:
+
+This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+
+- contract_id: `security_safety_review_plan/v1`; enforcement_level: `guidance_only`; consumer_id: `none`
+
 Safety rules:
 
 - Never print secret values, tokens, private keys, cookies, or credentials.

@@ -1065,7 +1065,7 @@ _HARNESSES = [
         ),
         (
             "validate readiness_matrix/v1",
-            "check build/test/CI/security/observability/rollback/doc/support coverage",
+            "check build/tests/CI/security-privacy/performance/observability/rollback/docs-support/release-communication coverage",
             "verify release_gate_verdict/v1 cites observed evidence or missing-evidence gaps",
             "check remediation handoffs separately from audit verdict",
         ),
@@ -1925,7 +1925,7 @@ _HARNESSES = [
         ("service or incident scope", "time window", "metric/source references", "known remediation items or gaps"),
         ("reliability review", "evidence and missing-evidence list", "remediation follow-up boundary"),
         ("source or metric boundary is explicit", "missing evidence is recorded", "closure claims remain observed-only"),
-        ("validate operation_artifact/v1", "require source/metric/reference for observed claims", "check remediation status separately"),
+        ("validate omh_operation_artifact/v1", "require source/metric/reference for observed claims", "check remediation status separately"),
         "If metric or incident evidence is unavailable, produce a prepared review scaffold and mark closure evidence not_observed.",
         ("reliability_scope_recorded", "evidence_boundary_recorded", "review_prepared_or_observed", "remediation_boundary_recorded"),
         "Record reliability review as Hermes-retained evidence work; record remediation implementation only from later accepted executor evidence.",

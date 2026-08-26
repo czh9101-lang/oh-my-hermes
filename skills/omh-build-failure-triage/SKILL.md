@@ -113,6 +113,12 @@ Artifact expectations:
 - rerun_plan/v1 orders targeted rerun, broader local check, CI rerun, and stale-check blocker
 - build_failure_triage_verdict/v1 returns FIX_READY, NEEDS_MORE_LOGS, BLOCKED_BY_ENVIRONMENT, or ROUTE_TO_VERIFICATION_GATE
 
+Artifact contracts:
+
+This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+
+- contract_id: `build_failure_triage_plan/v1`; enforcement_level: `guidance_only`; consumer_id: `none`
+
 Safety rules:
 
 - Do not claim the build, tests, CI, DCO, or merge-readiness are fixed from a triage plan.

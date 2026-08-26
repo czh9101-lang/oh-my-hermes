@@ -11,6 +11,7 @@ from ..paths import OmhPaths
 
 
 OPERATIONS_ARTIFACT_SCHEMA_VERSION = "omh_operation_artifact/v1"
+LEGACY_OPERATIONS_ARTIFACT_SCHEMA_VERSION = "operation_artifact/v1"
 OPERATIONS_INDEX_SCHEMA_VERSION = "omh_operations_index/v1"
 SURFACES = ("operating-rhythm", "report-package", "reliability-review")
 KINDS_BY_SURFACE = {
@@ -108,6 +109,22 @@ def build_operation_artifact(
     return record
 
 
+def operation_artifact_compatibility(record: dict[str, Any]) -> dict[str, Any]:
+    """Describe compatibility without rewriting or strengthening legacy evidence."""
+    schema_version = str(record.get("schema_version", ""))
+    legacy = schema_version == LEGACY_OPERATIONS_ARTIFACT_SCHEMA_VERSION
+    return {
+        "schema_version": "operation_artifact_compatibility/v1",
+        "input_contract": schema_version,
+        "canonical_contract": OPERATIONS_ARTIFACT_SCHEMA_VERSION,
+        "compatible": schema_version == OPERATIONS_ARTIFACT_SCHEMA_VERSION
+        or (legacy and record.get("surface") == "reliability-review"),
+        "legacy": legacy,
+        "migration_action": "none",
+        "evidence_state_action": "preserve",
+    }
+
+
 def validate_surface_kind(surface: str, kind: str) -> None:
     if surface not in SURFACES:
         raise ValueError(f"unsupported operation surface: {surface}")
@@ -117,9 +134,14 @@ def validate_surface_kind(surface: str, kind: str) -> None:
 
 def validate_operation_artifact(record: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    if record.get("schema_version") != OPERATIONS_ARTIFACT_SCHEMA_VERSION:
-        errors.append("schema_version must be omh_operation_artifact/v1")
+    schema_version = record.get("schema_version")
     surface = str(record.get("surface", ""))
+    if schema_version != OPERATIONS_ARTIFACT_SCHEMA_VERSION:
+        if not (
+            schema_version == LEGACY_OPERATIONS_ARTIFACT_SCHEMA_VERSION
+            and surface == "reliability-review"
+        ):
+            errors.append("schema_version must be omh_operation_artifact/v1")
     kind = str(record.get("kind", ""))
     try:
         validate_surface_kind(surface, kind)

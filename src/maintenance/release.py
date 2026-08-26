@@ -204,7 +204,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # say-not-observed carve-out for directly asked figures (renders into all
 # three handoff-guide skill bodies; the common rail carries the same text but
 # sits outside this metric); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 716418
+# 716418 -> 718886: ten operations skills now expose their artifact contract
+# id, machine-enforcement level, resolvable consumer (when validated), and the
+# enforcement-versus-evidence boundary (+2468 chars); warranted contract
+# visibility growth for issue #1119.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 718886
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

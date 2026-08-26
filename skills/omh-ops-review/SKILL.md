@@ -96,6 +96,12 @@ Artifact expectations:
 
 - ops review record or status artifact when a wrapper captures it
 
+Artifact contracts:
+
+This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+
+- contract_id: `ops-review`; enforcement_level: `guidance_only`; consumer_id: `none`
+
 Safety rules:
 
 - Do not infer status from missing evidence.
