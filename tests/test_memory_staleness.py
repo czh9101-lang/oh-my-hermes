@@ -692,6 +692,191 @@ class ReviewDueSoonWarningTests(unittest.TestCase):
         self.assertEqual(continuity_warning_count({"freshness_warnings": ["not-a-mapping"]}), 1)
 
 
+class AbsoluteDeadlineTests(unittest.TestCase):
+    """Deadlines as dates, not day counts: 'the 18th', anchored once, exactly."""
+
+    def test_an_absolute_review_date_lands_verbatim_and_reads_explicit(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            future = (datetime.now(timezone.utc) + timedelta(days=23)).date().isoformat()
+            captured = capture_project_memory_candidate(paths, "vendor contract renewal due", stale_after=future)
+            self.assertEqual(captured["candidate"]["staleness"]["cadence_source"], "explicit")
+            record = approve_project_memory_candidate(paths, captured["candidate"]["candidate_id"])["record"]
+            # A bare date means the START of that UTC day -- review-due the
+            # moment the 18th begins, never quietly late on its last second.
+            self.assertEqual(record["staleness"]["review_due_at"], f"{future}T00:00:00Z")
+            self.assertIsNone(record["staleness"]["stale_after_days"])
+
+    def test_an_absolute_expiry_survives_approval_and_gates_recall(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            future = (datetime.now(timezone.utc) + timedelta(days=23)).date().isoformat()
+            captured = capture_project_memory_candidate(paths, "promo code FALL26 is valid", tags=["promo"], expires_at=future)
+            record = approve_project_memory_candidate(paths, captured["candidate"]["candidate_id"])["record"]
+            # `build_retention` cannot re-derive a date it was never handed a
+            # day count for; approval must carry the candidate's date over.
+            self.assertEqual(record["retention"]["expires_at"], f"{future}T00:00:00Z")
+            self.assertEqual(record["ttl"]["expires_at"], f"{future}T00:00:00Z")
+            edge = datetime.fromisoformat(f"{future}T00:00:00+00:00")
+            before = build_project_memory_recall_pack(paths, "promo code", now=edge - timedelta(seconds=1))
+            after = build_project_memory_recall_pack(paths, "promo code", now=edge)
+            self.assertEqual((before["record_count"], after["record_count"]), (1, 0))
+
+    def test_an_absolute_review_date_survives_a_durable_reclass(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            future = (datetime.now(timezone.utc) + timedelta(days=15)).date().isoformat()
+            captured = capture_project_memory_candidate(paths, "date-pinned but durable", stale_after=future)
+            record = approve_project_memory_candidate(
+                paths, captured["candidate"]["candidate_id"], retention_class="durable"
+            )["record"]
+            # Explicit is explicit in either shape: the reviewer saw this
+            # date on the card, and a flag about retention must not drop it.
+            self.assertEqual(record["retention"].get("class"), "durable")
+            self.assertEqual(record["staleness"]["review_due_at"], f"{future}T00:00:00Z")
+            self.assertEqual(record["revalidation"].get("deadline"), f"{future}T00:00:00Z")
+
+    def test_workflow_class_gates_refuse_durable_ttl_and_volatile_cadence(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            # The workflow is the plugin-bundle-facing API; these gates must
+            # not live only in argparse. A durable candidate carrying a TTL
+            # is exactly how a "never expires" record once learned to expire.
+            with self.assertRaises(ValueError):
+                capture_project_memory_candidate(paths, "durable with ttl", retention_class="durable", ttl_days=10)
+            with self.assertRaises(ValueError):
+                capture_project_memory_candidate(paths, "volatile with cadence", retention_class="volatile", stale_after_days=5)
+            # Day-count carry-over parity is untouched: a standard fact with
+            # an explicit TTL keeps its capture-time deadline at approval.
+            captured = capture_project_memory_candidate(paths, "standard with ttl", ttl_days=10)
+            record = approve_project_memory_candidate(paths, captured["candidate"]["candidate_id"])["record"]
+            self.assertEqual(record["retention"]["expires_at"], captured["candidate"]["ttl"]["expires_at"])
+
+    def test_an_absolute_expiry_scales_its_advance_notice_window_too(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            near = (datetime.now(timezone.utc) + timedelta(days=2)).date().isoformat()
+            captured = capture_project_memory_candidate(paths, "two-day absolute note", expires_at=near)
+            record = approve_project_memory_candidate(paths, captured["candidate"]["candidate_id"])["record"]
+            verdict = memory_workflow._record_staleness(record, now=datetime.now(timezone.utc))
+            # A 2-day absolute deadline must not warn from birth any more
+            # than a 2-day TTL would; the span derives from the dates.
+            self.assertEqual(verdict["reason"], "")
+
+    def test_confirm_accepts_an_absolute_date_and_names_a_cadence_reset(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            future = (datetime.now(timezone.utc) + timedelta(days=15)).date().isoformat()
+            captured = capture_project_memory_candidate(paths, "contract-pinned record", stale_after=future)
+            record = approve_project_memory_candidate(paths, captured["candidate"]["candidate_id"])["record"]
+            later = (datetime.now(timezone.utc) + timedelta(days=40)).date().isoformat()
+            pinned = memory_workflow.confirm_project_memory_record(paths, record["record_id"], stale_after=later)
+            self.assertTrue(pinned["applied"])
+            self.assertEqual(pinned["review_due_at"], f"{later}T00:00:00Z")
+            self.assertIsNone(pinned["stale_after_days"])
+            self.assertFalse(pinned["cadence_reset"])
+            # A flagless confirm on a date-pinned record has no day count to
+            # honour; it re-anchors relative and must say so out loud.
+            reset = memory_workflow.confirm_project_memory_record(paths, record["record_id"])
+            self.assertTrue(reset["cadence_reset"])
+            self.assertIn("--stale-after DATE", reset["next_action"])
+            with self.assertRaises(ValueError):
+                memory_workflow.confirm_project_memory_record(
+                    paths, record["record_id"], stale_after=later, stale_after_days=30
+                )
+
+    def test_absolute_deadline_normalization_edges(self) -> None:
+        now = datetime(2026, 8, 26, 12, 0, 0, tzinfo=timezone.utc)
+        # An offset timestamp normalizes to UTC; truncation happens before
+        # the future check so a sub-second future instant is refused.
+        self.assertEqual(
+            memory_workflow._absolute_deadline("2027-01-15T09:00:00+09:00", field="x", now=now),
+            "2027-01-15T00:00:00Z",
+        )
+        for bad in ("2026-2-3", "2027-02-29", "2026-13-01"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                memory_workflow._absolute_deadline(bad, field="x", now=now)
+        with self.assertRaises(ValueError):
+            memory_workflow._absolute_deadline((now + timedelta(microseconds=400000)).isoformat(), field="x", now=now)
+
+    def test_absolute_deadline_inputs_fail_closed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            future = (datetime.now(timezone.utc) + timedelta(days=23)).date().isoformat()
+            refusals = (
+                (dict(stale_after="2020-01-01"), "must be in the future"),
+                (dict(stale_after="three weeks"), "YYYY-MM-DD or an ISO timestamp"),
+                (dict(stale_after=future, stale_after_days=10), "at most one of"),
+                (dict(expires_at=future, ttl_days=5), "at most one of"),
+                (dict(expires_at=future, retention_class="durable"), "durable memory cannot set expires_at"),
+                (dict(stale_after=future, retention_class="volatile"), "volatile memory keeps"),
+            )
+            for kwargs, fragment in refusals:
+                with self.subTest(kwargs=kwargs), self.assertRaises(ValueError) as raised:
+                    capture_project_memory_candidate(paths, "a fact", **kwargs)
+                self.assertIn(fragment, str(raised.exception))
+
+
+class RelativeTimeProseTests(unittest.TestCase):
+    """A summary saying '3주 뒤' is a fact with a hidden expiry; review it."""
+
+    def _auto_safe(self, paths) -> None:
+        paths.setup_profile_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.setup_profile_path.write_text(
+            json.dumps({"schema_version": "setup_profile/v1", "memory_policy": {"mode": "auto-safe"}}),
+            encoding="utf-8",
+        )
+
+    def test_relative_time_prose_forces_review_even_under_auto_safe(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            self._auto_safe(paths)
+            control = capture_project_memory_candidate(paths, "the staging db is postgres 15")
+            self.assertTrue(control["auto_approved"])
+            for summary in (
+                "계약 만료는 3주 2일 뒤",
+                "renew the cert in 3 weeks",
+                "내일 배포 예정",
+                "내일부터 새 정책이 적용된다",
+                "cert rotation is tomorrow",
+                "2년 뒤 갱신 예정",
+                "3日後にリリースする",
+                "3天后发布新版本",
+            ):
+                with self.subTest(summary=summary):
+                    captured = capture_project_memory_candidate(paths, summary)
+                    self.assertFalse(captured["auto_approved"])
+                    sensitivity = captured["candidate"]["time_sensitivity"]
+                    self.assertTrue(sensitivity["relative_phrase"])
+                    self.assertIn("--stale-after", sensitivity["next_action"])
+
+    def test_ordinary_prose_with_bare_relational_words_stays_untouched(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            self._auto_safe(paths)
+            # "후/전/주" as ordinary grammar, compounds around deictic words,
+            # and a number without a time unit must not trip the lint.
+            for summary in (
+                "리뷰 후 머지하는 프로세스를 따른다",
+                "배포 전 체크리스트를 확인한다",
+                "매주 회고를 진행한다",
+                "3개의 서비스로 구성된다",
+                "오늘의집 스타일 UI를 참고한다",
+                "下周期性任务由调度器管理",
+            ):
+                with self.subTest(summary=summary):
+                    captured = capture_project_memory_candidate(paths, summary)
+                    self.assertTrue(captured["auto_approved"])
+                    self.assertNotIn("time_sensitivity", captured["candidate"])
+
+    def test_the_review_card_carries_the_time_sensitivity_verdict(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(paths, "계약 만료는 3주 2일 뒤")
+            card = memory_workflow.build_project_memory_review_card(captured["candidate"])
+            self.assertIn("relative-time phrase", card["time_sensitivity"]["detail"])
+
+
 class ExpiresSoonWarningTests(unittest.TestCase):
     """The retention twin of review-due-soon: TTL expiry gets advance notice."""
 

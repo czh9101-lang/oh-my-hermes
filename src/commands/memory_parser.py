@@ -32,6 +32,18 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     capture.add_argument("--tag", action="append", default=[])
     capture.add_argument("--ttl-days", type=int, default=None)
     capture.add_argument("--stale-after-days", type=int, default=None)
+    capture.add_argument(
+        "--stale-after",
+        default="",
+        metavar="DATE",
+        help="Absolute review deadline (YYYY-MM-DD = start of that UTC day, or a full ISO timestamp); mutually exclusive with --stale-after-days.",
+    )
+    capture.add_argument(
+        "--expires-at",
+        default="",
+        metavar="DATE",
+        help="Absolute retention expiry (YYYY-MM-DD = start of that UTC day, or a full ISO timestamp); mutually exclusive with --ttl-days.",
+    )
     capture.add_argument("--retention-class", choices=("volatile", "standard", "durable"), default="standard", help="Retention class for the review candidate.")
     capture.add_argument(
         "--derived-from",
@@ -169,6 +181,12 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
         type=int,
         default=None,
         help="Days until the next review deadline (default 90).",
+    )
+    confirm.add_argument(
+        "--stale-after",
+        default="",
+        metavar="DATE",
+        help="Absolute next review deadline (YYYY-MM-DD = start of that UTC day, or ISO timestamp); mutually exclusive with --stale-after-days.",
     )
     confirm.add_argument("--confirmed-by", default="operator", help="Who confirmed the record; stored as bounded metadata.")
     confirm.set_defaults(func=memory.cmd_memory_confirm)

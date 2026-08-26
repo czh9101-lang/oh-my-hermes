@@ -440,6 +440,26 @@ caller's clock. Nothing is inferred from conversation, and nothing is fetched.
 always held; both are written, and when they disagree the earlier one wins, so
 editing one spelling can never restore freshness.
 
+Deadlines can be given as absolute dates, not only day counts:
+`--stale-after YYYY-MM-DD` (review deadline) and `--expires-at YYYY-MM-DD`
+(retention expiry) accept a bare date — meaning the **start** of that UTC day,
+the conservative reading — or a full ISO timestamp. Each is mutually
+exclusive with its day-count twin, past dates are refused at capture, and the
+class rules mirror the day-count gates (volatile keeps its 1–7 day TTL;
+durable cannot set `expires_at`). An absolute review date counts as an
+explicit cadence, so it survives an approval-time re-class.
+
+Relative-time **prose** is the opposite case and capture lints it: a summary
+like "계약 만료는 3주 뒤" or "renew in 3 weeks" is a fact with a hidden expiry —
+its anchor (the moment of writing) is not part of the stored content, so it
+reads wrong once time passes. Detection is a tight deterministic pattern
+(number-plus-unit or an unambiguous deictic word; bare "후/전" never match)
+and only **forces review** — never blocks, never auto-rewrites — with the
+candidate carrying a `time_sensitivity` verdict telling the reviewer to
+restate the fact with an absolute date or set the deadline structurally. The
+verdict is a capture gate, not record metadata: it rides the candidate and
+the review card, and deliberately does not survive onto the approved record.
+
 Source evidence is opt-in and local. When `--source-ref` names an absolute
 path to a readable local file, capture records the file's SHA-256 alongside it.
 Every later freshness check re-reads that file and compares. A ref that is not
@@ -500,7 +520,8 @@ covers held-back records as before.
 
 Answering the warning uses three verbs. `omh memory confirm <record-id>` is
 the lightweight one: it states the record is still true and resets its review
-deadline (default 90 days ahead, or `--stale-after-days N`), rewriting only
+deadline (default 90 days ahead, `--stale-after-days N`, or an absolute
+`--stale-after YYYY-MM-DD` for a date-pinned record), rewriting only
 revalidation metadata — the payload digest deliberately excludes it, so the
 record's identity, admission, and immutable review record are untouched.
 `omh memory confirm --all-due` confirms every record whose sole problem is a
