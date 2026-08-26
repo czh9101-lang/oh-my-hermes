@@ -247,8 +247,8 @@ class TuiWidgetPackTests(unittest.TestCase):
         # instead of the chat input ('채팅창에 선 두개가 있어야지 왜 tui에
         # 있어') and sank the plan the owner always read above the input
         # ('투두가 왜 하단에 떠 기존에는 상단에 잘 떴었는데'). The layout is
-        # now: plan todo in dock-top, closed by the FrameRule directly above
-        # the input; the bottom dock opens with the rule below the input and
+        # now: plan todo in dock-top, closed by the rule directly above the
+        # input; the bottom dock opens with the rule below the input and
         # carries status and activity rows with no closing rule.
         widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
 
@@ -258,10 +258,10 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertIn("id: 'omh-todo'", widget)
         self.assertIn("id: 'omh-status'", widget)
         # The todo panel renders only in the top dock, and every branch of it
-        # (no plan, all done, established) closes with the frame rule so the
-        # composer frame never blinks with the plan lifecycle.
+        # (no plan, all done, established) closes with the plain frame rule
+        # so the composer frame never blinks with the plan lifecycle.
         self.assertEqual(widget.count("h(TodoPanel"), 1)
-        self.assertEqual(widget.count("h(FrameRule, { columns, payload, t })"), 3)
+        self.assertNotIn("FrameRule", widget)
         # Both apps gate on the same payload validity, so neither half of the
         # frame renders on a host where the plugin does not answer.
         self.assertEqual(
@@ -295,13 +295,13 @@ class TuiWidgetPackTests(unittest.TestCase):
         # The Rule frame replaced the marginTop spacer: the docks carry the
         # classic composer frame, rules sitting tight against the input --
         # padding was tried at one and two rows and the owner picked none.
-        # Exactly two plain-rule renders remain (the dock-bottom opener and
-        # the frame app's idle fallback): the closing rules that used to
-        # follow the plan panel framed the OMH section instead of the input
-        # and were removed on owner direction.
+        # Exactly four plain-rule renders: the dock-bottom opener plus the
+        # three todo-panel closers (no plan, all done, established). The
+        # badge that briefly dressed the top rule moved to the [Plan] header,
+        # so every rule is plain, byte-stable chrome again.
         self.assertIn("const Rule = ", widget)
         self.assertNotIn("Gap", widget)
-        self.assertEqual(widget.count("h(Rule, { columns, t })"), 2)
+        self.assertEqual(widget.count("h(Rule, { columns, t })"), 4)
         # Text, not chrome — changed on purpose a second time, by owner
         # direction after living with the bordered card: the OMH surface reads
         # like the host's own status line, dense text in the TUI's idiom. The
@@ -425,12 +425,15 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertNotIn("Number.MAX_SAFE_INTEGER", widget)
         # Changed on purpose: the parallel-shot badge moved off the bottom
         # status line onto the dock-top frame rule — the transcript's
-        # "Tool calls (N)" group is host-owned rendering OMH cannot decorate,
-        # and the rule directly under the newest transcript lines is the
-        # closest OMH-owned surface ('tool calling 옆에서 떠야지 하단에
-        # 뜨면 의미가없지'). The bottom dock renders no parallel-shot text.
+        # "Tool calls (N)" group is host-owned rendering OMH cannot decorate.
+        # Changed on purpose a second time: the badge now rides the [Plan]
+        # header — the owner's chosen spot, directly under the host status
+        # rule ('여기 위치 옆에 뜨게') — and the seconds-scale reader
+        # freshness makes it vanish right after the batch lands. The bottom
+        # dock and the frame rules render no parallel-shot text.
         self.assertIn("parallel shot ×", widget)
         self.assertIn("payload.parallel_shot", widget)
+        self.assertIn("planShotBadge(payload, t)", widget)
         # Shift+Tab yolo state, as last hook-observed: ON warns in the
         # theme's yellow, OFF rests in the label blue, and an unobserved or
         # stale ledger renders nothing rather than a guessed "off".
@@ -438,7 +441,6 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertIn("payload.yolo && payload.yolo.status === 'observed'", widget)
         self.assertIn("payload.yolo.enabled ? t.color.warn : t.color.label", widget)
         self.assertNotIn("• parallel shot", widget)
-        self.assertIn("shot.status !== 'observed'", widget)
         self.assertIn("Math.min(3,", widget)
         self.assertNotIn("spinnerTimerKey", widget)
         self.assertIn("ActivityRow", widget)
