@@ -365,6 +365,35 @@ Expiry removes influence only; it does not move an artifact or prove any
 absence. A stale revalidation deadline requires fresh review or a bounded,
 identity-specific confirmation.
 
+A reviewer can re-class a record at approval:
+`omh memory approve <candidate-id> --retention-class durable` promotes a
+settled decision so it does not inherit the default review clock nobody chose
+for it. The override re-derives retention and a *defaulted* review deadline
+with the new class's own rules — but a cadence the captor explicitly chose
+(`--stale-after-days` at capture, recorded as `cadence_source: explicit`)
+survives the re-class: durable makes the deadline optional, not forbidden,
+and a flag about retention never silently removes a review date the reviewer
+saw on the card. Supplying the class the candidate already has is a
+validated no-op. Lifecycle (correction/restore) candidates keep their
+reviewed class; the flag applies to plain approvals only.
+
+### Cadence Tunables
+
+The three memory clocks are policy tunables, not baked-in constants. A stored
+setup profile's `memory_policy` block may carry, additively and optionally:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `stale_after_days_default` | 90 | Review cadence minted for fact/decision/lesson/procedure captures without an explicit `--stale-after-days`. |
+| `episode_ttl_days` | 30 | TTL minted for episode captures without an explicit `--ttl-days`. |
+| `due_soon_days` | 14 | Advance-notice window recall packs warn inside, shared by review-due and expiry notices; accepted range 1–365. |
+
+An absent or invalid value falls back to the named default, and the effective
+values are always disclosed on the `project_memory_policy/v1` payload, so
+`omh memory status` shows what is actually in force. A capture's cadence
+(explicit or default) is stored on the record and honoured by later flagless
+`omh memory confirm` runs.
+
 ### Durability Receipts
 
 "Written" is not one event. A memory operation reports exactly which of four
@@ -451,12 +480,21 @@ rather than as a count, so a summarized handoff still says which record needs
 a decision. A warning is prepared context, never execution, review, CI, or
 merge evidence.
 
-The warning also fires *before* the cliff: for the last 14 days before a
-record's review deadline, packs still deliver it normally but carry a
-`review_due_soon` warning naming the deadline. Only delivered records earn the
-advance notice — due-soon is a statement about this pack's own content, not a
-store-wide page — and once the deadline actually passes, the ordinary
-`stale_review_required` warning covers held-back records as before.
+The warning also fires *before* the cliff: for the last 14 days (the
+`due_soon_days` tunable) before a record's review deadline, packs still
+deliver it normally but carry a `review_due_soon` warning naming the deadline;
+inside the same window before a retention TTL ends, the warning is
+`expires_soon` — the retention twin, pointing out that confirmation cannot
+extend a TTL and the honest moves are a re-capture, a correction, or letting
+it expire. The expiry window scales down to half the record's own TTL (never
+below one day), so a short-lived volatile record warns near its end instead
+of carrying a permanent banner from the day it was approved. Expiry outranks
+review-due when both windows overlap: a passed TTL is terminal, a passed
+review date is not. Only delivered records earn advance
+notice — it is a statement about this pack's own content, not a store-wide
+page — advisory notices never displace blocking warnings inside the bounded
+list, and once a deadline actually passes, the ordinary blocking warning
+covers held-back records as before.
 
 ### Confirming, Correcting, or Retiring
 
@@ -838,6 +876,52 @@ The ranking inputs do not expand eligibility or establish truth:
 
 Dreaming prepares a reminder and metadata-only evidence. It never invokes a
 model or performs consolidation, retirement, restore, or prune.
+
+## Hermes Memory Tiering: Demotion (L1 → L2)
+
+Hermes-native memory files (`MEMORY.md`, `USER.md`) are L1: small,
+character-capped, and paid for on every turn. The OMH record store is L2:
+reviewed, governed, and not bound by that cap. When L1 fills, the usual move
+is deleting an entry — which loses the fact. Demotion is the other move: the
+content goes down into L2 and a short reference line stays in L1.
+
+```sh
+# Agent/operator only: plan which entries to move, biggest savings first.
+omh memory demote [--file MEMORY.md] [--max 5]
+
+# Capture the planned entries as review-first OMH candidates.
+omh memory demote --stage
+```
+
+The plan selects entries no approved OMH record already explains, ranked by
+size; an entry an approved record covers is reported separately as deletable
+rather than copied down twice, and each planned row carries its
+`staging_status` (`unstaged`, `already_staged`, `previously_rejected`) so the
+plan advertises exactly the work `--stage` would do. Each row carries a
+prepared reference line — `[omh#<sha12>] <first 60 chars…>` — keyed by the
+sha256 of the entry's exact bytes, the one identifier both stores can
+compute, so the line survives the candidate → record lifecycle it points
+into.
+
+Demotion moves content intact or it refuses; it never quietly damages it.
+An entry the 240-char summary bound would truncate is refused as
+`summary_bound_exceeded` (split it to demote it), and one the
+sensitive-content redactor would collapse is refused as
+`redacted_cannot_demote` — both stay in L1, because the next documented step
+deletes the L1 original and that must never happen to a copy that is not
+intact. Staging is idempotent (`already_staged` / `previously_rejected`,
+never a duplicate candidate), cleanly staged candidates go through the
+ordinary review gates, and the payload counts `captured_count` vs
+`refused_count`. Note the plan output prints entry text verbatim — it is the
+operator's own local Hermes memory content, but treat the plan like that
+content when capturing terminal transcripts.
+
+The L1 half stays with Hermes: OMH reads Hermes memory and cannot change it.
+After approving the staged candidates, ask Hermes to replace each original
+entry with its reference line through Hermes's own memory tool. Everything on
+this surface is `prepared_not_observed` until that happens. The reverse move
+— promoting an approved OMH record up into L1 — remains the memory bridge's
+`promotable` surface (`omh memory status`).
 
 ## Prepared Context Boundary
 

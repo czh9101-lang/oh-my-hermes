@@ -692,6 +692,177 @@ class ReviewDueSoonWarningTests(unittest.TestCase):
         self.assertEqual(continuity_warning_count({"freshness_warnings": ["not-a-mapping"]}), 1)
 
 
+class ExpiresSoonWarningTests(unittest.TestCase):
+    """The retention twin of review-due-soon: TTL expiry gets advance notice."""
+
+    def test_an_expiring_episode_warns_while_still_delivered(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            record = _approved(paths, "incident: cache stampede after deploy", record_type="episode", tags=["incident"])
+            probe = datetime.now(timezone.utc) + timedelta(days=20)  # 10 days before the 30-day TTL
+            pack = build_project_memory_recall_pack(paths, "incident cache", now=probe)
+            self.assertEqual(pack["record_count"], 1)
+            warnings = pack["freshness_warnings"]
+            self.assertEqual([w["reason_code"] for w in warnings], ["expires_soon"])
+            self.assertTrue(warnings[0]["delivered"])
+            self.assertEqual(warnings[0]["expires_at"], record["ttl"]["expires_at"])
+            self.assertIn("cannot extend a TTL", warnings[0]["next_action"])
+            self.assertEqual(validate_project_memory_recall_pack(pack), [])
+            quiet = build_project_memory_recall_pack(
+                paths, "incident cache", now=datetime.now(timezone.utc) + timedelta(days=10)
+            )
+            self.assertEqual(quiet["freshness_warnings"], [])
+
+    def test_the_window_scales_down_for_short_lived_records(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            record = _approved(paths, "a week-long volatile note", ttl_days=7)
+            # 7-day TTL -> 3-day window: silent on approval day and mid-life,
+            # warning near the end. A window wider than the record's life
+            # would be a permanent banner, not advance notice.
+            day0 = memory_workflow._record_staleness(record, now=datetime.now(timezone.utc))
+            self.assertEqual(day0["reason"], "")
+            day3 = memory_workflow._record_staleness(record, now=datetime.now(timezone.utc) + timedelta(days=3))
+            self.assertEqual(day3["reason"], "")
+            day5 = memory_workflow._record_staleness(record, now=datetime.now(timezone.utc) + timedelta(days=5))
+            self.assertEqual(day5["reason"], "expires_soon")
+
+    def test_expiry_notice_outranks_the_review_notice_when_both_windows_overlap(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            record = _approved(paths, "a fact that expires and comes due together", ttl_days=90)
+            probe = datetime.now(timezone.utc) + timedelta(days=80)
+            verdict = memory_workflow._record_staleness(record, now=probe)
+            self.assertEqual((verdict["state"], verdict["reason"]), ("fresh", "expires_soon"))
+
+
+class CadencePolicyTests(unittest.TestCase):
+    """The three memory clocks are policy tunables, not baked-in constants."""
+
+    def _write_policy(self, paths, **cadence) -> None:
+        paths.setup_profile_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.setup_profile_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "setup_profile/v1",
+                    "memory_policy": {"mode": "review-first", **cadence},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_policy_cadence_overrides_reach_capture_and_the_warning_window(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            self._write_policy(paths, stale_after_days_default=30, episode_ttl_days=60, due_soon_days=3)
+            fact = _approved(paths, "fact on a 30-day cadence", tags=["cadence"])
+            self.assertEqual(fact["staleness"]["stale_after_days"], 30)
+            episode = _approved(paths, "episode on a 60-day ttl", record_type="episode")
+            self.assertEqual(episode["ttl"]["ttl_days"], 60)
+            # The 3-day window: quiet 4 days out, warning 2 days out.
+            quiet = build_project_memory_recall_pack(
+                paths, "cadence fact", now=datetime.now(timezone.utc) + timedelta(days=26)
+            )
+            self.assertEqual(quiet["freshness_warnings"], [])
+            warned = build_project_memory_recall_pack(
+                paths, "cadence fact", now=datetime.now(timezone.utc) + timedelta(days=28)
+            )
+            self.assertEqual([w["reason_code"] for w in warned["freshness_warnings"]], ["review_due_soon"])
+
+    def test_invalid_overrides_fall_back_to_named_defaults_and_are_disclosed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            self._write_policy(paths, stale_after_days_default=-5, episode_ttl_days="soon", due_soon_days=True)
+            policy = memory_workflow.read_project_memory_policy(paths)
+            self.assertEqual(policy["stale_after_days_default"], 90)
+            self.assertEqual(policy["episode_ttl_days"], 30)
+            self.assertEqual(policy["due_soon_days"], 14)
+
+    def test_capture_cadence_survives_approval_and_flagless_confirm(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            record = _approved(paths, "captured on a yearly cadence", stale_after_days=365)
+            self.assertEqual(record["staleness"]["stale_after_days"], 365)
+            result = memory_workflow.confirm_project_memory_record(paths, record["record_id"])
+            self.assertEqual(result["stale_after_days"], 365)
+            self.assertFalse(result["shortened"])
+
+
+class DurablePromotionTests(unittest.TestCase):
+    """`omh memory approve --retention-class durable` drops the default review clock."""
+
+    def test_durable_override_removes_deadline_and_recalls_forever(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(paths, "the license is Apache-2.0", tags=["license"])
+            record = approve_project_memory_candidate(
+                paths, captured["candidate"]["candidate_id"], retention_class="durable"
+            )["record"]
+            self.assertEqual(record["retention"].get("class"), "durable")
+            self.assertEqual(record["staleness"]["review_due_at"], "")
+            self.assertEqual(record["revalidation"], {})
+            self.assertEqual(validate_project_memory_record(record), [])
+            far = build_project_memory_recall_pack(
+                paths, "license apache", now=datetime.now(timezone.utc) + timedelta(days=400)
+            )
+            self.assertEqual(far["record_count"], 1)
+            self.assertEqual(far["freshness_warnings"], [])
+
+    def test_an_explicit_capture_cadence_survives_the_durable_override(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(paths, "durable but still reviewed", stale_after_days=30)
+            record = approve_project_memory_candidate(
+                paths, captured["candidate"]["candidate_id"], retention_class="durable"
+            )["record"]
+            # The captor chose 30 days deliberately; a flag about retention
+            # must not silently remove a review date the reviewer saw.
+            self.assertEqual(record["retention"].get("class"), "durable")
+            self.assertEqual(record["staleness"]["stale_after_days"], 30)
+            self.assertNotEqual(record["staleness"]["review_due_at"], "")
+            self.assertEqual(record["revalidation"].get("deadline"), record["staleness"]["review_due_at"])
+
+    def test_policy_default_cadence_reaches_the_override_rederive(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            paths.setup_profile_path.parent.mkdir(parents=True, exist_ok=True)
+            paths.setup_profile_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "setup_profile/v1",
+                        "memory_policy": {"mode": "review-first", "stale_after_days_default": 30},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            captured = capture_project_memory_candidate(paths, "durable capture, standard approval", retention_class="durable")
+            record = approve_project_memory_candidate(
+                paths, captured["candidate"]["candidate_id"], retention_class="standard"
+            )["record"]
+            self.assertEqual(record["staleness"]["stale_after_days"], 30)
+
+    def test_supplying_the_same_class_is_a_validated_noop(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(paths, "a plain standard fact")
+            plain = approve_project_memory_candidate(
+                paths, captured["candidate"]["candidate_id"], retention_class="standard"
+            )["record"]
+            self.assertEqual(plain["staleness"]["stale_after_days"], 90)
+            other = capture_project_memory_candidate(paths, "another fact")
+            with self.assertRaises(ValueError):
+                approve_project_memory_candidate(paths, other["candidate"]["candidate_id"], retention_class="eternal")
+
+    def test_unknown_override_class_is_refused(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(paths, "a fact")
+            with self.assertRaises(ValueError):
+                approve_project_memory_candidate(
+                    paths, captured["candidate"]["candidate_id"], retention_class="forever"
+                )
+
+
 class MemoryConfirmationTests(unittest.TestCase):
     """`omh memory confirm` is the missing verb behind the freshness warning."""
 
@@ -794,10 +965,15 @@ class MemoryConfirmationTests(unittest.TestCase):
             stored = json.loads(_record_path(paths, record["record_id"]).read_text(encoding="utf-8"))
             self.assertLessEqual(len(stored["revalidation"]["confirmed_by"]), 240)
             self.assertNotIn("ci-token-bot", stored["revalidation"]["confirmed_by"])
-            # The default 90-day reset lands earlier than the 365-day capture
-            # deadline; the payload must say so instead of shortening silently.
-            self.assertTrue(result["shortened"])
-            self.assertIn("earlier", result["next_action"])
+            # A flagless confirm honours the captured 365-day cadence, so
+            # nothing shortened; an explicit shorter cadence does, and the
+            # payload must say so instead of shortening silently.
+            self.assertFalse(result["shortened"])
+            shorter = memory_workflow.confirm_project_memory_record(
+                paths, record["record_id"], stale_after_days=30
+            )
+            self.assertTrue(shorter["shortened"])
+            self.assertIn("earlier", shorter["next_action"])
 
     def test_confirm_persists_and_reuses_an_explicit_cadence(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -865,6 +1041,16 @@ class MemoryConfirmationTests(unittest.TestCase):
             self.assertEqual(batch["skipped"][0]["record_id"], poisoned["record_id"])
             self.assertEqual(batch["skipped"][0]["reason_code"], "write_rejected")
             self.assertIn("unsupported keys", batch["skipped"][0]["detail"])
+
+    def test_batch_names_expired_records_it_will_not_touch(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            expired = _approved(paths, "an expired volatile note", ttl_days=1)
+            _mutate_record(paths, expired["record_id"], ttl={"ttl_days": 1, "expires_at": PAST})
+            batch = memory_workflow.confirm_due_project_memory_records(paths)
+            self.assertEqual(batch["due_count"], 0)
+            self.assertEqual(batch["expired_count"], 1)
+            self.assertIn("omh memory retire", batch["next_action"])
 
     def test_batch_rejects_an_invalid_cadence_even_on_an_empty_store(self) -> None:
         with TemporaryDirectory() as tmp:

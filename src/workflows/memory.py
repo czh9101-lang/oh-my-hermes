@@ -20,6 +20,7 @@ from ..local_store import (
 )
 
 from ..plugin_bundle.omh.hermes_memory import build_hermes_memory_bridge as _bundle_memory_bridge
+from ..plugin_bundle.omh.hermes_memory import build_memory_demotion_plan as _bundle_demotion_plan
 from ..plugin_bundle.omh.hermes_memory import classify_record_expiry as _classify_record_expiry
 from ..plugin_bundle.omh.memory_dreaming import consolidation_path as _consolidation_path
 from ..plugin_bundle.omh.memory_governance import (
@@ -165,6 +166,7 @@ _FRESHNESS_WARNING_KEYS = {
     "state",
     "reason_code",
     "review_due_at",
+    "expires_at",
     "detail",
     "delivered",
     "next_action",
@@ -354,8 +356,22 @@ _DUE_SOON_NEXT_ACTION = (
     "Run `omh memory confirm <record-id>` (or correct/retire it) before the deadline passes; "
     "until then the record still recalls normally."
 )
+# The retention twin of the review window: an expiring record (an episode's
+# 30-day TTL, most often) gets the same advance notice. Confirmation cannot
+# extend a TTL -- the honest actions are a correction with a longer TTL or
+# letting it expire and retiring it.
+_EXPIRES_SOON_DAYS = 14
+_EXPIRES_SOON_NEXT_ACTION = (
+    "Its retention TTL is about to end and confirmation cannot extend a TTL: "
+    "re-capture it (`omh memory capture --ttl-days N ...`) or correct it to keep the content, or let it expire."
+)
+_ADVISORY_NEXT_ACTIONS = {
+    "review_due_soon": _DUE_SOON_NEXT_ACTION,
+    "expires_soon": _EXPIRES_SOON_NEXT_ACTION,
+}
 _FRESHNESS_REASON_TEXT = {
     "review_due_soon": "Its revalidation deadline is approaching; unconfirmed, it will leave default recall packs then.",
+    "expires_soon": "Its retention TTL is approaching; once it expires the record leaves recall entirely.",
     "stale_review_required": "Its revalidation deadline passed, so nobody has confirmed the record since then.",
     "source_changed": "The local source it cites changed after the record was approved.",
     "source_unverifiable": "The local source it cites cannot be read now, so its freshness is unobservable.",
@@ -372,7 +388,7 @@ _INSPECTABLE_STALE_REASONS = {"stale_review_required", "source_changed", "source
 # delivered. Consumers that treat "has a freshness reason" as "this record is
 # stale" (wrapper continuity, role-context-pack diffs) must subtract this set,
 # or the advance notice would read as the failure it exists to prevent.
-ADVISORY_FRESHNESS_REASONS = frozenset({"review_due_soon"})
+ADVISORY_FRESHNESS_REASONS = frozenset({"review_due_soon", "expires_soon"})
 _HANDOFF_CONTEXT_PACK_KEYS = {
     "schema_version",
     "executor_target",
@@ -432,8 +448,34 @@ def build_project_memory_policy(paths: OmhPaths, *, mode: str | None = None) -> 
         "redaction_policy": "metadata_only",
         "backend": "local_json",
         "optional_backend_extension": True,
+        **dict(_MEMORY_CADENCE_DEFAULTS),
         "claim_boundary": "Project memory configures OMH-local prepared context only; it does not mutate Hermes global or internal memory.",
     }
+
+
+# A notice window is not a retention period: a year is already generous, and
+# accepting the 100-year retention ceiling here would let one config typo turn
+# every record with any TTL into a permanent warning.
+_MEMORY_CADENCE_MAX = {"due_soon_days": 365}
+
+
+def _cadence_value(policy: dict[str, object], key: str) -> int | None:
+    """One validated cadence day-count from a policy mapping, or None."""
+    value = policy.get(key)
+    maximum = _MEMORY_CADENCE_MAX.get(key, MAX_RETENTION_DAYS)
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= maximum:
+        return value
+    return None
+
+
+def _policy_cadence_overrides(stored_policy: dict[str, object]) -> dict[str, int]:
+    """Validated cadence overrides from a stored profile's memory_policy."""
+    overrides: dict[str, int] = {}
+    for key in _MEMORY_CADENCE_DEFAULTS:
+        value = _cadence_value(stored_policy, key)
+        if value is not None:
+            overrides[key] = value
+    return overrides
 
 
 def read_project_memory_policy(paths: OmhPaths) -> dict[str, object]:
@@ -449,7 +491,8 @@ def read_project_memory_policy(paths: OmhPaths) -> dict[str, object]:
         return build_project_memory_policy(paths, mode="off")
     policy = setup.get("memory_policy")
     if isinstance(policy, dict):
-        return build_project_memory_policy(paths, mode=str(policy.get("mode", "") or "review-first"))
+        base = build_project_memory_policy(paths, mode=str(policy.get("mode", "") or "review-first"))
+        return {**base, **_policy_cadence_overrides(policy)}
     return build_project_memory_policy(paths, mode=str(setup.get("memory_mode", "") or "review-first"))
 
 
@@ -467,6 +510,192 @@ def _retain_knowledge_family_enabled(setup: dict[str, object]) -> bool:
     if not isinstance(disabled, list):
         return True
     return "retain_knowledge" not in {str(value) for value in disabled}
+
+
+MEMORY_DEMOTION_STAGE_SCHEMA_VERSION = "memory_demotion_stage/v1"
+
+
+def build_memory_demotion(paths: OmhPaths, *, file_label: str | None = None, max_entries: int = 5) -> dict[str, object]:
+    """Plan L1->L2 demotions: which Hermes entries to move into the OMH store.
+
+    Same delegation shape as the bridge: the planner lives in the plugin
+    bundle because the Hermes host can only import that package, and this
+    wrapper points the dependency the direction that works on both hosts.
+
+    The wrapper annotates each planned row with its `staging_status` from the
+    OMH candidate store -- `unstaged`, `already_staged`, or
+    `previously_rejected` -- so the plan advertises exactly the work `--stage`
+    would actually do instead of re-proposing rows staging will refuse.
+    """
+    plan = _bundle_demotion_plan(paths.omh_home, paths.hermes_home, file_label=file_label, max_entries=max_entries)
+    rows = plan.get("rows") if isinstance(plan.get("rows"), list) else []
+    if not rows:
+        return plan
+    status_by_ref = _demotion_status_by_ref(paths)
+    annotated = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        annotated.append({**row, "staging_status": status_by_ref.get(_demotion_origin_ref(row), "unstaged")})
+    return {**plan, "rows": annotated}
+
+
+def _demotion_origin_ref(row: dict[str, object]) -> str:
+    return f"hermes:{row.get('file', '')}#{str(row.get('sha256', ''))[:16]}"
+
+
+def _demotion_status_by_ref(paths: OmhPaths) -> dict[str, str]:
+    """Origin ref -> staging verdict, from the candidate store."""
+    status_by_ref: dict[str, str] = {}
+    for candidate in _read_project_memory_candidates(paths):
+        ref = str(candidate.get("source_ref", ""))
+        if not ref:
+            continue
+        status = str(candidate.get("status", "") or "")
+        status_by_ref[ref] = "previously_rejected" if status == "rejected" else "already_staged"
+    return status_by_ref
+
+
+def _refused_demotion_row(row: dict[str, object], status: str, detail: str) -> dict[str, object]:
+    return {
+        "file": str(row.get("file", "")),
+        "entry_index": int(row.get("entry_index", 0) or 0),
+        "sha256": str(row.get("sha256", "")),
+        "candidate_id": "",
+        "status": status,
+        "auto_approved": False,
+        "detail": detail,
+        "reference_line": str(row.get("reference_line", "")),
+    }
+
+
+def stage_memory_demotion(paths: OmhPaths, *, file_label: str | None = None, max_entries: int = 5) -> dict[str, object]:
+    """Capture each planned demotion row as an OMH candidate (L2 side only).
+
+    Staging is the half of a demotion OMH can actually do: the entry's
+    content becomes a review-first candidate in the governed store, keyed
+    back to its L1 origin through `source_ref` carrying the entry digest.
+    The L1 half -- replacing the original entry with the short reference
+    line -- stays with Hermes's own memory tool, so the plan's reference
+    lines travel on this payload as prepared text and nothing else.
+
+    Demotion moves content or it refuses; it never quietly damages it. An
+    entry the summary bound would truncate, or one the sensitive-content
+    redactor would collapse to `[redacted]`, is refused with a named status
+    and STAYS IN L1 -- because the very next documented step is deleting the
+    L1 original, which must never happen to a copy that is not intact.
+    Staging is also idempotent: a ref already in the candidate store reports
+    `already_staged`, or `previously_rejected` when a reviewer already said
+    no to exactly this entry, and never mints a duplicate candidate.
+    """
+    plan = build_memory_demotion(paths, file_label=file_label, max_entries=max_entries)
+    rows = plan.get("rows") if isinstance(plan.get("rows"), list) else []
+    staged: list[dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        entry_text = str(row.get("entry_text", "")).strip()
+        origin_ref = _demotion_origin_ref(row)
+        staging_status = str(row.get("staging_status", "unstaged"))
+        if staging_status != "unstaged":
+            staged.append(
+                _refused_demotion_row(
+                    row,
+                    staging_status,
+                    "A candidate for exactly this entry already exists in the OMH store."
+                    if staging_status == "already_staged"
+                    else "A reviewer already rejected exactly this entry; the refusal is the standing decision.",
+                )
+            )
+            continue
+        if _looks_sensitive(entry_text):
+            # The capture redactor would store the literal string
+            # "[redacted]" and the fact would exist nowhere but the L1
+            # entry the workflow then says to delete.
+            staged.append(
+                _refused_demotion_row(
+                    row,
+                    "redacted_cannot_demote",
+                    "The sensitive-content redactor would collapse this entry; it stays in L1 intact.",
+                )
+            )
+            continue
+        if len(entry_text) > _MEMORY_ATTENTION_REASON_LIMIT:
+            staged.append(
+                _refused_demotion_row(
+                    row,
+                    "summary_bound_exceeded",
+                    f"The {_MEMORY_ATTENTION_REASON_LIMIT}-char summary bound would truncate this entry; it stays in L1 intact. "
+                    "Split it into smaller entries to demote it.",
+                )
+            )
+            continue
+        captured = capture_project_memory_candidate(
+            paths,
+            entry_text,
+            record_type="fact",
+            tags=["hermes-demotion"],
+            source="hermes_demotion",
+            source_ref=origin_ref,
+        )
+        if not bool(captured.get("captured", True)):
+            # Any refused capture ends the staging run honestly: nothing
+            # after this row was attempted, and the payload says why.
+            return {
+                **captured,
+                "schema_version": MEMORY_DEMOTION_STAGE_SCHEMA_VERSION,
+                "staged": staged,
+                "staged_count": len(staged),
+            }
+        candidate = captured.get("candidate") if isinstance(captured.get("candidate"), dict) else {}
+        record = captured.get("record") if isinstance(captured.get("record"), dict) else {}
+        stored_summary = str(candidate.get("summary", "") or record.get("summary", ""))
+        if stored_summary != entry_text:
+            # Belt over the two named guards above: if capture stored
+            # anything other than the exact entry, the copy is not intact
+            # and the row must say so rather than claim a clean stage.
+            staged.append(
+                _refused_demotion_row(
+                    row,
+                    "content_not_intact",
+                    "Capture stored an altered copy of this entry; keep the L1 original.",
+                )
+            )
+            continue
+        staged.append(
+            {
+                "file": str(row.get("file", "")),
+                "entry_index": int(row.get("entry_index", 0) or 0),
+                "sha256": str(row.get("sha256", "")),
+                "candidate_id": str(candidate.get("candidate_id", "") or record.get("candidate_id", "")),
+                "status": str(candidate.get("status", "") or ("approved" if record else "")),
+                "auto_approved": bool(captured.get("auto_approved", False)),
+                "reference_line": str(row.get("reference_line", "")),
+            }
+        )
+    captured_count = sum(1 for row in staged if str(row.get("status", "")) in {"pending_review", "approved"})
+    return {
+        "schema_version": MEMORY_DEMOTION_STAGE_SCHEMA_VERSION,
+        **({"reason_code": str(plan["reason_code"])} if plan.get("reason_code") else {}),
+        "staged": staged,
+        "staged_count": len(staged),
+        "captured_count": captured_count,
+        "refused_count": len(staged) - captured_count,
+        "files": plan.get("files", []),
+        "already_covered": plan.get("already_covered", []),
+        "redaction_policy": "local_content_plan",
+        "next_action": (
+            "Approve the staged candidates (`omh memory review`, `omh memory approve`), then ask Hermes to "
+            "replace each cleanly staged entry with its reference line through Hermes's own memory tool. "
+            "Refused rows were NOT copied to L2 -- leave their L1 entries in place."
+        ),
+        "claim_boundary": (
+            "Staging captured OMH-local candidates only (prepared_not_observed). OMH reads Hermes memory and "
+            "cannot change it; no Hermes entry was edited, and this payload is not execution, review, CI, or "
+            "merge evidence."
+        ),
+    }
+
 
 
 def build_hermes_memory_bridge(paths: OmhPaths) -> dict[str, object]:
@@ -568,6 +797,8 @@ def capture_project_memory_candidate(
         retention_class=retention_class,
         derived_from=_normalize_derived_from(paths, derived_from),
         perspective=_normalize_perspective(observer, observed),
+        default_stale_after_days=_cadence_value(policy, "stale_after_days_default"),
+        episode_ttl_days=_cadence_value(policy, "episode_ttl_days"),
     )
     # Exact-summary duplicate detection, mnemosyne-style but review-first:
     # the match is surfaced on the candidate for the reviewer to decide, never
@@ -659,7 +890,13 @@ class LifecycleCandidateError(ValueError):
     """A v2 lifecycle candidate reached the plain approval path."""
 
 
-def approve_project_memory_candidate(paths: OmhPaths, candidate_id: str, *, approved_by: str = "operator") -> dict[str, object]:
+def approve_project_memory_candidate(
+    paths: OmhPaths,
+    candidate_id: str,
+    *,
+    approved_by: str = "operator",
+    retention_class: str | None = None,
+) -> dict[str, object]:
     candidate = _read_project_memory_candidate(paths, candidate_id)
     if not candidate:
         raise FileNotFoundError(candidate_id)
@@ -685,6 +922,8 @@ def approve_project_memory_candidate(paths: OmhPaths, candidate_id: str, *, appr
         approved_at=approved_at,
         review_id=review_id,
         admission_state=admission_state,
+        retention_class=retention_class,
+        default_stale_after_days=_cadence_value(read_project_memory_policy(paths), "stale_after_days_default"),
     )
     review = _project_memory_review_record(record, review_id=review_id, reviewer=approved_by, decision=admission_state)
     # The whole mutate sequence holds the store lock so a concurrent retirement
@@ -833,7 +1072,7 @@ def build_project_memory_recall_pack(
             stale_override=stale_override,
             run_id=run_id,
         )
-        staleness = _record_staleness(record, now=now)
+        staleness = _record_staleness(record, now=now, due_soon_days=_cadence_value(policy, "due_soon_days"))
         # Source-evidence freshness gates recall exactly like the time
         # deadline does. The shared evaluator only knows deadlines, so the
         # verdict `_record_staleness` derived from the record's own recorded
@@ -1866,11 +2105,16 @@ def confirm_project_memory_record(
         if not previous_due:
             return _refused_confirmation(normalized_id, "no_review_deadline")
         if days is None:
-            # No explicit cadence: honour the one stored on the record by an
-            # earlier confirm, so `--all-due` cannot silently pull a record
-            # confirmed at 180 days back to the 90-day default.
+            # No explicit cadence: honour the one stored on the record (set
+            # at capture or by an earlier confirm), so `--all-due` cannot
+            # silently pull a record confirmed at 180 days back to the
+            # default -- then the policy's default cadence, then the
+            # built-in 90 days.
             stored_days = record.get("staleness", {}).get("stale_after_days") if isinstance(record.get("staleness"), dict) else None
-            days = stored_days if isinstance(stored_days, int) and not isinstance(stored_days, bool) and stored_days > 0 else _REVIEW_DEFAULT_DAYS
+            if isinstance(stored_days, int) and not isinstance(stored_days, bool) and stored_days > 0:
+                days = stored_days
+            else:
+                days = _cadence_value(read_project_memory_policy(paths), "stale_after_days_default") or _REVIEW_DEFAULT_DAYS
         revalidation = record.get("revalidation") if isinstance(record.get("revalidation"), dict) else {}
         new_deadline = _days_after(stamp, days)
         updated_revalidation = {
@@ -1934,11 +2178,19 @@ def confirm_due_project_memory_records(
     # whether a due record happened to exist.
     _validated_day_count(stale_after_days, field="stale_after_days")
     moment = _parse_utc(_attention_stamp(now)) or datetime.now(timezone.utc)
-    due = sorted(
-        str(record.get("record_id", ""))
-        for record in _read_project_memory_records(paths)
-        if _record_staleness(record, now=moment).get("reason") == "review_due"
-    )
+    due: list[str] = []
+    expired_count = 0
+    for record in _read_project_memory_records(paths):
+        verdict = _record_staleness(record, now=moment)
+        if verdict.get("reason") == "review_due":
+            due.append(str(record.get("record_id", "")))
+        elif verdict.get("state") == "expired":
+            # Expired records never enter the batch -- their fix is retire,
+            # not confirmation -- but a batch that stays silent about them
+            # reads as "everything is handled" over a store that still holds
+            # dead records. The count keeps the report honest.
+            expired_count += 1
+    due.sort()
     confirmed: list[dict[str, object]] = []
     skipped: list[dict[str, object]] = []
     for due_id in due:
@@ -1967,24 +2219,28 @@ def confirm_due_project_memory_records(
                     "detail": str(result.get("detail", "")),
                 }
             )
+    next_action = (
+        "Review the skipped records individually; each carries the refusal reason."
+        if skipped
+        else (
+            "Every review-due record was confirmed; recall packs deliver them again."
+            if confirmed
+            else "No review-due record required confirmation."
+        )
+    )
+    if expired_count:
+        next_action += f" {expired_count} expired record(s) were not touched; expiry needs `omh memory retire`, not confirmation."
     return {
         "schema_version": MEMORY_CONFIRMATION_BATCH_SCHEMA_VERSION,
         "due_count": len(due),
+        "expired_count": expired_count,
         "confirmed": confirmed,
         "skipped": skipped,
         "confirmed_count": len(confirmed),
         "skipped_count": len(skipped),
         "confirmed_by": _redact(str(confirmed_by or "operator"))[:_MEMORY_ATTENTION_REASON_LIMIT],
         "redaction_policy": "metadata_only",
-        "next_action": (
-            "Review the skipped records individually; each carries the refusal reason."
-            if skipped
-            else (
-                "Every review-due record was confirmed; recall packs deliver them again."
-                if confirmed
-                else "No review-due record required confirmation; expired records need `omh memory retire`, not confirmation."
-            )
-        ),
+        "next_action": next_action,
         "claim_boundary": _MEMORY_CONFIRMATION_CLAIM_BOUNDARY,
     }
 
@@ -2165,6 +2421,9 @@ def build_memory_lineage(paths: OmhPaths, record_id: str, *, depth: int = 3) -> 
     cannot make the report unbounded.
     """
     depth = max(1, min(int(depth), _LINEAGE_MAX_DEPTH))
+    # The same advance-notice window recall uses, so lineage and recall never
+    # disagree about whether one record is due soon.
+    window = _cadence_value(read_project_memory_policy(paths), "due_soon_days")
     records = {
         str(record.get("record_id", "")): record
         for record in _read_project_memory_records(paths)
@@ -2214,7 +2473,7 @@ def build_memory_lineage(paths: OmhPaths, record_id: str, *, depth: int = 3) -> 
                         unresolved.append({"record_id": ref, "referenced_by": node_id})
                     continue
                 visited.add(ref)
-                ancestors.append(_lineage_card(records[ref], depth=hop))
+                ancestors.append(_lineage_card(records[ref], depth=hop, due_soon_days=window))
                 next_frontier.append(ref)
         frontier = next_frontier
     # Any unexpanded ref past the horizon -- resolvable or dangling -- means
@@ -2235,7 +2494,7 @@ def build_memory_lineage(paths: OmhPaths, record_id: str, *, depth: int = 3) -> 
                 if child_id in visited_down:
                     continue
                 visited_down.add(child_id)
-                descendants.append(_lineage_card(records[child_id], depth=hop))
+                descendants.append(_lineage_card(records[child_id], depth=hop, due_soon_days=window))
                 next_frontier.append(child_id)
         frontier = next_frontier
     truncated = truncated or any(
@@ -2246,7 +2505,7 @@ def build_memory_lineage(paths: OmhPaths, record_id: str, *, depth: int = 3) -> 
     return {
         **base,
         "found": True,
-        "record": _lineage_card(root, depth=0),
+        "record": _lineage_card(root, depth=0, due_soon_days=window),
         "ancestors": ancestors,
         "descendants": descendants,
         "unresolved_refs": unresolved,
@@ -2255,7 +2514,7 @@ def build_memory_lineage(paths: OmhPaths, record_id: str, *, depth: int = 3) -> 
     }
 
 
-def _lineage_card(record: dict[str, Any], *, depth: int) -> dict[str, object]:
+def _lineage_card(record: dict[str, Any], *, depth: int, due_soon_days: int | None = None) -> dict[str, object]:
     return {
         "record_id": str(record.get("record_id", "")),
         "depth": depth,
@@ -2264,7 +2523,7 @@ def _lineage_card(record: dict[str, Any], *, depth: int) -> dict[str, object]:
         "scope": _normalize_scope(record.get("scope", _scope("project", "default"))),
         "tags": _normalize_tags(record.get("tags", [])),
         "approved_at": str(record.get("approved_at", "")),
-        "staleness": _record_staleness(record),
+        "staleness": _record_staleness(record, due_soon_days=due_soon_days),
         "derived_from": _string_list(record.get("derived_from", [])),
     }
 
@@ -2843,6 +3102,8 @@ def _build_project_memory_candidate(
     retention_class: str,
     derived_from: list[str] | tuple[str, ...] = (),
     perspective: dict[str, str] | None = None,
+    default_stale_after_days: int | None = None,
+    episode_ttl_days: int | None = None,
 ) -> dict[str, object]:
     normalized_type = _normalize_record_type(record_type)
     scope = _scope_for_project_memory(scope_kind, scope_ref)
@@ -2850,10 +3111,20 @@ def _build_project_memory_candidate(
     content_text = str(content or "")
     safety = _project_memory_safety(summary, content_text, tags=normalized_tags)
     now = utc_now()
-    ttl = _ttl_metadata(ttl_days, record_type=normalized_type, created_at=now)
-    staleness = _staleness_metadata(
-        stale_after_days, record_type=normalized_type, retention_class=retention_class, created_at=now
-    )
+    ttl = _ttl_metadata(ttl_days, record_type=normalized_type, created_at=now, episode_ttl_days=episode_ttl_days)
+    # `cadence_source` records whether the captor chose the cadence or the
+    # default supplied it -- the one fact an approval-time re-class needs to
+    # honour an explicit deadline without freezing a defaulted one.
+    staleness = {
+        **_staleness_metadata(
+            stale_after_days,
+            record_type=normalized_type,
+            retention_class=retention_class,
+            created_at=now,
+            default_days=default_stale_after_days,
+        ),
+        "cadence_source": "explicit" if stale_after_days is not None else "default",
+    }
     candidate_id = "cand_" + os.urandom(8).hex()
     status = "blocked_review_required" if safety["status"] == "blocked" else "pending_review"
     # Digest the ref exactly as it will be stored, not as it was passed:
@@ -2896,6 +3167,8 @@ def _record_from_candidate(
     approved_at: str,
     review_id: str,
     admission_state: str,
+    retention_class: str | None = None,
+    default_stale_after_days: int | None = None,
 ) -> dict[str, object]:
     if admission_state not in ADMISSION_STATES:
         raise ValueError(f"unsupported memory admission state: {admission_state}")
@@ -2903,22 +3176,63 @@ def _record_from_candidate(
     if approved_at_value is None:
         raise ValueError("approved_at must be an ISO timestamp")
     record_type = _normalize_record_type(str(candidate.get("record_type", "fact")))
+    # The reviewer may re-class the record at approval -- most usefully
+    # promoting a settled decision to `durable` so it does not inherit the
+    # 90-day review clock nobody chose for it. The override re-derives
+    # retention AND the review deadline with the new class's own defaults;
+    # a captor who wants a specific cadence on a durable record sets it at
+    # capture, where the explicit value is recorded.
+    requested_class = str(candidate.get("retention_class", "standard"))
+    override = None
+    if retention_class is not None:
+        supplied = str(retention_class)
+        if supplied not in {"volatile", "standard", "durable"}:
+            raise ValueError(f"unsupported retention class: {supplied}")
+        # An identity override (the class the candidate already has) is a
+        # validated no-op: the record mints exactly as a plain approval
+        # would, carry-overs included.
+        if supplied != requested_class:
+            override = supplied
+            requested_class = supplied
     retention = build_retention(
-        str(candidate.get("retention_class", "standard")),
+        requested_class,
         record_type=record_type,
         admitted_at=approved_at_value,
-        ttl_days=_candidate_ttl_days(candidate),
+        ttl_days=_candidate_ttl_days(candidate) if override is None else None,
     )
     # Approval must not silently extend the deadline shown to the reviewer.
     # `utc_now` is second-truncated, so deriving it again from `approved_at`
     # made this record expire one second later whenever review crossed a clock
     # boundary. The candidate's stored deadline is the authoritative value.
+    # An overridden class skips the carry-over on purpose: that deadline was
+    # minted for the class the reviewer just rejected.
     candidate_ttl = candidate.get("ttl")
-    if "expires_at" in retention and isinstance(candidate_ttl, dict) and candidate_ttl.get("expires_at"):
+    if override is None and "expires_at" in retention and isinstance(candidate_ttl, dict) and candidate_ttl.get("expires_at"):
         retention["expires_at"] = str(candidate_ttl["expires_at"])
     record_id = "mem_" + os.urandom(8).hex()
     scope = _normalize_scope(candidate.get("scope", _scope("project", "default")))
     revalidation = _candidate_revalidation(candidate)
+    staleness_days = _candidate_stale_after_days(candidate)
+    if override is not None:
+        candidate_staleness = candidate.get("staleness") if isinstance(candidate.get("staleness"), dict) else {}
+        explicit_cadence = str(candidate_staleness.get("cadence_source", "") or "") == "explicit" and staleness_days is not None
+        if explicit_cadence:
+            # A cadence the captor explicitly chose survives the re-class:
+            # `_staleness_metadata` is explicit that durable makes the
+            # deadline optional, not forbidden, and the reviewer's flag was
+            # about retention, not about removing a review date they saw on
+            # the card. The candidate's revalidation carries over untouched.
+            pass
+        else:
+            refreshed = _staleness_metadata(
+                None,
+                record_type=record_type,
+                created_at=str(candidate.get("created_at", approved_at)),
+                retention_class=override,
+                default_days=default_stale_after_days,
+            )
+            revalidation = {"deadline": str(refreshed["stale_after"])} if refreshed["stale_after"] else {}
+            staleness_days = refreshed["stale_after_days"]
     record: dict[str, object] = {
         "schema_version": PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
         "record_id": record_id,
@@ -2954,7 +3268,15 @@ def _record_from_candidate(
         "created_at": str(candidate.get("created_at", approved_at)),
         "updated_at": approved_at,
         "ttl": _ttl_projection(retention),
-        "staleness": _staleness_projection(revalidation),
+        # The projection alone nulls `stale_after_days`, which lost the
+        # cadence the captor chose: a record captured at 365 days silently
+        # fell back to the 90-day default on its first flagless confirm.
+        # Carrying the candidate's cadence onto the record keeps `omh memory
+        # confirm` honouring it.
+        "staleness": {
+            **_staleness_projection(revalidation),
+            "stale_after_days": staleness_days,
+        },
         # Every approved record states its tier explicitly. An implicit
         # default would make "this record is active" and "nobody ever set a
         # tier" the same fact, and the operator could not tell an intentional
@@ -3001,6 +3323,12 @@ def _write_project_memory_review_decision(paths: OmhPaths, review: dict[str, obj
         raise ValueError(f"unsafe memory review id: {review_id!r}")
     atomic_write_json(_memory_review_path(paths, review_id), review, private=True)
     return review
+
+
+def _candidate_stale_after_days(candidate: dict[str, Any]) -> int | None:
+    staleness = candidate.get("staleness")
+    days = staleness.get("stale_after_days") if isinstance(staleness, dict) else None
+    return days if isinstance(days, int) and not isinstance(days, bool) and days > 0 else None
 
 
 def _candidate_ttl_days(candidate: dict[str, Any]) -> int | None:
@@ -3127,15 +3455,16 @@ def _freshness_warnings(
         state = str(staleness.get("state", ""))
         reason_code = str(entry.get("eligibility_reason", "") or "")
         known_reason = reason_code in _FRESHNESS_REASON_TEXT
-        if not known_reason and delivered and str(staleness.get("reason", "") or "") == "review_due_soon":
-            # A still-fresh record inside the pre-deadline window: eligibility
-            # has nothing to say about it, so the advance notice comes from
-            # the staleness verdict instead. Only a DELIVERED record earns it
-            # -- a due-soon warning on every unrelated record in the store
-            # would page the operator about records this task never touched,
-            # and once the deadline actually passes the ordinary stale warning
-            # fires for held-back records as before.
-            reason_code, known_reason = "review_due_soon", True
+        staleness_reason = str(staleness.get("reason", "") or "")
+        if not known_reason and delivered and staleness_reason in ADVISORY_FRESHNESS_REASONS:
+            # A still-fresh record inside a pre-deadline window (review-due or
+            # TTL expiry): eligibility has nothing to say about it, so the
+            # advance notice comes from the staleness verdict instead. Only a
+            # DELIVERED record earns it -- an advisory on every unrelated
+            # record in the store would page the operator about records this
+            # task never touched, and once the deadline actually passes the
+            # ordinary blocking warning fires for held-back records as before.
+            reason_code, known_reason = staleness_reason, True
         if not known_reason and state in {"", "fresh", "not_checked"}:
             continue
         if not record_id or record_id in seen:
@@ -3153,9 +3482,10 @@ def _freshness_warnings(
                 "state": state or "unknown",
                 "reason_code": reason_code,
                 "review_due_at": str(staleness.get("review_due_at", "") or ""),
+                "expires_at": str(staleness.get("expires_at", "") or ""),
                 "detail": _FRESHNESS_REASON_TEXT[reason_code],
                 "delivered": bool(delivered),
-                "next_action": _DUE_SOON_NEXT_ACTION if advisory_reason else _FRESHNESS_NEXT_ACTION,
+                "next_action": _ADVISORY_NEXT_ACTIONS.get(reason_code, _FRESHNESS_NEXT_ACTION),
             }
         )
         if len(blocking) >= _FRESHNESS_WARNING_LIMIT:
@@ -3374,7 +3704,12 @@ def _record_scope_matches(record: dict[str, Any], *, scope_kind: str | None, sco
     return (not scope_kind or scope["kind"] == scope_kind) and (not scope_ref or scope["ref"] == scope_ref)
 
 
-def _record_staleness(record: dict[str, Any], *, now: datetime | None = None) -> dict[str, object]:
+def _record_staleness(
+    record: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    due_soon_days: int | None = None,
+) -> dict[str, object]:
     """The one freshness verdict: TTL, review-due date, and source evidence.
 
     The TTL half is decided by the bundle classifier, the single source of
@@ -3415,11 +3750,27 @@ def _record_staleness(record: dict[str, Any], *, now: datetime | None = None) ->
         return {"state": "stale", "reason": "source_changed", **fields}
     if source_state == "unreadable":
         return {"state": "unknown", "reason": "source_unreadable", **fields}
-    if deadline and deadline - now <= timedelta(days=_REVIEW_DUE_SOON_DAYS):
-        # Still fresh and still eligible: the record delivers exactly as
-        # before. The reason is the advance notice recall packs turn into a
-        # warning, so the deadline stops being a surprise discovered only
-        # after the record has already left every pack.
+    # Still fresh and still eligible below here: the record delivers exactly
+    # as before. The reason is the advance notice recall packs turn into a
+    # warning, so a deadline stops being a surprise discovered only after the
+    # record has already left every pack. Expiry outranks review-due when both
+    # windows overlap: a passed TTL is terminal, a passed review date is not.
+    # Naive TTL timestamps read as UTC, matching the expiry classifier that
+    # decides the terminal verdict above; `_parse_utc` would read them as
+    # host-local and move this window by up to +/-14 hours.
+    expiry = _parse_utc_naive_as_utc(expires_at)
+    expiry_window = due_soon_days if due_soon_days is not None else _EXPIRES_SOON_DAYS
+    ttl_days_value = ttl.get("ttl_days")
+    if isinstance(ttl_days_value, int) and not isinstance(ttl_days_value, bool) and ttl_days_value > 0:
+        # A notice window longer than half the record's own life is not
+        # advance notice, it is a permanent banner: a 7-day volatile record
+        # would warn from the moment it was approved. Scale the window down
+        # to half the TTL (never below one day) so short-lived records warn
+        # near the end, which is when the warning means something.
+        expiry_window = min(expiry_window, max(ttl_days_value // 2, 1))
+    if expiry and expiry - now <= timedelta(days=expiry_window):
+        return {"state": "fresh", "reason": "expires_soon", **fields}
+    if deadline and deadline - now <= timedelta(days=due_soon_days if due_soon_days is not None else _REVIEW_DUE_SOON_DAYS):
         return {"state": "fresh", "reason": "review_due_soon", **fields}
     return {"state": "fresh", "reason": "", **fields}
 
@@ -3529,6 +3880,18 @@ MAX_RETENTION_DAYS = 36500
 
 _EPISODE_DEFAULT_TTL_DAYS = 30
 _REVIEW_DEFAULT_DAYS = 90
+# The three memory clocks, as product tunables rather than constants baked
+# into one machine's build: the default review cadence, the episode TTL, and
+# the advance-notice window recall packs warn inside (shared by review-due
+# and expiry notices). Stored setup profiles may carry them inside
+# `memory_policy` -- additive and optional, exactly like the rest of that
+# block -- and an absent or invalid value falls back to the named default
+# while the effective value is always disclosed on the policy payload.
+_MEMORY_CADENCE_DEFAULTS = {
+    "stale_after_days_default": _REVIEW_DEFAULT_DAYS,
+    "episode_ttl_days": _EPISODE_DEFAULT_TTL_DAYS,
+    "due_soon_days": _REVIEW_DUE_SOON_DAYS,
+}
 
 
 def _validated_day_count(days: int | None, *, field: str) -> int | None:
@@ -3555,10 +3918,16 @@ def _validated_day_count(days: int | None, *, field: str) -> int | None:
     return days
 
 
-def _ttl_metadata(ttl_days: int | None, *, record_type: str, created_at: str) -> dict[str, object]:
+def _ttl_metadata(
+    ttl_days: int | None,
+    *,
+    record_type: str,
+    created_at: str,
+    episode_ttl_days: int | None = None,
+) -> dict[str, object]:
     days = _validated_day_count(ttl_days, field="ttl_days")
     if days is None and record_type == "episode":
-        days = _EPISODE_DEFAULT_TTL_DAYS
+        days = episode_ttl_days if episode_ttl_days is not None else _EPISODE_DEFAULT_TTL_DAYS
     # `is None` rather than falsiness: "no deadline" and "zero days" are
     # different statements, and only the first one may produce an empty
     # `expires_at`. The falsy test is what let a rejected-at-the-CLI zero
@@ -3575,6 +3944,7 @@ def _staleness_metadata(
     record_type: str,
     created_at: str,
     retention_class: str = "standard",
+    default_days: int | None = None,
 ) -> dict[str, object]:
     """The review-due deadline, or none for a record declared durable.
 
@@ -3596,7 +3966,7 @@ def _staleness_metadata(
     """
     days = _validated_day_count(stale_after_days, field="stale_after_days")
     if days is None and retention_class != "durable" and record_type in {"fact", "decision", "lesson", "procedure"}:
-        days = _REVIEW_DEFAULT_DAYS
+        days = default_days if default_days is not None else _REVIEW_DEFAULT_DAYS
     default_days = days
     deadline = _days_after(created_at, days) if days is not None else ""
     # `review_due_at` is the readable name for the date `stale_after` always
