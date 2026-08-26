@@ -506,12 +506,16 @@ def _write_skill_load_observation(
     atomic_write_json(run_dir / "skill-load-observation.json", observation, private=True)
     signature = hmac.new(
         _observation_key(args),
-        _canonical_observation(observation),
+        _skill_load_signature_message(args.run_id, observation),
         hashlib.sha256,
     ).hexdigest()
     atomic_write_json(
         run_dir / "skill-load-observation.signature.json",
-        {"schema_version": "skill_load_observation_signature/v1", "hmac_sha256": signature},
+        {
+            "schema_version": "skill_load_observation_signature/v2",
+            "run_id": args.run_id,
+            "hmac_sha256": signature,
+        },
         private=True,
     )
 
@@ -526,19 +530,36 @@ def _skill_load_signature_valid(
         )
     except (OSError, json.JSONDecodeError, ValueError):
         return False
-    if not isinstance(signature, dict) or set(signature) != {"schema_version", "hmac_sha256"}:
+    if not isinstance(signature, dict) or set(signature) != {
+        "schema_version", "run_id", "hmac_sha256"
+    }:
         return False
-    if signature.get("schema_version") != "skill_load_observation_signature/v1":
+    if (
+        signature.get("schema_version") != "skill_load_observation_signature/v2"
+        or signature.get("run_id") != args.run_id
+    ):
         return False
     observed = signature.get("hmac_sha256")
     if not isinstance(observed, str):
         return False
     expected = hmac.new(
         _observation_key(args),
-        _canonical_observation(observation),
+        _skill_load_signature_message(args.run_id, observation),
         hashlib.sha256,
     ).hexdigest()
     return hmac.compare_digest(observed, expected)
+
+
+def _skill_load_signature_message(
+    run_id: str,
+    observation: dict[str, object],
+) -> bytes:
+    return (
+        b"omh-skill-load-observation-signature/v2\0"
+        + run_id.encode("utf-8")
+        + b"\0"
+        + _canonical_observation(observation)
+    )
 
 
 def _observation_signature_valid(
