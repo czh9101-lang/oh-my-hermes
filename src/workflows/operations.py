@@ -186,6 +186,8 @@ def validate_operation_artifact(record: dict[str, Any]) -> list[str]:
 
 
 def write_operation_artifact(paths: OmhPaths, record: dict[str, Any]) -> dict[str, Any]:
+    if record.get("schema_version") != OPERATIONS_ARTIFACT_SCHEMA_VERSION:
+        raise ValueError("new persisted artifacts require omh_operation_artifact/v1")
     errors = validate_operation_artifact(record)
     if errors:
         raise ValueError("; ".join(errors))

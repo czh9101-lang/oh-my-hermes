@@ -27,6 +27,18 @@ READINESS_CATEGORIES: Final = (
     "docs_support",
     "release_communication",
 )
+READINESS_CATEGORY_POLICY_SCHEMA_VERSION: Final = "readiness_category_policy/v1"
+READINESS_CATEGORY_POLICY: Final = (
+    ("build", False),
+    ("tests", False),
+    ("ci", True),
+    ("security_privacy", False),
+    ("performance", False),
+    ("observability", False),
+    ("rollback", False),
+    ("docs_support", False),
+    ("release_communication", False),
+)
 READINESS_EVIDENCE_STATES: Final = ("missing", "observed", "failed")
 READINESS_VERDICTS: Final = ("GO", "HOLD", "BLOCK")
 _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
@@ -44,16 +56,20 @@ class ReadinessAuthenticationError(Exception):
 
 
 class ReadinessTrustContext:
-    """Opaque caller-held signer/verifier; key bytes have no retrieval surface."""
+    """Caller-held HMAC state with redacted rendering and blocked standard exports.
 
-    __slots__ = ("context_id", "__hmac_key")
+    These supported guards do not claim resistance to arbitrary same-process introspection.
+    """
+
+    __slots__ = ("context_id", "__hmac_template", "__usable")
 
     def __init__(self, context_id: str, hmac_key: bytes) -> None:
         self.context_id = str(context_id)
-        self.__hmac_key = bytes(hmac_key)
+        self.__usable = _valid_ref(self.context_id) and _MIN_HMAC_KEY_BYTES <= len(hmac_key) <= _MAX_HMAC_KEY_BYTES
+        self.__hmac_template = hmac.new(hmac_key, digestmod=hashlib.sha256)
 
     def __repr__(self) -> str:
-        return f"ReadinessTrustContext(context_id={self.context_id!r}, hmac_key=<redacted>)"
+        return f"ReadinessTrustContext(context_id={self.context_id!r}, signer=<redacted>)"
 
     __str__ = __repr__
 
@@ -76,10 +92,12 @@ class ReadinessTrustContext:
         raise TypeError("ReadinessTrustContext is opaque and non-serializable")
 
     def _usable(self) -> bool:
-        return _valid_ref(self.context_id) and _MIN_HMAC_KEY_BYTES <= len(self.__hmac_key) <= _MAX_HMAC_KEY_BYTES
+        return self.__usable
 
     def _sign(self, payload: bytes) -> str:
-        return hmac.new(self.__hmac_key, payload, hashlib.sha256).hexdigest()
+        signer = self.__hmac_template.copy()
+        signer.update(payload)
+        return signer.hexdigest()
 
     def _verify(self, payload: bytes, candidate: str) -> bool:
         expected = self._sign(payload)
@@ -100,6 +118,20 @@ READINESS_MATRIX_ROLLBACK_CONTRACT: Final = {
 }
 
 
+OBSERVED_CHECK_RESULT_KEYS: Final = {
+    "schema_version",
+    "check_id",
+    "result",
+    "observed_at",
+    "evidence_ref",
+    "scope",
+    "category",
+    "task_id",
+    "revision",
+    "row_id",
+}
+
+
 def authenticate_external_readiness_evidence(
     evidence: dict[str, Any],
     *,
@@ -115,6 +147,8 @@ def authenticate_external_readiness_evidence(
     """Attach local keyed integrity from a caller-held trusted context."""
     if not _trusted_context_usable(trusted_context):
         raise ValueError("external readiness authentication requires a usable trusted context")
+    if not _category_requires_external_observation(category):
+        raise ValueError("external readiness authentication requires a registry-owned external category")
     matrix_id = _matrix_id(scope, task_id, revision, created_at)
     payload = _external_authenticity_payload(
         evidence,
@@ -174,12 +208,19 @@ def build_readiness_matrix(
     normalized_rows: list[dict[str, Any]] = []
     receipt_ids: list[str] = []
     observation_ids: list[str] = []
+    check_ids: list[str] = []
+    check_evidence_refs: list[str] = []
     for supplied in rows:
         category = str(supplied.get("category", "")).strip()
-        requires_external = supplied.get("requires_external_observation") is True
+        policy_requires_external = _category_requires_external_observation(category)
+        supplied_requires_external = supplied.get("requires_external_observation")
+        identity_errors: list[str] = []
+        if not isinstance(supplied_requires_external, bool) or supplied_requires_external != policy_requires_external:
+            identity_errors.append(_category_policy_error(category, policy_requires_external))
+        requires_external = policy_requires_external
         supplied_identity = supplied.get("external_identity")
         external_identity = supplied_identity if isinstance(supplied_identity, dict) else {}
-        identity_errors = _external_identity_errors(external_identity, required=requires_external)
+        identity_errors.extend(_external_identity_errors(external_identity, required=requires_external))
         if not requires_external and external_identity:
             identity_errors.append("non-external readiness rows must not carry external_identity")
         supplied_evidence = supplied.get("evidence")
@@ -191,6 +232,8 @@ def build_readiness_matrix(
         ]
         if requires_external and len(external_items) > 1:
             identity_errors.append("external readiness rows accept exactly one external readiness association")
+        if not requires_external and external_items:
+            identity_errors.append("category policy requires local observed_check_result evidence")
         evidence_errors = [
             error
             for item in evidence
@@ -200,6 +243,8 @@ def build_readiness_matrix(
                 else _evidence_errors(
                     item,
                     external_identity=external_identity,
+                    scope=clean_scope,
+                    category=category,
                     task_id=clean_task_id,
                     revision=clean_revision,
                     observed_before=created_at,
@@ -213,6 +258,8 @@ def build_readiness_matrix(
         accepted = [item for item in evidence if isinstance(item, dict)]
         receipt_ids.extend(_external_receipt_ids(accepted))
         observation_ids.extend(_external_observation_ids(accepted))
+        check_ids.extend(_local_check_ids(accepted))
+        check_evidence_refs.extend(_local_evidence_refs(accepted))
         normalized_rows.append(
             {
                 "category": category,
@@ -242,6 +289,14 @@ def build_readiness_matrix(
     duplicate_observations = _duplicates(observation_ids)
     if duplicate_observations:
         raise ValueError(f"duplicate external readiness postcondition associations: {', '.join(duplicate_observations)}")
+    duplicate_checks = _duplicates(check_ids)
+    if duplicate_checks:
+        raise ValueError(f"duplicate observed_check_result check_id associations: {', '.join(duplicate_checks)}")
+    duplicate_check_refs = _duplicates(check_evidence_refs)
+    if duplicate_check_refs:
+        raise ValueError(
+            f"duplicate observed_check_result evidence_ref associations: {', '.join(duplicate_check_refs)}"
+        )
     verdict = _derive_verdict(normalized_rows)
     record = {
         "schema_version": READINESS_MATRIX_SCHEMA_VERSION,
@@ -325,17 +380,28 @@ def validate_readiness_matrix(
     derived_rows: list[dict[str, Any]] = []
     receipt_ids: list[str] = []
     observation_ids: list[str] = []
+    check_ids: list[str] = []
+    check_evidence_refs: list[str] = []
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             errors.append(f"rows[{index}] must be an object")
             continue
-        requires_external = row.get("requires_external_observation")
-        if not isinstance(requires_external, bool):
+        category = str(row.get("category", ""))
+        policy_requires_external = _category_requires_external_observation(category)
+        supplied_requires_external = row.get("requires_external_observation")
+        if not isinstance(supplied_requires_external, bool):
             errors.append(f"rows[{index}].requires_external_observation must be a boolean")
-            requires_external = False
+        policy_matches_row = (
+            isinstance(supplied_requires_external, bool)
+            and supplied_requires_external == policy_requires_external
+        )
+        if not policy_matches_row:
+            errors.append(f"rows[{index}]: {_category_policy_error(category, policy_requires_external)}")
+        requires_external = policy_requires_external
+        authentication_external_mode = supplied_requires_external if isinstance(supplied_requires_external, bool) else False
         supplied_identity = row.get("external_identity")
         external_identity = supplied_identity if isinstance(supplied_identity, dict) else {}
-        for error in _external_identity_errors(external_identity, required=bool(requires_external)):
+        for error in _external_identity_errors(external_identity, required=requires_external):
             errors.append(f"rows[{index}]: {error}")
         if not requires_external and external_identity:
             errors.append(f"rows[{index}]: non-external readiness rows must not carry external_identity")
@@ -351,6 +417,8 @@ def validate_readiness_matrix(
         authenticated_items = [item for item in evidence if isinstance(item, dict) and "authenticity" in item]
         if requires_external and len(external_items) > 1:
             errors.append(f"rows[{index}] external readiness rows accept exactly one external readiness association")
+        if not requires_external and external_items:
+            errors.append(f"rows[{index}] category policy requires local observed_check_result evidence")
         for evidence_index, item in enumerate(evidence):
             if not isinstance(item, dict):
                 errors.append(f"rows[{index}].evidence[{evidence_index}] must be an object")
@@ -358,6 +426,8 @@ def validate_readiness_matrix(
             for error in _evidence_errors(
                 item,
                 external_identity=external_identity,
+                scope=scope,
+                category=category,
                 task_id=task_id,
                 revision=revision,
                 observed_before=created_at,
@@ -366,13 +436,15 @@ def validate_readiness_matrix(
         valid_evidence = [item for item in evidence if isinstance(item, dict)]
         receipt_ids.extend(_external_receipt_ids(valid_evidence))
         observation_ids.extend(_external_observation_ids(valid_evidence))
+        check_ids.extend(_local_check_ids(valid_evidence))
+        check_evidence_refs.extend(_local_evidence_refs(valid_evidence))
         if requires_external and any(
             item.get("schema_version") != EXTERNAL_READINESS_EVIDENCE_SCHEMA_VERSION for item in valid_evidence
         ):
             errors.append(f"rows[{index}] external observed success requires one exactly bound external association")
         derived_state = _derive_evidence_state(
             valid_evidence,
-            requires_external=bool(requires_external),
+            requires_external=requires_external,
             external_identity=external_identity,
             matrix_schema_version=str(record.get("schema_version", "")),
             matrix_id=matrix_id,
@@ -385,6 +457,8 @@ def validate_readiness_matrix(
             observed_before=created_at,
             trusted_context=trusted_context,
         )
+        if not policy_matches_row:
+            derived_state = "missing"
         if row.get("evidence_state") not in READINESS_EVIDENCE_STATES:
             errors.append(f"rows[{index}].evidence_state is unsupported: {row.get('evidence_state')}")
         if authenticated_items and row.get("evidence_state") == "observed" and derived_state != "observed":
@@ -395,12 +469,12 @@ def validate_readiness_matrix(
                     matrix_id=matrix_id,
                     contract_ref=contract_ref,
                     scope=scope,
-                    category=str(row.get("category", "")),
+                    category=category,
                     task_id=task_id,
                     revision=revision,
                     created_at=created_at,
                     evidence_fresh_after=fresh_after,
-                    requires_external_observation=bool(requires_external),
+                    requires_external_observation=authentication_external_mode,
                     external_identity=external_identity,
                     trusted_context=trusted_context,
                 )
@@ -417,6 +491,14 @@ def validate_readiness_matrix(
     duplicate_observations = _duplicates(observation_ids)
     if duplicate_observations:
         errors.append(f"duplicate external readiness postcondition associations: {', '.join(duplicate_observations)}")
+    duplicate_checks = _duplicates(check_ids)
+    if duplicate_checks:
+        errors.append(f"duplicate observed_check_result check_id associations: {', '.join(duplicate_checks)}")
+    duplicate_check_refs = _duplicates(check_evidence_refs)
+    if duplicate_check_refs:
+        errors.append(
+            f"duplicate observed_check_result evidence_ref associations: {', '.join(duplicate_check_refs)}"
+        )
     derived_verdict = _derive_verdict(derived_rows)
     verdict = record.get("verdict")
     if verdict not in READINESS_VERDICTS:
@@ -465,13 +547,21 @@ def _evidence_errors(
     evidence: dict[str, Any],
     *,
     external_identity: dict[str, Any] | None = None,
+    scope: str = "",
+    category: str = "",
     task_id: str = "",
     revision: str = "",
     observed_before: str = "",
 ) -> list[str]:
     schema = evidence.get("schema_version")
     if schema == OBSERVED_CHECK_RESULT_SCHEMA_VERSION:
-        errors = _observed_check_errors(evidence)
+        errors = _observed_check_errors(
+            evidence,
+            scope=scope,
+            category=category,
+            task_id=task_id,
+            revision=revision,
+        )
         errors.extend(_future_timestamp_errors(evidence.get("observed_at"), observed_before, "observed_check_result observed_at"))
         return errors
     if schema == EXTERNAL_READINESS_EVIDENCE_SCHEMA_VERSION:
@@ -485,8 +575,12 @@ def _evidence_errors(
     return [f"unsupported readiness evidence schema: {schema}"]
 
 
-def _observed_check_errors(evidence: dict[str, Any]) -> list[str]:
+def _observed_check_errors(
+    evidence: dict[str, Any], *, scope: str, category: str, task_id: str, revision: str
+) -> list[str]:
     errors: list[str] = []
+    if set(evidence) != OBSERVED_CHECK_RESULT_KEYS:
+        errors.append("observed_check_result keys must match observed_check_result/v1")
     result = evidence.get("result")
     if not isinstance(result, str) or result not in ("passed", "failed"):
         errors.append("observed_check_result result must be passed or failed")
@@ -495,6 +589,16 @@ def _observed_check_errors(evidence: dict[str, Any]) -> list[str]:
             errors.append(f"observed_check_result {field} must be an opaque reference")
     if _timestamp(evidence.get("observed_at")) is None:
         errors.append("observed_check_result observed_at must be a timezone-aware ISO-8601 timestamp")
+    authority = (
+        ("scope", scope),
+        ("category", category),
+        ("task_id", task_id),
+        ("revision", revision),
+        ("row_id", readiness_row_id(scope, category, task_id, revision)),
+    )
+    for field, expected in authority:
+        if evidence.get(field) != expected:
+            errors.append(f"observed_check_result {field} must match row authority")
     return errors
 
 
@@ -584,7 +688,7 @@ def _external_authenticity_error(
     external_identity: dict[str, Any],
     trusted_context: ReadinessTrustContext | None,
 ) -> str:
-    if not isinstance(trusted_context, ReadinessTrustContext) or not _trusted_context_usable(trusted_context):
+    if type(trusted_context) is not ReadinessTrustContext or not _trusted_context_usable(trusted_context):
         return "external readiness authenticity requires a usable trusted context"
     authenticity = evidence.get("authenticity")
     if not isinstance(authenticity, dict) or set(authenticity) != {
@@ -687,7 +791,7 @@ def _canonical_json_snapshot(value: object) -> tuple[Any, bytes] | None:
             separators=(",", ":"),
             allow_nan=False,
         ).encode()
-    except (KeyError, RecursionError, TypeError, UnicodeError, ValueError):
+    except (KeyError, RecursionError, RuntimeError, TypeError, UnicodeError, ValueError):
         return None
     if len(encoded) != bytes_used[0] or len(encoded) > READINESS_CANONICAL_JSON_MAX_BYTES:
         return None
@@ -726,8 +830,10 @@ def _snapshot_json_value(
     active_containers.add(identity)
     try:
         if type(value) is list:
+            source = cast(list[object], value)
+            detached = _copy_plain_list(source)
             items: list[Any] = []
-            for index, item in enumerate(list.__iter__(cast(list[object], value))):
+            for index, item in enumerate(detached):
                 if index and not _consume_json_bytes(1, bytes_used):
                     return _CANONICAL_JSON_REJECTED
                 snapshot = _snapshot_json_value(
@@ -740,9 +846,11 @@ def _snapshot_json_value(
                 if snapshot is _CANONICAL_JSON_REJECTED:
                     return _CANONICAL_JSON_REJECTED
                 items.append(snapshot)
-            return items
+            return items if _same_shallow_sequence(detached, _copy_plain_list(source)) else _CANONICAL_JSON_REJECTED
+        source_mapping = cast(dict[object, object], value)
+        detached_mapping = _copy_plain_dict(source_mapping)
         mapping: dict[str, Any] = {}
-        for index, (key, item) in enumerate(dict.items(cast(dict[object, object], value))):
+        for index, (key, item) in enumerate(detached_mapping.items()):
             if type(key) is not str or len(key) > READINESS_CANONICAL_JSON_MAX_BYTES:
                 return _CANONICAL_JSON_REJECTED
             separator_bytes = (1 if index else 0) + len(json.dumps(key).encode()) + 1
@@ -758,9 +866,41 @@ def _snapshot_json_value(
             if snapshot is _CANONICAL_JSON_REJECTED:
                 return _CANONICAL_JSON_REJECTED
             mapping[key] = snapshot
-        return mapping
+        return (
+            mapping
+            if _same_shallow_mapping(detached_mapping, _copy_plain_dict(source_mapping))
+            else _CANONICAL_JSON_REJECTED
+        )
     finally:
         active_containers.remove(identity)
+
+
+def _copy_plain_dict(value: dict[object, object]) -> dict[object, object]:
+    return dict.copy(value)
+
+
+def _copy_plain_list(value: list[object]) -> list[object]:
+    return list.copy(value)
+
+
+def _same_shallow_mapping(before: dict[object, object], after: dict[object, object]) -> bool:
+    if len(before) != len(after) or set(before) != set(after):
+        return False
+    return all(_same_json_slot(value, after[key]) for key, value in before.items())
+
+
+def _same_shallow_sequence(before: list[object], after: list[object]) -> bool:
+    return len(before) == len(after) and all(
+        _same_json_slot(left, right) for left, right in zip(before, after, strict=True)
+    )
+
+
+def _same_json_slot(left: object, right: object) -> bool:
+    if type(left) in (dict, list):
+        return left is right
+    if type(left) in (str, bool, int, float) or left is None:
+        return type(left) is type(right) and left == right
+    return left is right
 
 
 def _consume_json_bytes(amount: int, bytes_used: list[int]) -> bool:
@@ -769,7 +909,7 @@ def _consume_json_bytes(amount: int, bytes_used: list[int]) -> bool:
 
 
 def _trusted_context_usable(context: ReadinessTrustContext | None) -> bool:
-    return isinstance(context, ReadinessTrustContext) and context._usable()
+    return type(context) is ReadinessTrustContext and context._usable()
 
 
 def _derive_evidence_state(
@@ -793,6 +933,8 @@ def _derive_evidence_state(
         if _evidence_errors(
             item,
             external_identity=external_identity,
+            scope=scope,
+            category=category,
             task_id=task_id,
             revision=revision,
             observed_before=observed_before,
@@ -802,8 +944,8 @@ def _derive_evidence_state(
         if requires_external and schema != EXTERNAL_READINESS_EVIDENCE_SCHEMA_VERSION:
             continue
         if not requires_external and schema == EXTERNAL_READINESS_EVIDENCE_SCHEMA_VERSION:
-            observed_at = (item.get("postcondition") or {}).get("observed_at")
-        elif schema == OBSERVED_CHECK_RESULT_SCHEMA_VERSION:
+            continue
+        if schema == OBSERVED_CHECK_RESULT_SCHEMA_VERSION:
             observed_at = item.get("observed_at")
         else:
             observed_at = (item.get("postcondition") or {}).get("observed_at")
@@ -889,6 +1031,24 @@ def _external_observation_ids(evidence: list[dict[str, Any]]) -> list[str]:
     ]
 
 
+def _local_check_ids(evidence: list[dict[str, Any]]) -> list[str]:
+    return [
+        str(item.get("check_id", ""))
+        for item in evidence
+        if item.get("schema_version") == OBSERVED_CHECK_RESULT_SCHEMA_VERSION
+        and str(item.get("check_id", ""))
+    ]
+
+
+def _local_evidence_refs(evidence: list[dict[str, Any]]) -> list[str]:
+    return [
+        str(item.get("evidence_ref", ""))
+        for item in evidence
+        if item.get("schema_version") == OBSERVED_CHECK_RESULT_SCHEMA_VERSION
+        and str(item.get("evidence_ref", ""))
+    ]
+
+
 def _duplicates(values: list[str]) -> list[str]:
     return sorted({value for value in values if values.count(value) > 1})
 
@@ -897,11 +1057,38 @@ def _valid_ref(value: object) -> bool:
     return isinstance(value, str) and bool(_REF_RE.fullmatch(value))
 
 
-def _canonical_contract_ref() -> dict[str, str]:
+def _category_requires_external_observation(category: str) -> bool:
+    return next((required for name, required in READINESS_CATEGORY_POLICY if name == category), False)
+
+
+def _category_policy_error(category: str, requires_external: bool) -> str:
+    mode = "external observation" if requires_external else "local observation"
+    return f"category policy requires {mode} for {category or '<unknown>'}"
+
+
+def readiness_row_id(scope: str, category: str, task_id: str, revision: str) -> str:
+    digest = hashlib.sha256(
+        json.dumps(
+            {"scope": scope, "category": category, "task_id": task_id, "revision": revision},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()[:16]
+    return f"readiness-row-{digest}"
+
+
+def _canonical_contract_ref() -> dict[str, Any]:
     return {
         "contract_id": READINESS_MATRIX_SCHEMA_VERSION,
         "enforcement_level": "executable_validated",
         "consumer_id": "validate_readiness_matrix",
+        "category_policy": {
+            "schema_version": READINESS_CATEGORY_POLICY_SCHEMA_VERSION,
+            "categories": [
+                {"category": category, "requires_external_observation": required}
+                for category, required in READINESS_CATEGORY_POLICY
+            ],
+        },
     }
 
 

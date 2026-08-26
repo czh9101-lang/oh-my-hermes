@@ -6,8 +6,10 @@ import hashlib
 import json
 import logging
 import pickle
+import threading
 import unittest
 from dataclasses import asdict
+from unittest.mock import patch
 from pathlib import Path
 
 from _local_package import load_local_package
@@ -27,14 +29,18 @@ from omh.production_readiness import (
     READINESS_CANONICAL_JSON_MAX_DEPTH,
     READINESS_CANONICAL_JSON_MAX_NODES,
     READINESS_CATEGORIES,
+    READINESS_CATEGORY_POLICY,
+    READINESS_CATEGORY_POLICY_SCHEMA_VERSION,
     READINESS_MATRIX_ROLLBACK_CONTRACT,
     ReadinessTrustContext,
     authenticate_external_readiness_evidence,
     build_readiness_matrix as _build_readiness_matrix,
+    readiness_row_id,
     validate_readiness_matrix,
 )
 from omh.skills.catalog import builtin_definitions
 from omh.skills.render import workflow_reference_payload
+import omh.workflows.production_readiness as readiness_workflow
 
 
 CREATED = "2026-08-26T12:00:00Z"
@@ -61,13 +67,25 @@ def build_readiness_matrix(
     )
 
 
-def observed_check(category: str, *, observed_at: str = CREATED) -> dict[str, object]:
+def observed_check(
+    category: str,
+    *,
+    observed_at: str = CREATED,
+    scope: str = "release-1119",
+    task_id: str = TASK_ID,
+    revision: str = REVISION,
+) -> dict[str, object]:
     return {
         "schema_version": "observed_check_result/v1",
         "check_id": f"{category}-check",
         "result": "passed",
         "observed_at": observed_at,
         "evidence_ref": f"evidence-{category}",
+        "scope": scope,
+        "category": category,
+        "task_id": task_id,
+        "revision": revision,
+        "row_id": readiness_row_id(scope, category, task_id, revision),
     }
 
 
@@ -135,14 +153,17 @@ def external_row(category: str, evidence: dict[str, object], *, effect_id: str |
 
 
 def complete_rows() -> list[dict[str, object]]:
-    return [
+    rows = [
         {
             "category": category,
             "requires_external_observation": False,
             "evidence": [observed_check(category)],
         }
         for category in READINESS_CATEGORIES
+        if category != "ci"
     ]
+    rows.insert(2, external_row("ci", external_evidence("ci")))
+    return rows
 
 
 class OperationsArtifactContractTests(unittest.TestCase):
@@ -228,9 +249,15 @@ class ReadinessMatrixTests(unittest.TestCase):
         )
         self.assertEqual(matrix["schema_version"], "readiness_matrix/v1")
         self.assertEqual([row["category"] for row in matrix["rows"]], list(READINESS_CATEGORIES))
+        self.assertEqual(len(READINESS_CATEGORY_POLICY), 9)
+        self.assertEqual(dict(READINESS_CATEGORY_POLICY), {category: category == "ci" for category in READINESS_CATEGORIES})
+        self.assertEqual(
+            matrix["contract_ref"]["category_policy"]["schema_version"],
+            READINESS_CATEGORY_POLICY_SCHEMA_VERSION,
+        )
         self.assertEqual({row["evidence_state"] for row in matrix["rows"]}, {"observed"})
         self.assertEqual(matrix["verdict"], "GO")
-        self.assertEqual(validate_readiness_matrix(matrix), [])
+        self.assertEqual(validate_readiness_matrix(matrix, trusted_context=TRUST_CONTEXT), [])
         self.assertFalse(any(key in json.dumps(matrix).lower() for key in ('"score"', '"rank"', '"badge"')))
 
     def test_missing_or_duplicate_rows_are_rejected(self) -> None:
@@ -246,7 +273,12 @@ class ReadinessMatrixTests(unittest.TestCase):
 
     def test_prepared_only_rows_derive_hold(self) -> None:
         rows = [
-            {"category": category, "requires_external_observation": False, "evidence": []}
+            {
+                "category": category,
+                "requires_external_observation": category == "ci",
+                "external_identity": ({"effect_id": "readiness:ci", "run_id": RUN_ID} if category == "ci" else {}),
+                "evidence": [],
+            }
             for category in READINESS_CATEGORIES
         ]
         matrix = build_readiness_matrix(
@@ -274,6 +306,52 @@ class ReadinessMatrixTests(unittest.TestCase):
         self.assertEqual(matrix["verdict"], "GO")
         self.assertEqual(matrix["rows"][2]["evidence_state"], "observed")
         self.assertEqual(validate_readiness_matrix(matrix, trusted_context=TRUST_CONTEXT), [])
+
+    def test_registry_owned_external_policy_cannot_be_coherently_downgraded(self) -> None:
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci"))
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        self.assertEqual(matrix["verdict"], "GO")
+        downgraded = copy.deepcopy(matrix)
+        ci_row = downgraded["rows"][2]
+        ci_row["requires_external_observation"] = False
+        ci_row["external_identity"] = {}
+        ci_row["evidence"] = [observed_check("ci")]
+        ci_row["evidence_state"] = "observed"
+        downgraded["verdict"] = "GO"
+        downgraded["missing_categories"] = []
+
+        errors = validate_readiness_matrix(downgraded, trusted_context=TRUST_CONTEXT)
+
+        self.assertIn("category policy requires external observation", "; ".join(errors))
+        self.assertIn("verdict must match derived verdict HOLD", "; ".join(errors))
+
+        upgraded = copy.deepcopy(matrix)
+        build_row = upgraded["rows"][0]
+        build_row["requires_external_observation"] = True
+        build_row["external_identity"] = copy.deepcopy(matrix["rows"][2]["external_identity"])
+        build_row["evidence"] = copy.deepcopy(matrix["rows"][2]["evidence"])
+        build_row["evidence_state"] = "observed"
+        upgraded_errors = "; ".join(validate_readiness_matrix(upgraded, trusted_context=TRUST_CONTEXT))
+        self.assertIn("category policy requires local observation for build", upgraded_errors)
+        self.assertIn("verdict must match derived verdict HOLD", upgraded_errors)
+
+    def test_local_observations_are_row_bound_and_globally_unique(self) -> None:
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=complete_rows(), created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        replayed = copy.deepcopy(matrix)
+        replayed["rows"][1]["evidence"] = copy.deepcopy(replayed["rows"][0]["evidence"])
+
+        errors = validate_readiness_matrix(replayed, trusted_context=TRUST_CONTEXT)
+        rendered = "; ".join(errors)
+
+        self.assertIn("observed_check_result category must match row authority", rendered)
+        self.assertIn("duplicate observed_check_result check_id", rendered)
+        self.assertIn("duplicate observed_check_result evidence_ref", rendered)
+        self.assertIn("verdict must match derived verdict HOLD", rendered)
 
     def test_forged_observed_state_is_rejected(self) -> None:
         matrix = build_readiness_matrix(
@@ -422,7 +500,7 @@ class ReadinessMatrixTests(unittest.TestCase):
         evidence = external_evidence("ci")
         rows = complete_rows()
         rows[2] = external_row("ci", evidence)
-        rows[3] = external_row("security_privacy", copy.deepcopy(evidence), effect_id="readiness:ci")
+        rows[3] = external_row("ci", copy.deepcopy(evidence), effect_id="readiness:ci")
         with self.assertRaisesRegex(ValueError, "duplicate external readiness receipt associations"):
             build_readiness_matrix(
                 scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
@@ -430,11 +508,11 @@ class ReadinessMatrixTests(unittest.TestCase):
 
     def test_duplicate_postcondition_association_across_rows_is_rejected(self) -> None:
         first = external_evidence("ci")
-        second = external_evidence("security_privacy", effect_id="readiness:security")
+        second = external_evidence("ci", run_id="run-second")
         second["postcondition"]["observation_id"] = first["postcondition"]["observation_id"]
         rows = complete_rows()
         rows[2] = external_row("ci", first)
-        rows[3] = external_row("security_privacy", second, effect_id="readiness:security")
+        rows[3] = external_row("ci", second, run_id="run-second")
         with self.assertRaisesRegex(ValueError, "duplicate external readiness postcondition associations"):
             build_readiness_matrix(
                 scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
@@ -568,6 +646,50 @@ class ReadinessMatrixTests(unittest.TestCase):
                     "external readiness authenticity tag does not match trusted context",
                     "; ".join(validate_readiness_matrix(mutated, trusted_context=TRUST_CONTEXT)),
                 )
+
+    def test_trust_context_retains_no_addressable_raw_key_and_subclasses_fail_closed(self) -> None:
+        context = ReadinessTrustContext("operator-readiness", TRUST_KEY)
+        self.assertFalse(hasattr(context, "_ReadinessTrustContext__hmac_key"))
+        self.assertFalse(
+            any(
+                isinstance(getattr(context, name), bytes)
+                for name in ("context_id", "_ReadinessTrustContext__hmac_template", "_ReadinessTrustContext__usable")
+            )
+        )
+
+        def bytes_leaves(value: object) -> list[bytes]:
+            if isinstance(value, bytes):
+                return [value]
+            if isinstance(value, dict):
+                return [leaf for item in value.values() for leaf in bytes_leaves(item)]
+            if isinstance(value, tuple):
+                return [leaf for item in value for leaf in bytes_leaves(item)]
+            return []
+
+        self.assertNotIn(TRUST_KEY, bytes_leaves(object.__getstate__(context)))
+
+        class HostileTrustContext(ReadinessTrustContext):
+            def _usable(self) -> bool:
+                raise RuntimeError("raw hostile trust failure")
+
+            def _verify(self, payload: bytes, candidate: str) -> bool:
+                raise RuntimeError("raw hostile trust failure")
+
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci"))
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        hostile = HostileTrustContext("operator-readiness", TRUST_KEY)
+
+        errors = validate_readiness_matrix(matrix, trusted_context=hostile)
+
+        self.assertIn("external readiness authenticity requires a usable trusted context", errors)
+        self.assertIn("verdict must match derived verdict HOLD", errors)
+        self.assertNotIn("hostile", "; ".join(errors))
+        doc = ReadinessTrustContext.__doc__ or ""
+        self.assertIn("same-process introspection", doc)
+        self.assertNotIn("no retrieval surface", doc)
 
     def test_trust_context_rendering_redacts_key_material(self) -> None:
         key = b"trusted-readiness-key-material-1119"
@@ -805,6 +927,96 @@ class ReadinessMatrixTests(unittest.TestCase):
                 self.assertNotIn("hostile", rendered)
         self.assertEqual(HostileDict.item_calls, 0)
         self.assertEqual(HostileList.iteration_calls, 0)
+
+    def test_concurrent_builtin_container_mutation_fails_closed_without_retry(self) -> None:
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci"))
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        trigger = threading.Event()
+        mutated = threading.Event()
+        original_consume = readiness_workflow._consume_json_bytes
+        original_copy = readiness_workflow._copy_plain_dict
+        consume_calls = 0
+        root_copy_calls = 0
+
+        def mutate_once() -> None:
+            self.assertTrue(trigger.wait(timeout=2))
+            matrix["concurrent-mutation"] = True
+            mutated.set()
+
+        def controlled_consume(amount: int, bytes_used: list[int]) -> bool:
+            nonlocal consume_calls
+            consume_calls += 1
+            accepted = original_consume(amount, bytes_used)
+            if consume_calls == 2:
+                trigger.set()
+                self.assertTrue(mutated.wait(timeout=2))
+            return accepted
+
+        def controlled_copy(value: dict[object, object]) -> dict[object, object]:
+            nonlocal root_copy_calls
+            if value is matrix:
+                root_copy_calls += 1
+            return original_copy(value)
+
+        worker = threading.Thread(target=mutate_once)
+        worker.start()
+        try:
+            with (
+                patch.object(readiness_workflow, "_consume_json_bytes", side_effect=controlled_consume),
+                patch.object(readiness_workflow, "_copy_plain_dict", side_effect=controlled_copy),
+            ):
+                errors = validate_readiness_matrix(matrix, trusted_context=TRUST_CONTEXT)
+        finally:
+            worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(
+            errors,
+            [
+                "readiness_matrix signed data is not safely bounded canonical JSON",
+                "external readiness evidence is unauthenticated",
+                "verdict must match derived verdict HOLD",
+            ],
+        )
+        self.assertGreaterEqual(consume_calls, 2)
+        self.assertEqual(root_copy_calls, 2)
+
+        list_matrix = build_readiness_matrix(
+            scope="release-1119", rows=complete_rows(), created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        rows_list = list_matrix["rows"]
+        list_trigger = threading.Event()
+        list_mutated = threading.Event()
+        original_list_copy = readiness_workflow._copy_plain_list
+        rows_copy_calls = 0
+
+        def mutate_list_once() -> None:
+            self.assertTrue(list_trigger.wait(timeout=2))
+            rows_list.append(copy.deepcopy(rows_list[0]))
+            list_mutated.set()
+
+        def controlled_list_copy(value: list[object]) -> list[object]:
+            nonlocal rows_copy_calls
+            detached = original_list_copy(value)
+            if value is rows_list:
+                rows_copy_calls += 1
+                if rows_copy_calls == 1:
+                    list_trigger.set()
+                    self.assertTrue(list_mutated.wait(timeout=2))
+            return detached
+
+        list_worker = threading.Thread(target=mutate_list_once)
+        list_worker.start()
+        try:
+            with patch.object(readiness_workflow, "_copy_plain_list", side_effect=controlled_list_copy):
+                list_errors = validate_readiness_matrix(list_matrix, trusted_context=TRUST_CONTEXT)
+        finally:
+            list_worker.join(timeout=2)
+        self.assertFalse(list_worker.is_alive())
+        self.assertEqual(list_errors, errors)
+        self.assertEqual(rows_copy_calls, 2)
 
     def test_trust_context_is_opaque_and_non_serializable(self) -> None:
         context = ReadinessTrustContext("operator-readiness", TRUST_KEY)
