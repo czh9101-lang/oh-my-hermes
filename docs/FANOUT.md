@@ -108,6 +108,22 @@ Rules:
   re-running `omh setup` writes it out, and rewrites the whole profile
   while doing so. `lane_budget_default` is advisory context for
   Hermes-native lanes — OMH never enforces a lane count inside Hermes.
+- **Units are process groups; interrupts are honest.** The default runner
+  spawns each unit as its own session/process group and records the leader
+  pid in the unit's inflight marker. A timeout kills the whole group (no
+  surviving grandchildren against the worktree). Ctrl-C stops admitting
+  work, terminates every live group, marks never-started units
+  `interrupted`, prints the summary with `"interrupted": true`, and exits
+  130. SIGTERM writes the same summary FILE but prints nothing: the
+  original termination is re-raised after the write so a supervisor
+  observes the death it asked for, and the process exits 143. If the
+  dispatcher dies without cleanup, `omh coding fanout reap` terminates the
+  marker-named groups — liveness is judged at the GROUP level (a dead
+  leader with live grandchildren stays reapable), a live pid no longer
+  leading its own group is refused as recycled, and a pid the markers do
+  not name is refused whatever its process name. The reaper does not check
+  that the dispatcher is dead — verify that first; a live dispatcher's
+  running units are equally marker-named.
 - **Spawnability is data.** `DISPATCH_COMMAND_TEMPLATES` in
   `src/coding/fanout_dispatch.py` maps profiles with a local headless CLI to
   fixed argv templates — currently codex (`codex exec`), claude-code
@@ -455,6 +471,9 @@ omh coding fanout migrate-legacy <fanout-id> \
 omh coding fanout dispatch <fanout-id> --goal-file goal.txt \
   [--repo-root .] [--base-ref HEAD] [--concurrency N] [--timeout 1800] \
   [--unit <id> ...] [--dry-run] [--run-verification]
+omh coding fanout reap <fanout-id> [--pid N ...]  # terminate marker-named
+  # unit process groups (verify the dispatcher is dead first); refuses any
+  # pid the inflight markers do not name — never kills by process name
 omh coding model-route [--executor <profile>] [--role <role>] [--model <id>] [--effort <level>] [--domain <name>] [--explain] [--from-inventory] [--json]
 omh coding model-inventory [--json]
 omh coding composition-guide [--model <id>] [--json]
