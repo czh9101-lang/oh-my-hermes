@@ -101,7 +101,8 @@ curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh
 irm https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.ps1 | iex
 ```
 
-**インストール後に OMH をセットアップ:**
+**⭐ インストール後に OMH をセットアップ (必須):**
+
 ```sh
 omh setup
 ```
@@ -325,5 +326,5 @@ OMH は [Team Art & Engineering](https://rlaope.github.io/artengine-lab/) の
 oh-my-hermes に貢献してくださった皆さまに感謝します。
 
 <a href="https://github.com/rlaope/oh-my-hermes/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=rlaope/oh-my-hermes" alt="oh-my-hermes contributors" />
+  <img src="https://contrib.rocks/image?repo=rlaope/oh-my-hermes&max=100&columns=10" alt="oh-my-hermes contributors" />
 </a>

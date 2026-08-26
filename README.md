@@ -146,7 +146,7 @@ curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh
 irm https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.ps1 | iex
 ```
 
-**Set up OMH after installing:**
+**⭐ Set up OMH after installing (required):**
 
 ```sh
 omh setup
@@ -437,5 +437,5 @@ OMH is developed in the open as part of
 Thanks to everyone who has contributed to oh-my-hermes.
 
 <a href="https://github.com/rlaope/oh-my-hermes/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=rlaope/oh-my-hermes" alt="oh-my-hermes contributors" />
+  <img src="https://contrib.rocks/image?repo=rlaope/oh-my-hermes&max=100&columns=10" alt="oh-my-hermes contributors" />
 </a>
