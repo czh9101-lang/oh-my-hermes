@@ -101,9 +101,8 @@ curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh
 irm https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.ps1 | iex
 ```
 
-**⚠️ 必須のフォローアップ — 上記どのインストール方法でもこのステップが必要です。**
-インストールは `omh` コマンドを PATH に置くだけで、`omh setup` がワークフローを
-インストールしてプラグインを Hermes に接続するまでは何も Hermes に反映されません:
+**⭐ インストール後に OMH をセットアップ (必須):**
+
 ```sh
 omh setup
 ```

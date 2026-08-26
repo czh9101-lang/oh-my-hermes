@@ -99,9 +99,8 @@ curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh
 irm https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.ps1 | iex
 ```
 
-**⚠️ 必需的后续步骤 —— 上述所有安装方式都必须执行这一步。**
-安装只是把 `omh` 命令放到 PATH 上；在 `omh setup` 安装工作流并把插件连接到
-Hermes 之前，任何内容都不会生效：
+**⭐ 安装后设置 OMH（必需）：
+
 ```sh
 omh setup
 ```

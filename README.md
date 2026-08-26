@@ -146,9 +146,7 @@ curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh
 irm https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.ps1 | iex
 ```
 
-**⚠️ Required follow-up — every install method above needs this step.**
-Installing only puts the `omh` command on your PATH; nothing reaches Hermes
-until `omh setup` installs the workflows and connects the plugin:
+**⭐ Set up OMH after installing (required):**
 
 ```sh
 omh setup
