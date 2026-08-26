@@ -4255,6 +4255,16 @@ class RouterContentTests(unittest.TestCase):
             "sales-development": ("strategy", "operator", "Turn an account or market opportunity into a focused discovery, qualification, and next-step brief.", "operations-data", "operations", "ops-review"),
             "product-brief": ("planning", "planner", "Turn product evidence into a decision-ready PRD, prioritization frame, and roadmap brief.", "product-planning", "planning", "planning"),
         }
+        expected_trigger_counts = {
+            "finance-analysis": 7,
+            "people-ops": 7,
+            "legal-compliance-review": 7,
+            "support-operations": 6,
+            "curriculum-design": 6,
+            "localization-review": 6,
+            "sales-development": 6,
+            "product-brief": 6,
+        }
         shared_boundary = (
             "Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. "
             "A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, implementation, review, CI, or merge claim. "
@@ -4270,7 +4280,8 @@ class RouterContentTests(unittest.TestCase):
                 self.assertEqual(definition.delegation_boundary, "retained-catalog-intent")
                 self.assertEqual(primary_harness_for_skill(skill), harness)
                 self.assertIn(shared_boundary, definition.handoff_policy)
-                self.assertEqual(len(definition.triggers), 6)
+                # Freeze deliberate catalog widths so source and generated projections move together.
+                self.assertEqual(len(definition.triggers), expected_trigger_counts[skill])
                 self.assertTrue(definition.expected_outputs)
                 self.assertTrue(definition.do_not_use_when)
                 self.assertIsNotNone(definition.good_example)

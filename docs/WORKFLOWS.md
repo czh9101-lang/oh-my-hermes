@@ -1185,7 +1185,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The user wants generic exploration of a supplied CSV or table without accounting periods, controls, or finance decision framing; use `data-analysis`.
   - The user asks to post journal entries, reconcile accounts, approve payments, submit tax filings, or configure an accounting system; use `connector-operator` for an explicit observed action path.
   - The user needs an enterprise or product direction decision after analysis; route that decision to `strategy-brief`.
-- Strong routing signals: `finance analysis`, `budget vs actual`, `month-end close`, `재무 분석`, `예산 대비 실적`, `월마감`
+- Strong routing signals: `finance analysis`, `budget variance`, `budget vs actual`, `month-end close`, `재무 분석`, `예산 대비 실적`, `월마감`
 - Good example:
   - Prompt: Compare Q2 actuals against budget, explain the biggest expense variances, and flag cash risks for the CFO.
   - Expected behavior: Prepare the period boundary, actual-versus-plan narrative, cash-risk register, and decision questions.
@@ -1247,7 +1247,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The user only needs a one-off job-ad, rejection, or interview-email rewrite; use `content-operator`.
   - The user asks to create ATS records, send invitations, book interviews, change employment status, or modify HRIS settings; use `connector-operator` with explicit authorization and observed results.
   - The prompt asks the workflow to make an unsupported candidate decision from protected characteristics or missing interview evidence; retain the process and evidence gap instead.
-- Strong routing signals: `recruiting plan`, `interview scorecard`, `candidate debrief`, `채용 계획`, `면접 평가표`, `후보자 비교`
+- Strong routing signals: `recruiting plan`, `hiring scorecard`, `interview scorecard`, `candidate debrief`, `채용 계획`, `면접 평가표`, `후보자 비교`
 - Good example:
   - Prompt: Create an interview scorecard and debrief plan for our first senior support hire.
   - Expected behavior: Prepare role criteria, a structured scorecard, a debrief template, and decision-owner plan.
@@ -1309,7 +1309,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The review is about code, secrets, permissions, prompt injection, dependencies, or unsafe tool behavior; use `security-safety-review`.
   - The request is a plain-language rewrite without a legal-risk review objective; use `content-operator`.
   - The user asks to sign, accept, submit, file, publish, or change a policy or contract in an external system; use `connector-operator` only after explicit authority.
-- Strong routing signals: `contract review`, `regulatory analysis`, `compliance review`, `계약서 검토`, `규제 분석`, `컴플라이언스 검토`
+- Strong routing signals: `contract review`, `contract liability clause`, `regulatory analysis`, `compliance review`, `계약서 검토`, `규제 분석`, `컴플라이언스 검토`
 - Good example:
   - Prompt: Review this vendor DPA for data-processing obligations, risky clauses, and questions for counsel.
   - Expected behavior: Prepare an authority-bound issue matrix, ranked risks, and counsel questions.

@@ -4412,7 +4412,7 @@ selected_workflow=ultraprocess
             "Finance analysis should really truly not happen",
         )
         beyond_window = specialist_domain_route_signal(
-            "Not today please prepare another detailed finance analysis",
+            "Not today please prepare another finance analysis",
         )
 
         self.assertIsNone(exactly_four_before)
