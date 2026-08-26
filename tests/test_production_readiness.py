@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import logging
+import pickle
 import unittest
 from dataclasses import asdict
 from pathlib import Path
@@ -574,7 +575,7 @@ class ReadinessMatrixTests(unittest.TestCase):
             f"{context}",
             "%r" % context,
             "%s" % context,
-            repr(asdict(context)),
+            format(context),
             str(RuntimeError(context)),
             logging.Formatter("%(message)s").format(
                 logging.LogRecord("test", logging.ERROR, __file__, 1, "%r", (context,), None)
@@ -585,6 +586,116 @@ class ReadinessMatrixTests(unittest.TestCase):
             self.assertIn("redacted", text.lower())
             for value in forbidden:
                 self.assertNotIn(value, text)
+
+    def test_supplied_matrix_id_is_authenticated_not_only_structurally_checked(self) -> None:
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci"))
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        matrix["matrix_id"] = "readiness-forged-public-id"
+        errors = validate_readiness_matrix(matrix, trusted_context=TRUST_CONTEXT)
+        self.assertIn("matrix_id must match canonical", "; ".join(errors))
+        self.assertIn("external readiness authenticity tag does not match trusted context", "; ".join(errors))
+
+    def test_same_key_cannot_relabel_authenticated_evidence_to_another_context(self) -> None:
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci"))
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        matrix["rows"][2]["evidence"][0]["authenticity"]["context_id"] = "other-context"
+        other_context = ReadinessTrustContext("other-context", TRUST_KEY)
+        errors = validate_readiness_matrix(matrix, trusted_context=other_context)
+        self.assertIn("external readiness authenticity tag does not match trusted context", "; ".join(errors))
+        self.assertIn("verdict must match derived verdict HOLD", "; ".join(errors))
+
+    def test_every_mutable_verdict_or_trust_authority_has_a_rejection_path(self) -> None:
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci"))
+        original = build_readiness_matrix(
+            scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+
+        def mutate(path: tuple[object, ...], value: object) -> dict[str, object]:
+            record = copy.deepcopy(original)
+            target = record
+            for part in path[:-1]:
+                target = target[part]
+            target[path[-1]] = value
+            return record
+
+        authentication_cases = (
+            (("schema_version",), "readiness_matrix/v2"),
+            (("matrix_id",), "readiness-public-forgery"),
+            (("scope",), "scope-forged"),
+            (("task_id",), "task-forged"),
+            (("revision",), "revision-forged"),
+            (("created_at",), "2026-08-26T12:30:00Z"),
+            (("evidence_fresh_after",), "2026-08-26T10:00:00Z"),
+            (("contract_ref", "consumer_id"), "forged_consumer"),
+            (("rows", 2, "category"), "category-forged"),
+            (("rows", 2, "requires_external_observation"), False),
+            (("rows", 2, "external_identity", "effect_id"), "readiness:forged"),
+            (("rows", 2, "external_identity", "run_id"), "run-forged"),
+            (("rows", 2, "evidence", 0, "authenticity", "schema_version"), "external_readiness_authenticity/v2"),
+            (("rows", 2, "evidence", 0, "authenticity", "algorithm"), "public-sha256"),
+            (("rows", 2, "evidence", 0, "authenticity", "context_id"), "context-forged"),
+            (("rows", 2, "evidence", 0, "authenticity", "hmac_sha256"), "0" * 64),
+        )
+        for path, value in authentication_cases:
+            with self.subTest(path=path):
+                errors = validate_readiness_matrix(mutate(path, value), trusted_context=TRUST_CONTEXT)
+                self.assertIn("external readiness authenticity", "; ".join(errors))
+
+        def leaf_paths(value: object, prefix: tuple[object, ...] = ()) -> list[tuple[object, ...]]:
+            if isinstance(value, dict):
+                return [path for key, item in value.items() for path in leaf_paths(item, (*prefix, key))]
+            if isinstance(value, list):
+                return [prefix]
+            return [prefix]
+
+        unsigned_evidence = original["rows"][2]["evidence"][0]
+        for relative_path in leaf_paths(
+            {key: value for key, value in unsigned_evidence.items() if key != "authenticity"}
+        ):
+            path = ("rows", 2, "evidence", 0, *relative_path)
+            current = unsigned_evidence
+            for part in relative_path:
+                current = current[part]
+            changed = [*current, "forged"] if isinstance(current, list) else f"{current}-forged"
+            with self.subTest(authenticated_evidence_path=path):
+                errors = validate_readiness_matrix(mutate(path, changed), trusted_context=TRUST_CONTEXT)
+                self.assertIn("external readiness authenticity", "; ".join(errors))
+
+        derived_cases = (
+            (("verdict",), "HOLD"),
+            (("missing_categories",), ["ci"]),
+            (("rows", 2, "evidence_state"), "missing"),
+            (("rollback_contract", "legacy_evidence_state_action"), "upgrade"),
+        )
+        for path, value in derived_cases:
+            with self.subTest(path=path):
+                self.assertTrue(validate_readiness_matrix(mutate(path, value), trusted_context=TRUST_CONTEXT))
+
+    def test_trust_context_is_opaque_and_non_serializable(self) -> None:
+        context = ReadinessTrustContext("operator-readiness", TRUST_KEY)
+        operations = (
+            lambda: asdict(context),
+            lambda: copy.copy(context),
+            lambda: copy.deepcopy(context),
+            lambda: pickle.dumps(context),
+            lambda: context.__reduce__(),
+            lambda: context.__reduce_ex__(4),
+            lambda: memoryview(context),
+            lambda: json.dumps(context),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises((TypeError, pickle.PicklingError)):
+                    operation()
+        self.assertFalse(hasattr(context, "hmac_key"))
+        self.assertFalse(hasattr(context, "material"))
 
     def test_stale_public_matrix_id_is_rejected(self) -> None:
         matrix = build_readiness_matrix(

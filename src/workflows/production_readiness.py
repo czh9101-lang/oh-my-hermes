@@ -4,9 +4,8 @@ import hashlib
 import hmac
 import json
 import re
-from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime
-from typing import Any, Final
+from typing import Any, Final, NoReturn
 
 from .external_effect_receipts import validate_external_effect_receipt
 
@@ -35,39 +34,47 @@ _MIN_HMAC_KEY_BYTES = 32
 _MAX_HMAC_KEY_BYTES = 4_096
 
 
-class _RedactedHmacKey:
-    __slots__ = ("__material",)
-
-    def __init__(self, material: bytes) -> None:
-        self.__material = bytes(material)
-
-    def material(self) -> bytes:
-        return self.__material
-
-    def __repr__(self) -> str:
-        return "<redacted hmac key>"
-
-    __str__ = __repr__
-
-    def __deepcopy__(self, memo: dict[int, object]) -> _RedactedHmacKey:
-        return self
-
-
-@dataclass(frozen=True, slots=True, init=False)
 class ReadinessTrustContext:
-    """Caller-held local integrity context whose rendering never exposes its key."""
+    """Opaque caller-held signer/verifier; key bytes have no retrieval surface."""
 
-    context_id: str
-    _hmac_key: _RedactedHmacKey = dataclass_field(repr=False)
+    __slots__ = ("context_id", "__hmac_key")
 
     def __init__(self, context_id: str, hmac_key: bytes) -> None:
-        object.__setattr__(self, "context_id", str(context_id))
-        object.__setattr__(self, "_hmac_key", _RedactedHmacKey(hmac_key))
+        self.context_id = str(context_id)
+        self.__hmac_key = bytes(hmac_key)
 
     def __repr__(self) -> str:
         return f"ReadinessTrustContext(context_id={self.context_id!r}, hmac_key=<redacted>)"
 
     __str__ = __repr__
+
+    def __format__(self, format_spec: str) -> str:
+        return format(str(self), format_spec)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("ReadinessTrustContext is opaque and non-copyable")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        raise TypeError("ReadinessTrustContext is opaque and non-copyable")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("ReadinessTrustContext is opaque and non-serializable")
+
+    def __reduce_ex__(self, protocol: object) -> NoReturn:
+        raise TypeError("ReadinessTrustContext is opaque and non-serializable")
+
+    def __getstate__(self) -> NoReturn:
+        raise TypeError("ReadinessTrustContext is opaque and non-serializable")
+
+    def _usable(self) -> bool:
+        return _valid_ref(self.context_id) and _MIN_HMAC_KEY_BYTES <= len(self.__hmac_key) <= _MAX_HMAC_KEY_BYTES
+
+    def _sign(self, payload: bytes) -> str:
+        return hmac.new(self.__hmac_key, payload, hashlib.sha256).hexdigest()
+
+    def _verify(self, payload: bytes, candidate: str) -> bool:
+        expected = self._sign(payload)
+        return hmac.compare_digest(candidate, expected)
 
 # Machine-consumed rollback policy. Rollback removes the new consumer and
 # generated annotations; it does not rewrite persisted matrices or promote old
@@ -99,11 +106,15 @@ def authenticate_external_readiness_evidence(
     """Attach local keyed integrity from a caller-held trusted context."""
     if not _trusted_context_usable(trusted_context):
         raise ValueError("external readiness authentication requires a usable trusted context")
+    matrix_id = _matrix_id(scope, task_id, revision, created_at)
     payload = _external_authenticity_payload(
         evidence,
+        matrix_schema_version=READINESS_MATRIX_SCHEMA_VERSION,
+        matrix_id=matrix_id,
+        contract_ref=_canonical_contract_ref(),
+        context_id=trusted_context.context_id,
         scope=scope,
         category=category,
-        matrix_schema_version=READINESS_MATRIX_SCHEMA_VERSION,
         task_id=task_id,
         revision=revision,
         created_at=created_at,
@@ -111,7 +122,7 @@ def authenticate_external_readiness_evidence(
         requires_external_observation=True,
         external_identity=external_identity,
     )
-    tag = hmac.new(_trusted_context_key(trusted_context), payload, hashlib.sha256).hexdigest()
+    tag = trusted_context._sign(payload)
     return {
         **evidence,
         "authenticity": {
@@ -145,6 +156,8 @@ def build_readiness_matrix(
     )
     if top_errors:
         raise ValueError("; ".join(top_errors))
+    matrix_id = _matrix_id(clean_scope, clean_task_id, clean_revision, created_at)
+    contract_ref = _canonical_contract_ref()
     normalized_rows: list[dict[str, Any]] = []
     receipt_ids: list[str] = []
     observation_ids: list[str] = []
@@ -198,6 +211,8 @@ def build_readiness_matrix(
                     external_identity=external_identity,
                     task_id=clean_task_id,
                     matrix_schema_version=READINESS_MATRIX_SCHEMA_VERSION,
+                    matrix_id=matrix_id,
+                    contract_ref=contract_ref,
                     scope=clean_scope,
                     category=category,
                     revision=clean_revision,
@@ -217,17 +232,13 @@ def build_readiness_matrix(
     verdict = _derive_verdict(normalized_rows)
     record = {
         "schema_version": READINESS_MATRIX_SCHEMA_VERSION,
-        "matrix_id": _matrix_id(clean_scope, clean_task_id, clean_revision, created_at),
+        "matrix_id": matrix_id,
         "scope": clean_scope,
         "task_id": clean_task_id,
         "revision": clean_revision,
         "created_at": created_at,
         "evidence_fresh_after": evidence_fresh_after,
-        "contract_ref": {
-            "contract_id": READINESS_MATRIX_SCHEMA_VERSION,
-            "enforcement_level": "executable_validated",
-            "consumer_id": "validate_readiness_matrix",
-        },
+        "contract_ref": contract_ref,
         "rows": normalized_rows,
         "verdict": verdict,
         "missing_categories": [
@@ -268,17 +279,12 @@ def validate_readiness_matrix(
         errors.append("matrix_id is required")
     elif matrix_id != _matrix_id(scope, task_id, revision, created_at):
         errors.append("matrix_id must match canonical scope, task, revision, and created_at identity")
-    contract_ref = record.get("contract_ref")
-    if not isinstance(contract_ref, dict):
+    supplied_contract_ref = record.get("contract_ref")
+    contract_ref = supplied_contract_ref if isinstance(supplied_contract_ref, dict) else {}
+    if not isinstance(supplied_contract_ref, dict):
         errors.append("contract_ref must be an object")
-    else:
-        expected_ref = {
-            "contract_id": READINESS_MATRIX_SCHEMA_VERSION,
-            "enforcement_level": "executable_validated",
-            "consumer_id": "validate_readiness_matrix",
-        }
-        if contract_ref != expected_ref:
-            errors.append("contract_ref must identify the executable readiness_matrix consumer")
+    elif contract_ref != _canonical_contract_ref():
+        errors.append("contract_ref must identify the executable readiness_matrix consumer")
     if record.get("rollback_contract") != READINESS_MATRIX_ROLLBACK_CONTRACT:
         errors.append("rollback_contract must match readiness_matrix_rollback/v1")
     rows = record.get("rows")
@@ -321,6 +327,7 @@ def validate_readiness_matrix(
             for item in evidence
             if isinstance(item, dict) and item.get("schema_version") == EXTERNAL_READINESS_EVIDENCE_SCHEMA_VERSION
         ]
+        authenticated_items = [item for item in evidence if isinstance(item, dict) and "authenticity" in item]
         if requires_external and len(external_items) > 1:
             errors.append(f"rows[{index}] external readiness rows accept exactly one external readiness association")
         for evidence_index, item in enumerate(evidence):
@@ -347,6 +354,8 @@ def validate_readiness_matrix(
             requires_external=bool(requires_external),
             external_identity=external_identity,
             matrix_schema_version=str(record.get("schema_version", "")),
+            matrix_id=matrix_id,
+            contract_ref=contract_ref,
             scope=scope,
             category=str(row.get("category", "")),
             task_id=task_id,
@@ -357,11 +366,13 @@ def validate_readiness_matrix(
         )
         if row.get("evidence_state") not in READINESS_EVIDENCE_STATES:
             errors.append(f"rows[{index}].evidence_state is unsupported: {row.get('evidence_state')}")
-        if external_items and row.get("evidence_state") == "observed" and derived_state != "observed":
+        if authenticated_items and row.get("evidence_state") == "observed" and derived_state != "observed":
             authentication_errors = [
                 _external_authenticity_error(
                     item,
                     matrix_schema_version=str(record.get("schema_version", "")),
+                    matrix_id=matrix_id,
+                    contract_ref=contract_ref,
                     scope=scope,
                     category=str(row.get("category", "")),
                     task_id=task_id,
@@ -372,8 +383,7 @@ def validate_readiness_matrix(
                     external_identity=external_identity,
                     trusted_context=trusted_context,
                 )
-                for item in valid_evidence
-                if item.get("schema_version") == EXTERNAL_READINESS_EVIDENCE_SCHEMA_VERSION
+                for item in authenticated_items
             ]
             errors.extend(error for error in authentication_errors if error)
             errors.append(f"rows[{index}] external observed success requires one exactly bound authenticated association")
@@ -539,6 +549,8 @@ def _external_authenticity_error(
     evidence: dict[str, Any],
     *,
     matrix_schema_version: str,
+    matrix_id: str,
+    contract_ref: dict[str, Any],
     scope: str,
     category: str,
     task_id: str,
@@ -569,23 +581,22 @@ def _external_authenticity_error(
     candidate = authenticity.get("hmac_sha256")
     if not isinstance(candidate, str) or not _HMAC_RE.fullmatch(candidate):
         return "external readiness authenticity tag does not match trusted context"
-    expected = hmac.new(
-        _trusted_context_key(trusted_context),
-        _external_authenticity_payload(
-            evidence,
-            matrix_schema_version=matrix_schema_version,
-            scope=scope,
-            category=category,
-            task_id=task_id,
-            revision=revision,
-            created_at=created_at,
-            evidence_fresh_after=evidence_fresh_after,
-            requires_external_observation=requires_external_observation,
-            external_identity=external_identity,
-        ),
-        hashlib.sha256,
-    ).hexdigest()
-    if not hmac.compare_digest(candidate, expected):
+    payload = _external_authenticity_payload(
+        evidence,
+        matrix_schema_version=matrix_schema_version,
+        matrix_id=matrix_id,
+        contract_ref=contract_ref,
+        context_id=trusted_context.context_id,
+        scope=scope,
+        category=category,
+        task_id=task_id,
+        revision=revision,
+        created_at=created_at,
+        evidence_fresh_after=evidence_fresh_after,
+        requires_external_observation=requires_external_observation,
+        external_identity=external_identity,
+    )
+    if not trusted_context._verify(payload, candidate):
         return "external readiness authenticity tag does not match trusted context"
     return ""
 
@@ -594,6 +605,9 @@ def _external_authenticity_payload(
     evidence: dict[str, Any],
     *,
     matrix_schema_version: str,
+    matrix_id: str,
+    contract_ref: dict[str, Any],
+    context_id: str,
     scope: str,
     category: str,
     task_id: str,
@@ -608,7 +622,9 @@ def _external_authenticity_payload(
         {
             "schema_version": "external_readiness_authenticity_payload/v1",
             "matrix_schema_version": matrix_schema_version,
-            "matrix_id": _matrix_id(scope, task_id, revision, created_at),
+            "matrix_id": matrix_id,
+            "contract_ref": contract_ref,
+            "context_id": context_id,
             "scope": scope,
             "category": category,
             "task_id": task_id,
@@ -625,14 +641,7 @@ def _external_authenticity_payload(
 
 
 def _trusted_context_usable(context: ReadinessTrustContext | None) -> bool:
-    if not isinstance(context, ReadinessTrustContext) or not _valid_ref(context.context_id):
-        return False
-    key = _trusted_context_key(context)
-    return _MIN_HMAC_KEY_BYTES <= len(key) <= _MAX_HMAC_KEY_BYTES
-
-
-def _trusted_context_key(context: ReadinessTrustContext) -> bytes:
-    return context._hmac_key.material()
+    return isinstance(context, ReadinessTrustContext) and context._usable()
 
 
 def _derive_evidence_state(
@@ -641,6 +650,8 @@ def _derive_evidence_state(
     requires_external: bool,
     external_identity: dict[str, Any],
     matrix_schema_version: str,
+    matrix_id: str,
+    contract_ref: dict[str, Any],
     scope: str,
     category: str,
     task_id: str,
@@ -674,6 +685,8 @@ def _derive_evidence_state(
             if _external_authenticity_error(
                 item,
                 matrix_schema_version=matrix_schema_version,
+                matrix_id=matrix_id,
+                contract_ref=contract_ref,
                 scope=scope,
                 category=category,
                 task_id=task_id,
@@ -754,6 +767,14 @@ def _duplicates(values: list[str]) -> list[str]:
 
 def _valid_ref(value: object) -> bool:
     return isinstance(value, str) and bool(_REF_RE.fullmatch(value))
+
+
+def _canonical_contract_ref() -> dict[str, str]:
+    return {
+        "contract_id": READINESS_MATRIX_SCHEMA_VERSION,
+        "enforcement_level": "executable_validated",
+        "consumer_id": "validate_readiness_matrix",
+    }
 
 
 def _matrix_id(scope: str, task_id: str, revision: str, created_at: str) -> str:
