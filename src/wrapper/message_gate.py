@@ -279,8 +279,10 @@ def _model_field(executor: str, model_label: str) -> str:
 
     The parenthetical is never emitted empty: ``DELEGATE_MODEL_LABEL_RULE``
     names that exact shape as forbidden. A known executor with no resolved route
-    is ``codex (executor default)``, which is what the status board already
-    prints; knowing neither is ``unknown``, not a default label OMH cannot back.
+    is ``codex (executor default)`` — the status board's own convention, outside
+    the rule's two `(model effort)` / `(model)` shapes; knowing neither is
+    ``unknown``, not a default label OMH cannot back (a bare field, not a
+    placeholder beside a known model, so the rule's ban does not apply).
     """
     owner = _bounded(executor)
     label = _bounded(model_label)

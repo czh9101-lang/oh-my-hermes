@@ -197,7 +197,14 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # delivery order, one implement/verify/deliver task per work unit,
 # independent review lanes, an evidence-and-cleanup close, one task per
 # observable outcome); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 715434
+# 715434 -> 716418: the shared delegate model-label rule now tells lanes
+# to show `(model)` alone when the host exposes no reasoning effort instead
+# of printing a literal `unknown` placeholder beside a known model, scoped to
+# narration lines (board columns keep their `unknown` cells) with a
+# say-not-observed carve-out for directly asked figures (renders into all
+# three handoff-guide skill bodies; the common rail carries the same text but
+# sits outside this metric); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 716418
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
