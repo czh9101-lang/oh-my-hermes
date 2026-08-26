@@ -157,7 +157,7 @@ class CollisionOwnershipTests(unittest.TestCase):
 
 
 class CollisionGateTests(unittest.TestCase):
-    """The gate fails closed on undeclared, stale, and owner-expanded entries."""
+    """The gate fails closed unless declared owners equal observed owners exactly."""
 
     def _fixture_definitions(self) -> list[SkillDefinition]:
         return [
@@ -206,6 +206,66 @@ class CollisionGateTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         message = "\n".join(result["errors"])
         self.assertIn("fixture-three", message)
+
+    def test_declaration_naming_an_unobserved_owner_fails(self) -> None:
+        """Given a declaration approving an owner the catalog does not share,
+        When the gate runs, Then it fails and names the phantom owner.
+
+        A superset declaration is a pre-approval: it signs off on sharing that
+        no maintainer has actually reviewed, because the group it describes has
+        never existed.
+        """
+        result = validate_collision_declarations(
+            self._fixture_definitions(),
+            declarations=(self._declaration(("fixture-one", "fixture-two", "fixture-future")),),
+        )
+        self.assertFalse(result["ok"])
+        message = "\n".join(result["errors"])
+        self.assertIn("fixture-future", message)
+        self.assertIn(normalized_phrase("shared phrase"), message)
+        self.assertIn("INTENTIONAL_COLLISIONS", message)
+
+    def test_phantom_owner_cannot_pre_approve_a_future_expansion(self) -> None:
+        """Given one superset declaration, When the catalog is evaluated before and
+        after the phantom owner really joins, Then the gate's verdict differs.
+
+        This is the whole fail-closed claim. A gate that only compares observed
+        against declared in one direction accepts the superset in BOTH states,
+        so the expansion lands already approved and no review is ever triggered.
+        """
+        pre_expansion = self._fixture_definitions()
+        expanded = self._fixture_definitions()
+        expanded.append(_definition("fixture-future", triggers=("shared phrase",)))
+        superset = self._declaration(("fixture-one", "fixture-two", "fixture-future"))
+
+        before = validate_collision_declarations(pre_expansion, declarations=(superset,))
+        after = validate_collision_declarations(expanded, declarations=(superset,))
+
+        self.assertFalse(before["ok"], "a superset declaration must be rejected while its owner is unobserved")
+        self.assertTrue(after["ok"], after["errors"])
+        self.assertNotEqual(
+            before["ok"],
+            after["ok"],
+            "the gate must distinguish the two catalog states; one accepting both pre-approves the expansion",
+        )
+
+    def test_duplicate_declaration_identities_are_rejected(self) -> None:
+        """Given two declarations for one identity, When the gate runs, Then it fails.
+
+        Silently collapsing duplicates lets a second entry with different owners
+        or a different rationale shadow the reviewed one.
+        """
+        result = validate_collision_declarations(
+            self._fixture_definitions(),
+            declarations=(
+                self._declaration(("fixture-one", "fixture-two")),
+                self._declaration(("fixture-one", "fixture-two")),
+            ),
+        )
+        self.assertFalse(result["ok"])
+        message = "\n".join(result["errors"])
+        self.assertIn("duplicate", message.lower())
+        self.assertIn(normalized_phrase("shared phrase"), message)
 
     def test_declaration_stores_only_identity_owners_and_rationale(self) -> None:
         fields = set(CollisionDeclaration.__dataclass_fields__)

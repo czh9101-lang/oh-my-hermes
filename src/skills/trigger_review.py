@@ -15,6 +15,8 @@ group's sharing has never been reviewed at all.
 
 from __future__ import annotations
 
+from collections import Counter
+
 from ..routing.localization import normalized_phrase
 from .catalog import SkillDefinition, builtin_definitions
 from .trigger_collisions import INTENTIONAL_COLLISIONS, CollisionDeclaration
@@ -99,11 +101,18 @@ def validate_collision_declarations(
     *,
     declarations: tuple[CollisionDeclaration, ...] | None = None,
 ) -> dict[str, object]:
-    """Fail closed when a collision group's sharing has not been reviewed.
+    """Fail closed unless every group's declared owners equal its observed owners.
 
-    Three states fail, each naming the exact edit that resolves it:
-    an undeclared group, a declaration whose group no longer collides (stale),
-    and a group whose owner set grew past what was approved.
+    The comparison runs in both directions, because either mismatch hides an
+    unreviewed collision. An owner observed but not declared is sharing nobody
+    approved. An owner declared but not observed is a pre-approval: it signs off
+    on a group that does not exist yet, so when that owner really does join, the
+    declaration already covers it and no review is ever triggered.
+
+    Failing states, each naming the exact edit that resolves it: an undeclared
+    group, a declaration whose group no longer collides (stale), a group whose
+    owner set grew past what was approved, a declaration naming an owner the
+    catalog does not share, and two declarations for one identity.
     """
     approved = _declarations(declarations)
     observed = {
@@ -113,6 +122,14 @@ def validate_collision_declarations(
     declared_by_identity = {declaration.identity: declaration for declaration in approved}
     errors: list[str] = []
 
+    counted = Counter(declaration.identity for declaration in approved)
+    for identity in sorted(identity for identity, count in counted.items() if count > 1):
+        errors.append(
+            f"duplicate trigger collision declaration {identity!r}: one identity is reviewed once, "
+            f"so merge its {counted[identity]} entries into a single CollisionDeclaration "
+            f"in INTENTIONAL_COLLISIONS"
+        )
+
     for identity in sorted(observed):
         declaration = declared_by_identity.get(identity)
         if declaration is None:
@@ -121,11 +138,20 @@ def validate_collision_declarations(
                 f"{', '.join(observed[identity])}: {_DECLARATION_HINT}"
             )
             continue
+        approved_owners = ", ".join(sorted(set(declaration.owners)))
         expanded = sorted(set(observed[identity]) - set(declaration.owners))
         if expanded:
             errors.append(
                 f"owner-expanded trigger collision {identity!r} adds {', '.join(expanded)} "
-                f"beyond the approved owners {', '.join(sorted(declaration.owners))}: {_DECLARATION_HINT}"
+                f"beyond the approved owners {approved_owners}: {_DECLARATION_HINT}"
+            )
+        phantom = sorted(set(declaration.owners) - set(observed[identity]))
+        if phantom:
+            errors.append(
+                f"unobserved owner in trigger collision declaration {identity!r}: "
+                f"{', '.join(phantom)} does not share this identity, so approving "
+                f"{approved_owners} pre-approves sharing nobody reviewed; narrow its owners to "
+                f"{', '.join(observed[identity])} in INTENTIONAL_COLLISIONS"
             )
 
     for identity in sorted(declared_by_identity):
