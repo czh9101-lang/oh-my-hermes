@@ -320,6 +320,23 @@ export default function register(sdk) {
         h(Text, { color: t.color.border }, SEPARATOR),
         h(Text, { color: active ? t.color.warn : t.color.ok }, hudStateLabel(active, agents)),
         h(Text, { color: t.color.muted }, `${metrics.cost ? ` • ${metrics.cost}` : ''} • ${metrics.ctx}`),
+        // Shift+Tab yolo state, as last observed by the plugin's turn and
+        // tool-call hooks (the host keeps the flag in process memory only).
+        // ON warns in the theme's yellow; OFF rests in the label blue —
+        // colours resolve through the active theme, never literals. An
+        // unobserved or stale ledger renders nothing rather than a guess.
+        payload.yolo && payload.yolo.status === 'observed'
+          ? h(
+              Text,
+              {},
+              h(Text, { color: t.color.muted }, ' • yolo mode: '),
+              h(
+                Text,
+                { bold: true, color: payload.yolo.enabled ? t.color.warn : t.color.label },
+                payload.yolo.enabled ? 'on' : 'off',
+              ),
+            )
+          : null,
       ),
       mainRows.length || rows.length
         ? ([...mainRows, ...rows].some(row => !row.state || row.state === 'running')

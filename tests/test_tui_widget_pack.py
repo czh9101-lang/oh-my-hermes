@@ -431,6 +431,12 @@ class TuiWidgetPackTests(unittest.TestCase):
         # 뜨면 의미가없지'). The bottom dock renders no parallel-shot text.
         self.assertIn("parallel shot ×", widget)
         self.assertIn("payload.parallel_shot", widget)
+        # Shift+Tab yolo state, as last hook-observed: ON warns in the
+        # theme's yellow, OFF rests in the label blue, and an unobserved or
+        # stale ledger renders nothing rather than a guessed "off".
+        self.assertIn("' • yolo mode: '", widget)
+        self.assertIn("payload.yolo && payload.yolo.status === 'observed'", widget)
+        self.assertIn("payload.yolo.enabled ? t.color.warn : t.color.label", widget)
         self.assertNotIn("• parallel shot", widget)
         self.assertIn("shot.status !== 'observed'", widget)
         self.assertIn("Math.min(3,", widget)

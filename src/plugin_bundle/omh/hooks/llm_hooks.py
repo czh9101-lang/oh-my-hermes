@@ -18,6 +18,7 @@ from ..degradation import (
     degradation_payload,
     safe_error_type,
 )
+from ..approval_bypass import record_approval_bypass
 from ..awareness_delivery import claim_route_guidance_delivery, record_awareness_delivery
 from ..host_context import record_active_main_agent_model
 from ..host_observation import observe_plugin_hook_call
@@ -71,6 +72,10 @@ def pre_llm_call(**kwargs) -> dict[str, object] | None:
     """Inject bounded OMH role/status context without storing prompts."""
     record_active_main_agent_model(kwargs.get("model"))
     observe_plugin_hook_call("pre_llm_call", kwargs)
+    # Turn start is the freshest in-process view of the Shift+Tab yolo flag:
+    # a toggle shows on the HUD at the user's next message, not only at the
+    # next tool call.
+    record_approval_bypass(omh_home=str(kwargs.get("omh_home", "") or ""))
     context_parts: list[str] = []
     payload: dict[str, object] = {}
     user_message = str(kwargs.get("user_message", "") or "")
