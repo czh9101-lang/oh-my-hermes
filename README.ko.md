@@ -101,7 +101,9 @@ curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh
 irm https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.ps1 | iex
 ```
 
-**설치 후 OMH를 설정합니다:**
+**⚠️ 필수 후속 단계 — 위의 모든 설치 방법이 여기서 끝나야 합니다.**
+설치는 `omh` 명령을 PATH에 올릴 뿐이며, `omh setup`이 워크플로를 설치하고
+플러그인을 Hermes에 연결하기 전까지는 아무것도 Hermes에 반영되지 않습니다:
 ```sh
 omh setup
 ```
@@ -325,5 +327,5 @@ OMH는 [Team Art & Engineering](https://rlaope.github.io/artengine-lab/)의
 oh-my-hermes에 기여해 주신 모든 분들께 감사드립니다.
 
 <a href="https://github.com/rlaope/oh-my-hermes/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=rlaope/oh-my-hermes" alt="oh-my-hermes contributors" />
+  <img src="https://contrib.rocks/image?repo=rlaope/oh-my-hermes&max=100&columns=10" alt="oh-my-hermes contributors" />
 </a>

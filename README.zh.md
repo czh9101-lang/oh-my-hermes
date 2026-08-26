@@ -99,7 +99,9 @@ curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh
 irm https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.ps1 | iex
 ```
 
-**安装后设置 OMH：**
+**⚠️ 必需的后续步骤 —— 上述所有安装方式都必须执行这一步。**
+安装只是把 `omh` 命令放到 PATH 上；在 `omh setup` 安装工作流并把插件连接到
+Hermes 之前，任何内容都不会生效：
 ```sh
 omh setup
 ```
@@ -324,5 +326,5 @@ OMH 是 [Team Art & Engineering](https://rlaope.github.io/artengine-lab/) 的
 感谢每一位为 oh-my-hermes 做出贡献的人。
 
 <a href="https://github.com/rlaope/oh-my-hermes/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=rlaope/oh-my-hermes" alt="oh-my-hermes contributors" />
+  <img src="https://contrib.rocks/image?repo=rlaope/oh-my-hermes&max=100&columns=10" alt="oh-my-hermes contributors" />
 </a>
