@@ -6,7 +6,7 @@ import json
 import math
 import re
 from datetime import datetime
-from typing import Any, Final, NoReturn
+from typing import Any, Final, NoReturn, cast
 
 from .external_effect_receipts import validate_external_effect_receipt
 
@@ -33,6 +33,10 @@ _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _HMAC_RE = re.compile(r"^[0-9a-f]{64}$")
 _MIN_HMAC_KEY_BYTES = 32
 _MAX_HMAC_KEY_BYTES = 4_096
+READINESS_CANONICAL_JSON_MAX_DEPTH: Final = 16
+READINESS_CANONICAL_JSON_MAX_NODES: Final = 2_048
+READINESS_CANONICAL_JSON_MAX_BYTES: Final = 65_536
+_CANONICAL_JSON_REJECTED: Final = object()
 
 
 class ReadinessAuthenticationError(Exception):
@@ -267,12 +271,14 @@ def validate_readiness_matrix(
     errors: list[str] = []
     if not isinstance(record, dict):
         return ["readiness_matrix must be an object"]
-    if not _is_canonical_json_data(record):
+    snapshot = _canonical_json_snapshot(record)
+    if snapshot is None:
         return [
-            "readiness_matrix signed data is not canonical JSON",
+            "readiness_matrix signed data is not safely bounded canonical JSON",
             "external readiness evidence is unauthenticated",
             "verdict must match derived verdict HOLD",
         ]
+    record = snapshot[0]
     if record.get("schema_version") != READINESS_MATRIX_SCHEMA_VERSION:
         errors.append("schema_version must be readiness_matrix/v1")
     scope = str(record.get("scope", ""))
@@ -636,7 +642,11 @@ def _external_authenticity_payload(
     requires_external_observation: bool,
     external_identity: dict[str, Any],
 ) -> bytes | None:
-    unsigned_evidence = {key: value for key, value in evidence.items() if key != "authenticity"}
+    evidence_snapshot = _canonical_json_snapshot(evidence)
+    if evidence_snapshot is None:
+        return None
+    unsigned_evidence = cast(dict[str, Any], evidence_snapshot[0])
+    unsigned_evidence.pop("authenticity", None)
     payload = {
         "schema_version": "external_readiness_authenticity_payload/v1",
         "matrix_schema_version": matrix_schema_version,
@@ -653,21 +663,109 @@ def _external_authenticity_payload(
         "external_identity": external_identity,
         "evidence": unsigned_evidence,
     }
-    if not _is_canonical_json_data(payload):
+    snapshot = _canonical_json_snapshot(payload)
+    return None if snapshot is None else snapshot[1]
+
+
+def _canonical_json_snapshot(value: object) -> tuple[Any, bytes] | None:
+    nodes = [0]
+    bytes_used = [0]
+    active_containers: set[int] = set()
+    try:
+        snapshot = _snapshot_json_value(
+            value,
+            depth=0,
+            nodes=nodes,
+            bytes_used=bytes_used,
+            active_containers=active_containers,
+        )
+        if snapshot is _CANONICAL_JSON_REJECTED:
+            return None
+        encoded = json.dumps(
+            snapshot,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    except (KeyError, RecursionError, TypeError, UnicodeError, ValueError):
         return None
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    if len(encoded) != bytes_used[0] or len(encoded) > READINESS_CANONICAL_JSON_MAX_BYTES:
+        return None
+    return snapshot, encoded
 
 
-def _is_canonical_json_data(value: object) -> bool:
-    if value is None or isinstance(value, (str, bool, int)):
-        return True
-    if isinstance(value, float):
-        return math.isfinite(value)
-    if isinstance(value, list):
-        return all(_is_canonical_json_data(item) for item in value)
-    if isinstance(value, dict):
-        return all(isinstance(key, str) and _is_canonical_json_data(item) for key, item in value.items())
-    return False
+def _snapshot_json_value(
+    value: object,
+    *,
+    depth: int,
+    nodes: list[int],
+    bytes_used: list[int],
+    active_containers: set[int],
+) -> Any:
+    if depth > READINESS_CANONICAL_JSON_MAX_DEPTH:
+        return _CANONICAL_JSON_REJECTED
+    nodes[0] += 1
+    if nodes[0] > READINESS_CANONICAL_JSON_MAX_NODES:
+        return _CANONICAL_JSON_REJECTED
+    if value is None or type(value) in (str, bool, int, float):
+        if type(value) is float and not math.isfinite(cast(float, value)):
+            return _CANONICAL_JSON_REJECTED
+        if type(value) is str and len(cast(str, value)) > READINESS_CANONICAL_JSON_MAX_BYTES:
+            return _CANONICAL_JSON_REJECTED
+        if type(value) is int and cast(int, value).bit_length() > READINESS_CANONICAL_JSON_MAX_BYTES * 4:
+            return _CANONICAL_JSON_REJECTED
+        primitive_bytes = len(json.dumps(value, allow_nan=False).encode())
+        return value if _consume_json_bytes(primitive_bytes, bytes_used) else _CANONICAL_JSON_REJECTED
+    if type(value) not in (dict, list):
+        return _CANONICAL_JSON_REJECTED
+    identity = id(value)
+    if identity in active_containers:
+        return _CANONICAL_JSON_REJECTED
+    if not _consume_json_bytes(2, bytes_used):
+        return _CANONICAL_JSON_REJECTED
+    active_containers.add(identity)
+    try:
+        if type(value) is list:
+            items: list[Any] = []
+            for index, item in enumerate(list.__iter__(cast(list[object], value))):
+                if index and not _consume_json_bytes(1, bytes_used):
+                    return _CANONICAL_JSON_REJECTED
+                snapshot = _snapshot_json_value(
+                    item,
+                    depth=depth + 1,
+                    nodes=nodes,
+                    bytes_used=bytes_used,
+                    active_containers=active_containers,
+                )
+                if snapshot is _CANONICAL_JSON_REJECTED:
+                    return _CANONICAL_JSON_REJECTED
+                items.append(snapshot)
+            return items
+        mapping: dict[str, Any] = {}
+        for index, (key, item) in enumerate(dict.items(cast(dict[object, object], value))):
+            if type(key) is not str or len(key) > READINESS_CANONICAL_JSON_MAX_BYTES:
+                return _CANONICAL_JSON_REJECTED
+            separator_bytes = (1 if index else 0) + len(json.dumps(key).encode()) + 1
+            if not _consume_json_bytes(separator_bytes, bytes_used):
+                return _CANONICAL_JSON_REJECTED
+            snapshot = _snapshot_json_value(
+                item,
+                depth=depth + 1,
+                nodes=nodes,
+                bytes_used=bytes_used,
+                active_containers=active_containers,
+            )
+            if snapshot is _CANONICAL_JSON_REJECTED:
+                return _CANONICAL_JSON_REJECTED
+            mapping[key] = snapshot
+        return mapping
+    finally:
+        active_containers.remove(identity)
+
+
+def _consume_json_bytes(amount: int, bytes_used: list[int]) -> bool:
+    bytes_used[0] += amount
+    return bytes_used[0] <= READINESS_CANONICAL_JSON_MAX_BYTES
 
 
 def _trusted_context_usable(context: ReadinessTrustContext | None) -> bool:

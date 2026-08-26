@@ -23,6 +23,9 @@ from omh.operations_contracts import (
 )
 from omh.operations import operation_artifact_compatibility, validate_operation_artifact
 from omh.production_readiness import (
+    READINESS_CANONICAL_JSON_MAX_BYTES,
+    READINESS_CANONICAL_JSON_MAX_DEPTH,
+    READINESS_CANONICAL_JSON_MAX_NODES,
     READINESS_CATEGORIES,
     READINESS_MATRIX_ROLLBACK_CONTRACT,
     ReadinessTrustContext,
@@ -717,9 +720,91 @@ class ReadinessMatrixTests(unittest.TestCase):
                     self.assertIn("verdict must match derived verdict HOLD", rendered)
                     self.assertTrue(
                         "external readiness authenticity" in rendered
-                        or "readiness_matrix signed data is not canonical JSON" in rendered
+                        or "readiness_matrix signed data is not safely bounded canonical JSON" in rendered
                     )
                     self.assertNotIn(TRUST_KEY.decode(), rendered)
+
+        stable_boundary_errors = [
+            "readiness_matrix signed data is not safely bounded canonical JSON",
+            "external readiness evidence is unauthenticated",
+            "verdict must match derived verdict HOLD",
+        ]
+        cyclic_top = copy.deepcopy(original)
+        cyclic_top["cycle"] = cyclic_top
+        cyclic_receipt = copy.deepcopy(original)
+        receipt = cyclic_receipt["rows"][2]["evidence"][0]["receipt"]
+        receipt["cycle"] = receipt
+        cyclic_postcondition = copy.deepcopy(original)
+        postcondition = cyclic_postcondition["rows"][2]["evidence"][0]["postcondition"]
+        postcondition["cycle"] = postcondition
+        excessive_nesting: object = "leaf"
+        for _ in range(1_500):
+            excessive_nesting = [excessive_nesting]
+        deeply_nested = copy.deepcopy(original)
+        deeply_nested["rows"][2]["evidence"][0]["receipt"]["summary"] = excessive_nesting
+        excessive_nodes = copy.deepcopy(original)
+        excessive_nodes["rows"][2]["evidence"][0]["receipt"]["summary"] = [
+            None
+        ] * READINESS_CANONICAL_JSON_MAX_NODES
+        excessive_bytes = copy.deepcopy(original)
+        excessive_bytes["rows"][2]["evidence"][0]["receipt"]["summary"] = (
+            "x" * READINESS_CANONICAL_JSON_MAX_BYTES
+        )
+        self.assertEqual(
+            (
+                READINESS_CANONICAL_JSON_MAX_DEPTH,
+                READINESS_CANONICAL_JSON_MAX_NODES,
+                READINESS_CANONICAL_JSON_MAX_BYTES,
+            ),
+            (16, 2_048, 65_536),
+        )
+
+        class HostileDict(dict[object, object]):
+            item_calls = 0
+
+            def items(self) -> object:
+                type(self).item_calls += 1
+                raise KeyError("hostile mapping hook must not escape or render")
+
+        class HostileList(list[object]):
+            iteration_calls = 0
+
+            def __iter__(self) -> object:
+                type(self).iteration_calls += 1
+                raise ValueError("hostile sequence hook must not escape or render")
+
+        hostile_top = HostileDict(original)
+        hostile_receipt = copy.deepcopy(original)
+        hostile_receipt["rows"][2]["evidence"][0]["receipt"] = HostileDict(
+            hostile_receipt["rows"][2]["evidence"][0]["receipt"]
+        )
+        hostile_postcondition = copy.deepcopy(original)
+        hostile_postcondition["rows"][2]["evidence"][0]["postcondition"] = HostileDict(
+            hostile_postcondition["rows"][2]["evidence"][0]["postcondition"]
+        )
+        hostile_sequence = copy.deepcopy(original)
+        hostile_sequence["rows"] = HostileList(hostile_sequence["rows"])
+        boundary_cases = (
+            cyclic_top,
+            cyclic_receipt,
+            cyclic_postcondition,
+            deeply_nested,
+            excessive_nodes,
+            excessive_bytes,
+            hostile_top,
+            hostile_receipt,
+            hostile_postcondition,
+            hostile_sequence,
+        )
+        for case in boundary_cases:
+            with self.subTest(public_boundary_case=type(case).__name__):
+                errors = validate_readiness_matrix(case, trusted_context=TRUST_CONTEXT)
+                self.assertEqual(errors, stable_boundary_errors)
+                rendered = "; ".join(errors)
+                self.assertNotIn(TRUST_KEY.decode(), rendered)
+                self.assertNotIn("hostile", rendered)
+        self.assertEqual(HostileDict.item_calls, 0)
+        self.assertEqual(HostileList.iteration_calls, 0)
 
     def test_trust_context_is_opaque_and_non_serializable(self) -> None:
         context = ReadinessTrustContext("operator-readiness", TRUST_KEY)
