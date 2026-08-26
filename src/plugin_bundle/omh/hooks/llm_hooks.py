@@ -24,6 +24,7 @@ from ..host_context import record_active_main_agent_model
 from ..host_observation import observe_plugin_hook_call
 from ..omh_roles import extract_role_marker, role_context_payload
 from ..runtime_reader import read_omh_activity, read_omh_hud, read_omh_status
+from ..todo_reconciliation import open_todo_reminder
 from ..status_board_reader import (
     last_running_work_board_fingerprint,
     read_running_work_board,
@@ -157,6 +158,14 @@ def pre_llm_call(**kwargs) -> dict[str, object] | None:
                 "[OMH Role Warning] "
                 f"Unknown role '{marker}'. Available roles: {', '.join(role_payload['available_roles']) or '(none)'}."
             )
+
+    # An open plan is a state, not a phrasing: while one exists, every turn
+    # carries the reconciliation line so a completion claim cannot part ways
+    # with the HUD checklist unnoticed. Honors the caller's awareness opt-out.
+    if include_awareness:
+        todo_reminder = open_todo_reminder(omh_home=str(kwargs.get("omh_home", "") or ""))
+        if todo_reminder:
+            context_parts.append(todo_reminder)
 
     omh_home: str | None = None
     try:
