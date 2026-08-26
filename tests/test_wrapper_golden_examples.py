@@ -14,62 +14,32 @@ load_local_package()
 from omh.coding_delegation import build_coding_delegation_payload
 from omh.hermes_planning import build_hermes_plan_payload
 from omh.ingress import extract_message_text, extract_source_metadata
-from omh.skills.catalog import omh_skill_display_name
+from omh.skills.catalog import builtin_definitions, omh_skill_display_name
 from omh.skills.render import workflow_reference_payload
 from omh.paths import project_identity, resolve_paths
 from omh.wrapper_contract import build_chat_interaction_payload
 from omh.wrapper.route_hints import build_chat_route_hint_payload
 
 
-DOMAIN_EXPERT_QUESTIONS = (
+_DOMAIN_WORKFLOW_NAMES = (
+    "finance-analysis",
+    "people-ops",
+    "legal-compliance-review",
+    "support-operations",
+    "curriculum-design",
+    "localization-review",
+    "sales-development",
+    "product-brief",
+)
+_DEFINITIONS_BY_NAME = {definition.name: definition for definition in builtin_definitions()}
+DOMAIN_EXPERT_QUESTIONS = tuple(
     (
-        "finance-analysis",
-        "period",
-        "Which reporting period should this finance analysis cover?",
-        "이 재무 분석은 어느 기간을 대상으로 해야 하나요?",
-    ),
-    (
-        "people-ops",
-        "role or people-process outcome",
-        "What role or people-process outcome should this work achieve?",
-        "이 작업에서 어떤 역할 또는 인사 프로세스 결과를 달성해야 하나요?",
-    ),
-    (
-        "legal-compliance-review",
-        "jurisdiction",
-        "Which jurisdiction should this legal or compliance review apply to?",
-        "이 법률 또는 컴플라이언스 검토는 어느 관할권을 기준으로 해야 하나요?",
-    ),
-    (
-        "support-operations",
-        "support case",
-        "Which support case should we examine first?",
-        "어떤 지원 사례를 먼저 살펴봐야 하나요?",
-    ),
-    (
-        "curriculum-design",
-        "learners",
-        "Who are the learners this curriculum should serve?",
-        "이 커리큘럼의 대상 학습자는 누구인가요?",
-    ),
-    (
-        "localization-review",
-        "locale",
-        "Which target locale should this localization review cover?",
-        "이 현지화 검토의 대상 로캘은 무엇인가요?",
-    ),
-    (
-        "sales-development",
-        "account or segment",
-        "Which account or customer segment should this sales work focus on?",
-        "이 영업 작업은 어떤 계정 또는 고객 세그먼트에 집중해야 하나요?",
-    ),
-    (
-        "product-brief",
-        "product evidence",
-        "What product evidence should anchor this brief?",
-        "이 브리프의 근거가 될 제품 증거는 무엇인가요?",
-    ),
+        name,
+        _DEFINITIONS_BY_NAME[name].expert_questions[0].required_input,
+        _DEFINITIONS_BY_NAME[name].expert_questions[0].en,
+        _DEFINITIONS_BY_NAME[name].expert_questions[0].ko,
+    )
+    for name in _DOMAIN_WORKFLOW_NAMES
 )
 
 
@@ -201,7 +171,7 @@ class DomainExpertQuestionGoldenTests(unittest.TestCase):
         self.assertEqual(context["required_input"], "account or segment")
         self.assertEqual(
             payload["chat_response"]["body"],
-            "Which account or customer segment should this sales work focus on?",
+            _DEFINITIONS_BY_NAME["sales-development"].expert_questions[0].en,
         )
 
     @requires_domain_intelligence_store

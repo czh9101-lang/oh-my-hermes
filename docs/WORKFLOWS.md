@@ -1211,53 +1211,69 @@ These surfaces are generated command references, not installed Hermes workflow s
   - calculation assumptions
 - Expert clarification questions:
   - `period`
-    - English: Which reporting period should this finance analysis cover?
-    - Korean: 이 재무 분석은 어느 기간을 대상으로 해야 하나요?
+    - English: What period, cutoff, reporting entity/perimeter, currency/units, accounting basis, comparator version, and close status apply?
+    - Korean: 어떤 기간, 마감 기준일, 보고 법인과 범위, 통화와 단위, 회계 기준, 비교 버전, 마감 상태를 적용해야 하나요?
   - `supplied finance source`
-    - English: Which supplied finance source should anchor the analysis?
-    - Korean: 어떤 제공된 재무 자료를 분석의 근거로 삼아야 하나요?
+    - English: Which actual and comparator sources, provenance, versions, completeness checks, account mappings, and tie-out status are supplied?
+    - Korean: 어떤 실적 및 비교 자료와 출처, 버전, 완전성 점검, 계정 매핑, 대사 상태가 제공되었나요?
   - `decision question`
-    - English: Which decision should this finance analysis support?
-    - Korean: 이 재무 분석은 어떤 의사결정을 지원해야 하나요?
+    - English: Which decision, owner, threshold or materiality boundary, and deadline should the analysis support?
+    - Korean: 이 분석이 지원할 의사결정, 책임자, 임계값 또는 중요성 기준, 기한은 무엇인가요?
   - `calculation assumptions`
-    - English: Which calculation assumptions should be applied or challenged?
-    - Korean: 어떤 계산 가정을 적용하거나 검토해야 하나요?
+    - English: Which formulas, approved policy sources, materiality, FX or allocation treatments, and challenged assumptions apply?
+    - Korean: 어떤 공식, 승인된 정책 근거, 중요성, 환율 또는 배부 처리, 검토할 가정을 적용해야 하나요?
 - Expected outputs:
-  - period and source-boundary statement
-  - actual-versus-plan and variance narrative with calculation/assumption gaps
-  - cash, close, control, or decision-risk register
-  - decision questions and next route such as strategy-brief, data-analysis, or human finance review
+  - finance_scope_source_record/v1
+  - finance_reconciliation_analysis_schedule/v1
+  - finance_risk_register/v1
+  - finance_decision_brief/v1
 - Artifact expectations:
   - prepared finance analysis brief when a wrapper captures it
 - Safety rules:
   - State source and calculation assumptions before presenting a variance.
   - Do not imply an ERP, bank, ledger, tax, payment, or filing action occurred.
 - Procedure checks:
-  - `finance_source_boundary_check`
-  - `finance_calculation_reconciliation_check`
-  - `finance_assumption_traceability_check`
-  - `finance_decision_risk_check`
+  - `finance_scope_comparability_check`
+    - Required result fields: `entity_perimeter`, `period_cutoff`, `currency_units`, `accounting_basis`, `comparator_version`, `close_status`, `source_provenance`
+    - Criterion: PASS only when scope and comparator attributes are supplied and comparable; otherwise HOLD with each missing or conflicting attribute.
+  - `finance_source_reconciliation_check`
+    - Required result fields: `totals_status`, `account_mapping_status`, `basis_units_status`, `cutoff_status`, `duplicate_missing_status`, `tie_out_status`, `unreconciled_gaps`
+    - Criterion: Record totals, mappings, basis and units, cutoff, duplicate or missing records, and tie-out evidence; never label an untied extract reconciled.
+  - `finance_policy_assumption_check`
+    - Required result fields: `formula_provenance`, `policy_provenance`, `materiality_status`, `fx_allocation_treatment`, `assumption_approval_status`
+    - Criterion: Use supplied formulas, policy, thresholds, FX, and allocations; mark every unsupplied choice an unapproved assumption and infer no accounting policy or assurance.
+  - `finance_conditional_interpretation_check`
+    - Required result fields: `analysis_applicability`, `revenue_bridge_status`, `receivables_dso_status`, `working_capital_status`, `unavailable_evidence`
+    - Criterion: Run only relevant supported analyses; distinguish bookings, billings, recognized and deferred revenue and cutoff, or calculate DSO, aging, AR, AP, inventory and working-capital movement only from stated comparable formulas and balances.
+  - `finance_validation_escalation_check`
+    - Required result fields: `recalculation_status`, `reconciliation_status`, `source_conflicts`, `control_exceptions`, `high_impact_assumptions`, `disposition`, `escalation_owner`
+    - Criterion: HOLD authoritative conclusions and escalate unresolved policy, cutoff, source conflict, control exception, failed recalculation, or high-impact assumption to a qualified finance or accounting owner.
 - Procedure steps:
   - `finance_scope_sources` (`analysis`)
     - Input refs: `period`, `supplied finance source`
-    - Output refs: `period and source-boundary statement`
-    - Check IDs: `finance_source_boundary_check`
-    - Instruction: Fix the period and source boundary before interpreting any amount, and label unavailable records explicitly.
+    - Output refs: `finance_scope_source_record/v1`
+    - Check IDs: `finance_scope_comparability_check`
+    - Instruction: Capture the reporting and comparator perimeter, units, basis, versions, close state, provenance, and explicit evidence gaps before interpreting amounts.
+  - `finance_reconcile_sources` (`validation`)
+    - Input refs: `period`, `supplied finance source`
+    - Output refs: `finance_reconciliation_analysis_schedule/v1`
+    - Check IDs: `finance_source_reconciliation_check`
+    - Instruction: Tie totals and account mappings, normalize only approved basis and units, test cutoff and duplicate or missing records, and preserve unreconciled gaps.
   - `finance_analyze_variances` (`analysis`)
-    - Input refs: `supplied finance source`, `calculation assumptions`
-    - Output refs: `actual-versus-plan and variance narrative with calculation/assumption gaps`
-    - Check IDs: `finance_calculation_reconciliation_check`, `finance_assumption_traceability_check`
-    - Instruction: Reconcile comparable figures, calculate material variances, and keep supplied values separate from assumptions.
-  - `finance_register_risks` (`production`)
-    - Input refs: `supplied finance source`, `decision question`
-    - Output refs: `cash, close, control, or decision-risk register`
-    - Check IDs: `finance_decision_risk_check`
-    - Instruction: Record the cash, close, control, and decision risks supported by the bounded evidence.
+    - Input refs: `supplied finance source`, `calculation assumptions`, `decision question`
+    - Output refs: `finance_reconciliation_analysis_schedule/v1`
+    - Check IDs: `finance_policy_assumption_check`
+    - Instruction: Recalculate comparable variances with supplied formulas and thresholds, separating facts, approved policy, proposed assumptions, and material decision effects.
+  - `finance_interpret_conditionally` (`analysis`)
+    - Input refs: `supplied finance source`, `calculation assumptions`, `decision question`
+    - Output refs: `finance_risk_register/v1`
+    - Check IDs: `finance_conditional_interpretation_check`
+    - Instruction: Apply revenue, receivables, liquidity, or working-capital interpretation only when relevant evidence exists, and mark unavailable analyses rather than forcing them.
   - `finance_validate_brief` (`validation`)
     - Input refs: `period`, `supplied finance source`, `decision question`, `calculation assumptions`
-    - Output refs: `decision questions and next route such as strategy-brief, data-analysis, or human finance review`
-    - Check IDs: `finance_source_boundary_check`, `finance_calculation_reconciliation_check`, `finance_assumption_traceability_check`, `finance_decision_risk_check`
-    - Instruction: Validate source and assumption traceability, then name unresolved decision questions and the appropriate review route.
+    - Output refs: `finance_decision_brief/v1`
+    - Check IDs: `finance_scope_comparability_check`, `finance_source_reconciliation_check`, `finance_policy_assumption_check`, `finance_conditional_interpretation_check`, `finance_validation_escalation_check`
+    - Instruction: Report recalculation and reconciliation status, evidence-linked risks, assumptions, decision options and owners, and a PASS or HOLD disposition with mandatory escalation gaps.
 
 ### people-ops
 
@@ -1370,53 +1386,69 @@ These surfaces are generated command references, not installed Hermes workflow s
   - review objective
 - Expert clarification questions:
   - `jurisdiction`
-    - English: Which jurisdiction should this legal or compliance review apply to?
-    - Korean: 이 법률 또는 컴플라이언스 검토는 어느 관할권을 기준으로 해야 하나요?
+    - English: Which parties, actor or data roles, operative facts, governing law and forum, and separately applicable regulatory jurisdictions are supplied?
+    - Korean: 어떤 당사자, 행위자 또는 데이터 역할, 주요 사실, 준거법과 관할, 별도 적용 규제 관할권이 제공되었나요?
   - `document or process version`
-    - English: Which document or process version is in scope for review?
-    - Korean: 어떤 문서 또는 프로세스 버전을 검토 범위로 삼아야 하나요?
+    - English: Which instrument type, complete document set and precedence, version, execution/effective date, amendments, and as-of date are in scope?
+    - Korean: 어떤 문서 유형, 전체 문서 세트와 우선순위, 버전, 체결일과 효력일, 개정본, 기준일이 범위에 포함되나요?
   - `supplied authority`
-    - English: Which supplied authority should inform this review?
-    - Korean: 어떤 제공된 근거 자료를 이 검토에 반영해야 하나요?
+    - English: Which supplied authority identifiers, issuers, versions, effective status, exact pinpoints, hierarchy, and verification state may be used?
+    - Korean: 사용 가능한 제공 근거의 식별자, 발행기관, 버전, 효력 상태, 정확한 인용 위치, 위계, 검증 상태는 무엇인가요?
   - `review objective`
-    - English: Which review objective or decision should the issue matrix support?
-    - Korean: 이슈 매트릭스는 어떤 검토 목표 또는 의사결정을 지원해야 하나요?
+    - English: Which decision, risk tolerance, approval owner, deadline, and mandatory counsel questions should the review support?
+    - Korean: 이 검토가 지원할 의사결정, 위험 허용 범위, 승인 책임자, 기한, 필수 법률 자문 질문은 무엇인가요?
 - Expected outputs:
-  - jurisdiction, document/version, authority, and evidence-boundary statement
-  - clause/control/requirement matrix with issue, rationale, owner, and open question
-  - risk-ranked negotiation, remediation, or counsel-escalation brief
-  - review checklist that distinguishes supplied evidence from legal interpretation
+  - legal_scope_authority_record/v1
+  - legal_issue_traceability_matrix/v1
+  - legal_risk_counsel_hold_register/v1
+  - legal_review_disposition/v1
 - Artifact expectations:
   - prepared legal and compliance issue matrix when a wrapper captures it
 - Safety rules:
   - Distinguish supplied authority from legal interpretation and final advice.
   - Do not claim sign-off, certification, filing, execution, or regulator communication.
 - Procedure checks:
-  - `legal_jurisdiction_authority_check`
-  - `legal_version_traceability_check`
-  - `legal_issue_matrix_completeness_check`
-  - `legal_counsel_escalation_check`
+  - `legal_scope_facts_instruments_check`
+    - Required result fields: `actors_roles`, `operative_facts`, `instrument_set`, `order_of_precedence`, `governing_law_forum`, `regulatory_jurisdictions`, `execution_effective_as_of_dates`, `assumptions_blockers`
+    - Criterion: Require material facts and roles, complete instruments and precedence, distinct contractual and regulatory jurisdictions, and temporal scope; never infer missing values.
+  - `legal_authority_citation_check`
+    - Required result fields: `source_type`, `source_identifier`, `source_version`, `effective_status`, `pinpoint`, `operative_text_summary`, `verification_status`
+    - Criterion: Each authority-dependent proposition must trace to supplied or observed authority and an exact locator and status; user summaries and inferences stay unverified.
+  - `legal_issue_matrix_check`
+    - Required result fields: `applicability_facts`, `obligation_position`, `definitions_dependencies`, `exceptions_carveouts_conflicts`, `evidence_status`, `risk_uncertainty`, `action_owner`, `recommended_disposition`, `counsel_question`, `issue_family_applicability`
+    - Criterion: Map facts to operative text, dependencies, exceptions and conflicts; when triggered cover warranty, disclaimer, indemnity and liability interactions or privacy roles, basis, transfers, security, breach, retention, rights and DPIA, marking other families not applicable.
+  - `legal_counsel_hold_check`
+    - Required result fields: `trigger_ids`, `impact`, `likelihood_applicability`, `urgency`, `evidence_confidence`, `reversibility`, `hold_status`, `counsel_owner`
+    - Criterion: Mandatory HOLD triggers include uncertain or conflicting authority, missing jurisdiction or dates, enforceability or privilege, material or uncapped liability or indemnity, regulatory deadlines, and sensitive, high-risk or cross-border privacy or DPIA uncertainty.
+  - `legal_final_determination_guard`
+    - Required result fields: `invented_authority_status`, `stale_authority_status`, `unresolved_triggers`, `disposition`
+    - Criterion: Fail closed on absent, fabricated, stale, superseded or unverified authority; invent no citation, holding, requirement or compliance conclusion and issue no final determination while a hold remains open.
 - Procedure steps:
-  - `legal_scope_authority` (`analysis`)
-    - Input refs: `jurisdiction`, `document or process version`, `supplied authority`
-    - Output refs: `jurisdiction, document/version, authority, and evidence-boundary statement`
-    - Check IDs: `legal_jurisdiction_authority_check`, `legal_version_traceability_check`
-    - Instruction: Fix the jurisdiction, version, supplied authority, and evidence boundary before identifying issues.
-  - `legal_map_requirements` (`analysis`)
-    - Input refs: `document or process version`, `supplied authority`, `review objective`
-    - Output refs: `clause/control/requirement matrix with issue, rationale, owner, and open question`
-    - Check IDs: `legal_issue_matrix_completeness_check`
-    - Instruction: Map each relevant clause, control, or requirement to its supported rationale, owner, and unresolved question.
-  - `legal_rank_escalations` (`production`)
-    - Input refs: `jurisdiction`, `review objective`
-    - Output refs: `risk-ranked negotiation, remediation, or counsel-escalation brief`
-    - Check IDs: `legal_counsel_escalation_check`
-    - Instruction: Rank supported issues by decision impact and separate remediation options from questions requiring counsel.
-  - `legal_validate_review` (`validation`)
+  - `legal_scope_facts_instruments` (`analysis`)
+    - Input refs: `jurisdiction`, `document or process version`, `review objective`
+    - Output refs: `legal_scope_authority_record/v1`
+    - Check IDs: `legal_scope_facts_instruments_check`
+    - Instruction: Record actors, roles, facts, instrument set and precedence, governing law, forum, regulatory reach, dates, objective, and every missing assumption or blocker.
+  - `legal_trace_authority` (`validation`)
+    - Input refs: `supplied authority`, `document or process version`
+    - Output refs: `legal_scope_authority_record/v1`
+    - Check IDs: `legal_authority_citation_check`, `legal_final_determination_guard`
+    - Instruction: Create a citation ledger using only supplied or observed sources, exact pinpoints and effective status; route absent authority to research or counsel instead of filling it in.
+  - `legal_map_issues_exceptions` (`analysis`)
     - Input refs: `jurisdiction`, `document or process version`, `supplied authority`, `review objective`
-    - Output refs: `review checklist that distinguishes supplied evidence from legal interpretation`
-    - Check IDs: `legal_jurisdiction_authority_check`, `legal_version_traceability_check`, `legal_issue_matrix_completeness_check`, `legal_counsel_escalation_check`
-    - Instruction: Validate version and authority traceability, matrix completeness, and the boundary between supplied evidence and interpretation.
+    - Output refs: `legal_issue_traceability_matrix/v1`
+    - Check IDs: `legal_issue_matrix_check`
+    - Instruction: Build clause and obligation rows with facts-to-rule traceability, definitions, dependencies, exceptions, conflicts, evidence state, uncertainty, disposition and counsel questions, adding only triggered issue families.
+  - `legal_apply_counsel_holds` (`production`)
+    - Input refs: `jurisdiction`, `supplied authority`, `review objective`
+    - Output refs: `legal_risk_counsel_hold_register/v1`
+    - Check IDs: `legal_counsel_hold_check`
+    - Instruction: Rank impact, applicability, urgency, confidence and reversibility, then impose mandatory counsel holds and owners for every triggered high-risk or authority-sensitive issue.
+  - `legal_validate_disposition` (`validation`)
+    - Input refs: `jurisdiction`, `document or process version`, `supplied authority`, `review objective`
+    - Output refs: `legal_review_disposition/v1`
+    - Check IDs: `legal_scope_facts_instruments_check`, `legal_authority_citation_check`, `legal_issue_matrix_check`, `legal_counsel_hold_check`, `legal_final_determination_guard`
+    - Instruction: Return PASS, REVISE, or HOLD with exact open triggers and counsel route; prohibit final legal or compliance determinations until all mandatory holds are resolved by qualified counsel.
 
 ### support-operations
 
@@ -1529,53 +1561,66 @@ These surfaces are generated command references, not installed Hermes workflow s
   - constraints
 - Expert clarification questions:
   - `learners`
-    - English: Who are the learners this curriculum should serve?
-    - Korean: 이 커리큘럼의 대상 학습자는 누구인가요?
+    - English: Which learner roles or ages and setting, baseline evidence, experience, motivations, language or culture, access needs, and relevant variability should shape the design?
+    - Korean: 어떤 학습자 역할 또는 연령과 환경, 기초 수준 근거, 경험, 동기, 언어와 문화, 접근 요구, 관련 다양성이 설계에 반영되어야 하나요?
   - `learning goal`
-    - English: Which observable learning goal should the curriculum achieve?
-    - Korean: 이 커리큘럼은 어떤 관찰 가능한 학습 목표를 달성해야 하나요?
+    - English: What observable learner performance, conditions, success criteria, transfer context, and priority or scope define the goal?
+    - Korean: 어떤 관찰 가능한 학습자 수행, 조건, 성공 기준, 전이 맥락, 우선순위 또는 범위가 목표를 정의하나요?
   - `prerequisites`
-    - English: Which learner prerequisites should the sequence assume?
-    - Korean: 학습 순서는 어떤 선수 지식을 전제로 해야 하나요?
+    - English: Which entry skills and knowledge can learners demonstrate, what diagnostic evidence and misconceptions exist, and what remediation path covers gaps?
+    - Korean: 학습자가 입증할 수 있는 선수 기술과 지식, 진단 근거와 오개념, 부족한 부분을 보완할 경로는 무엇인가요?
   - `constraints`
-    - English: Which delivery, time, accessibility, or resource constraints apply?
-    - Korean: 어떤 운영, 시간, 접근성 또는 자원 제약이 적용되나요?
+    - English: Which modality, cohort size, schedule, technology, accessibility, resources, assessment policy, or facilitator constraints apply?
+    - Korean: 어떤 운영 방식, 학습자 규모, 일정, 기술, 접근성, 자원, 평가 정책 또는 진행자 제약이 적용되나요?
 - Expected outputs:
-  - learner/audience, prerequisite, outcome, and constraint brief
-  - scope-and-sequence with modules/lessons and activity rationale
-  - formative/summative assessment rubric and completion evidence
-  - accessibility, adaptation, and source/rights questions plus next route
+  - curriculum_learner_outcome_brief/v1
+  - curriculum_alignment_map/v1
+  - curriculum_sequence_design/v1
+  - curriculum_validation_disposition/v1
 - Artifact expectations:
   - prepared curriculum design brief when a wrapper captures it
 - Safety rules:
   - Make learner prerequisites, accessibility, adaptation, and source-rights gaps explicit.
   - Do not claim LMS mutation, enrollment, grading, certification, publication, or learning outcomes.
 - Procedure checks:
-  - `curriculum_learner_alignment_check`
-  - `curriculum_outcome_assessment_alignment_check`
-  - `curriculum_prerequisite_constraint_check`
-  - `curriculum_accessibility_rights_check`
+  - `curriculum_intake_readiness_check`
+    - Required result fields: `learner_setting`, `baseline_evidence`, `motivation_goals`, `language_culture`, `access_variability`, `outcome_performance_conditions_criteria_transfer`, `prerequisite_misconception_diagnostic_remediation`, `delivery_policy_constraints`
+    - Criterion: PASS intake only when learner variability, evidence-backed entry state, observable outcomes and relevant delivery constraints are design-ready; otherwise mark gaps and remediation assumptions.
+  - `curriculum_outcome_evidence_alignment_check`
+    - Required result fields: `outcome_id`, `performance_condition_criterion`, `assessment_evidence`, `rubric_criteria`, `formative_checks`, `coverage_status`, `orphan_mismatch_insufficient_evidence`
+    - Criterion: For every outcome map acceptable evidence and criteria before activities, reporting orphan outcomes, orphan assessments, level or condition mismatches and insufficient evidence.
+  - `curriculum_scaffolding_inclusion_check`
+    - Required result fields: `activation_diagnosis`, `modeling_examples`, `guided_practice`, `feedback`, `independent_transfer`, `scaffold_removal`, `accessible_formats_interactions`, `language_cultural_support`, `technology_barriers`, `accommodations_flexible_paths`, `equivalent_demonstration`, `barrier_addressed`
+    - Criterion: Design a domain-appropriate progression and inclusive access before final validation, linking each scaffold or adaptation to a learner barrier and preserving equivalent outcome evidence.
+  - `curriculum_validation_revision_check`
+    - Required result fields: `criterion_id`, `status`, `exact_gaps`, `learner_impact`, `required_revision`, `owner_decision`, `unresolved_evidence`, `revalidation_checks`, `review_pilot_plan`, `evidence_state`
+    - Criterion: Return PASS, REVISE, or BLOCKED per criterion, revise affected outcomes, evidence, sequence, scaffolds or access choices, and rerun affected checks; learner review or pilot plans remain prepared until observed.
 - Procedure steps:
-  - `curriculum_frame_learners` (`analysis`)
+  - `curriculum_frame_learners_outcomes` (`analysis`)
     - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
-    - Output refs: `learner/audience, prerequisite, outcome, and constraint brief`
-    - Check IDs: `curriculum_learner_alignment_check`, `curriculum_prerequisite_constraint_check`
-    - Instruction: Define observable outcomes against the learners, prerequisites, delivery setting, and known constraints.
-  - `curriculum_sequence_learning` (`production`)
-    - Input refs: `learners`, `learning goal`, `prerequisites`
-    - Output refs: `scope-and-sequence with modules/lessons and activity rationale`
-    - Check IDs: `curriculum_learner_alignment_check`
-    - Instruction: Order modules and activities so each stage builds the prerequisite knowledge needed for the next outcome.
-  - `curriculum_design_assessment` (`production`)
-    - Input refs: `learning goal`, `constraints`
-    - Output refs: `formative/summative assessment rubric and completion evidence`
-    - Check IDs: `curriculum_outcome_assessment_alignment_check`
-    - Instruction: Design formative and summative evidence that directly demonstrates each observable learning outcome.
-  - `curriculum_validate_design` (`validation`)
+    - Output refs: `curriculum_learner_outcome_brief/v1`
+    - Check IDs: `curriculum_intake_readiness_check`
+    - Instruction: Establish learner context, baseline and variability, then define a small outcome set with observable performance, conditions, criteria and transfer priority.
+  - `curriculum_define_evidence_criteria` (`production`)
     - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
-    - Output refs: `accessibility, adaptation, and source/rights questions plus next route`
-    - Check IDs: `curriculum_learner_alignment_check`, `curriculum_outcome_assessment_alignment_check`, `curriculum_prerequisite_constraint_check`, `curriculum_accessibility_rights_check`
-    - Instruction: Validate learner, outcome, assessment, accessibility, adaptation, and source-rights alignment before packaging or LMS work.
+    - Output refs: `curriculum_alignment_map/v1`
+    - Check IDs: `curriculum_outcome_evidence_alignment_check`
+    - Instruction: Before sequencing instruction, define acceptable assessment evidence, rubric criteria and formative decision points for every outcome and expose all coverage defects.
+  - `curriculum_design_sequence_scaffolds` (`production`)
+    - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
+    - Output refs: `curriculum_sequence_design/v1`
+    - Check IDs: `curriculum_scaffolding_inclusion_check`
+    - Instruction: Design activities from the evidence backward, including diagnosis, modeling where useful, guided practice, feedback, independent transfer, scaffold fading, accessible formats and equivalent demonstration paths.
+  - `curriculum_validate_alignment` (`validation`)
+    - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
+    - Output refs: `curriculum_validation_disposition/v1`
+    - Check IDs: `curriculum_intake_readiness_check`, `curriculum_outcome_evidence_alignment_check`, `curriculum_scaffolding_inclusion_check`, `curriculum_validation_revision_check`
+    - Instruction: Record criterion-level PASS, REVISE, or BLOCKED findings, exact misalignments and learner impact, required revisions, owner decisions, evidence gaps, and bounded expert or learner review plans.
+  - `curriculum_revise_revalidate` (`validation`)
+    - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
+    - Output refs: `curriculum_alignment_map/v1`, `curriculum_sequence_design/v1`, `curriculum_validation_disposition/v1`
+    - Check IDs: `curriculum_outcome_evidence_alignment_check`, `curriculum_scaffolding_inclusion_check`, `curriculum_validation_revision_check`
+    - Instruction: Apply approved revisions to the affected artifacts, rerun the named checks, and retain BLOCKED whenever required evidence or review remains unobserved.
 
 ### localization-review
 
@@ -1688,53 +1733,66 @@ These surfaces are generated command references, not installed Hermes workflow s
   - sales objective
 - Expert clarification questions:
   - `account or segment`
-    - English: Which account or customer segment should this sales work focus on?
-    - Korean: 이 영업 작업은 어떤 계정 또는 고객 세그먼트에 집중해야 하나요?
+    - English: Which fit criteria and disqualifiers, offer or use case, stage and owner, geography, and evidenced stakeholders and roles define the account or segment?
+    - Korean: 어떤 적합 기준과 제외 기준, 제안 또는 사용 사례, 단계와 책임자, 지역, 근거가 있는 이해관계자와 역할이 계정 또는 세그먼트를 정의하나요?
   - `available evidence`
-    - English: Which available account or market evidence should anchor this sales work?
-    - Korean: 어떤 계정 또는 시장 근거 자료를 이 영업 작업의 기반으로 삼아야 하나요?
+    - English: Which source locators, dates, reliability and permission states, observed facts, contradictions, and approved personalization claims are available?
+    - Korean: 어떤 출처 위치, 날짜, 신뢰도와 사용 권한 상태, 관찰된 사실, 상충 정보, 승인된 개인화 주장이 제공되나요?
   - `buyer hypothesis`
-    - English: Which buyer hypothesis should discovery test?
-    - Korean: 발견 과정에서 어떤 구매자 가설을 검증해야 하나요?
+    - English: Which stakeholder role, problem and current approach, impact, influence, buying stage, and evidence state should discovery test?
+    - Korean: 어떤 이해관계자 역할, 문제와 현재 방식, 영향, 영향력, 구매 단계, 근거 상태를 발견 과정에서 검증해야 하나요?
   - `sales objective`
-    - English: Which sales objective should the next-step plan support?
-    - Korean: 다음 단계 계획은 어떤 영업 목표를 지원해야 하나요?
+    - English: Which motion, measurable outcome, offer and approved proof, channel and consent constraints, deadline, owner, approver, CRM shape, and next-step criterion apply?
+    - Korean: 어떤 영업 방식, 측정 가능한 결과, 제안과 승인된 근거, 채널과 동의 제약, 기한, 책임자, 승인자, CRM 형식, 다음 단계 기준이 적용되나요?
 - Expected outputs:
-  - account/segment, buyer, problem, and evidence-gap brief
-  - discovery-question and qualification framework
-  - value narrative, objection hypotheses, and outreach-draft outline
-  - next-step/owner plan with CRM, approval, and source gaps explicit
+  - sales_opportunity_evidence_record/v1
+  - sales_qualification_state/v1
+  - sales_draft_sequence/v1
+  - sales_handoff_disposition/v1
 - Artifact expectations:
   - prepared sales development brief when a wrapper captures it
 - Safety rules:
   - Treat unsupported company and competitor information as evidence gaps, not facts.
   - Do not claim prospect contact, CRM mutation, meeting booking, opportunity creation, revenue, or progress.
 - Procedure checks:
-  - `sales_evidence_hypothesis_separation_check`
-  - `sales_qualification_coverage_check`
-  - `sales_outreach_non_execution_check`
-  - `sales_next_step_ownership_check`
+  - `sales_account_evidence_check`
+    - Required result fields: `fit_disqualifiers`, `offer_use_case`, `account_stage_owner`, `stakeholder_states`, `problem_current_approach_impact`, `source_locator_date_reliability_permission`, `contradictions`, `unknowns`, `claim_evidence_state`
+    - Criterion: Every account, stakeholder, problem, impact and personalization claim must point to approved supplied or observed evidence or remain a hypothesis; never fill missing customer facts.
+  - `sales_qualification_state_check`
+    - Required result fields: `stakeholder_authority_state`, `problem_current_state`, `measurable_impact`, `decision_criteria_process`, `alternatives`, `timing_urgency`, `risks_blockers`, `champion_economic_buyer_hypotheses`, `prioritized_questions`, `buyer_confirmation_evidence`, `disposition`
+    - Criterion: Maintain framework-neutral observed, asserted, hypothesis, unknown and buyer-confirmed states, prioritized questions, and explicit ADVANCE, HOLD or DISQUALIFY evidence criteria; named methods are optional mappings only.
+  - `sales_sequence_eligibility_check`
+    - Required result fields: `consent_basis`, `privacy_constraints`, `suppression_status`, `channel_eligibility`, `policy_constraints`, `audience_persona`, `timing_cadence`, `evidence_backed_personalization`, `approved_proof`, `purpose_value_cta`, `objection_hypothesis`, `validation_question`, `owner_approver`, `stop_opt_out_reply_conditions`, `draft_status`
+    - Criterion: HOLD drafting when supplied consent, privacy, suppression, channel or policy eligibility is unknown; each eligible row must remain a draft with bounded cadence and stop, opt-out and reply conditions.
+  - `sales_handoff_check`
+    - Required result fields: `proposed_confirmed_status`, `action`, `owner`, `approver`, `target_timing`, `success_exit_criterion`, `dependencies`, `evidence_refs`, `crm_object_field_value_proposals`, `unresolved_gaps`, `disposition`
+    - Criterion: Emit measurable proposed handoff and CRM field/value changes without mutation; only observed buyer response may mark a next step, objection or commitment confirmed.
 - Procedure steps:
-  - `sales_scope_opportunity` (`analysis`)
+  - `sales_scope_account_evidence` (`analysis`)
     - Input refs: `account or segment`, `available evidence`, `buyer hypothesis`, `sales objective`
-    - Output refs: `account/segment, buyer, problem, and evidence-gap brief`
-    - Check IDs: `sales_evidence_hypothesis_separation_check`
-    - Instruction: Separate observed account evidence from buyer and problem hypotheses, and name the gaps that discovery must test.
-  - `sales_plan_discovery` (`production`)
-    - Input refs: `account or segment`, `buyer hypothesis`, `sales objective`
-    - Output refs: `discovery-question and qualification framework`
-    - Check IDs: `sales_qualification_coverage_check`
-    - Instruction: Build discovery and qualification questions that test the buyer hypothesis against the stated objective.
-  - `sales_shape_narrative` (`production`)
-    - Input refs: `available evidence`, `buyer hypothesis`, `sales objective`
-    - Output refs: `value narrative, objection hypotheses, and outreach-draft outline`
-    - Check IDs: `sales_evidence_hypothesis_separation_check`, `sales_outreach_non_execution_check`
-    - Instruction: Draft an evidence-bounded value narrative and objection hypotheses without presenting outreach as sent.
-  - `sales_validate_next_steps` (`validation`)
+    - Output refs: `sales_opportunity_evidence_record/v1`
+    - Check IDs: `sales_account_evidence_check`
+    - Instruction: Record fit and disqualifiers, offer and stage, owner, evidenced stakeholders, problem and current approach signals, source provenance and permissions, contradictions, unknowns, and per-claim evidence state.
+  - `sales_build_qualification_state` (`analysis`)
     - Input refs: `account or segment`, `available evidence`, `buyer hypothesis`, `sales objective`
-    - Output refs: `next-step/owner plan with CRM, approval, and source gaps explicit`
-    - Check IDs: `sales_evidence_hypothesis_separation_check`, `sales_qualification_coverage_check`, `sales_outreach_non_execution_check`, `sales_next_step_ownership_check`
-    - Instruction: Validate evidence and qualification coverage, then assign an owner and approval boundary to each non-executing next step.
+    - Output refs: `sales_qualification_state/v1`
+    - Check IDs: `sales_qualification_state_check`
+    - Instruction: Build neutral qualification fields, distinguish seller hypotheses from observed buyer responses, prioritize discovery questions, and assign ADVANCE, HOLD or DISQUALIFY criteria without forcing a named method.
+  - `sales_check_sequence_eligibility` (`validation`)
+    - Input refs: `account or segment`, `available evidence`, `sales objective`
+    - Output refs: `sales_draft_sequence/v1`
+    - Check IDs: `sales_sequence_eligibility_check`
+    - Instruction: Verify supplied consent basis, privacy and suppression restrictions, permitted channels, organizational policy, sender and approver, locale, timing and cadence before any message construction.
+  - `sales_prepare_draft_sequence` (`production`)
+    - Input refs: `account or segment`, `available evidence`, `buyer hypothesis`, `sales objective`
+    - Output refs: `sales_draft_sequence/v1`
+    - Check IDs: `sales_account_evidence_check`, `sales_sequence_eligibility_check`
+    - Instruction: Prepare eligible draft rows for audience, channel, cadence, supported personalization and proof, purpose, value, CTA, objection hypothesis and validation question, owner, approver and stop conditions; do not send.
+  - `sales_validate_handoff` (`validation`)
+    - Input refs: `account or segment`, `available evidence`, `buyer hypothesis`, `sales objective`
+    - Output refs: `sales_handoff_disposition/v1`
+    - Check IDs: `sales_account_evidence_check`, `sales_qualification_state_check`, `sales_sequence_eligibility_check`, `sales_handoff_check`
+    - Instruction: Return proposed versus confirmed actions, ownership, timing, exit criteria, dependencies, evidence refs, CRM object/field/value proposals, gaps and ADVANCE, HOLD or DISQUALIFY disposition, preserving confirmation only from observed response.
 
 ### product-brief
 

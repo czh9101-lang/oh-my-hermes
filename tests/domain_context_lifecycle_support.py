@@ -13,6 +13,7 @@ from unittest import mock
 from _local_package import load_local_package
 
 load_local_package()
+from omh.skills.catalog import builtin_definitions
 
 
 PUBLIC_CONTEXT_KEYS = {
@@ -24,7 +25,8 @@ PUBLIC_CONTEXT_KEYS = {
     "claim_boundary",
 }
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-EN_SALES_QUESTION = "Which account or customer segment should this sales work focus on?"
+_SALES = next(item for item in builtin_definitions() if item.name == "sales-development")
+EN_SALES_QUESTION = _SALES.expert_questions[0].en
 
 
 def _canonical(value: object) -> str:

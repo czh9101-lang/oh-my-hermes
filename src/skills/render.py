@@ -33,6 +33,7 @@ from .expert_question_rendering import (
 from .procedure_rendering import (
     copy_procedure_check_payloads,
     copy_procedure_step_payloads,
+    procedure_check_payloads,
     procedure_reference_lines,
     procedure_step_payloads,
 )
@@ -2488,7 +2489,7 @@ def _skill_payload(definition: SkillDefinition) -> dict[str, object]:
         "expert_questions": expert_question_payloads(definition),
         **(
             {
-                "procedure_checks": list(definition.procedure_checks),
+                "procedure_checks": procedure_check_payloads(definition),
                 "procedure_steps": procedure_step_payloads(definition),
             }
             if definition.procedure_steps

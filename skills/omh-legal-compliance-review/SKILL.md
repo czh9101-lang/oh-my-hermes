@@ -88,15 +88,15 @@ Required inputs:
 
 Expert clarification questions:
 - `jurisdiction`
-  - English: Which jurisdiction should this legal or compliance review apply to?
-  - Korean: 이 법률 또는 컴플라이언스 검토는 어느 관할권을 기준으로 해야 하나요?
+  - English: Which parties, actor or data roles, operative facts, governing law and forum, and separately applicable regulatory jurisdictions are supplied?
+  - Korean: 어떤 당사자, 행위자 또는 데이터 역할, 주요 사실, 준거법과 관할, 별도 적용 규제 관할권이 제공되었나요?
 
 Expected outputs:
 
-- jurisdiction, document/version, authority, and evidence-boundary statement
-- clause/control/requirement matrix with issue, rationale, owner, and open question
-- risk-ranked negotiation, remediation, or counsel-escalation brief
-- review checklist that distinguishes supplied evidence from legal interpretation
+- legal_scope_authority_record/v1
+- legal_issue_traceability_matrix/v1
+- legal_risk_counsel_hold_register/v1
+- legal_review_disposition/v1
 
 Artifact expectations:
 

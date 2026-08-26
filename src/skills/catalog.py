@@ -103,6 +103,7 @@ from .catalog_types import (
     ENGINE_INTERJECTION_RESUME_RULE,
     ExpertQuestion,
     HarnessDefinition,
+    ProcedureCheck,
     ProcedureStep,
     REASONING_DEMAND_VALUES,
     OMH_DESCRIPTION_PREFIX,

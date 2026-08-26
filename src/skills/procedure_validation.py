@@ -19,13 +19,29 @@ def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
     violations: list[str] = []
     if not isinstance(steps, (tuple, list)) or not steps:
         return ["procedure_steps_required"]
+    declared_checks: set[str] = set()
     if not isinstance(checks, (tuple, list)) or not checks:
         violations.append("procedure_checks_required")
-        declared_checks: set[str] = set()
     else:
-        declared_checks = {check_id for check_id in checks if isinstance(check_id, str)}
-        if len(declared_checks) != len(checks):
-            violations.append("procedure_duplicate_or_invalid_check_id")
+        for check in checks:
+            check_id = getattr(check, "check_id", None)
+            result_fields = getattr(check, "required_result_fields", None)
+            instruction = getattr(check, "instruction", None)
+            if not isinstance(check_id, str) or not _STEP_ID_PATTERN.fullmatch(check_id):
+                violations.append("procedure_invalid_check_id")
+            elif check_id in declared_checks:
+                violations.append("procedure_duplicate_check_id")
+            else:
+                declared_checks.add(check_id)
+            if not isinstance(result_fields, (tuple, list)) or not result_fields:
+                violations.append("procedure_check_result_fields_required")
+            elif (
+                len(set(result_fields)) != len(result_fields)
+                or any(not isinstance(field, str) or not _STEP_ID_PATTERN.fullmatch(field) for field in result_fields)
+            ):
+                violations.append("procedure_duplicate_or_invalid_check_result_field")
+            if not isinstance(instruction, str) or not instruction.strip():
+                violations.append("procedure_check_instruction_required")
 
     required_inputs = set(definition.required_inputs)
     expected_outputs = set(definition.expected_outputs)

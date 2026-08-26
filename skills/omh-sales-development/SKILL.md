@@ -88,15 +88,15 @@ Required inputs:
 
 Expert clarification questions:
 - `account or segment`
-  - English: Which account or customer segment should this sales work focus on?
-  - Korean: 이 영업 작업은 어떤 계정 또는 고객 세그먼트에 집중해야 하나요?
+  - English: Which fit criteria and disqualifiers, offer or use case, stage and owner, geography, and evidenced stakeholders and roles define the account or segment?
+  - Korean: 어떤 적합 기준과 제외 기준, 제안 또는 사용 사례, 단계와 책임자, 지역, 근거가 있는 이해관계자와 역할이 계정 또는 세그먼트를 정의하나요?
 
 Expected outputs:
 
-- account/segment, buyer, problem, and evidence-gap brief
-- discovery-question and qualification framework
-- value narrative, objection hypotheses, and outreach-draft outline
-- next-step/owner plan with CRM, approval, and source gaps explicit
+- sales_opportunity_evidence_record/v1
+- sales_qualification_state/v1
+- sales_draft_sequence/v1
+- sales_handoff_disposition/v1
 
 Artifact expectations:
 

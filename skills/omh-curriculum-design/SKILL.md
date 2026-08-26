@@ -88,15 +88,15 @@ Required inputs:
 
 Expert clarification questions:
 - `learners`
-  - English: Who are the learners this curriculum should serve?
-  - Korean: 이 커리큘럼의 대상 학습자는 누구인가요?
+  - English: Which learner roles or ages and setting, baseline evidence, experience, motivations, language or culture, access needs, and relevant variability should shape the design?
+  - Korean: 어떤 학습자 역할 또는 연령과 환경, 기초 수준 근거, 경험, 동기, 언어와 문화, 접근 요구, 관련 다양성이 설계에 반영되어야 하나요?
 
 Expected outputs:
 
-- learner/audience, prerequisite, outcome, and constraint brief
-- scope-and-sequence with modules/lessons and activity rationale
-- formative/summative assessment rubric and completion evidence
-- accessibility, adaptation, and source/rights questions plus next route
+- curriculum_learner_outcome_brief/v1
+- curriculum_alignment_map/v1
+- curriculum_sequence_design/v1
+- curriculum_validation_disposition/v1
 
 Artifact expectations:
 
