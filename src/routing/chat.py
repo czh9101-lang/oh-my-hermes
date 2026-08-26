@@ -1376,6 +1376,33 @@ def route_chat_message(
     return _enriched_route(message, source, limit, min_confidence, skill_policy=skill_policy)
 
 
+def _route_has_strong_blocked_owner(
+    route: dict[str, object],
+    blocked_skills: tuple[str, ...],
+) -> bool:
+    """Keep a blocked skill only when canonical router evidence independently owns it."""
+    selected_skill = str(route.get("selected_skill") or "")
+    if selected_skill not in blocked_skills:
+        return False
+    if route.get("explicit") is True:
+        return True
+    recommendations = route.get("recommendations")
+    if not isinstance(recommendations, list):
+        return False
+    for recommendation in recommendations:
+        if not isinstance(recommendation, dict) or recommendation.get("skill") != selected_skill:
+            continue
+        matched = recommendation.get("matched")
+        if not isinstance(matched, list):
+            return False
+        return any(
+            isinstance(marker, str)
+            and (marker.startswith("domain:") or marker.startswith("operator_surface_fast_path:"))
+            for marker in matched
+        )
+    return False
+
+
 def _enriched_route(
     message: str,
     source: str,
@@ -1401,8 +1428,8 @@ def _enriched_route(
     relevance = classify_clarification_relevance(message)
     if (
         route.get("action") == "dispatch"
-        and not route.get("explicit")
         and route.get("selected_skill") in relevance.blocked_skills
+        and not _route_has_strong_blocked_owner(route, relevance.blocked_skills)
     ):
         route.update(
             {

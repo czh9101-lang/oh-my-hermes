@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -4369,6 +4371,160 @@ selected_workflow=ultraprocess
                 relevance = domain_signals_impl.classify_clarification_relevance(message)
                 self.assertEqual(relevance.skills or (), expected)
 
+    def test_relevance_single_scan_derives_owned_and_blocked_independently(self) -> None:
+        cases = (
+            ("plain request without specialist cues", None, ()),
+            ("MEDDPICC qualification", ("sales-development",), ()),
+            (
+                "four-fifths rule ... MEDDPICC",
+                ("sales-development",),
+                ("rules-distill",),
+            ),
+            (
+                "Bloom backward design ... MEDDPICC",
+                ("sales-development",),
+                ("curriculum-design",),
+            ),
+        )
+
+        for message, skills, blocked_skills in cases:
+            with self.subTest(message=message):
+                with (
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_normalized_relevance_message",
+                        wraps=domain_signals_impl._normalized_relevance_message,
+                    ) as normalize,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_fold_for_match",
+                        wraps=domain_signals_impl._fold_for_match,
+                    ) as fold,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_scan_normalized_relevance_message",
+                        wraps=domain_signals_impl._scan_normalized_relevance_message,
+                    ) as scan,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_full_message_relevance_scan",
+                        wraps=domain_signals_impl._full_message_relevance_scan,
+                    ) as full_scan,
+                ):
+                    relevance = domain_signals_impl.classify_clarification_relevance(message)
+
+                self.assertEqual(relevance.skills, skills)
+                self.assertEqual(relevance.blocked_skills, blocked_skills)
+                self.assertEqual(normalize.call_count, 1)
+                self.assertEqual(fold.call_count, 1)
+                self.assertEqual(scan.call_count, 1)
+                self.assertEqual(full_scan.call_count, 1)
+
+    def test_mixed_owned_and_blocked_signals_never_name_the_blocked_skill(self) -> None:
+        cases = (
+            ("four-fifths rule ... MEDDPICC", "rules-distill"),
+            ("Bloom backward design ... MEDDPICC", "curriculum-design"),
+        )
+
+        for message, blocked_skill in cases:
+            with self.subTest(message=message):
+                relevance = domain_signals_impl.classify_clarification_relevance(message)
+                direct = route_chat_message(message, source="discord")
+                public = chat_router_impl.public_chat_route_payload(message, source="discord")
+
+                self.assertIn(blocked_skill, relevance.blocked_skills)
+                for route in (direct, public):
+                    self.assertNotEqual(route["selected_skill"], blocked_skill)
+                    self.assertNotEqual(route.get("candidate_skill"), blocked_skill)
+                    self.assertNotIn(blocked_skill, [item["skill"] for item in route["recommendations"]])
+                    self.assertNotIn(blocked_skill, str(route.get("clarification", "")))
+                    self.assertIn("sales-development", [item["skill"] for item in route["recommendations"]])
+
+    def test_unowned_cues_only_yield_to_canonical_strong_owner_evidence(self) -> None:
+        strong = (
+            (
+                "Distill repeated lessons into AGENTS.md rule candidates about the four-fifths rule",
+                "rules-distill",
+                "operator_surface_fast_path:rules_distill",
+            ),
+            (
+                "Design a curriculum with learning objectives and Bloom backward design",
+                "curriculum-design",
+                "domain:learning objectives",
+            ),
+        )
+        weak = (
+            ("distill rules about the four-fifths rule", "rules-distill"),
+            ("candidate_skill=rules-distill four-fifths rule", "rules-distill"),
+            ("Bloom backward design", "curriculum-design"),
+        )
+
+        for message, skill, marker in strong:
+            with self.subTest(message=message):
+                route = route_chat_message(message, source="discord")
+                public = chat_router_impl.public_chat_route_payload(message, source="discord")
+                for payload in (route, public):
+                    self.assertEqual((payload["action"], payload["selected_skill"]), ("dispatch", skill))
+                    self.assertIn(marker, payload["recommendations"][0]["matched"])
+
+        for message, skill in weak:
+            with self.subTest(message=message):
+                for payload in (
+                    route_chat_message(message, source="discord"),
+                    chat_router_impl.public_chat_route_payload(message, source="discord"),
+                ):
+                    self.assertNotEqual(payload["selected_skill"], skill)
+                    self.assertNotEqual(payload.get("candidate_skill"), skill)
+                    self.assertNotIn(skill, [item["skill"] for item in payload["recommendations"]])
+
+    def test_contractions_share_canonical_local_not_semantics(self) -> None:
+        contractions = ("don't", "doesn't", "won't", "can't", "shouldn't", "isn't")
+        for contraction in contractions:
+            for apostrophe in ("'", "’"):
+                message = f"{contraction.replace(chr(39), apostrophe)} assess ASC 606; use MEDDPICC"
+                with self.subTest(message=message):
+                    relevance = domain_signals_impl.classify_clarification_relevance(message)
+                    self.assertEqual(relevance.skills, ("sales-development",))
+                    self.assertNotIn(
+                        "finance-analysis",
+                        [item["skill"] for item in route_chat_message(message)["recommendations"]],
+                    )
+                    self.assertNotIn(
+                        "finance-analysis",
+                        [
+                            item["skill"]
+                            for item in chat_router_impl.public_chat_route_payload(message)["recommendations"]
+                        ],
+                    )
+
+        inclusive = domain_signals_impl.classify_clarification_relevance(
+            "not only ASC 606 but revenue recognition"
+        )
+        self.assertEqual(inclusive.skills, ("finance-analysis",))
+
+    def test_composition_sensitive_negation_constants_are_defined_once(self) -> None:
+        source = Path(domain_signals_impl.__file__).parents[1] / "plugin_bundle" / "omh" / "domain_signals.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        names = (
+            "_DOMAIN_NEGATORS",
+            "_INCLUSIVE_NEGATION_FOLLOWERS",
+            "_LOCAL_NEGATION_TOKEN_RANGE",
+            "_CLAUSE_SEPARATOR_PATTERN",
+            "_ENGLISH_TOKEN_PATTERN",
+        )
+        assignments = [
+            target.id
+            for node in tree.body
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            for target in (
+                node.targets if isinstance(node, ast.Assign) else (node.target,)
+            )
+            if isinstance(target, ast.Name)
+        ]
+        for name in names:
+            with self.subTest(name=name):
+                self.assertEqual(assignments.count(name), 1)
+
     def test_synthesized_relevance_candidates_have_machine_next_actions(self) -> None:
         for message in (
             "ASC 606 model",
@@ -4413,7 +4569,12 @@ selected_workflow=ultraprocess
                 self.assertFalse(domain_signals_impl.classify_clarification_relevance(message).applies)
 
     def test_relevance_classification_and_normalization_run_once_per_request(self) -> None:
-        for message in ("DSO revenue cutoff", "four-fifths rule"):
+        for message in (
+            "DSO revenue cutoff",
+            "four-fifths rule",
+            "plain request without specialist cues",
+            "four-fifths rule ... MEDDPICC",
+        ):
             with self.subTest(message=message):
                 with (
                     mock.patch.object(
@@ -4431,12 +4592,24 @@ selected_workflow=ultraprocess
                         "_fold_for_match",
                         wraps=domain_signals_impl._fold_for_match,
                     ) as fold,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_scan_normalized_relevance_message",
+                        wraps=domain_signals_impl._scan_normalized_relevance_message,
+                    ) as scan,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_full_message_relevance_scan",
+                        wraps=domain_signals_impl._full_message_relevance_scan,
+                    ) as full_scan,
                 ):
                     route_chat_message(message, source="discord")
 
                 self.assertEqual(classify.call_count, 1)
                 self.assertEqual(normalize.call_count, 1)
                 self.assertEqual(fold.call_count, 1)
+                self.assertEqual(scan.call_count, 1)
+                self.assertEqual(full_scan.call_count, 1)
 
     def test_o013_unrelated_clarification_candidates_are_forbidden(self) -> None:
         cases = (
