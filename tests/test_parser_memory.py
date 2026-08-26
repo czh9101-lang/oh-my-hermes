@@ -32,12 +32,23 @@ class MemoryParserTests(unittest.TestCase):
             (["memory", "rollup", "--tag", "deploy", "--apply"], "cmd_memory_rollup"),
             (["memory", "capture", "summary", "--observed", "codex"], "cmd_memory_capture"),
             (["memory", "recall", "query", "--observer", "operator", "--observed", "codex"], "cmd_memory_recall"),
+            (["memory", "confirm", "record-one"], "cmd_memory_confirm"),
+            (["memory", "confirm", "--all-due", "--stale-after-days", "120"], "cmd_memory_confirm"),
         )
 
         for argv, handler_name in cases:
             with self.subTest(argv=argv):
                 args = build_parser().parse_args(argv)
                 self.assertEqual(args.func.__name__, handler_name)
+
+    def test_memory_confirm_requires_exactly_one_target(self) -> None:
+        from omh.installer import OmhError
+
+        for argv in (["memory", "confirm"], ["memory", "confirm", "record-one", "--all-due"]):
+            with self.subTest(argv=argv):
+                args = build_parser().parse_args(argv)
+                with self.assertRaises(OmhError):
+                    args.func(args)
 
     def test_memory_capture_rejects_invalid_source_class_at_parser_boundary(self) -> None:
         with self.assertRaises(SystemExit) as raised:

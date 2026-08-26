@@ -47,6 +47,8 @@ from ..memory import (
     build_project_memory_status,
     MAX_RETENTION_DAYS,
     capture_project_memory_candidate,
+    confirm_due_project_memory_records,
+    confirm_project_memory_record,
     read_memory_snapshot_file,
     reject_project_memory_candidate,
     review_memory_update_batch,
@@ -218,6 +220,29 @@ def cmd_memory_pin(args: argparse.Namespace) -> int:
 def cmd_memory_unpin(args: argparse.Namespace) -> int:
     try:
         payload = set_memory_pin(_paths(args), args.record_id, pinned=False)
+    except (OSError, ValueError) as exc:
+        raise OmhError(str(exc)) from exc
+    _print_json(payload)
+    return 0
+
+
+def cmd_memory_confirm(args: argparse.Namespace) -> int:
+    if bool(args.all_due) == bool(args.record_id):
+        raise OmhError("pass exactly one of <record-id> or --all-due")
+    try:
+        if args.all_due:
+            payload = confirm_due_project_memory_records(
+                _paths(args),
+                confirmed_by=args.confirmed_by,
+                stale_after_days=args.stale_after_days,
+            )
+        else:
+            payload = confirm_project_memory_record(
+                _paths(args),
+                args.record_id,
+                confirmed_by=args.confirmed_by,
+                stale_after_days=args.stale_after_days,
+            )
     except (OSError, ValueError) as exc:
         raise OmhError(str(exc)) from exc
     _print_json(payload)

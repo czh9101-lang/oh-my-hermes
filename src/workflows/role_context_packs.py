@@ -48,6 +48,7 @@ from ..local_store import atomic_write_json, read_json_object
 from ..paths import OmhPaths
 from ..system.metadata_safety import is_secret_value_shaped
 from .memory import (
+    ADVISORY_FRESHNESS_REASONS,
     HANDOFF_CONTEXT_PACK_SCHEMA_VERSION,
     PROJECT_MEMORY_RECALL_PACK_SCHEMA_VERSION,
     freshness_reason_detail,
@@ -490,8 +491,12 @@ def _reason_text(reason_code: str) -> str:
 
 
 def _is_stale_reason(reason_code: str) -> bool:
-    """Stale means the recall pack's own freshness vocabulary claimed it."""
-    return bool(freshness_reason_detail(reason_code))
+    """Stale means the recall pack's own freshness vocabulary claimed it.
+
+    Advisory codes are subtracted: they describe a record that is still fresh
+    and still delivered, so listing it under "stale" would be false.
+    """
+    return reason_code not in ADVISORY_FRESHNESS_REASONS and bool(freshness_reason_detail(reason_code))
 
 
 def _pack_scope(scope: Any, context_pack: Any, memory_recall_pack: Any) -> dict[str, str]:

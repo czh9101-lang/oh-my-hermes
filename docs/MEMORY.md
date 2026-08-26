@@ -451,12 +451,36 @@ rather than as a count, so a summarized handoff still says which record needs
 a decision. A warning is prepared context, never execution, review, CI, or
 merge evidence.
 
-Answering the warning uses the existing lifecycle verbs: `omh memory correct`
-supersedes the record with a reviewable replacement, `omh memory retire`
-archives it once expired. Both preserve the prior revision — a correction
-writes `history/<record-id>.r<revision>.json` carrying the original payload,
-its admission provenance, its source evidence, and a `superseded_by` link to
-the successor revision.
+The warning also fires *before* the cliff: for the last 14 days before a
+record's review deadline, packs still deliver it normally but carry a
+`review_due_soon` warning naming the deadline. Only delivered records earn the
+advance notice — due-soon is a statement about this pack's own content, not a
+store-wide page — and once the deadline actually passes, the ordinary
+`stale_review_required` warning covers held-back records as before.
+
+### Confirming, Correcting, or Retiring
+
+Answering the warning uses three verbs. `omh memory confirm <record-id>` is
+the lightweight one: it states the record is still true and resets its review
+deadline (default 90 days ahead, or `--stale-after-days N`), rewriting only
+revalidation metadata — the payload digest deliberately excludes it, so the
+record's identity, admission, and immutable review record are untouched.
+`omh memory confirm --all-due` confirms every record whose sole problem is a
+passed deadline; each record still passes the single-record gates, so the
+batch reports superseded or source-changed records as skipped with their
+refusal reason and detail rather than silently re-blessing them. Expired
+records never enter the batch at all — their verdict is `retention_expired`,
+not `review_due`, and the fix is `omh memory retire`. Confirmation never
+resurrects an expired record and never overrides the source-evidence gate —
+a record whose cited source changed needs a correction, because a new
+deadline would not restore its eligibility anyway.
+
+The heavier verbs are unchanged: `omh memory correct` supersedes the record
+with a reviewable replacement, `omh memory retire` archives it once expired.
+Both preserve the prior revision — a correction writes
+`history/<record-id>.r<revision>.json` carrying the original payload, its
+admission provenance, its source evidence, and a `superseded_by` link to the
+successor revision.
 
 ## Recall Ranking and Delivery Usage
 

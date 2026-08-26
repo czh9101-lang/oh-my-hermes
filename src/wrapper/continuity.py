@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final, Literal, TypeAlias, TypedDict, assert_never
 
+from ..workflows.memory import ADVISORY_FRESHNESS_REASONS
 from .continuity_state import json_strings as _strings, resume_status_from_evidence
 
 JsonValue: TypeAlias = None | bool | int | float | str | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
@@ -261,7 +262,18 @@ def _warning_count(pack: Mapping[str, JsonValue]) -> int | None:
     if count is not None:
         return count
     warnings = pack.get("freshness_warnings")
-    return len(warnings) if _is_json_list(warnings) else None
+    if not _is_json_list(warnings):
+        return None
+    # Advisory notices (a delivered record approaching its review deadline)
+    # describe a still-fresh pack; counting them would flip `freshness` to
+    # `warnings_present` for a store where nothing is actually unconfirmed.
+    # An entry that is not a mapping still counts -- unknown shapes fail
+    # toward warning, never toward silence.
+    return sum(
+        1
+        for warning in warnings
+        if not (isinstance(warning, Mapping) and str(warning.get("reason_code", "")) in ADVISORY_FRESHNESS_REASONS)
+    )
 
 
 def _unknown_memory() -> MemoryContinuity:
