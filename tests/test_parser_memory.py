@@ -32,6 +32,8 @@ class MemoryParserTests(unittest.TestCase):
             (["memory", "rollup", "--tag", "deploy", "--apply"], "cmd_memory_rollup"),
             (["memory", "capture", "summary", "--observed", "codex"], "cmd_memory_capture"),
             (["memory", "recall", "query", "--observer", "operator", "--observed", "codex"], "cmd_memory_recall"),
+            (["memory", "confirm", "record-one"], "cmd_memory_confirm"),
+            (["memory", "confirm", "--all-due", "--stale-after-days", "120"], "cmd_memory_confirm"),
         )
 
         for argv, handler_name in cases:

@@ -597,5 +597,132 @@ class DurableRecordsAreActuallyPermanentTests(unittest.TestCase):
             self.assertEqual((changed["state"], changed["reason"]), ("stale", "source_changed"))
 
 
+class ReviewDueSoonWarningTests(unittest.TestCase):
+    """A record announces its deadline while confirming still keeps recall intact."""
+
+    def test_a_delivered_record_warns_inside_the_pre_deadline_window(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            record = _approved(paths, "staging runs postgres 15", tags=["staging"])
+            probe = datetime.now(timezone.utc) + timedelta(days=80)  # 10 days before the 90-day deadline
+            pack = build_project_memory_recall_pack(paths, "postgres staging", now=probe)
+            self.assertEqual(pack["record_count"], 1)
+            self.assertEqual(validate_project_memory_recall_pack(pack), [])
+            warnings = pack["freshness_warnings"]
+            self.assertEqual(len(warnings), 1)
+            self.assertEqual(warnings[0]["record_id"], record["record_id"])
+            self.assertEqual(warnings[0]["reason_code"], "review_due_soon")
+            self.assertTrue(warnings[0]["delivered"])
+            self.assertIn("omh memory confirm", warnings[0]["next_action"])
+
+    def test_outside_the_window_and_undelivered_records_stay_silent(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            _approved(paths, "staging runs postgres 15", tags=["staging"])
+            _approved(paths, "we lint with ruff", tags=["lint"])
+            quiet = build_project_memory_recall_pack(
+                paths, "postgres staging", now=datetime.now(timezone.utc) + timedelta(days=60)
+            )
+            self.assertEqual(quiet["freshness_warnings"], [])
+            # Inside the window, the record this query never delivered stays
+            # silent: due-soon is advance notice about the pack's own content,
+            # not a store-wide page.
+            windowed = build_project_memory_recall_pack(
+                paths, "postgres staging", now=datetime.now(timezone.utc) + timedelta(days=80)
+            )
+            self.assertEqual(
+                [warning["reason_code"] for warning in windowed["freshness_warnings"]],
+                ["review_due_soon"],
+            )
+            self.assertTrue(windowed["freshness_warnings"][0]["delivered"])
+
+
+class MemoryConfirmationTests(unittest.TestCase):
+    """`omh memory confirm` is the missing verb behind the freshness warning."""
+
+    def test_confirm_returns_a_review_due_record_to_recall(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            record = _approved(paths, "staging runs postgres 15", tags=["staging"])
+            _mutate_record(
+                paths,
+                record["record_id"],
+                revalidation={"deadline": PAST},
+                staleness={"stale_after": PAST, "stale_after_days": None, "review_due_at": PAST},
+            )
+            dark = build_project_memory_recall_pack(paths, "postgres staging")
+            self.assertEqual(dark["record_count"], 0)
+            self.assertEqual(dark["excluded_records"][0]["reason"], "stale_review_required")
+
+            result = memory_workflow.confirm_project_memory_record(
+                paths, record["record_id"], confirmed_by="operator"
+            )
+            self.assertTrue(result["applied"])
+            self.assertTrue(result["was_stale"])
+            self.assertEqual(result["previous_review_due_at"], PAST)
+
+            restored = build_project_memory_recall_pack(paths, "postgres staging")
+            self.assertEqual(restored["record_count"], 1)
+            self.assertEqual(restored["freshness_warnings"], [])
+            stored = json.loads(_record_path(paths, record["record_id"]).read_text(encoding="utf-8"))
+            self.assertEqual(stored["revalidation"]["deadline"], result["review_due_at"])
+            self.assertEqual(stored["staleness"]["review_due_at"], result["review_due_at"])
+            self.assertEqual(stored["staleness"]["stale_after"], result["review_due_at"])
+            self.assertEqual(stored["revalidation"]["confirmed_by"], "operator")
+            self.assertEqual(validate_project_memory_record(stored), [])
+
+    def test_confirm_refuses_what_a_new_deadline_cannot_fix(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = resolve_paths(root / ".omh", root / ".hermes")
+
+            missing = memory_workflow.confirm_project_memory_record(paths, "mem_ffffffffffffffff")
+            self.assertEqual((missing["applied"], missing["reason_code"]), (False, "record_not_found"))
+
+            durable = _approved(paths, "the license is Apache-2.0", retention_class="durable")
+            no_deadline = memory_workflow.confirm_project_memory_record(paths, durable["record_id"])
+            self.assertEqual((no_deadline["applied"], no_deadline["reason_code"]), (False, "no_review_deadline"))
+
+            expired = _approved(paths, "volatile branch note", ttl_days=1)
+            _mutate_record(paths, expired["record_id"], ttl={"ttl_days": 1, "expires_at": PAST})
+            dead = memory_workflow.confirm_project_memory_record(paths, expired["record_id"])
+            self.assertEqual((dead["applied"], dead["reason_code"]), (False, "retention_expired"))
+
+            source = _source_file(root, "cited.md", "the original claim\n")
+            cited = _approved(paths, "claim with a cited source", source_ref=str(source))
+            atomic_write_text(source, "the claim, edited\n")
+            moved = memory_workflow.confirm_project_memory_record(paths, cited["record_id"])
+            self.assertEqual((moved["applied"], moved["reason_code"]), (False, "source_requires_correction"))
+
+    def test_confirm_all_due_reblesses_only_clean_deadline_records(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = resolve_paths(root / ".omh", root / ".hermes")
+            overdue = _approved(paths, "staging runs postgres 15", tags=["staging"])
+            fresh = _approved(paths, "we lint with ruff", tags=["lint"])
+            source = _source_file(root, "cited.md", "the original claim\n")
+            tainted = _approved(paths, "claim with a cited source", source_ref=str(source))
+            for record_id in (overdue["record_id"], tainted["record_id"]):
+                _mutate_record(
+                    paths,
+                    record_id,
+                    revalidation={"deadline": PAST},
+                    staleness={"stale_after": PAST, "stale_after_days": None, "review_due_at": PAST},
+                )
+            atomic_write_text(source, "the claim, edited\n")
+
+            batch = memory_workflow.confirm_due_project_memory_records(paths)
+            self.assertEqual(batch["due_count"], 2)
+            self.assertEqual([entry["record_id"] for entry in batch["confirmed"]], [overdue["record_id"]])
+            self.assertEqual(
+                batch["skipped"],
+                [{"record_id": tainted["record_id"], "reason_code": "source_requires_correction"}],
+            )
+            # The fresh record was never touched: its deadline still derives
+            # from capture, not from the batch run.
+            untouched = json.loads(_record_path(paths, fresh["record_id"]).read_text(encoding="utf-8"))
+            self.assertEqual(untouched["staleness"]["review_due_at"], fresh["staleness"]["review_due_at"])
+
+
 if __name__ == "__main__":
     unittest.main()

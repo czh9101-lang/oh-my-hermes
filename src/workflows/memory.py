@@ -67,6 +67,8 @@ MEMORY_ATTENTION_CHANGE_SCHEMA_VERSION = "memory_attention_change/v1"
 MEMORY_ATTENTION_JOURNAL_SCHEMA_VERSION = "omh_memory_attention_journal/v1"
 MEMORY_ROLLUP_SCHEMA_VERSION = "omh_memory_rollup/v1"
 HERMES_MEMORY_BRIDGE_SCHEMA_VERSION = "hermes_memory_bridge/v1"
+MEMORY_CONFIRMATION_SCHEMA_VERSION = "memory_confirmation/v1"
+MEMORY_CONFIRMATION_BATCH_SCHEMA_VERSION = "memory_confirmation_batch/v1"
 
 SOURCE_TRUTH_LEVELS = {
     "runtime_evidence": "observed_evidence",
@@ -273,6 +275,23 @@ _MEMORY_ATTENTION_CLAIM_BOUNDARY = (
     "true, approved, fresh, or eligible, it never deletes anything, and it is not execution, review, CI, "
     "merge, or Hermes internal-memory evidence."
 )
+_MEMORY_CONFIRMATION_REFUSAL_DETAIL = {
+    "record_not_found": "No approved OMH memory record carries that id, so there is nothing to confirm.",
+    "record_unreadable": "That record file exists but could not be read as JSON, so it cannot be confirmed safely.",
+    "unsupported_record_schema": "That file is not a current approved OMH memory record, so confirmation does not apply to it.",
+    "superseded": "A newer revision supersedes this record; confirm the live revision instead.",
+    "retention_expired": "Its retention deadline passed; confirmation resets review deadlines, it does not resurrect expired records.",
+    "source_requires_correction": (
+        "The local source it cites changed or cannot be read now, and a new review deadline would not restore "
+        "eligibility past that gate. Correct or retire the record instead."
+    ),
+    "no_review_deadline": "It carries no review deadline, so there is nothing to confirm.",
+}
+_MEMORY_CONFIRMATION_CLAIM_BOUNDARY = (
+    "Confirmation resets one OMH-local review deadline only. It never changes the record's reviewed content, "
+    "admission, or immutable review record, and it is not execution, review, CI, merge, or Hermes "
+    "internal-memory evidence."
+)
 # Perspective is honcho's peer paradigm reinterpreted deterministically: an
 # optional (observer, observed) pair naming whose view a record is and which
 # actor it is about. Unscoped records behave exactly as before; a scoped
@@ -323,7 +342,17 @@ _SOURCE_EVIDENCE_MAX_BYTES = 4 * 1024 * 1024
 # `truncated` when its own budget cuts records.
 _FRESHNESS_WARNING_LIMIT = 12
 _FRESHNESS_NEXT_ACTION = "Confirm, replace, or retire this record before it steers the plan."
+# The pre-deadline window turns the 90-day cliff into a slope: for this many
+# days before a record's review deadline, packs still deliver it but carry a
+# named warning, so the operator hears about the deadline while confirming
+# still keeps recall intact -- not on the first day the record is gone.
+_REVIEW_DUE_SOON_DAYS = 14
+_DUE_SOON_NEXT_ACTION = (
+    "Run `omh memory confirm <record-id>` (or correct/retire it) before the deadline passes; "
+    "until then the record still recalls normally."
+)
 _FRESHNESS_REASON_TEXT = {
+    "review_due_soon": "Its revalidation deadline is approaching; unconfirmed, it will leave default recall packs then.",
     "stale_review_required": "Its revalidation deadline passed, so nobody has confirmed the record since then.",
     "source_changed": "The local source it cites changed after the record was approved.",
     "source_unverifiable": "The local source it cites cannot be read now, so its freshness is unobservable.",
@@ -1773,6 +1802,160 @@ def apply_memory_attention_change(
     }
 
 
+def confirm_project_memory_record(
+    paths: OmhPaths,
+    record_id: str,
+    *,
+    confirmed_by: str = "operator",
+    stale_after_days: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Reset one approved record's review deadline after a human confirmed it.
+
+    This is the verb the freshness warning has always instructed ("Confirm,
+    replace, or retire") without a command behind it: replacing is the
+    correction path and retiring exists, but confirming -- the record is
+    still true, keep it recalling -- required a full correction plan plus
+    reapproval per record. Confirmation rewrites only revalidation metadata;
+    the canonical payload digest deliberately excludes revalidation, so the
+    record's identity, admission, and immutable review record are untouched.
+
+    Refusals are fail-closed and mirror recall's own gates: an expired record
+    is not resurrected here, a superseded one stays superseded, and a record
+    whose cited source changed or became unreadable needs a correction --
+    a new deadline would not make it eligible past the source gate anyway.
+    A record with no deadline (declared durable) has nothing to confirm.
+    """
+    normalized_id = str(record_id).strip()
+    if not _SAFE_REF.match(normalized_id):
+        raise ValueError(f"unsafe memory record id: {record_id!r}")
+    days = _validated_day_count(stale_after_days, field="stale_after_days")
+    if days is None:
+        days = _REVIEW_DEFAULT_DAYS
+    stamp = _attention_stamp(now)
+    moment = _parse_utc(stamp) or datetime.now(timezone.utc)
+    with file_lock(paths.memory_index_path, private=True):
+        record, error = read_json_object_result(_memory_record_path(paths, normalized_id))
+        if error:
+            return _refused_confirmation(normalized_id, "record_unreadable")
+        if not isinstance(record, dict) or str(record.get("record_id", "")) != normalized_id:
+            return _refused_confirmation(normalized_id, "record_not_found")
+        if record.get("schema_version") != PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
+            return _refused_confirmation(normalized_id, "unsupported_record_schema")
+        if str(record.get("superseded_by", "") or ""):
+            return _refused_confirmation(normalized_id, "superseded")
+        staleness = _record_staleness(record, now=moment)
+        state = str(staleness.get("state", ""))
+        if state == "expired":
+            return _refused_confirmation(normalized_id, "retention_expired")
+        if str(staleness.get("source_state", "")) in {"changed", "unreadable"}:
+            return _refused_confirmation(normalized_id, "source_requires_correction")
+        previous_due = str(staleness.get("review_due_at", "") or "")
+        if not previous_due:
+            return _refused_confirmation(normalized_id, "no_review_deadline")
+        revalidation = record.get("revalidation") if isinstance(record.get("revalidation"), dict) else {}
+        new_deadline = _days_after(stamp, days)
+        updated_revalidation = {
+            **revalidation,
+            "deadline": new_deadline,
+            "confirmed_at": stamp,
+            "confirmed_by": str(confirmed_by or "operator"),
+        }
+        _write_project_memory_record(
+            paths,
+            {
+                **record,
+                "revalidation": updated_revalidation,
+                "staleness": _staleness_projection(updated_revalidation),
+                "updated_at": stamp,
+            },
+        )
+        _write_memory_index_unlocked(paths)
+    return {
+        "schema_version": MEMORY_CONFIRMATION_SCHEMA_VERSION,
+        "record_id": normalized_id,
+        "applied": True,
+        "reason_code": "confirmed",
+        "was_stale": state == "stale",
+        "previous_review_due_at": previous_due,
+        "review_due_at": new_deadline,
+        "stale_after_days": days,
+        "confirmed_at": stamp,
+        "confirmed_by": str(confirmed_by or "operator"),
+        "redaction_policy": "metadata_only",
+        "next_action": f"The record recalls normally until {new_deadline}; confirm, correct, or retire it again by then.",
+        "claim_boundary": _MEMORY_CONFIRMATION_CLAIM_BOUNDARY,
+    }
+
+
+def confirm_due_project_memory_records(
+    paths: OmhPaths,
+    *,
+    confirmed_by: str = "operator",
+    stale_after_days: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Confirm every approved record whose review deadline has passed.
+
+    Default deadlines land 90 days after capture, so the store tends to go
+    review-due all at once -- the operator who ignored it for a season faces
+    dozens of one-by-one confirmations, which is how the warnings get ignored
+    for another season. The batch confirms only records whose sole problem is
+    the passed deadline: every record still goes through the single-record
+    gates, so an expired, superseded, or source-changed record is reported as
+    skipped with its refusal reason, never silently re-blessed.
+    """
+    moment = _parse_utc(_attention_stamp(now)) or datetime.now(timezone.utc)
+    due = sorted(
+        str(record.get("record_id", ""))
+        for record in _read_project_memory_records(paths)
+        if _record_staleness(record, now=moment).get("reason") == "review_due"
+    )
+    confirmed: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+    for due_id in due:
+        result = confirm_project_memory_record(
+            paths,
+            due_id,
+            confirmed_by=confirmed_by,
+            stale_after_days=stale_after_days,
+            now=now,
+        )
+        if bool(result.get("applied")):
+            confirmed.append({"record_id": due_id, "review_due_at": str(result.get("review_due_at", ""))})
+        else:
+            skipped.append({"record_id": due_id, "reason_code": str(result.get("reason_code", ""))})
+    return {
+        "schema_version": MEMORY_CONFIRMATION_BATCH_SCHEMA_VERSION,
+        "due_count": len(due),
+        "confirmed": confirmed,
+        "skipped": skipped,
+        "confirmed_count": len(confirmed),
+        "skipped_count": len(skipped),
+        "confirmed_by": str(confirmed_by or "operator"),
+        "redaction_policy": "metadata_only",
+        "next_action": (
+            "Review the skipped records individually; each carries the refusal reason."
+            if skipped
+            else "Every review-due record was confirmed; recall packs deliver them again."
+        ),
+        "claim_boundary": _MEMORY_CONFIRMATION_CLAIM_BOUNDARY,
+    }
+
+
+def _refused_confirmation(record_id: str, reason_code: str) -> dict[str, object]:
+    return {
+        "schema_version": MEMORY_CONFIRMATION_SCHEMA_VERSION,
+        "record_id": record_id,
+        "applied": False,
+        "reason_code": reason_code,
+        "detail": _MEMORY_CONFIRMATION_REFUSAL_DETAIL[reason_code],
+        "redaction_policy": "metadata_only",
+        "next_action": f"Inspect the record with `omh memory inspect {record_id}`; nothing was changed.",
+        "claim_boundary": _MEMORY_CONFIRMATION_CLAIM_BOUNDARY,
+    }
+
+
 def _age_tier(approved_at: str, *, now: datetime) -> int:
     """0 for young, 1 for aging, 2 for old; unparseable timestamps stay 0 so
     a malformed record is never silently downweighted."""
@@ -2897,6 +3080,15 @@ def _freshness_warnings(
         state = str(staleness.get("state", ""))
         reason_code = str(entry.get("eligibility_reason", "") or "")
         known_reason = reason_code in _FRESHNESS_REASON_TEXT
+        if not known_reason and delivered and str(staleness.get("reason", "") or "") == "review_due_soon":
+            # A still-fresh record inside the pre-deadline window: eligibility
+            # has nothing to say about it, so the advance notice comes from
+            # the staleness verdict instead. Only a DELIVERED record earns it
+            # -- a due-soon warning on every unrelated record in the store
+            # would page the operator about records this task never touched,
+            # and once the deadline actually passes the ordinary stale warning
+            # fires for held-back records as before.
+            reason_code, known_reason = "review_due_soon", True
         if not known_reason and state in {"", "fresh", "not_checked"}:
             continue
         if not record_id or record_id in seen:
@@ -2912,7 +3104,7 @@ def _freshness_warnings(
                 "review_due_at": str(staleness.get("review_due_at", "") or ""),
                 "detail": _FRESHNESS_REASON_TEXT[reason_code],
                 "delivered": bool(delivered),
-                "next_action": _FRESHNESS_NEXT_ACTION,
+                "next_action": _DUE_SOON_NEXT_ACTION if reason_code == "review_due_soon" else _FRESHNESS_NEXT_ACTION,
             }
         )
         if len(warnings) >= _FRESHNESS_WARNING_LIMIT:
@@ -3170,6 +3362,12 @@ def _record_staleness(record: dict[str, Any], *, now: datetime | None = None) ->
         return {"state": "stale", "reason": "source_changed", **fields}
     if source_state == "unreadable":
         return {"state": "unknown", "reason": "source_unreadable", **fields}
+    if deadline and deadline - now <= timedelta(days=_REVIEW_DUE_SOON_DAYS):
+        # Still fresh and still eligible: the record delivers exactly as
+        # before. The reason is the advance notice recall packs turn into a
+        # warning, so the deadline stops being a surprise discovered only
+        # after the record has already left every pack.
+        return {"state": "fresh", "reason": "review_due_soon", **fields}
     return {"state": "fresh", "reason": "", **fields}
 
 

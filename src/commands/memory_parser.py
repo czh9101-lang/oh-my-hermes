@@ -126,6 +126,28 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     unpin.add_argument("record_id")
     unpin.set_defaults(func=memory.cmd_memory_unpin)
 
+    confirm = memory_sub.add_parser(
+        "confirm",
+        help=(
+            "Confirm one approved record is still true and reset its review deadline; "
+            "--all-due confirms every record whose deadline has passed."
+        ),
+    )
+    confirm.add_argument("record_id", nargs="?", default="", help="Record to confirm; omit when using --all-due.")
+    confirm.add_argument(
+        "--all-due",
+        action="store_true",
+        help="Confirm every approved record whose review deadline has passed; refusals are reported as skipped.",
+    )
+    confirm.add_argument(
+        "--stale-after-days",
+        type=int,
+        default=None,
+        help="Days until the next review deadline (default 90).",
+    )
+    confirm.add_argument("--confirmed-by", default="operator", help="Who confirmed the record; stored as bounded metadata.")
+    confirm.set_defaults(func=memory.cmd_memory_confirm)
+
     attention = memory_sub.add_parser(
         "attention",
         help="Report how one record's attention tier would change the working context; --apply writes the local tier change.",
