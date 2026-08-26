@@ -192,10 +192,22 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # HUD-panel wording, and the rewrite-on-evidence-gap step) and the bounded
 # in-plan research stage rule with its dossier-recording obligation, minus
 # one subsumed recovery note (net +809 chars); warranted growth.
-# 715255 -> 715864: visual-qa replaced timestamp freshness prose with exact
+# 715255 -> 715434: the ultrawork skill's todo-init rule grew into a
+# plan-structure contract on owner direction (+179 chars: numbered phases in
+# delivery order, one implement/verify/deliver task per work unit,
+# independent review lanes, an evidence-and-cleanup close, one task per
+# observable outcome); warranted growth.
+# 715434 -> 716418: the shared delegate model-label rule now tells lanes
+# to show `(model)` alone when the host exposes no reasoning effort instead
+# of printing a literal `unknown` placeholder beside a known model, scoped to
+# narration lines (board columns keep their `unknown` cells) with a
+# say-not-observed carve-out for directly asked figures (renders into all
+# three handoff-guide skill bodies; the common rail carries the same text but
+# sits outside this metric); warranted growth.
+# 716418 -> 717027: visual-qa replaced timestamp freshness prose with exact
 # source-lineage and required-viewport contracts (+609 chars across the
 # generated skill body); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 715864
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 717027
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

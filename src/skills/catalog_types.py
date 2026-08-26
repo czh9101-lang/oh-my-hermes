@@ -283,9 +283,13 @@ DELEGATE_PROMPT_DISPLAY_RULE = (
     "must see WHAT was asked, not just that something was."
 )
 DELEGATE_MODEL_LABEL_RULE = (
-    "Name every delegated or parallel lane's model and reasoning effort inline as `(model effort)` in "
-    "status and briefing lines — including runtime-native subagents; write the literal `unknown` when the "
-    "host does not expose a value, never empty parentheses, and carry token and elapsed figures the same way."
+    "Name every delegated or parallel lane's model and, when the host exposes it, its reasoning effort "
+    "inline as `(model effort)` in status and briefing lines — including runtime-native subagents; when "
+    "no effort is exposed, show the model alone as `(model)` rather than writing a placeholder like "
+    "`unknown` beside a known model, and never emit empty parentheses. Carry token and elapsed figures "
+    "the same way in these narration lines: report observed figures and omit unobserved ones — when the "
+    "user asks for a figure directly, say it was not observed instead of omitting it; a rendered "
+    "status-board column keeps its own `unknown` cell."
 )
 DELEGATE_RESUMABLE_SESSION_RULE = (
     "Capture a resumable session or thread id at dispatch and report it in the status message: for "

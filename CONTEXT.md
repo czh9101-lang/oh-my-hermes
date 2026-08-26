@@ -109,7 +109,7 @@ _Avoid_: process handle, job
 
 **Plan todo**:
 The declared checklist at `$OMH_HOME/runtime/todo.json` that HUD surfaces
-render below the Hermes prompt input. Items are plan declarations; a done mark
+render above the Hermes prompt input. Items are plan declarations; a done mark
 never upgrades into observed evidence.
 _Avoid_: task list as evidence, TodoWrite (that is another product's tool name)
 
@@ -222,11 +222,12 @@ _Avoid_: assuming dock-bottom means above the input
 
 **OMH status widget**:
 `omh-status.mjs`, the managed Modern-TUI widget file OMH installs into
-`$HERMES_HOME/tui-widgets/`. It registers one `dock-bottom` app that renders
-the status HUD first (header always visible when installed; activity rows only
-during live work), followed by the plan-todo checklist. Keeping all OMH chrome
-below the composer leaves newly submitted transcript text adjacent to the
-prompt input.
+`$HERMES_HOME/tui-widgets/`. It registers two ambient apps that frame the
+composer like the classic REPL: a `dock-top` app renders the plan-todo
+checklist above the input, closed by the frame rule that also carries the
+`parallel shot ×N` badge, and a `dock-bottom` app opens with the frame rule
+below the input and renders the status HUD (header always visible when
+installed; activity rows only during live work).
 _Avoid_: statusline (that is a different, host-owned surface), HUD (the widget
 renders the HUD payload; it is not the payload)
 
