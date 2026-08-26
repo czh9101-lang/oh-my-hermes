@@ -497,3 +497,188 @@ def _unsourced_entry_rows(entries: tuple[str, ...], matched: set[int]) -> list[d
         for index, entry in enumerate(entries)
         if index not in matched
     ]
+
+
+MEMORY_DEMOTION_PLAN_SCHEMA_VERSION = "hermes_memory_demotion_plan/v1"
+
+# How much of the entry the reference line quotes back. Long enough that an
+# operator recognises which fact moved, short enough that the move still frees
+# space -- freeing space is the entire reason to make it.
+DEMOTION_REFERENCE_LABEL_CHARS = 60
+
+
+def build_memory_demotion_plan(
+    omh_home: str | Path,
+    hermes_home: str | Path,
+    *,
+    file_label: str | None = None,
+    max_entries: int = 5,
+) -> dict[str, object]:
+    """Plan which Hermes entries to move down into OMH's store, biggest first.
+
+    Hermes memory is L1: small, character-capped, and paid for on every turn.
+    The OMH record store is L2: reviewed, governed, and not bound by that cap.
+    When L1 fills the usual move is deleting an entry, which loses the fact.
+    Demotion is the other move -- the content goes to L2 and a short reference
+    line stays in L1 -- and this function is the plan for it.
+
+    An entry an approved OMH record already explains is not demotion work: its
+    content is in L2 already, so it is reported separately as deletable rather
+    than copied down a second time. What remains is ranked by size, so the
+    first row an operator applies buys the most headroom.
+
+    The reference line is keyed by the sha256 of the entry's exact UTF-8 bytes,
+    which is the one identifier both stores can compute without agreeing on
+    anything: it is the same before the candidate is captured and after the
+    record is approved, so the line survives the lifecycle it points into.
+
+    Prepared text only. Nothing here opens a Hermes file for writing -- Hermes
+    applies a row through its own `memory` tool, or the row is not applied.
+    """
+    if isinstance(max_entries, bool) or not isinstance(max_entries, int) or max_entries < 1:
+        raise ValueError(f"max_entries must be an integer of at least 1, got {max_entries!r}")
+    readings = read_hermes_memory(hermes_home)
+    if file_label is not None and not any(reading.label == file_label for reading in readings):
+        return _unknown_file_label_plan(file_label, readings)
+    selected = [reading for reading in readings if file_label is None or reading.label == file_label]
+    summaries = [
+        (str(record.get("record_id", "")), str(record.get("summary", "") or ""))
+        for record in read_approved_records(omh_home)
+    ]
+    already_covered: list[dict[str, object]] = []
+    candidates: list[tuple[str, int, str]] = []
+    for reading in selected:
+        for index, entry in enumerate(reading.entries):
+            record_id, score = _nearest_record(entry, summaries)
+            if score >= DUPLICATE_SIMILARITY_THRESHOLD:
+                already_covered.append(_already_covered_row(reading.label, index, entry, record_id, score))
+                continue
+            candidates.append((reading.label, index, entry))
+    # Biggest saving first; label and index only break ties, so two runs over
+    # the same store propose the same rows in the same order.
+    candidates.sort(key=lambda candidate: (-len(candidate[2]), candidate[0], candidate[1]))
+    rows = [_demotion_row(label, index, entry) for label, index, entry in candidates[:max_entries]]
+    return {
+        "schema_version": MEMORY_DEMOTION_PLAN_SCHEMA_VERSION,
+        "files": [_demotion_file_summary(reading, rows) for reading in selected],
+        "rows": rows,
+        "already_covered": already_covered,
+        "row_count": len(rows),
+        "estimated_savings_chars": sum(max(int(row["savings_chars"]), 0) for row in rows),
+        "redaction_policy": "local_content_plan",
+        "next_action": _DEMOTION_NEXT_ACTION,
+        "claim_boundary": _DEMOTION_CLAIM_BOUNDARY,
+    }
+
+
+# Unlike the bridge, these rows carry entry text: a demotion cannot be reviewed
+# or applied without the content being moved. The text is the operator's own
+# local Hermes memory, staying on the same host, and no lane transmits it.
+_DEMOTION_NEXT_ACTION = (
+    "Stage the rows with `omh memory demote --stage`, approve the staged candidates, then ask Hermes to "
+    "replace each original entry with its reference line through Hermes's own memory tool."
+)
+_DEMOTION_CLAIM_BOUNDARY = (
+    "OMH reads Hermes memory and cannot change it. This plan is prepared local text only "
+    "(prepared_not_observed); it is not a Hermes memory write, execution, review, CI, or merge evidence."
+)
+
+
+def _unknown_file_label_plan(file_label: str, readings: tuple[HermesMemoryFile, ...]) -> dict[str, object]:
+    """An empty plan that names the labels that do exist.
+
+    A typo'd label must not read as "this file has nothing to demote": the two
+    answers look identical from the payload unless the reason is stated.
+    """
+    return {
+        "schema_version": MEMORY_DEMOTION_PLAN_SCHEMA_VERSION,
+        "files": [],
+        "rows": [],
+        "already_covered": [],
+        "row_count": 0,
+        "estimated_savings_chars": 0,
+        "reason_code": "unknown_file_label",
+        "requested_file_label": file_label,
+        "known_file_labels": [reading.label for reading in readings],
+        "redaction_policy": "local_content_plan",
+        "next_action": _DEMOTION_NEXT_ACTION,
+        "claim_boundary": _DEMOTION_CLAIM_BOUNDARY,
+    }
+
+
+def _nearest_record(entry: str, summaries: list[tuple[str, str]]) -> tuple[str, float]:
+    """Record id and score of the approved summary closest to ``entry``."""
+    best_id = ""
+    best_score = 0.0
+    for record_id, summary in summaries:
+        score = similarity(entry, summary)
+        if score > best_score:
+            best_id, best_score = record_id, score
+    return best_id, best_score
+
+
+def _already_covered_row(
+    label: str,
+    index: int,
+    entry: str,
+    record_id: str,
+    score: float,
+) -> dict[str, object]:
+    """One L1 entry an approved L2 record already explains: delete, don't demote."""
+    return {
+        "file": label,
+        "entry_index": index,
+        "chars": len(entry),
+        "sha256": _entry_digest(entry),
+        "matched_record_id": record_id,
+        "similarity": round(score, 2),
+        "already_in_omh": True,
+    }
+
+
+def _demotion_row(label: str, index: int, entry: str) -> dict[str, object]:
+    """One proposed move, with the text to store and the line that replaces it."""
+    reference_line = demotion_reference_line(entry)
+    return {
+        "file": label,
+        "entry_index": index,
+        "chars": len(entry),
+        "sha256": _entry_digest(entry),
+        "entry_text": entry,
+        "reference_line": reference_line,
+        "reference_chars": len(reference_line),
+        # Negative for an entry shorter than its own reference line. Reported
+        # rather than hidden: a row that costs characters is still a real
+        # answer, and clamping it would inflate the total saving.
+        "savings_chars": len(entry) - len(reference_line),
+    }
+
+
+def demotion_reference_line(entry: str) -> str:
+    """The line that stays in L1 once the entry's content lives in OMH."""
+    digest = _entry_digest(entry)
+    label_text = " ".join(entry.split())
+    if len(label_text) > DEMOTION_REFERENCE_LABEL_CHARS:
+        label_text = label_text[:DEMOTION_REFERENCE_LABEL_CHARS] + "…"
+    return f"[omh#{digest[:12]}] {label_text}"
+
+
+def _entry_digest(entry: str) -> str:
+    """The entry's identity in both stores: sha256 of its exact UTF-8 bytes."""
+    return hashlib.sha256(entry.encode("utf-8")).hexdigest()
+
+
+def _demotion_file_summary(reading: HermesMemoryFile, rows: list[dict[str, object]]) -> dict[str, object]:
+    """One file's headroom now, and the headroom the planned rows would leave."""
+    planned = [row for row in rows if row["file"] == reading.label]
+    return {
+        "label": reading.label,
+        "cap": reading.cap,
+        "chars": reading.chars,
+        "headroom_chars": reading.headroom_chars,
+        "over_cap": reading.over_cap,
+        "entry_count": len(reading.entries),
+        "planned_demotions": len(planned),
+        "estimated_headroom_after": reading.headroom_chars
+        + sum(max(int(row["savings_chars"]), 0) for row in planned),
+    }

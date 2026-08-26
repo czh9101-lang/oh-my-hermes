@@ -46,9 +46,11 @@ from ..memory import (
     build_project_memory_review,
     build_project_memory_status,
     MAX_RETENTION_DAYS,
+    build_memory_demotion,
     capture_project_memory_candidate,
     confirm_due_project_memory_records,
     confirm_project_memory_record,
+    stage_memory_demotion,
     read_memory_snapshot_file,
     reject_project_memory_candidate,
     review_memory_update_batch,
@@ -131,8 +133,18 @@ def cmd_memory_review(args: argparse.Namespace) -> int:
 def cmd_memory_approve(args: argparse.Namespace) -> int:
     paths = _paths(args)
     try:
-        payload = approve_project_memory_candidate(paths, args.candidate_id, approved_by=args.approved_by)
+        payload = approve_project_memory_candidate(
+            paths,
+            args.candidate_id,
+            approved_by=args.approved_by,
+            retention_class=args.retention_class,
+        )
     except LifecycleCandidateError:
+        if args.retention_class is not None:
+            raise OmhError(
+                "lifecycle candidates keep their reviewed retention class; "
+                "--retention-class applies only to plain approvals"
+            ) from None
         # Correction/restore candidates approve through the lifecycle
         # executor so the replacement payload and revision survive; the
         # operator keeps one approve verb either way.
@@ -220,6 +232,20 @@ def cmd_memory_pin(args: argparse.Namespace) -> int:
 def cmd_memory_unpin(args: argparse.Namespace) -> int:
     try:
         payload = set_memory_pin(_paths(args), args.record_id, pinned=False)
+    except (OSError, ValueError) as exc:
+        raise OmhError(str(exc)) from exc
+    _print_json(payload)
+    return 0
+
+
+def cmd_memory_demote(args: argparse.Namespace) -> int:
+    try:
+        build = stage_memory_demotion if args.stage else build_memory_demotion
+        payload = build(
+            _paths(args),
+            file_label=args.file,
+            max_entries=_optional_positive_int(args.max, "--max") or 5,
+        )
     except (OSError, ValueError) as exc:
         raise OmhError(str(exc)) from exc
     _print_json(payload)

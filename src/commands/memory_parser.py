@@ -53,6 +53,15 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     approve = memory_sub.add_parser("approve", help="Approve a reviewed project-memory candidate.")
     approve.add_argument("candidate_id")
     approve.add_argument("--approved-by", default="operator")
+    approve.add_argument(
+        "--retention-class",
+        choices=("volatile", "standard", "durable"),
+        default=None,
+        help=(
+            "Re-class the record at approval (most usefully durable, which drops the default "
+            "90-day review clock); retention and the review deadline are re-derived for the new class."
+        ),
+    )
     approve.set_defaults(func=memory.cmd_memory_approve)
 
     reject = memory_sub.add_parser("reject", help="Reject a project-memory candidate.")
@@ -125,6 +134,22 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     unpin = memory_sub.add_parser("unpin", help="Remove one record's recall-anchor marker.")
     unpin.add_argument("record_id")
     unpin.set_defaults(func=memory.cmd_memory_unpin)
+
+    demote = memory_sub.add_parser(
+        "demote",
+        help=(
+            "Plan moving capped Hermes memory entries (L1) down into the OMH store (L2), leaving a short "
+            "reference line; --stage captures the planned entries as review-first candidates."
+        ),
+    )
+    demote.add_argument("--file", default=None, help="Only plan one Hermes memory file (MEMORY.md or USER.md).")
+    demote.add_argument("--max", type=int, default=5, help="Most entries to plan, biggest savings first (default 5).")
+    demote.add_argument(
+        "--stage",
+        action="store_true",
+        help="Capture the planned entries as OMH candidates (default is report-only). Hermes itself applies the L1 edits.",
+    )
+    demote.set_defaults(func=memory.cmd_memory_demote)
 
     confirm = memory_sub.add_parser(
         "confirm",
