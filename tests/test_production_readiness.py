@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import unittest
 from pathlib import Path
@@ -20,6 +21,8 @@ from omh.operations import operation_artifact_compatibility, validate_operation_
 from omh.production_readiness import (
     READINESS_CATEGORIES,
     READINESS_MATRIX_ROLLBACK_CONTRACT,
+    ReadinessTrustContext,
+    authenticate_external_readiness_evidence,
     build_readiness_matrix as _build_readiness_matrix,
     validate_readiness_matrix,
 )
@@ -32,10 +35,22 @@ FRESH_AFTER = "2026-08-26T11:00:00Z"
 TASK_ID = "task-1119"
 REVISION = "abc123def456"
 RUN_ID = "run-1119"
+TRUST_CONTEXT = ReadinessTrustContext("operator-readiness", b"trusted-readiness-key-material-1119")
 
 
-def build_readiness_matrix(*, task_id: str = TASK_ID, revision: str = REVISION, **kwargs: object) -> dict[str, object]:
-    return _build_readiness_matrix(task_id=task_id, revision=revision, **kwargs)
+def build_readiness_matrix(
+    *,
+    task_id: str = TASK_ID,
+    revision: str = REVISION,
+    trusted_context: ReadinessTrustContext | None = TRUST_CONTEXT,
+    **kwargs: object,
+) -> dict[str, object]:
+    return _build_readiness_matrix(
+        task_id=task_id,
+        revision=revision,
+        trusted_context=trusted_context,
+        **kwargs,
+    )
 
 
 def observed_check(category: str, *, observed_at: str = CREATED) -> dict[str, object]:
@@ -73,7 +88,7 @@ def external_evidence(
         evidence_refs=(f"task:{task_id}", f"revision:{revision}"),
         observed_at=receipt_observed_at,
     )
-    return {
+    evidence = {
         "schema_version": "external_readiness_evidence/v1",
         "receipt": receipt,
         "postcondition": {
@@ -89,6 +104,15 @@ def external_evidence(
             "observation_id": f"postcondition-{category}",
         },
     }
+    return authenticate_external_readiness_evidence(
+        evidence,
+        scope="release-1119",
+        category=category,
+        task_id=task_id,
+        revision=revision,
+        external_identity={"effect_id": effect, "run_id": run_id},
+        trusted_context=TRUST_CONTEXT,
+    )
 
 
 def external_row(category: str, evidence: dict[str, object], *, effect_id: str | None = None, run_id: str = RUN_ID) -> dict[str, object]:
@@ -239,7 +263,7 @@ class ReadinessMatrixTests(unittest.TestCase):
         )
         self.assertEqual(matrix["verdict"], "GO")
         self.assertEqual(matrix["rows"][2]["evidence_state"], "observed")
-        self.assertEqual(validate_readiness_matrix(matrix), [])
+        self.assertEqual(validate_readiness_matrix(matrix, trusted_context=TRUST_CONTEXT), [])
 
     def test_forged_observed_state_is_rejected(self) -> None:
         matrix = build_readiness_matrix(
@@ -327,7 +351,7 @@ class ReadinessMatrixTests(unittest.TestCase):
             evidence_fresh_after=FRESH_AFTER,
         )
         self.assertEqual(matrix["verdict"], "GO")
-        self.assertEqual(validate_readiness_matrix(matrix), [])
+        self.assertEqual(validate_readiness_matrix(matrix, trusted_context=TRUST_CONTEXT), [])
 
     def test_otherwise_valid_unrelated_receipt_cannot_produce_go(self) -> None:
         rows = complete_rows()
@@ -425,6 +449,104 @@ class ReadinessMatrixTests(unittest.TestCase):
                         created_at=created_at,
                         evidence_fresh_after=fresh_after,
                     )
+
+    def test_coherently_forged_public_bundle_cannot_authenticate(self) -> None:
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci"))
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        forged = copy.deepcopy(matrix)
+        forged_task = "task-forged"
+        forged_revision = "revision-forged"
+        forged_run = "run-forged"
+        forged_effect = "readiness:forged"
+        forged["task_id"] = forged_task
+        forged["revision"] = forged_revision
+        forged["matrix_id"] = "readiness-" + hashlib.sha256(
+            json.dumps(
+                {
+                    "scope": forged["scope"],
+                    "task_id": forged_task,
+                    "revision": forged_revision,
+                    "created_at": forged["created_at"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()[:16]
+        row = forged["rows"][2]
+        row["external_identity"] = {"effect_id": forged_effect, "run_id": forged_run}
+        receipt = row["evidence"][0]["receipt"]
+        receipt["effect_id"] = forged_effect
+        receipt["run_id"] = forged_run
+        receipt["evidence_refs"] = [f"task:{forged_task}", f"revision:{forged_revision}"]
+        receipt["receipt_id"] = "receipt-" + hashlib.sha256(b"coherent-public-forgery").hexdigest()[:24]
+        postcondition = row["evidence"][0]["postcondition"]
+        postcondition.update(
+            {
+                "receipt_id": receipt["receipt_id"],
+                "effect_id": forged_effect,
+                "run_id": forged_run,
+                "task_id": forged_task,
+                "revision": forged_revision,
+            }
+        )
+        row["evidence"][0]["authenticity"]["hmac_sha256"] = hashlib.sha256(
+            json.dumps(row["evidence"][0], sort_keys=True, default=str).encode()
+        ).hexdigest()
+
+        errors = validate_readiness_matrix(forged, trusted_context=TRUST_CONTEXT)
+
+        self.assertIn("external readiness authenticity tag does not match trusted context", "; ".join(errors))
+        self.assertIn("verdict must match derived verdict HOLD", "; ".join(errors))
+
+    def test_stale_public_matrix_id_is_rejected(self) -> None:
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=complete_rows(), created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        matrix["task_id"] = "task-forged"
+        self.assertIn(
+            "matrix_id must match canonical scope, task, revision, and created_at identity",
+            validate_readiness_matrix(matrix),
+        )
+
+    def test_absent_wrong_or_untrusted_context_cannot_advance_external_evidence(self) -> None:
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci"))
+        valid = build_readiness_matrix(
+            scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        contexts = (
+            None,
+            ReadinessTrustContext("operator-readiness", b"wrong-readiness-key-material-1119"),
+            ReadinessTrustContext("other-context", b"trusted-readiness-key-material-1119"),
+            ReadinessTrustContext("operator-readiness", b"short"),
+        )
+        for context in contexts:
+            with self.subTest(context=context):
+                errors = validate_readiness_matrix(valid, trusted_context=context)
+                self.assertIn("external readiness authenticity", "; ".join(errors))
+                rebuilt = build_readiness_matrix(
+                    scope="release-1119",
+                    rows=rows,
+                    created_at=CREATED,
+                    evidence_fresh_after=FRESH_AFTER,
+                    trusted_context=context,
+                )
+                self.assertEqual(rebuilt["verdict"], "HOLD")
+                self.assertEqual(rebuilt["rows"][2]["evidence_state"], "missing")
+
+    def test_valid_authentication_persists_no_secret(self) -> None:
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci"))
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        rendered = json.dumps(matrix, sort_keys=True)
+        self.assertEqual(matrix["verdict"], "GO")
+        self.assertEqual(validate_readiness_matrix(matrix, trusted_context=TRUST_CONTEXT), [])
+        self.assertNotIn(TRUST_CONTEXT.hmac_key.decode(), rendered)
 
     def test_validator_rejects_each_invalid_top_level_state(self) -> None:
         matrix = build_readiness_matrix(
