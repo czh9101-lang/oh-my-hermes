@@ -2861,6 +2861,27 @@ class RouterContentTests(unittest.TestCase):
         self.assertTrue(any("source or web evidence" in item for item in definitions["ralplan"].required_inputs))
         self.assertIn("verification commands", definitions["ralplan"].expected_outputs)
         self.assertTrue(any("rejected options" in item for item in definitions["ralplan"].quality_bar))
+        # The plan run must surface a TUI todo checklist (`omh_todo`), like the
+        # ultrawork engine already does, and run research as an in-plan stage
+        # when plan-shaping evidence is missing instead of only consuming a
+        # dossier that happens to exist.
+        ralplan_bar = definitions["ralplan"].quality_bar
+        self.assertTrue(any("`omh_todo`" in item and "todo init" in item for item in ralplan_bar))
+        self.assertTrue(
+            any("declarations, never execution evidence" in item for item in ralplan_bar)
+        )
+        self.assertTrue(
+            any(
+                "run the `research` workflow as a bounded in-plan stage" in item
+                for item in ralplan_bar
+            )
+        )
+        # The todo rule stays off the shared `planning` harness and off the lighter
+        # `plan` skill on purpose: `plan`, `curriculum-design`, and `product-brief`
+        # share that harness and should not gain a HUD checklist obligation.
+        self.assertFalse(any("omh_todo" in item for item in definitions["plan"].quality_bar))
+        planning_harness = next(item for item in builtin_harnesses() if item.name == "planning")
+        self.assertFalse(any("omh_todo" in item for item in planning_harness.quality_bar))
         self.assertTrue(any("prepared_not_observed" in item for item in definitions["ralplan"].final_checklist))
         self.assertEqual(primary_harness_for_skill("research"), "research")
         self.assertEqual(primary_harness_for_skill("research-brief"), "business-research")

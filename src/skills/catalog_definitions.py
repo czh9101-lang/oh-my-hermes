@@ -4563,7 +4563,7 @@ _DEFINITIONS = [
         phase="reviewed-plan",
         hermes_role="retained-cognition",
         handoff_policy="Keep consensus planning and review in Hermes; produce explicit selected executor/runtime handoff guidance only after the plan is accepted, and start a follow-on workflow engine only after the user explicitly confirms the recommended path.",
-        required_inputs=("requirements", "codebase facts", "source or web evidence when needed", "options", "tradeoffs", "test shape"),
+        required_inputs=("requirements", "codebase facts", "source or web evidence when needed, or an in-plan research stage to obtain it", "options", "tradeoffs", "test shape"),
         expected_outputs=("reviewed plan", "acceptance criteria", "risk register", "verification commands", "handoff guidance"),
         # Naming the commands is the point. This used to read "plan and review
         # artifacts when a wrapper supports file-backed planning", which names
@@ -4584,9 +4584,11 @@ _DEFINITIONS = [
         quality_tier="reviewed-plan-gated",
         quality_bar=(
             "Start from observed repo facts and source/web evidence when freshness or external behavior matters.",
+            "Initialize the plan todo before the first planning step: declare the planning stages as `omh_todo` items (todo init) — repo facts and evidence check, options and tradeoffs, risk review, acceptance criteria and verification commands, plan record and acceptance — keep exactly one item active, and when the evidence check reveals a gap rewrite the list (`omh_todo` action=set) to insert the research stage; update the list as stages complete so the HUD todo panel shows plan progress as a bounded checklist, and treat items as declarations, never execution evidence.",
             "Include planner view, critic/risk review, alternative paths, rejected options, and a testability check before handoff.",
             "Produce testable acceptance criteria and exact verification commands or explain why they are not yet knowable.",
             "Record unresolved tradeoffs and evidence gaps instead of flattening uncertainty.",
+            "When plan-shaping evidence is missing — current external behavior, contested claims, or unstudied reference implementations — run the `research` workflow as a bounded in-plan stage (not an exhaustive deep-research run) before comparing options, record its dossier the way the `research` artifact contract requires, and consume it instead of planning on assumptions.",
             "Consume a recorded `research` dossier when one exists: plan options and rejected alternatives should cite its decision drivers and verified claims.",
             "End with a selected executor/runtime handoff shape only after the plan is accepted.",
             ENGINE_FIT_RECOMMENDATION_RULE,
@@ -4621,7 +4623,6 @@ _DEFINITIONS = [
         recovery_notes=(
             "If requirements are still fuzzy, route back to deep-interview before planning.",
             "If current-source evidence is missing, route a `research` step before accepting the plan.",
-            "If the plan depends on unstudied reference implementations or contested external claims, route a deep research step and consume its dossier before accepting the plan.",
             "If the user asks for implementation after acceptance, recommend the follow-on path that fits the work's shape (`ultrawork` with the matching capability — durable checkpoint, coordinated lanes, single-owner persistence, or one delivery cycle — or a direct selected executor handoff) with a one-line fit reason, and start it only on the user's explicit go-ahead — never auto-start an engine from acceptance alone.",
         ),
     ),

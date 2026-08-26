@@ -187,7 +187,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # the bare-number collision rule, the mid-interview option shape, and one
 # quality-bar bullet), replacing free-text-only replies with an
 # AskUserQuestion-shaped numbered list; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 714446
+# 714446 -> 715255: the ralplan skill gained the plan-todo checklist rule
+# (`omh_todo` stage declaration with the declarations-not-evidence boundary,
+# HUD-panel wording, and the rewrite-on-evidence-gap step) and the bounded
+# in-plan research stage rule with its dossier-recording obligation, minus
+# one subsumed recovery note (net +809 chars); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 715255
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
