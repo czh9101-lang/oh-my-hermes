@@ -10,6 +10,7 @@ PROCEDURE_STEP_KINDS = frozenset({"analysis", "production", "validation"})
 _STEP_ID_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 _PLACEHOLDER_PREFIX_PATTERN = re.compile(r"^\s*(?:todo|tbd)(?=$|[^a-z0-9])", re.IGNORECASE)
 _PLACEHOLDER_PREFIX_WRAPPERS = frozenset("`'\"*_~([{<")
+_LEADING_MARKER_CONFUSABLES = str.maketrans("ТтВвΟοОоᎠꭰ", "TtBbOoOoDd")
 
 
 def _normalized_placeholder_candidate(value: str) -> str:
@@ -29,10 +30,11 @@ def _normalized_placeholder_candidate(value: str) -> str:
 
 
 def _has_placeholder_prefix(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and _PLACEHOLDER_PREFIX_PATTERN.match(_normalized_placeholder_candidate(value)) is not None
-    )
+    if not isinstance(value, str):
+        return False
+    candidate = _normalized_placeholder_candidate(value)
+    bounded_candidate = candidate[:4].translate(_LEADING_MARKER_CONFUSABLES) + candidate[4:]
+    return _PLACEHOLDER_PREFIX_PATTERN.match(bounded_candidate) is not None
 
 
 def _string_members(value: object) -> tuple[tuple[str, ...], bool] | None:
@@ -46,16 +48,21 @@ def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
     """Return stable machine violation IDs for an opt-in procedure contract."""
     steps = definition.procedure_steps
     checks = definition.procedure_checks
-    if not steps and not checks:
+    steps_supported = isinstance(steps, (tuple, list))
+    checks_supported = isinstance(checks, (tuple, list))
+    if steps_supported and checks_supported and not steps and not checks:
         return []
 
     violations: list[str] = []
-    if not isinstance(steps, (tuple, list)) or not steps:
-        return ["procedure_steps_required"]
-    declared_checks: set[str] = set()
-    if not isinstance(checks, (tuple, list)) or not checks:
+    if not steps_supported or not steps:
+        violations.append("procedure_steps_required")
+    if not checks_supported or not checks:
         violations.append("procedure_checks_required")
-    else:
+    if not steps_supported or not checks_supported or not steps:
+        return violations
+
+    declared_checks: set[str] = set()
+    if checks:
         for check in checks:
             check_id = getattr(check, "check_id", None)
             result_fields = getattr(check, "required_result_fields", None)
@@ -85,8 +92,23 @@ def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
 
     required_input_members = _string_members(definition.required_inputs)
     expected_output_members = _string_members(definition.expected_outputs)
+    if required_input_members is None or not required_input_members[1]:
+        violations.append("procedure_invalid_required_inputs")
     required_inputs = set(required_input_members[0] if required_input_members is not None else ())
     expected_outputs = set(expected_output_members[0] if expected_output_members is not None else ())
+
+    questions = definition.expert_questions
+    question_inputs: list[str] = []
+    valid_questions = isinstance(questions, (tuple, list))
+    if valid_questions:
+        for question in questions:
+            required_input = getattr(question, "required_input", None)
+            if isinstance(required_input, str):
+                question_inputs.append(required_input)
+            else:
+                valid_questions = False
+    if not valid_questions:
+        violations.append("procedure_invalid_expert_questions")
     referenced_inputs: set[str] = set()
     referenced_outputs: set[str] = set()
     referenced_checks: set[str] = set()
@@ -160,8 +182,7 @@ def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
     if not validation_seen:
         violations.append("procedure_missing_validation_step")
 
-    question_inputs = [getattr(question, "required_input", None) for question in definition.expert_questions]
-    question_input_set = {item for item in question_inputs if isinstance(item, str)}
+    question_input_set = set(question_inputs)
     if required_inputs - question_input_set:
         violations.append("procedure_missing_required_input_question")
     if question_input_set - required_inputs:
