@@ -91,6 +91,23 @@ Rules:
 
 ## Dispatch bridge semantics
 
+- **Concurrency is a profile tunable.** The dispatch pool width comes from
+  the setup profile's `parallelism` block — `default_concurrency` (5) sized
+  against a `global_concurrency` ceiling (8), the same defaults OMO's task
+  engine ships. A fresh `omh setup` writes the block into the profile so it
+  is visible and editable; an explicit `--concurrency` flag still wins,
+  clamped to the ceiling, and the dispatch summary's `concurrency` block
+  records the requested and applied widths plus their source. `per_owner`
+  maps an executor owner (for example `codex: 2`) to its own lane width so
+  one rate-limited provider is not hammered by the whole pool; owners not
+  named there are governed by the global pool alone. A gated owner's units
+  hold pool slots while they wait for a lane, so many same-owner units
+  queued ahead can delay another owner's units in the same wave — size
+  `per_owner` with that trade in mind. An install written before this
+  block existed resolves to the same defaults without showing the block;
+  re-running `omh setup` writes it out, and rewrites the whole profile
+  while doing so. `lane_budget_default` is advisory context for
+  Hermes-native lanes — OMH never enforces a lane count inside Hermes.
 - **Spawnability is data.** `DISPATCH_COMMAND_TEMPLATES` in
   `src/coding/fanout_dispatch.py` maps profiles with a local headless CLI to
   fixed argv templates — currently codex (`codex exec`), claude-code
@@ -436,7 +453,7 @@ omh coding fanout status --fanout-id <fanout-id> [--json]
 omh coding fanout migrate-legacy <fanout-id> \
   [--confirm-contract-sha256 <digest>]  # operator/maintenance only
 omh coding fanout dispatch <fanout-id> --goal-file goal.txt \
-  [--repo-root .] [--base-ref HEAD] [--concurrency 2] [--timeout 1800] \
+  [--repo-root .] [--base-ref HEAD] [--concurrency N] [--timeout 1800] \
   [--unit <id> ...] [--dry-run] [--run-verification]
 omh coding model-route [--executor <profile>] [--role <role>] [--model <id>] [--effort <level>] [--domain <name>] [--explain] [--from-inventory] [--json]
 omh coding model-inventory [--json]

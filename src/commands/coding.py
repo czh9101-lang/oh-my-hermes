@@ -1607,8 +1607,11 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
         read_fanout_contract_provenance,
     )
     from ..coding.fanout_dispatch import dispatch_fanout, fanout_dispatch_preflight
+    from ..coding.parallelism_policy import read_parallelism_policy, resolve_fanout_concurrency
 
     paths = _paths(args)
+    parallelism = read_parallelism_policy(paths)
+    concurrency = resolve_fanout_concurrency(parallelism, args.concurrency)
     try:
         contract = read_fanout_contract(paths, args.fanout_id)
         read_fanout_contract_provenance(
@@ -1636,7 +1639,9 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             goal_text=goal_text,
             repo_root=repo_root,
             base_sha="",
-            concurrency=args.concurrency,
+            concurrency=concurrency["applied"],
+            per_owner_lanes=parallelism["per_owner"],
+            concurrency_policy=concurrency,
             timeout=args.timeout,
             only_units=args.unit,
             dry_run=bool(args.dry_run),
@@ -1664,7 +1669,9 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             # worktree add can re-check that the base has not moved between
             # this single resolve and the unit's own creation.
             source_ref=args.base_ref,
-            concurrency=args.concurrency,
+            concurrency=concurrency["applied"],
+            per_owner_lanes=parallelism["per_owner"],
+            concurrency_policy=concurrency,
             timeout=args.timeout,
             only_units=args.unit,
             dry_run=bool(args.dry_run),
@@ -1934,7 +1941,18 @@ def _add_coding_commands(sub) -> None:
     fanout_dispatch.add_argument("--goal-file", required=True, help="File with the goal text frozen at prepare time ('-' for stdin).")
     fanout_dispatch.add_argument("--repo-root", default=".", help="Repository the unit worktrees branch from.")
     fanout_dispatch.add_argument("--base-ref", default="HEAD", help="Ref resolved once to a SHA all unit branches start from.")
-    fanout_dispatch.add_argument("--concurrency", type=int, default=2)
+    # Default None resolves through the setup profile's `parallelism` block
+    # (default_concurrency 5, global_concurrency 8 unless edited); an
+    # explicit flag still wins, clamped to the global ceiling.
+    fanout_dispatch.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help=(
+            "Pool width override; defaults to the setup profile's "
+            "parallelism.default_concurrency and is clamped to global_concurrency."
+        ),
+    )
     fanout_dispatch.add_argument("--timeout", type=int, default=1800, help="Per-unit subprocess timeout in seconds.")
     fanout_dispatch.add_argument("--unit", action="append", default=None, help="Dispatch only these unit ids (repeatable).")
     fanout_dispatch.add_argument("--dry-run", action="store_true", help="Resolve readiness, argv, and worktree paths; spawn nothing.")
