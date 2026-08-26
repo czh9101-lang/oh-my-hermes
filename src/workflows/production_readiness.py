@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime
 from typing import Any, Final
 
@@ -35,12 +35,39 @@ _MIN_HMAC_KEY_BYTES = 32
 _MAX_HMAC_KEY_BYTES = 4_096
 
 
-@dataclass(frozen=True, slots=True)
+class _RedactedHmacKey:
+    __slots__ = ("__material",)
+
+    def __init__(self, material: bytes) -> None:
+        self.__material = bytes(material)
+
+    def material(self) -> bytes:
+        return self.__material
+
+    def __repr__(self) -> str:
+        return "<redacted hmac key>"
+
+    __str__ = __repr__
+
+    def __deepcopy__(self, memo: dict[int, object]) -> _RedactedHmacKey:
+        return self
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class ReadinessTrustContext:
-    """Caller-held local integrity context; the key is never serialized."""
+    """Caller-held local integrity context whose rendering never exposes its key."""
 
     context_id: str
-    hmac_key: bytes
+    _hmac_key: _RedactedHmacKey = dataclass_field(repr=False)
+
+    def __init__(self, context_id: str, hmac_key: bytes) -> None:
+        object.__setattr__(self, "context_id", str(context_id))
+        object.__setattr__(self, "_hmac_key", _RedactedHmacKey(hmac_key))
+
+    def __repr__(self) -> str:
+        return f"ReadinessTrustContext(context_id={self.context_id!r}, hmac_key=<redacted>)"
+
+    __str__ = __repr__
 
 # Machine-consumed rollback policy. Rollback removes the new consumer and
 # generated annotations; it does not rewrite persisted matrices or promote old
@@ -64,6 +91,8 @@ def authenticate_external_readiness_evidence(
     category: str,
     task_id: str,
     revision: str,
+    created_at: str,
+    evidence_fresh_after: str,
     external_identity: dict[str, Any],
     trusted_context: ReadinessTrustContext,
 ) -> dict[str, Any]:
@@ -74,11 +103,15 @@ def authenticate_external_readiness_evidence(
         evidence,
         scope=scope,
         category=category,
+        matrix_schema_version=READINESS_MATRIX_SCHEMA_VERSION,
         task_id=task_id,
         revision=revision,
+        created_at=created_at,
+        evidence_fresh_after=evidence_fresh_after,
+        requires_external_observation=True,
         external_identity=external_identity,
     )
-    tag = hmac.new(trusted_context.hmac_key, payload, hashlib.sha256).hexdigest()
+    tag = hmac.new(_trusted_context_key(trusted_context), payload, hashlib.sha256).hexdigest()
     return {
         **evidence,
         "authenticity": {
@@ -164,6 +197,7 @@ def build_readiness_matrix(
                     requires_external=requires_external,
                     external_identity=external_identity,
                     task_id=clean_task_id,
+                    matrix_schema_version=READINESS_MATRIX_SCHEMA_VERSION,
                     scope=clean_scope,
                     category=category,
                     revision=clean_revision,
@@ -312,6 +346,7 @@ def validate_readiness_matrix(
             valid_evidence,
             requires_external=bool(requires_external),
             external_identity=external_identity,
+            matrix_schema_version=str(record.get("schema_version", "")),
             scope=scope,
             category=str(row.get("category", "")),
             task_id=task_id,
@@ -322,14 +357,18 @@ def validate_readiness_matrix(
         )
         if row.get("evidence_state") not in READINESS_EVIDENCE_STATES:
             errors.append(f"rows[{index}].evidence_state is unsupported: {row.get('evidence_state')}")
-        if requires_external and row.get("evidence_state") == "observed" and derived_state != "observed":
+        if external_items and row.get("evidence_state") == "observed" and derived_state != "observed":
             authentication_errors = [
                 _external_authenticity_error(
                     item,
+                    matrix_schema_version=str(record.get("schema_version", "")),
                     scope=scope,
                     category=str(row.get("category", "")),
                     task_id=task_id,
                     revision=revision,
+                    created_at=created_at,
+                    evidence_fresh_after=fresh_after,
+                    requires_external_observation=bool(requires_external),
                     external_identity=external_identity,
                     trusted_context=trusted_context,
                 )
@@ -499,10 +538,14 @@ def _future_timestamp_errors(value: object, observed_before: str, label: str) ->
 def _external_authenticity_error(
     evidence: dict[str, Any],
     *,
+    matrix_schema_version: str,
     scope: str,
     category: str,
     task_id: str,
     revision: str,
+    created_at: str,
+    evidence_fresh_after: str,
+    requires_external_observation: bool,
     external_identity: dict[str, Any],
     trusted_context: ReadinessTrustContext | None,
 ) -> str:
@@ -527,13 +570,17 @@ def _external_authenticity_error(
     if not isinstance(candidate, str) or not _HMAC_RE.fullmatch(candidate):
         return "external readiness authenticity tag does not match trusted context"
     expected = hmac.new(
-        trusted_context.hmac_key,
+        _trusted_context_key(trusted_context),
         _external_authenticity_payload(
             evidence,
+            matrix_schema_version=matrix_schema_version,
             scope=scope,
             category=category,
             task_id=task_id,
             revision=revision,
+            created_at=created_at,
+            evidence_fresh_after=evidence_fresh_after,
+            requires_external_observation=requires_external_observation,
             external_identity=external_identity,
         ),
         hashlib.sha256,
@@ -546,20 +593,29 @@ def _external_authenticity_error(
 def _external_authenticity_payload(
     evidence: dict[str, Any],
     *,
+    matrix_schema_version: str,
     scope: str,
     category: str,
     task_id: str,
     revision: str,
+    created_at: str,
+    evidence_fresh_after: str,
+    requires_external_observation: bool,
     external_identity: dict[str, Any],
 ) -> bytes:
     unsigned_evidence = {key: value for key, value in evidence.items() if key != "authenticity"}
     return json.dumps(
         {
             "schema_version": "external_readiness_authenticity_payload/v1",
+            "matrix_schema_version": matrix_schema_version,
+            "matrix_id": _matrix_id(scope, task_id, revision, created_at),
             "scope": scope,
             "category": category,
             "task_id": task_id,
             "revision": revision,
+            "created_at": created_at,
+            "evidence_fresh_after": evidence_fresh_after,
+            "requires_external_observation": requires_external_observation,
             "external_identity": external_identity,
             "evidence": unsigned_evidence,
         },
@@ -569,12 +625,14 @@ def _external_authenticity_payload(
 
 
 def _trusted_context_usable(context: ReadinessTrustContext | None) -> bool:
-    return (
-        isinstance(context, ReadinessTrustContext)
-        and _valid_ref(context.context_id)
-        and isinstance(context.hmac_key, bytes)
-        and _MIN_HMAC_KEY_BYTES <= len(context.hmac_key) <= _MAX_HMAC_KEY_BYTES
-    )
+    if not isinstance(context, ReadinessTrustContext) or not _valid_ref(context.context_id):
+        return False
+    key = _trusted_context_key(context)
+    return _MIN_HMAC_KEY_BYTES <= len(key) <= _MAX_HMAC_KEY_BYTES
+
+
+def _trusted_context_key(context: ReadinessTrustContext) -> bytes:
+    return context._hmac_key.material()
 
 
 def _derive_evidence_state(
@@ -582,6 +640,7 @@ def _derive_evidence_state(
     *,
     requires_external: bool,
     external_identity: dict[str, Any],
+    matrix_schema_version: str,
     scope: str,
     category: str,
     task_id: str,
@@ -614,10 +673,14 @@ def _derive_evidence_state(
         if schema == EXTERNAL_READINESS_EVIDENCE_SCHEMA_VERSION:
             if _external_authenticity_error(
                 item,
+                matrix_schema_version=matrix_schema_version,
                 scope=scope,
                 category=category,
                 task_id=task_id,
                 revision=revision,
+                created_at=observed_before,
+                evidence_fresh_after=fresh_after,
+                requires_external_observation=requires_external,
                 external_identity=external_identity,
                 trusted_context=trusted_context,
             ):

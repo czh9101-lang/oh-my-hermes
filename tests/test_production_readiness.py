@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
+import logging
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 
 from _local_package import load_local_package
@@ -35,7 +38,8 @@ FRESH_AFTER = "2026-08-26T11:00:00Z"
 TASK_ID = "task-1119"
 REVISION = "abc123def456"
 RUN_ID = "run-1119"
-TRUST_CONTEXT = ReadinessTrustContext("operator-readiness", b"trusted-readiness-key-material-1119")
+TRUST_KEY = b"trusted-readiness-key-material-1119"
+TRUST_CONTEXT = ReadinessTrustContext("operator-readiness", TRUST_KEY)
 
 
 def build_readiness_matrix(
@@ -110,6 +114,8 @@ def external_evidence(
         category=category,
         task_id=task_id,
         revision=revision,
+        created_at=CREATED,
+        evidence_fresh_after=FRESH_AFTER,
         external_identity={"effect_id": effect, "run_id": run_id},
         trusted_context=TRUST_CONTEXT,
     )
@@ -501,6 +507,85 @@ class ReadinessMatrixTests(unittest.TestCase):
         self.assertIn("external readiness authenticity tag does not match trusted context", "; ".join(errors))
         self.assertIn("verdict must match derived verdict HOLD", "; ".join(errors))
 
+    def test_authenticated_stale_hold_cannot_widen_freshness_into_go(self) -> None:
+        rows = complete_rows()
+        stale = external_evidence(
+            "ci",
+            receipt_observed_at="2026-08-26T10:59:59Z",
+            postcondition_observed_at="2026-08-26T10:59:59Z",
+        )
+        rows[2] = external_row("ci", stale)
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        self.assertEqual(matrix["verdict"], "HOLD")
+        widened = copy.deepcopy(matrix)
+        widened["evidence_fresh_after"] = "2026-08-26T10:00:00Z"
+        widened["rows"][2]["evidence_state"] = "observed"
+        widened["verdict"] = "GO"
+        widened["missing_categories"] = []
+
+        errors = validate_readiness_matrix(widened, trusted_context=TRUST_CONTEXT)
+
+        self.assertIn("external readiness authenticity tag does not match trusted context", "; ".join(errors))
+        self.assertIn("verdict must match derived verdict HOLD", "; ".join(errors))
+
+    def test_authentication_binds_all_mutable_verdict_authority_fields(self) -> None:
+        rows = complete_rows()
+        rows[2] = external_row("ci", external_evidence("ci"))
+        matrix = build_readiness_matrix(
+            scope="release-1119", rows=rows, created_at=CREATED, evidence_fresh_after=FRESH_AFTER
+        )
+        mutations = []
+        changed_created = copy.deepcopy(matrix)
+        changed_created["created_at"] = "2026-08-26T12:30:00Z"
+        changed_created["matrix_id"] = "readiness-" + hashlib.sha256(
+            json.dumps(
+                {
+                    "scope": changed_created["scope"],
+                    "task_id": changed_created["task_id"],
+                    "revision": changed_created["revision"],
+                    "created_at": changed_created["created_at"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()[:16]
+        mutations.append(changed_created)
+        changed_schema = copy.deepcopy(matrix)
+        changed_schema["schema_version"] = "readiness_matrix/v2"
+        mutations.append(changed_schema)
+        changed_external_mode = copy.deepcopy(matrix)
+        changed_external_mode["rows"][2]["requires_external_observation"] = False
+        mutations.append(changed_external_mode)
+        for mutated in mutations:
+            with self.subTest(mutation=mutated):
+                self.assertIn(
+                    "external readiness authenticity tag does not match trusted context",
+                    "; ".join(validate_readiness_matrix(mutated, trusted_context=TRUST_CONTEXT)),
+                )
+
+    def test_trust_context_rendering_redacts_key_material(self) -> None:
+        key = b"trusted-readiness-key-material-1119"
+        context = ReadinessTrustContext("operator-readiness", key)
+        rendered = (
+            repr(context),
+            str(context),
+            f"{context}",
+            "%r" % context,
+            "%s" % context,
+            repr(asdict(context)),
+            str(RuntimeError(context)),
+            logging.Formatter("%(message)s").format(
+                logging.LogRecord("test", logging.ERROR, __file__, 1, "%r", (context,), None)
+            ),
+        )
+        forbidden = (key.decode(), key.hex(), base64.b64encode(key).decode())
+        for text in rendered:
+            self.assertIn("redacted", text.lower())
+            for value in forbidden:
+                self.assertNotIn(value, text)
+
     def test_stale_public_matrix_id_is_rejected(self) -> None:
         matrix = build_readiness_matrix(
             scope="release-1119", rows=complete_rows(), created_at=CREATED, evidence_fresh_after=FRESH_AFTER
@@ -546,7 +631,7 @@ class ReadinessMatrixTests(unittest.TestCase):
         rendered = json.dumps(matrix, sort_keys=True)
         self.assertEqual(matrix["verdict"], "GO")
         self.assertEqual(validate_readiness_matrix(matrix, trusted_context=TRUST_CONTEXT), [])
-        self.assertNotIn(TRUST_CONTEXT.hmac_key.decode(), rendered)
+        self.assertNotIn(TRUST_KEY.decode(), rendered)
 
     def test_validator_rejects_each_invalid_top_level_state(self) -> None:
         matrix = build_readiness_matrix(
