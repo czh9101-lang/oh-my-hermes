@@ -8,6 +8,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import threading
 import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -713,6 +714,8 @@ def dispatch_fanout(
     repo_root: Path,
     base_sha: str,
     source_ref: str = "",
+    # Conservative library fallback only: the CLI resolves the pool width
+    # from the setup profile's `parallelism` block (default 5, ceiling 8).
     concurrency: int = 2,
     timeout: int = 1800,
     only_units: Sequence[str] | None = None,
@@ -721,6 +724,8 @@ def dispatch_fanout(
     runner: Callable[..., Any] = subprocess.run,
     readiness: Callable[..., dict[str, object]] = probe_executor_readiness,
     live_safety_profile_revision: str | None = None,
+    per_owner_lanes: Mapping[str, int] | None = None,
+    concurrency_policy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Both boundary re-checks run first, before discovery, readiness probing,
     # any unit spawn, and any summary write: nothing downstream should observe a
@@ -829,6 +834,27 @@ def dispatch_fanout(
             results[unit_id] = _skipped(unit, "not_selected")
 
     pending = [unit_id for unit_id in order if unit_id not in results]
+    # Per-owner lanes (OMO's per-provider limiter, reduced to what this
+    # blocking pool can honor): only owners the policy names get a lane
+    # semaphore — the global pool alone governs everyone else. The gate
+    # wraps the unit's WHOLE lifecycle (readiness probe, worktree, spawn,
+    # and local verification when requested), so an over-subscribed owner
+    # holds a pool slot while it waits and can delay other owners' units
+    # queued behind it in the same wave; with the pool sized to the global
+    # ceiling that is the same trade OMO's global permit makes.
+    owner_gates = {
+        owner: threading.BoundedSemaphore(int(width))
+        for owner, width in (per_owner_lanes or {}).items()
+        if isinstance(width, int) and not isinstance(width, bool) and int(width) >= 1
+    }
+
+    def _dispatch_with_owner_gate(unit: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
+        gate = owner_gates.get(str(unit.get("owner") or "choose"))
+        if gate is None:
+            return _dispatch_unit(paths, unit, **kwargs)
+        with gate:
+            return _dispatch_unit(paths, unit, **kwargs)
+
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
         while pending:
             ready = [
@@ -853,8 +879,7 @@ def dispatch_fanout(
                 continue
             futures = {
                 unit_id: pool.submit(
-                    _dispatch_unit,
-                    paths,
+                    _dispatch_with_owner_gate,
                     units[unit_id],
                     goal_text=goal_text,
                     repo_root=repo_root,
@@ -899,6 +924,10 @@ def dispatch_fanout(
         "base_sha": base_sha,
         "claim_boundary": f"{DISPATCH_CLAIM_BOUNDARY} {FANOUT_CLAIM_BOUNDARY}",
     }
+    if concurrency_policy:
+        # How the pool width was chosen (policy default vs flag, any clamp)
+        # so a dispatch record answers "why did only N run at once".
+        summary["concurrency"] = dict(concurrency_policy)
     if not dry_run and fanout_id:
         from .fanout_artifacts import fanout_dispatch_summary_path
 

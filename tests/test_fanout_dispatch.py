@@ -493,6 +493,103 @@ class FanoutDispatchEngineTests(unittest.TestCase):
         contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, _UNITS))
         return paths, repo, sha, contract
 
+    def test_summary_discloses_how_the_pool_width_was_chosen(self) -> None:
+        # The command layer resolves the parallelism policy and hands the
+        # resolution in; the dispatch record must answer "why did only N run
+        # at once" without re-deriving policy state after the fact.
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=_agent_runner(),
+                readiness=_ready,
+                per_owner_lanes={"codex": 2},
+                concurrency_policy={
+                    "applied": 5,
+                    "source": "policy_default",
+                    "global_concurrency": 8,
+                    "clamped": False,
+                },
+            )
+
+            self.assertEqual(summary["concurrency"]["applied"], 5)
+            self.assertEqual(summary["concurrency"]["source"], "policy_default")
+
+    def test_owner_gate_limits_simultaneous_spawns_for_a_configured_owner(self) -> None:
+        # Enforcement, not just the summary echo: with a codex lane width of
+        # one and three parallel-safe codex units, no two codex spawns may
+        # ever overlap, while the unconfigured claude-code owner is ungated
+        # and the whole batch still completes.
+        import threading as _threading
+        import time as _time
+
+        goal = "gate the codex lane"
+        units = [
+            {"unit_id": f"cx{index}", "title": f"Codex {index}", "owner": "codex", "file_scope": [f"src/cx{index}/"]}
+            for index in range(3)
+        ] + [{"unit_id": "cc", "title": "Claude work", "owner": "claude-code", "file_scope": ["docs/"]}]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(goal, units))
+            lock = _threading.Lock()
+            live = {"codex": 0}
+            max_live = {"codex": 0}
+
+            def runner(argv, **kwargs):
+                if argv[0] == "git":
+                    return subprocess.run(argv, **kwargs)
+                is_codex = argv[0] == "codex"
+                if is_codex:
+                    with lock:
+                        live["codex"] += 1
+                        max_live["codex"] = max(max_live["codex"], live["codex"])
+                _time.sleep(0.05)
+                if is_codex:
+                    with lock:
+                        live["codex"] -= 1
+                return _FakeCompleted(0, "done")
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=goal,
+                repo_root=repo,
+                base_sha=sha,
+                concurrency=4,
+                per_owner_lanes={"codex": 1},
+                runner=runner,
+                readiness=_ready,
+            )
+
+            self.assertEqual(max_live["codex"], 1)
+            statuses = {entry["unit_id"]: entry["process_succeeded"] for entry in summary["units"]}
+            self.assertTrue(all(statuses.values()), statuses)
+
+    def test_summary_omits_the_concurrency_block_when_none_was_resolved(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=_agent_runner(),
+                readiness=_ready,
+            )
+
+            self.assertNotIn("concurrency", summary)
+
     def test_summary_process_succeeded_only_on_exit_zero(self) -> None:
         with TemporaryDirectory() as tmp:
             paths, repo, sha, contract = self._setup(tmp)
