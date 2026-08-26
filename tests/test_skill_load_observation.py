@@ -78,6 +78,8 @@ if mode == "digest-mismatch":
     payload["expected_digest"] = "e" * 64
 if mode == "inventory-digest-mismatch":
     payload["inventory_digest"] = "d" * 64
+if mode == "tool-mismatch":
+    payload["tool_fingerprint"] = "c" * 64
 if mode == "expired":
     payload["observed_at"] = (now - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
     payload["expires_at"] = (now - timedelta(seconds=60)).isoformat().replace("+00:00", "Z")
@@ -106,7 +108,7 @@ class SkillLoadObservationTests(unittest.TestCase):
         values: dict[str, object] = {
             "expected_skills": expected,
             "hermes": str(executable),
-            "timeout_seconds": 1.0,
+            "timeout_seconds": 5.0,
             "env": {"PATH": "/usr/bin:/bin"},
         }
         values.update(changes)
@@ -130,6 +132,67 @@ class SkillLoadObservationTests(unittest.TestCase):
                 self.assertEqual(payload["missing_skills"], list(missing))
                 self.assertEqual(payload["unexpected_skills"], list(unexpected))
                 self.assertEqual(validate_skill_load_observation(payload), [])
+
+    def test_path_selected_executable_fingerprint_binds_the_binary_that_ran(self) -> None:
+        fingerprints: list[str] = []
+        for label, runtime_digit in (("first", "1"), ("second", "2")):
+            binary_dir = self.root / label
+            binary_dir.mkdir()
+            executable = binary_dir / "hermes"
+            executable.write_text(
+                textwrap.dedent(_FAKE).replace(
+                    '"runtime_fingerprint": "b" * 64',
+                    f'"runtime_fingerprint": "{runtime_digit}" * 64',
+                ),
+                encoding="utf-8",
+            )
+            executable.chmod(0o755)
+            payload = probe_skill_load(
+                SkillLoadProbeRequest(
+                    expected_skills=("alpha", "beta"),
+                    hermes="hermes",
+                    env={"PATH": os.pathsep.join((str(binary_dir), os.defpath))},
+                ),
+                confirmed=True,
+            )
+            self.assertEqual(payload["probe_status"], "observed")
+            self.assertEqual(payload["runtime_fingerprint"], runtime_digit * 64)
+            fingerprints.append(str(payload["tool_fingerprint"]))
+
+        self.assertNotEqual(fingerprints[0], fingerprints[1])
+
+    def test_explicit_symlink_binds_the_resolved_executable(self) -> None:
+        target = self.root / "all.py"
+        target.write_bytes(self.hermes.read_bytes())
+        target.chmod(0o755)
+        link = self.root / "selected-hermes"
+        link.symlink_to(target)
+        direct = probe_skill_load(self.request("all", hermes=str(target)), confirmed=True)
+        selected = probe_skill_load(self.request("all", hermes=str(link)), confirmed=True)
+        self.assertEqual(direct["probe_status"], "observed")
+        self.assertEqual(selected["probe_status"], "observed")
+        self.assertEqual(direct["tool_fingerprint"], selected["tool_fingerprint"])
+
+    def test_unresolvable_or_unreadable_executable_fails_closed_without_path_leak(self) -> None:
+        secret_path = self.root / "SECRET_EXECUTABLE_PATH" / "hermes"
+        missing = probe_skill_load(
+            SkillLoadProbeRequest(expected_skills=("alpha",), hermes=str(secret_path)),
+            confirmed=True,
+        )
+        self.assertEqual(
+            (missing["probe_status"], missing["reason_code"]),
+            ("probe_error", "inventory_executable_unavailable"),
+        )
+        self.assertNotIn("SECRET_EXECUTABLE_PATH", json.dumps(missing))
+        self.assertNotIn("observed_skills", missing)
+
+        executable = self.request("all")
+        with patch("omh.coding.skill_load_observation.Path.open", side_effect=PermissionError):
+            unreadable = probe_skill_load(executable, confirmed=True)
+        self.assertEqual(
+            (unreadable["probe_status"], unreadable["reason_code"]),
+            ("probe_error", "inventory_executable_unavailable"),
+        )
 
     def test_confirmation_is_mandatory_and_default_construction_starts_nothing(self) -> None:
         request = self.request("all")
@@ -156,6 +219,7 @@ class SkillLoadObservationTests(unittest.TestCase):
             "nonce-mismatch": "inventory_nonce_mismatch",
             "digest-mismatch": "inventory_expected_digest_mismatch",
             "inventory-digest-mismatch": "inventory_digest_mismatch",
+            "tool-mismatch": "inventory_response_malformed",
             "expired": "inventory_response_expired",
             "stale": "inventory_response_stale",
             "forbidden": "inventory_response_malformed",

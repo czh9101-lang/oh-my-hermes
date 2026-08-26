@@ -16,7 +16,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
+import stat
 import subprocess
 from threading import Lock
 from typing import Final, cast
@@ -32,6 +34,7 @@ REASON_CODES: Final = (
     "inventory_validated",
     "inventory_protocol_unavailable",
     "inventory_process_error",
+    "inventory_executable_unavailable",
     "inventory_timeout",
     "inventory_response_malformed",
     "inventory_nonce_mismatch",
@@ -136,16 +139,27 @@ def probe_skill_load(
     if not _HEX_64.fullmatch(nonce):
         raise ValueError("skill-load probe nonce must be 64 lowercase hexadecimal characters")
     expected_digest = _set_digest(expected)
-    tool_fingerprint = _tool_fingerprint(request.hermes)
     runtime_unavailable = hashlib.sha256(b"runtime-unavailable").hexdigest()
+    unavailable_tool = hashlib.sha256(b"unresolved-executable").hexdigest()
     observed_at = _utc(now)
+    env = _probe_environment(request.env)
+    try:
+        tool = _resolve_tool(request.hermes, env)
+    except OSError:
+        return _closed_observation(
+            "probe_error", "inventory_executable_unavailable", nonce,
+            expected_digest, unavailable_tool, runtime_unavailable, observed_at,
+        )
+    tool_fingerprint = tool.fingerprint
     if nonce_ledger is not None and nonce_ledger.contains(nonce):
         return _closed_observation(
             "probe_error", "inventory_nonce_replayed", nonce, expected_digest,
             tool_fingerprint, runtime_unavailable, observed_at,
         )
 
-    outcome = _run_inventory_process(request, nonce, expected_digest, tool_fingerprint)
+    outcome = _run_inventory_process(
+        request, tool.executable, env, nonce, expected_digest, tool_fingerprint
+    )
     if outcome.kind == "timeout":
         return _closed_observation(
             "probe_error", "inventory_timeout", nonce, expected_digest,
@@ -222,6 +236,12 @@ def probe_skill_load(
 
 
 @dataclass(frozen=True, slots=True)
+class _ResolvedTool:
+    executable: str
+    fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
 class _ProcessOutcome:
     kind: str
     exit_code: int | None
@@ -230,27 +250,17 @@ class _ProcessOutcome:
 
 def _run_inventory_process(
     request: SkillLoadProbeRequest,
+    executable: str,
+    env: Mapping[str, str],
     nonce: str,
     expected_digest: str,
     tool_fingerprint: str,
 ) -> _ProcessOutcome:
     argv = (
-        request.hermes, "--safe-mode", "--ignore-user-config", "--ignore-rules",
+        executable, "--safe-mode", "--ignore-user-config", "--ignore-rules",
         "skills", "inventory", "--protocol",
         HERMES_SKILL_INVENTORY_SCHEMA_VERSION, "--nonce", nonce,
         "--expected-digest", expected_digest, "--tool-fingerprint", tool_fingerprint,
-    )
-    source = os.environ if request.env is None else request.env
-    env = {name: source[name] for name in _SAFE_ENV_NAMES if source.get(name)}
-    env.setdefault("PATH", os.defpath)
-    env.update(
-        {
-            "HERMES_SAFE_MODE": "1",
-            "HERMES_IGNORE_USER_CONFIG": "1",
-            "HERMES_IGNORE_RULES": "1",
-            "OMH_ISOLATED_HERMES_ROUTING": "disabled",
-            "OMH_ISOLATED_HERMES_MAX_DEPTH": "1",
-        }
     )
     process: subprocess.Popen[bytes] | None = None
     drainers = None
@@ -469,15 +479,51 @@ def _set_digest(values: Sequence[str]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _tool_fingerprint(executable: str) -> str:
-    candidate = Path(executable).expanduser()
-    try:
-        resolved = candidate.resolve(strict=True)
-        stat_result = resolved.stat()
-        identity = f"{resolved}\0{stat_result.st_size}\0{stat_result.st_mtime_ns}"
-    except OSError:
-        identity = executable
-    return hashlib.sha256(identity.encode("utf-8", errors="surrogateescape")).hexdigest()
+def _probe_environment(source: Mapping[str, str] | None) -> dict[str, str]:
+    values = os.environ if source is None else source
+    env = {name: values[name] for name in _SAFE_ENV_NAMES if values.get(name)}
+    env.setdefault("PATH", os.defpath)
+    env.update(
+        {
+            "HERMES_SAFE_MODE": "1",
+            "HERMES_IGNORE_USER_CONFIG": "1",
+            "HERMES_IGNORE_RULES": "1",
+            "OMH_ISOLATED_HERMES_ROUTING": "disabled",
+            "OMH_ISOLATED_HERMES_MAX_DEPTH": "1",
+        }
+    )
+    return env
+
+
+def _resolve_tool(executable: str, env: Mapping[str, str]) -> _ResolvedTool:
+    has_separator = os.sep in executable or bool(os.altsep and os.altsep in executable)
+    if has_separator or Path(executable).is_absolute():
+        selected = Path(executable).expanduser()
+    else:
+        found = shutil.which(executable, path=env.get("PATH"))
+        if found is None:
+            raise FileNotFoundError(executable)
+        selected = Path(found)
+    resolved = selected.resolve(strict=True)
+    before = resolved.stat()
+    if not stat.S_ISREG(before.st_mode) or not os.access(resolved, os.R_OK | os.X_OK):
+        raise PermissionError(executable)
+
+    digest = hashlib.sha256()
+    digest.update(b"omh-skill-load-tool/v1\0")
+    digest.update(os.fsencode(resolved))
+    digest.update(
+        f"\0{before.st_dev}\0{before.st_ino}\0{before.st_mode}\0{before.st_size}".encode("ascii")
+    )
+    with resolved.open("rb") as stream:
+        while chunk := stream.read(64 * 1024):
+            digest.update(chunk)
+        after = os.fstat(stream.fileno())
+    identity_before = (before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_mtime_ns)
+    identity_after = (after.st_dev, after.st_ino, after.st_mode, after.st_size, after.st_mtime_ns)
+    if identity_after != identity_before:
+        raise OSError("executable changed during fingerprinting")
+    return _ResolvedTool(str(resolved), digest.hexdigest())
 
 
 def _parse_time(value: object) -> datetime:
