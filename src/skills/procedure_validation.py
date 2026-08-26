@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import cast
+import unicodedata
 
 from .catalog_types import SkillDefinition
 
@@ -9,10 +9,37 @@ from .catalog_types import SkillDefinition
 PROCEDURE_STEP_KINDS = frozenset({"analysis", "production", "validation"})
 _STEP_ID_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 _PLACEHOLDER_PREFIX_PATTERN = re.compile(r"^\s*(?:todo|tbd)(?=$|[^a-z0-9])", re.IGNORECASE)
+_PLACEHOLDER_PREFIX_WRAPPERS = frozenset("`'\"*_~([{<")
+
+
+def _normalized_placeholder_candidate(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value)
+    index = 0
+    while index < len(normalized):
+        character = normalized[index]
+        if (
+            character.isspace()
+            or unicodedata.category(character) == "Cf"
+            or character in _PLACEHOLDER_PREFIX_WRAPPERS
+        ):
+            index += 1
+            continue
+        break
+    return normalized[index:]
 
 
 def _has_placeholder_prefix(value: object) -> bool:
-    return isinstance(value, str) and _PLACEHOLDER_PREFIX_PATTERN.match(value) is not None
+    return (
+        isinstance(value, str)
+        and _PLACEHOLDER_PREFIX_PATTERN.match(_normalized_placeholder_candidate(value)) is not None
+    )
+
+
+def _string_members(value: object) -> tuple[tuple[str, ...], bool] | None:
+    if not isinstance(value, (tuple, list)):
+        return None
+    members = tuple(item for item in value if isinstance(item, str))
+    return members, len(members) == len(value)
 
 
 def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
@@ -39,16 +66,16 @@ def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
                 violations.append("procedure_duplicate_check_id")
             else:
                 declared_checks.add(check_id)
-            if not isinstance(result_fields, (tuple, list)) or not result_fields:
+            result_field_members = _string_members(result_fields)
+            if result_field_members is None or not result_fields:
                 violations.append("procedure_check_result_fields_required")
-            elif any(
-                _has_placeholder_prefix(field)
-                for field in cast(tuple[object, ...] | list[object], result_fields)
-            ):
+            elif not result_field_members[1]:
+                violations.append("procedure_duplicate_or_invalid_check_result_field")
+            elif any(_has_placeholder_prefix(field) for field in result_field_members[0]):
                 violations.append("procedure_placeholder_check_result_field")
             elif (
-                len(set(result_fields)) != len(result_fields)
-                or any(not isinstance(field, str) or not _STEP_ID_PATTERN.fullmatch(field) for field in result_fields)
+                len(set(result_field_members[0])) != len(result_field_members[0])
+                or any(not _STEP_ID_PATTERN.fullmatch(field) for field in result_field_members[0])
             ):
                 violations.append("procedure_duplicate_or_invalid_check_result_field")
             if not isinstance(instruction, str) or not instruction.strip():
@@ -56,8 +83,10 @@ def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
             elif _has_placeholder_prefix(instruction):
                 violations.append("procedure_placeholder_check_instruction")
 
-    required_inputs = set(definition.required_inputs)
-    expected_outputs = set(definition.expected_outputs)
+    required_input_members = _string_members(definition.required_inputs)
+    expected_output_members = _string_members(definition.expected_outputs)
+    required_inputs = set(required_input_members[0] if required_input_members is not None else ())
+    expected_outputs = set(expected_output_members[0] if expected_output_members is not None else ())
     referenced_inputs: set[str] = set()
     referenced_outputs: set[str] = set()
     referenced_checks: set[str] = set()
@@ -79,7 +108,7 @@ def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
         else:
             seen_step_ids.add(step_id)
 
-        if kind not in PROCEDURE_STEP_KINDS:
+        if not isinstance(kind, str) or kind not in PROCEDURE_STEP_KINDS:
             violations.append("procedure_unknown_step_kind")
         elif kind == "validation":
             validation_seen = True
@@ -87,22 +116,34 @@ def procedure_violation_ids(definition: SkillDefinition) -> list[str]:
         if not isinstance(input_refs, (tuple, list)) or not input_refs:
             violations.append("procedure_step_input_refs_required")
         else:
-            referenced_inputs.update(ref for ref in input_refs if isinstance(ref, str))
-            if any(ref not in required_inputs for ref in input_refs):
+            input_ref_members = _string_members(input_refs)
+            string_input_refs = input_ref_members[0] if input_ref_members is not None else ()
+            referenced_inputs.update(string_input_refs)
+            if input_ref_members is None or not input_ref_members[1] or any(
+                ref not in required_inputs for ref in string_input_refs
+            ):
                 violations.append("procedure_unknown_input_ref")
 
         if not isinstance(output_refs, (tuple, list)) or not output_refs:
             violations.append("procedure_step_output_refs_required")
         else:
-            referenced_outputs.update(ref for ref in output_refs if isinstance(ref, str))
-            if any(ref not in expected_outputs for ref in output_refs):
+            output_ref_members = _string_members(output_refs)
+            string_output_refs = output_ref_members[0] if output_ref_members is not None else ()
+            referenced_outputs.update(string_output_refs)
+            if output_ref_members is None or not output_ref_members[1] or any(
+                ref not in expected_outputs for ref in string_output_refs
+            ):
                 violations.append("procedure_unknown_output_ref")
 
         if not isinstance(check_ids, (tuple, list)) or not check_ids:
             violations.append("procedure_step_check_ids_required")
         else:
-            referenced_checks.update(check_id for check_id in check_ids if isinstance(check_id, str))
-            if any(check_id not in declared_checks for check_id in check_ids):
+            check_id_members = _string_members(check_ids)
+            string_check_ids = check_id_members[0] if check_id_members is not None else ()
+            referenced_checks.update(string_check_ids)
+            if check_id_members is None or not check_id_members[1] or any(
+                check_id not in declared_checks for check_id in string_check_ids
+            ):
                 violations.append("procedure_unknown_check_id")
 
         if not isinstance(instruction, str) or not instruction.strip():
