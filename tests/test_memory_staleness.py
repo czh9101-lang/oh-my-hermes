@@ -46,6 +46,7 @@ from omh.workflows.memory_lifecycle import (
 from omh.workflows.memory_lifecycle_executor import execute_memory_lifecycle
 from omh.runtime.artifacts import _memory_recall_pack_summary as artifact_pack_summary
 from omh.wrapper.briefing import _memory_recall_pack_summary as briefing_pack_summary
+from omh.wrapper.continuity import _warning_count as continuity_warning_count
 
 PAST = "2020-01-01T00:00:00Z"
 
@@ -636,6 +637,60 @@ class ReviewDueSoonWarningTests(unittest.TestCase):
             )
             self.assertTrue(windowed["freshness_warnings"][0]["delivered"])
 
+    def test_the_window_boundaries_are_exact(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            _approved(paths, "staging runs postgres 15", tags=["staging"])
+            base = datetime.now(timezone.utc)
+            outside = build_project_memory_recall_pack(paths, "postgres staging", now=base + timedelta(days=75))
+            self.assertEqual(outside["freshness_warnings"], [])
+            inside = build_project_memory_recall_pack(paths, "postgres staging", now=base + timedelta(days=76))
+            self.assertEqual([w["reason_code"] for w in inside["freshness_warnings"]], ["review_due_soon"])
+            past = build_project_memory_recall_pack(paths, "postgres staging", now=base + timedelta(days=91))
+            self.assertEqual(past["record_count"], 0)
+            self.assertEqual([w["reason_code"] for w in past["freshness_warnings"]], ["stale_review_required"])
+            self.assertFalse(past["freshness_warnings"][0]["delivered"])
+
+    def test_advisory_notices_never_displace_blocking_warnings(self) -> None:
+        # Synthetic pack entries, driven straight through the warning builder:
+        # 12 delivered due-soon notices would fill the budget on their own,
+        # and the one record that actually left the pack must still be named.
+        advisory_entries = [
+            {
+                "record_id": f"mem_advisory{index:02d}",
+                "eligibility_reason": "eligible",
+                "staleness": {"state": "fresh", "reason": "review_due_soon", "review_due_at": "2099-01-01T00:00:00Z"},
+            }
+            for index in range(12)
+        ]
+        held_back = [
+            {
+                "record_id": "mem_heldback",
+                "eligibility_reason": "stale_review_required",
+                "staleness": {"state": "stale", "reason": "review_due", "review_due_at": PAST},
+            }
+        ]
+        warnings = memory_workflow._freshness_warnings(advisory_entries, held_back)
+        self.assertLessEqual(len(warnings), 12)
+        self.assertEqual(warnings[0]["record_id"], "mem_heldback")
+        self.assertEqual(warnings[0]["reason_code"], "stale_review_required")
+
+    def test_wrapper_continuity_does_not_count_advisory_notices(self) -> None:
+        self.assertEqual(
+            continuity_warning_count(
+                {"freshness_warnings": [{"reason_code": "review_due_soon"}, {"reason_code": "stale_review_required"}]}
+            ),
+            1,
+        )
+        self.assertEqual(
+            continuity_warning_count({"freshness_warnings": [{"reason_code": "review_due_soon"}]}),
+            0,
+        )
+        # An explicit producer count and unknown warning shapes stay untouched:
+        # both fail toward warning, never toward silence.
+        self.assertEqual(continuity_warning_count({"freshness_warning_count": 3}), 3)
+        self.assertEqual(continuity_warning_count({"freshness_warnings": ["not-a-mapping"]}), 1)
+
 
 class MemoryConfirmationTests(unittest.TestCase):
     """`omh memory confirm` is the missing verb behind the freshness warning."""
@@ -694,6 +749,71 @@ class MemoryConfirmationTests(unittest.TestCase):
             moved = memory_workflow.confirm_project_memory_record(paths, cited["record_id"])
             self.assertEqual((moved["applied"], moved["reason_code"]), (False, "source_requires_correction"))
 
+            replaced = _approved(paths, "an already superseded claim")
+            _mutate_record(paths, replaced["record_id"], superseded_by="mem_0000000000000001")
+            stale_rev = memory_workflow.confirm_project_memory_record(paths, replaced["record_id"])
+            self.assertEqual((stale_rev["applied"], stale_rev["reason_code"]), (False, "superseded"))
+
+            garbled = _approved(paths, "a record about to be corrupted")
+            atomic_write_text(_record_path(paths, garbled["record_id"]), "{", private=True)
+            unreadable = memory_workflow.confirm_project_memory_record(paths, garbled["record_id"])
+            self.assertEqual((unreadable["applied"], unreadable["reason_code"]), (False, "record_unreadable"))
+
+            legacy = _approved(paths, "a legacy-schema record")
+            _mutate_record(paths, legacy["record_id"], schema_version="project_memory_record/v1")
+            old_schema = memory_workflow.confirm_project_memory_record(paths, legacy["record_id"])
+            self.assertEqual((old_schema["applied"], old_schema["reason_code"]), (False, "unsupported_record_schema"))
+
+            with self.assertRaises(ValueError):
+                memory_workflow.confirm_project_memory_record(paths, "../escape")
+
+    def test_confirm_heals_a_legacy_stale_after_only_record_to_full_parity(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            record = _approved(paths, "written before review_due_at existed")
+            _mutate_record(paths, record["record_id"], revalidation={}, staleness={"stale_after": PAST})
+            result = memory_workflow.confirm_project_memory_record(paths, record["record_id"])
+            self.assertTrue(result["applied"])
+            self.assertTrue(result["was_stale"])
+            stored = json.loads(_record_path(paths, record["record_id"]).read_text(encoding="utf-8"))
+            self.assertEqual(stored["revalidation"]["deadline"], result["review_due_at"])
+            self.assertEqual(stored["staleness"]["review_due_at"], result["review_due_at"])
+            self.assertEqual(stored["staleness"]["stale_after"], result["review_due_at"])
+
+    def test_confirm_bounds_the_actor_and_names_a_shortened_deadline(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            record = _approved(paths, "a slow-rotting claim", stale_after_days=365)
+            result = memory_workflow.confirm_project_memory_record(
+                paths, record["record_id"], confirmed_by="ci-token-bot " + "A" * 5000
+            )
+            self.assertTrue(result["applied"])
+            # Sensitive-looking prose degrades to a redaction and a bound, the
+            # same way the attention reason does -- never to a record-level
+            # validation error naming a field the operator cannot see.
+            stored = json.loads(_record_path(paths, record["record_id"]).read_text(encoding="utf-8"))
+            self.assertLessEqual(len(stored["revalidation"]["confirmed_by"]), 240)
+            self.assertNotIn("ci-token-bot", stored["revalidation"]["confirmed_by"])
+            # The default 90-day reset lands earlier than the 365-day capture
+            # deadline; the payload must say so instead of shortening silently.
+            self.assertTrue(result["shortened"])
+            self.assertIn("earlier", result["next_action"])
+
+    def test_confirm_persists_and_reuses_an_explicit_cadence(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            record = _approved(paths, "reviewed on a slow cadence")
+            first = memory_workflow.confirm_project_memory_record(
+                paths, record["record_id"], stale_after_days=180
+            )
+            self.assertEqual(first["stale_after_days"], 180)
+            stored = json.loads(_record_path(paths, record["record_id"]).read_text(encoding="utf-8"))
+            self.assertEqual(stored["staleness"]["stale_after_days"], 180)
+            # A later flagless confirm honours the stored cadence instead of
+            # silently resetting the record to the 90-day default.
+            second = memory_workflow.confirm_project_memory_record(paths, record["record_id"])
+            self.assertEqual(second["stale_after_days"], 180)
+
     def test_confirm_all_due_reblesses_only_clean_deadline_records(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -714,14 +834,43 @@ class MemoryConfirmationTests(unittest.TestCase):
             batch = memory_workflow.confirm_due_project_memory_records(paths)
             self.assertEqual(batch["due_count"], 2)
             self.assertEqual([entry["record_id"] for entry in batch["confirmed"]], [overdue["record_id"]])
-            self.assertEqual(
-                batch["skipped"],
-                [{"record_id": tainted["record_id"], "reason_code": "source_requires_correction"}],
-            )
+            self.assertEqual(len(batch["skipped"]), 1)
+            self.assertEqual(batch["skipped"][0]["record_id"], tainted["record_id"])
+            self.assertEqual(batch["skipped"][0]["reason_code"], "source_requires_correction")
+            self.assertIn("Correct or retire", batch["skipped"][0]["detail"])
             # The fresh record was never touched: its deadline still derives
             # from capture, not from the batch run.
             untouched = json.loads(_record_path(paths, fresh["record_id"]).read_text(encoding="utf-8"))
             self.assertEqual(untouched["staleness"]["review_due_at"], fresh["staleness"]["review_due_at"])
+
+    def test_a_write_rejection_mid_batch_is_contained_and_reported(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            clean = _approved(paths, "a record that confirms cleanly", tags=["clean"])
+            poisoned = _approved(paths, "a record whose write will be refused", tags=["poison"])
+            for record_id in (clean["record_id"], poisoned["record_id"]):
+                _mutate_record(
+                    paths,
+                    record_id,
+                    revalidation={"deadline": PAST},
+                    staleness={"stale_after": PAST, "stale_after_days": None, "review_due_at": PAST},
+                )
+            # An unknown top-level key makes `_write_project_memory_record`
+            # raise at validation time -- after the gates, at the write. The
+            # batch must absorb it, keep going, and say what happened.
+            _mutate_record(paths, poisoned["record_id"], unexpected_key="boom")
+            batch = memory_workflow.confirm_due_project_memory_records(paths)
+            self.assertEqual(batch["due_count"], 2)
+            self.assertEqual([entry["record_id"] for entry in batch["confirmed"]], [clean["record_id"]])
+            self.assertEqual(batch["skipped"][0]["record_id"], poisoned["record_id"])
+            self.assertEqual(batch["skipped"][0]["reason_code"], "write_rejected")
+            self.assertIn("unsupported keys", batch["skipped"][0]["detail"])
+
+    def test_batch_rejects_an_invalid_cadence_even_on_an_empty_store(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            with self.assertRaises(ValueError):
+                memory_workflow.confirm_due_project_memory_records(paths, stale_after_days=-5)
 
 
 if __name__ == "__main__":

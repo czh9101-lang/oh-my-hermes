@@ -771,6 +771,9 @@ def _memory_consolidation_check(paths: OmhPaths) -> Check:
     if expired > 0:
         # Expired records have an operator-runnable fix; consolidation does not.
         remedy = f"Run `omh memory retire` to archive {expired} expired record(s); OMH never deletes them."
+    elif any(reason.startswith("stale_review_required") for reason in reasons):
+        # Review-due records also have an operator-runnable fix now.
+        remedy = "Run `omh memory confirm --all-due` to re-bless still-true review-due records; refusals are reported, never forced."
     else:
         remedy = "Ask Hermes to review and consolidate its memory; OMH prepared the brief and cannot run it."
     return Check(

@@ -467,10 +467,12 @@ revalidation metadata — the payload digest deliberately excludes it, so the
 record's identity, admission, and immutable review record are untouched.
 `omh memory confirm --all-due` confirms every record whose sole problem is a
 passed deadline; each record still passes the single-record gates, so the
-batch reports expired, superseded, or source-changed records as skipped with
-their refusal reason rather than silently re-blessing them. Confirmation
-never resurrects an expired record and never overrides the source-evidence
-gate — a record whose cited source changed needs a correction, because a new
+batch reports superseded or source-changed records as skipped with their
+refusal reason and detail rather than silently re-blessing them. Expired
+records never enter the batch at all — their verdict is `retention_expired`,
+not `review_due`, and the fix is `omh memory retire`. Confirmation never
+resurrects an expired record and never overrides the source-evidence gate —
+a record whose cited source changed needs a correction, because a new
 deadline would not restore its eligibility anyway.
 
 The heavier verbs are unchanged: `omh memory correct` supersedes the record
