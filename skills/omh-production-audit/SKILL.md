@@ -1,6 +1,6 @@
 ---
-name: omh-production-audit
-description: [omh] Hermes Production Audit workflow: evaluate release, deploy, security, observability, rollback, docs, and support readiness without claiming production access. Use when the user says: production-audit, production audit, production readiness, prod audit, prod readiness, ready for production, ready to ship, ship readiness.
+name: "omh-production-audit"
+description: "[omh] Hermes Production Audit workflow: evaluate release, deploy, security, observability, rollback, docs, and support readiness without claiming production access. Use when the user says: production-audit, production audit, production readiness, prod audit, prod readiness, ready for production, ready to ship, ship readiness."
 metadata:
   hermes:
     tags: [workflow, oh-my-hermes, review]

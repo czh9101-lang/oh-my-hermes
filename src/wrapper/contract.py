@@ -2001,7 +2001,7 @@ _WORKFLOW_OPERATIONS_CHAT_CARDS: dict[str, dict[str, object]] = {
         ),
         "phase": "skill_health_prepared",
         "next_action": "prepare_skill_health",
-        "artifact_schema": "skill_portfolio_health_dashboard/v1",
+        "artifact_schema": "skill_health_card/v1",
         "claim_boundary_suffix": "It is not install/setup health, live skill execution success, automatic skill mutation, model training, verification, review, CI, or proof that future routing is fixed.",
         "actions": [
             {"id": "prepare_skill_health", "label": "Prepare skill health", "style": "primary"},

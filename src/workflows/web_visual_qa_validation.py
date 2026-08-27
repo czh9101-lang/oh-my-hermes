@@ -18,12 +18,14 @@ from .web_visual_qa_contracts import (
     WEB_VISUAL_QA_MESSAGE_CARD_DOES_NOT_PROVE,
     WEB_VISUAL_QA_MESSAGE_CARD_SCHEMA_VERSION,
     WEB_VISUAL_QA_MESSAGE_ROUTE_SCHEMA_VERSION,
+    WEB_VISUAL_QA_PACKAGE_LEGACY_SCHEMA_VERSION,
     WEB_VISUAL_QA_PACKAGE_SCHEMA_VERSION,
     JsonObject,
     JsonValue,
     ids,
     object_list,
     object_value,
+    pass_blocker_ids,
     strings,
     text,
     valid_id,
@@ -63,6 +65,7 @@ def validate_web_visual_qa_package(record: JsonObject) -> list[str]:
     _validate_results(object_list(record.get("criteria_results")), criteria_ids, evidence_ids, errors)
     _validate_reviews(object_list(record.get("multimodal_reviews")), evidence_ids, errors)
     _validate_projection(record, errors)
+    _validate_lineage_contract(record, errors)
     _validate_pass(record, errors)
     return errors
 
@@ -155,6 +158,7 @@ def _validate_projection(record: JsonObject, errors: list[str]) -> None:
 def _validate_pass(record: JsonObject, errors: list[str]) -> None:
     if record.get("verdict") != "pass":
         return
+    errors.extend(text(item) for item in pass_blocker_ids(record))
     if not object_list(record.get("captures")):
         errors.append("PASS requires at least one observed capture")
     blocking_criteria_ids = [
@@ -173,8 +177,11 @@ def _validate_pass(record: JsonObject, errors: list[str]) -> None:
 
 
 def _require_schema(record: JsonObject, errors: list[str]) -> None:
-    if record.get("schema_version") != WEB_VISUAL_QA_PACKAGE_SCHEMA_VERSION:
-        errors.append("schema_version must be web_visual_qa_package/v1")
+    if record.get("schema_version") not in {
+        WEB_VISUAL_QA_PACKAGE_SCHEMA_VERSION,
+        WEB_VISUAL_QA_PACKAGE_LEGACY_SCHEMA_VERSION,
+    }:
+        errors.append("schema_version must be web_visual_qa_package/v1 or web_visual_qa_package/v2")
     if not valid_id(text(record.get("package_id"))):
         errors.append("package_id must contain only letters, digits, and hyphens")
     if text(record.get("status")) not in SUPPORTED_LIFECYCLE_STATUSES:
@@ -183,6 +190,17 @@ def _require_schema(record: JsonObject, errors: list[str]) -> None:
         errors.append(f"verdict must be one of {', '.join(SUPPORTED_VERDICTS)}")
     if not text(record.get("target")):
         errors.append("target is required")
+
+
+def _validate_lineage_contract(record: JsonObject, errors: list[str]) -> None:
+    if record.get("schema_version") == WEB_VISUAL_QA_PACKAGE_LEGACY_SCHEMA_VERSION:
+        return
+    required_viewports = strings(record.get("required_viewports"))
+    if len(required_viewports) != len(set(required_viewports)):
+        errors.append("required_viewports must contain unique viewport names")
+    expected_blockers = pass_blocker_ids(record)
+    if record.get("blocking_violations") != expected_blockers:
+        errors.append("blocking_violations must match validator-enforced blocker IDs")
 
 
 def _validate_message_route(raw_route: JsonValue | None, errors: list[str]) -> None:

@@ -613,6 +613,23 @@ class ExpertQuestion:
 
 
 @dataclass(frozen=True)
+class ProcedureCheck:
+    check_id: str
+    required_result_fields: tuple[str, ...]
+    instruction: str
+
+
+@dataclass(frozen=True)
+class ProcedureStep:
+    step_id: str
+    kind: str
+    input_refs: tuple[str, ...]
+    output_refs: tuple[str, ...]
+    check_ids: tuple[str, ...]
+    instruction: str
+
+
+@dataclass(frozen=True)
 class SkillDefinition:
     name: str
     description: str
@@ -657,6 +674,10 @@ class SkillDefinition:
     # Machine enforcement is independent of the evidence state on produced
     # artifacts. Operations workflows receive their single registry-owned ref.
     artifact_contracts: tuple[ArtifactContractRef, ...] = ()
+    # Procedures are opt-in machine contracts. Input and output refs resolve
+    # against this definition; check IDs resolve against procedure_checks.
+    procedure_checks: tuple[ProcedureCheck, ...] = ()
+    procedure_steps: tuple[ProcedureStep, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "description", omh_description(self.description))

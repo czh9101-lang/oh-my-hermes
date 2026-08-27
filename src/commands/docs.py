@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from pathlib import Path
 
 from ..catalogs.roles import roles_reference_markdown
@@ -135,12 +137,71 @@ def _sync_ulw_region(*, path: Path, check: bool, label: str, site: bool = False)
     return 0
 
 
+def cmd_docs_skill_trigger_report(args: argparse.Namespace) -> int:
+    from ..skills.trigger_review import skill_trigger_review_payload
+
+    if args.format != "json":
+        raise OmhError(f"unsupported skill-trigger-report format: {args.format}")
+    _print_json(skill_trigger_review_payload())
+    return 0
+
+
 def cmd_docs_skill_context_cost(args: argparse.Namespace) -> int:
     if args.json:
         _print_json(skill_context_cost_payload())
         return 0
     print(skill_context_cost_markdown().rstrip())
     return 0
+
+
+def cmd_docs_skill_lint(args: argparse.Namespace) -> int:
+    """Return one structural pass/fail verdict for every tracked skill.
+
+    Exit codes are the contract: 0 pass, 1 violations, 2 invocation or internal
+    error. The unsupported-format branch raises `OmhError` so it exits 2 through
+    the same path every other invocation error uses.
+
+    An unexpected failure inside the lint is the third case, and it is caught
+    here rather than left to escape. Escaping is not neutral: the interpreter
+    would exit 1, which already means "this tree has structural violations", so
+    a crash would be indistinguishable from a real verdict to any caller reading
+    the exit code. The handler is deliberately at this one command boundary and
+    nowhere deeper, so the rest of the repository keeps its existing behavior.
+    """
+    from ..quality.skill_governance import skill_structure_lint_report
+
+    if args.format != "json":
+        raise OmhError(f"unsupported skill-lint format: {args.format}")
+    try:
+        report = skill_structure_lint_report()
+    except Exception as exc:
+        _print_internal_error(exc)
+        return 2
+    _print_json(report)
+    return 0 if report["ok"] else 1
+
+
+def _print_internal_error(exc: BaseException) -> None:
+    """Report a lint crash on the error channel as a classified result.
+
+    The exception *type* is surfaced because it is what makes the failure
+    triageable and is not attacker-influenced. The message is not: it is
+    arbitrary text that may carry a path, a token, or any other value the
+    failing code happened to be holding, and this command's whole contract is
+    deterministic machine-readable output.
+
+    Written to stderr so stdout carries only real reports; a caller parsing
+    stdout therefore never has to tell a verdict apart from a crash.
+    """
+    from ..skills.validation import SKILL_STRUCTURE_LINT_SCHEMA_VERSION
+
+    payload = {
+        "schema_version": SKILL_STRUCTURE_LINT_SCHEMA_VERSION,
+        "ok": False,
+        "status": "internal_error",
+        "error_type": type(exc).__name__,
+    }
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")), file=sys.stderr)
 
 
 def _default_capability_families_path() -> Path:
@@ -253,6 +314,37 @@ def _add_docs_commands(sub) -> None:
         help="Print the machine-readable omh_skill_context_cost/v1 payload.",
     )
     docs_skill_context_cost.set_defaults(func=cmd_docs_skill_context_cost)
+
+    docs_skill_lint = docs_sub.add_parser(
+        "skill-lint",
+        help=(
+            "Check every tracked skill for structure only: parsed frontmatter, machine-consumed "
+            "fields, resolvable harness, generated parity, trigger format, executable consumers, "
+            "and the context budget. Offline and pass/fail; never scores, ranks, or reviews wording."
+        ),
+    )
+    docs_skill_lint.add_argument(
+        "--format",
+        default="json",
+        choices=("json",),
+        help="Output format for the omh_skill_structure_lint/v1 report.",
+    )
+    docs_skill_lint.set_defaults(func=cmd_docs_skill_lint)
+
+    docs_skill_trigger_report = docs_sub.add_parser(
+        "skill-trigger-report",
+        help=(
+            "Report which defined triggers reached picker frontmatter, why the rest did not, "
+            "and which normalized trigger identities are shared across skills."
+        ),
+    )
+    docs_skill_trigger_report.add_argument(
+        "--format",
+        default="json",
+        choices=("json",),
+        help="Output format for the skill_trigger_review/v1 payload.",
+    )
+    docs_skill_trigger_report.set_defaults(func=cmd_docs_skill_trigger_report)
 
 
 def _add_harness_commands(sub) -> None:

@@ -14,7 +14,8 @@ from omh.local_store import utc_now
 JsonValue: TypeAlias = str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
-WEB_VISUAL_QA_PACKAGE_SCHEMA_VERSION: Final = "web_visual_qa_package/v1"
+WEB_VISUAL_QA_PACKAGE_SCHEMA_VERSION: Final = "web_visual_qa_package/v2"
+WEB_VISUAL_QA_PACKAGE_LEGACY_SCHEMA_VERSION: Final = "web_visual_qa_package/v1"
 WEB_VISUAL_QA_PACKAGES_INDEX_SCHEMA_VERSION: Final = "omh_web_visual_qa_packages_index/v1"
 MESSAGE_ATTACHMENT_PROJECTION_SCHEMA_VERSION: Final = "message_attachment_projection/v1"
 WEB_VISUAL_QA_MESSAGE_CARD_SCHEMA_VERSION: Final = "web_visual_qa_message_card/v1"
@@ -44,6 +45,16 @@ SUPPORTED_RISK_LEVELS: Final = ("low", "medium", "high", "critical", "unknown")
 SUPPORTED_REDACTION_STATUSES: Final = ("not_needed", "redacted", "contains_sensitive_content", "unknown")
 SUPPORTED_ATTACHMENT_STATES: Final = ("eligible", "blocked", "not_requested")
 SUPPORTED_CAPTURE_ORIGINS: Final = ("supplied_metadata", "imported_local_file")
+WEB_VISUAL_QA_PASS_BLOCKER_IDS: Final = (
+    "legacy_package_cannot_pass",
+    "observed_capture_missing",
+    "target_lineage_missing",
+    "capture_source_lineage_missing",
+    "capture_source_lineage_mismatch",
+    "required_viewports_missing",
+    "required_viewport_missing",
+    "supplied_blocking_criterion_unresolved",
+)
 OBSERVED_REVIEW_STATUSES: Final = ("observed", "prepared", "not_observed")
 SUPPORTED_AUTO_ROUTES: Final = (
     "prepare_capture",
@@ -117,6 +128,7 @@ def capture_record(item: Mapping[str, JsonValue], index: int, now: str) -> JsonO
         "path_or_uri": path_or_uri,
         "mime_type": mime_type(path_or_uri, text(record.get("mime_type"))),
         "viewport": text(record.get("viewport")) or "unspecified",
+        "source_lineage": lineage_record(record.get("source_lineage")),
         "captured_at": text(record.get("captured_at")) or now,
         "observer": text(record.get("observer")) or "wrapper_or_user",
         "evidence_summary": text(record.get("evidence_summary")),
@@ -126,6 +138,71 @@ def capture_record(item: Mapping[str, JsonValue], index: int, now: str) -> JsonO
         "byte_size": optional_non_negative_int(record.get("byte_size")),
         "sha256": text(record.get("sha256")),
     }
+
+
+def lineage_record(value: JsonValue | None) -> JsonObject:
+    lineage = object_value(value)
+    return {
+        "repository": text(lineage.get("repository")),
+        "revision": text(lineage.get("revision")),
+    }
+
+
+def unique_strings(value: Sequence[str]) -> list[JsonValue]:
+    return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+
+
+def pass_blocker_ids(record: JsonObject) -> list[JsonValue]:
+    if record.get("schema_version") == WEB_VISUAL_QA_PACKAGE_LEGACY_SCHEMA_VERSION:
+        return ["legacy_package_cannot_pass"]
+    captures = object_list(record.get("captures"))
+    blockers: set[str] = set()
+    if not captures:
+        blockers.add("observed_capture_missing")
+    target_lineage = lineage_record(record.get("target_lineage"))
+    target_repository = text(target_lineage.get("repository"))
+    target_revision = text(target_lineage.get("revision"))
+    target_lineage_complete = bool(target_repository and target_revision)
+    if not target_lineage_complete:
+        blockers.add("target_lineage_missing")
+    capture_lineages_complete = True
+    capture_lineages_match = True
+    for capture in captures:
+        source_lineage = lineage_record(capture.get("source_lineage"))
+        source_repository = text(source_lineage.get("repository"))
+        source_revision = text(source_lineage.get("revision"))
+        if not source_repository or not source_revision:
+            blockers.add("capture_source_lineage_missing")
+            capture_lineages_complete = False
+            continue
+        if target_lineage_complete and (
+            source_repository != target_repository or source_revision != target_revision
+        ):
+            blockers.add("capture_source_lineage_mismatch")
+            capture_lineages_match = False
+    required_viewports = strings(record.get("required_viewports"))
+    if not required_viewports:
+        blockers.add("required_viewports_missing")
+    elif target_lineage_complete and capture_lineages_complete and capture_lineages_match:
+        captured_viewports = {text(capture.get("viewport")) for capture in captures}
+        if any(viewport_name not in captured_viewports for viewport_name in required_viewports):
+            blockers.add("required_viewport_missing")
+    blocking_criteria_ids = {
+        text(item.get("criterion_id"))
+        for item in object_list(record.get("criteria"))
+        if text(item.get("severity")) == "blocking"
+    }
+    results_by_criterion = {
+        text(item.get("criterion_id")): item for item in object_list(record.get("criteria_results"))
+    }
+    if not blocking_criteria_ids or any(
+        criterion_id not in results_by_criterion
+        or results_by_criterion[criterion_id].get("status") != "pass"
+        or not strings(results_by_criterion[criterion_id].get("evidence_refs"))
+        for criterion_id in blocking_criteria_ids
+    ):
+        blockers.add("supplied_blocking_criterion_unresolved")
+    return [blocker_id for blocker_id in WEB_VISUAL_QA_PASS_BLOCKER_IDS if blocker_id in blockers]
 
 
 def criterion_record(item: Mapping[str, JsonValue]) -> JsonObject:

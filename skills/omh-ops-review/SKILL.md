@@ -1,6 +1,6 @@
 ---
-name: omh-ops-review
-description: [omh] Hermes Ops Review workflow: status, risks, blockers, priorities, and follow-ups. Use when the user says: ops-review, ops review, weekly ops review, status review, operating review, release risks, risks and blockers, priorities.
+name: "omh-ops-review"
+description: "[omh] Hermes Ops Review workflow: status, risks, blockers, priorities, and follow-ups. Use when the user says: ops-review, ops review, weekly ops review, status review, operating review, release risks, risks and blockers, priorities."
 metadata:
   hermes:
     tags: [workflow, oh-my-hermes, operations]

@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from omh.skills.catalog import builtin_definitions
 from omh.workflows import domain_intelligence_profile_snapshot as profile_snapshot
 
 from domain_routing_context_support import (
@@ -27,12 +28,10 @@ class DomainContextResolverMixin:
                     binding, "Please do a pipeline review", locale="en"
                 )
 
+        sales = next(item for item in builtin_definitions() if item.name == "sales-development")
         self.assertEqual(
             fragment["domain_routing_context"]["question"],
-            {
-                "locale": "en",
-                "text": "Which account or customer segment should this sales work focus on?",
-            },
+            {"locale": "en", "text": sales.expert_questions[0].en},
         )
         self.assertEqual(
             fragment["domain_routing_context"]["required_input"],

@@ -12,13 +12,18 @@ def validate_expert_questions(
     if not isinstance(questions, (tuple, list)):
         errors.append(f"{label} expert_questions must be a list")
         return
+    required_inputs = (
+        tuple(item for item in definition.required_inputs if isinstance(item, str))
+        if isinstance(definition.required_inputs, (tuple, list))
+        else ()
+    )
     seen_inputs: set[str] = set()
     for index, question in enumerate(questions):
         question_label = f"{label} expert_questions[{index}]"
         required_input = getattr(question, "required_input", None)
         if (
             not isinstance(required_input, str)
-            or required_input not in definition.required_inputs
+            or required_input not in required_inputs
         ):
             errors.append(
                 f"{question_label} required_input must exactly match a declared required_inputs member"
