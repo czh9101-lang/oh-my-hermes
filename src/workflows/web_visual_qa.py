@@ -31,7 +31,10 @@ from .web_visual_qa_contracts import (
     object_list,
     object_value,
     package_id_or_default,
+    pass_blocker_ids,
+    lineage_record,
     text,
+    unique_strings,
     valid_id,
     viewport,
 )
@@ -43,6 +46,8 @@ def build_web_visual_qa_package(
     package_id: str = "",
     target: str,
     criteria: Sequence[Mapping[str, JsonValue]],
+    target_lineage: Mapping[str, JsonValue] | None = None,
+    required_viewports: Sequence[str] = (),
     source: str = "generic",
     risk_level: str = "unknown",
     estimated_cost_tier: str = "none",
@@ -62,7 +67,7 @@ def build_web_visual_qa_package(
     trace_records = [dict(item) for item in interaction_traces]
     review_records = [multimodal_review_record(item) for item in multimodal_reviews]
     attachments = attachment_projection(capture_records)
-    canonical_verdict = choice(verdict, SUPPORTED_VERDICTS, "not_observed")
+    requested_verdict = choice(verdict, SUPPORTED_VERDICTS, "not_observed")
     routing = auto_routing(
         risk_level=risk_level,
         estimated_cost_tier=estimated_cost_tier,
@@ -71,30 +76,39 @@ def build_web_visual_qa_package(
         criteria_results=result_records,
         multimodal_reviews=review_records,
     )
-    return {
+    package: JsonObject = {
         "schema_version": WEB_VISUAL_QA_PACKAGE_SCHEMA_VERSION,
         "package_id": package_id_or_default(package_id, target),
-        "status": lifecycle_status(capture_records, result_records, canonical_verdict),
+        "status": lifecycle_status(capture_records, result_records, requested_verdict),
         "source": choice(source, SUPPORTED_SOURCES, "generic"),
         "target": target.strip(),
+        "target_lineage": lineage_record(dict(target_lineage) if target_lineage is not None else None),
+        "required_viewports": unique_strings(required_viewports),
         "created_at": created,
         "updated_at": updated,
         "risk_level": choice(risk_level, SUPPORTED_RISK_LEVELS, "unknown"),
         "estimated_cost_tier": choice(estimated_cost_tier, SUPPORTED_COST_TIERS, "none"),
-        "criteria": criteria_records,
-        "criteria_results": result_records,
-        "viewport_matrix": [viewport(item) for item in capture_records],
-        "captures": capture_records,
-        "interaction_traces": trace_records,
-        "multimodal_reviews": review_records,
-        "verdict": canonical_verdict,
+        "criteria": list[JsonValue](criteria_records),
+        "criteria_results": list[JsonValue](result_records),
+        "viewport_matrix": list[JsonValue](viewport(item) for item in capture_records),
+        "captures": list[JsonValue](capture_records),
+        "interaction_traces": list[JsonValue](trace_records),
+        "multimodal_reviews": list[JsonValue](review_records),
+        "verdict": requested_verdict,
         "attachment_hints": item_list(attachments.get("items")),
         "attachment_projection": attachments,
-        "messenger_summary": messenger_summary(result_records, canonical_verdict),
+        "messenger_summary": messenger_summary(result_records, requested_verdict),
         "routing": routing,
         "claim_boundary": WEB_VISUAL_QA_CLAIM_BOUNDARY,
-        "does_not_prove": list(WEB_VISUAL_QA_PACKAGE_DOES_NOT_PROVE),
+        "does_not_prove": list[JsonValue](WEB_VISUAL_QA_PACKAGE_DOES_NOT_PROVE),
     }
+    blockers = pass_blocker_ids(package)
+    package["blocking_violations"] = blockers
+    if requested_verdict == "pass" and blockers:
+        package["verdict"] = "hold"
+    package["status"] = lifecycle_status(capture_records, result_records, text(package.get("verdict")))
+    package["messenger_summary"] = messenger_summary(result_records, text(package.get("verdict")))
+    return package
 
 
 def write_web_visual_qa_package(paths: OmhPaths, record: JsonObject) -> JsonObject:

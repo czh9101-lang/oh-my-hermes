@@ -161,17 +161,22 @@ export default function register(sdk) {
     const taskId = truncateCells(safeText(row.task_id) || safeText(row.role) || 'agent', 8).padEnd(8)
     const model = [safeText(row.model), safeText(row.effort)].filter(Boolean).join(':')
     const category = safeText(row.category)
-    // Prepared-route provenance from the reader: a fallback lane carries a
-    // visible `fallback` token, and an exhausted chain reads
-    // `category→inherit` instead of converging into plain inherit.
+    // Prepared-route provenance from the reader, rendered as one shape:
+    // `category(model tag)`. The category names the LANE and never changes;
+    // only the parenthesized model (and its state token) moves — a fallback
+    // lane reads `category(model fallback)`, and an exhausted chain running
+    // the parent's model reads `category(model inherit)` instead of being
+    // relabeled away from its category.
     const routeOrigin = safeText(row.route_origin)
     const routeCategory = safeText(row.route_category)
-    const routeDetail = [model, routeOrigin === 'fallback' ? 'fallback' : ''].filter(Boolean).join(' ')
-    const route = routeOrigin === 'exhausted_to_inherit' && routeCategory
-      ? `category:${routeCategory}→inherit${model ? `(${model})` : ''}`
-      : category
-        ? `category:${category}${routeDetail ? `(${routeDetail})` : ''}`
-        : model
+    const routeTag = routeOrigin === 'fallback' ? 'fallback'
+      : routeOrigin === 'exhausted_to_inherit' ? 'inherit'
+        : ''
+    const routeDetail = [model, routeTag].filter(Boolean).join(' ')
+    const displayCategory = routeOrigin === 'exhausted_to_inherit' && routeCategory ? routeCategory : category
+    const route = displayCategory
+      ? `category:${displayCategory}${routeDetail ? `(${routeDetail})` : ''}`
+      : model
     const routeKind = routeOrigin === 'fallback' || routeOrigin === 'exhausted_to_inherit' ? 'route-fallback' : 'route'
     const turn = Number.isFinite(row.turn_count) ? `turn ${row.turn_count}` : ''
     const tools = Number.isFinite(row.tool_count) ? `${row.tool_count} tools` : ''
