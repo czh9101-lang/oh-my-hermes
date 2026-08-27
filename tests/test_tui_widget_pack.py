@@ -458,6 +458,14 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertIn("ActivityRow", widget)
         self.assertIn("truncateCells", widget)
         self.assertIn("category:", widget)
+        # Prepared-route provenance renders: a fallback lane carries a
+        # warning-colored `fallback` token, and an exhausted chain reads
+        # `category→inherit` instead of converging into plain inherit.
+        self.assertIn("route_origin", widget)
+        self.assertIn("route-fallback", widget)
+        self.assertIn("routeOrigin === 'fallback' ? 'fallback' : ''", widget)
+        self.assertIn("→inherit", widget)
+        self.assertIn("row.route_category", widget)
         self.assertIn("tools", widget)
         self.assertIn("tok/s", widget)
         self.assertIn("cache_hit_percentage", widget)
