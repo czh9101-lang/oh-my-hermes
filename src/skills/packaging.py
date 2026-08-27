@@ -12,6 +12,7 @@ from .render import (
     context_reference_templates,
     context_skill,
     deep_interview_skill,
+    design_reference_templates,
     jit_learn_skill,
     loop_reference_templates,
     loop_skill,
@@ -38,6 +39,7 @@ def builtin_skill_reference_templates() -> list[SkillReferenceTemplate]:
         *context_reference_templates(),
         *buzz_reference_templates(),
         *loop_reference_templates(),
+        *design_reference_templates(),
     ]
 
 

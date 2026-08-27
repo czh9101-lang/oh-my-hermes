@@ -2642,7 +2642,7 @@ _DEFINITIONS = [
         quality_tier="design-orchestration-gated",
         quality_bar=(
             "Make the design job, context boundary, direction, downstream lane ownership, and visual evidence requirements readable before handoff.",
-            "Reject generic default drift by naming hierarchy, palette, typography, layout, signature element, and avoid patterns deliberately.",
+            "Reject generic default drift by naming hierarchy, palette, typography, layout, signature element, and avoid patterns deliberately — the direction vocabulary and anti-slop patterns live in the frontend skill's `omh-frontend/references/taste-foundations.md`; prepared directions inherit its named bar (technically clean but flat fails).",
             "Require the selected executor and fresh visual evidence separately before any implementation or quality completion claim.",
         ),
         why_this_exists=(
@@ -2743,7 +2743,7 @@ _DEFINITIONS = [
         ),
         quality_tier="design-pro-gated",
         quality_bar=(
-            "Define superior design quality with references, audience, hierarchy, style, and measurable QA gates.",
+            "Define superior design quality with references, audience, hierarchy, style, and measurable QA gates. The bar is named, not relative: what a senior product designer at a top-tier product company (the Linear/Stripe/Supabase class) would sign off on — technically clean but flat output fails it. Load `references/design-critique-rubric.md` and judge every axis with named evidence.",
             "State why the result should be better than ordinary output, including content depth, visual hierarchy, spacing, typography, and interaction or export polish.",
             "Review content accuracy and hierarchy before visual polish.",
             "Use design-system/reference rules for web, deck, PDF, and poster surfaces.",
@@ -2891,8 +2891,9 @@ _DEFINITIONS = [
         quality_tier="frontend-design-gated",
         quality_bar=(
             "Name the product goal, audience, target surfaces, routes, states, and visual quality bar.",
-            "Use references and domain fit to avoid generic AI-looking frontend output.",
-            "Prepare a concrete design-system contract before implementation handoff.",
+            "Hold the named bar: what a senior product designer at a top-tier product company (the Linear/Stripe/Supabase class) would sign off on — technically clean but flat output fails it. Load `references/taste-foundations.md`, name one primary taste direction, and reject the anti-slop patterns it lists.",
+            "Use references and domain fit to avoid generic AI-looking frontend output; when the user supplies a visual reference, load `references/reference-token-extraction.md` and extract tokens into the contract instead of eyeballing.",
+            "Prepare a concrete design-system contract before implementation handoff: load `references/design-system-contract.md` and write DESIGN.md before the first component — no component code before the contract exists.",
             "For first-time UI creation, name the initial generation branch, reference direction, reusable primitives, state coverage, and required visual QA path.",
             "Cover responsive layout, empty/loading/error states, hover/focus/active states, CJK text, accessibility, and performance expectations.",
             "Prefer native UI controls, stable dimensions, and realistic content over decorative cards, blobs, and placeholder-heavy screens.",

@@ -204,11 +204,17 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # say-not-observed carve-out for directly asked figures (renders into all
 # three handoff-guide skill bodies; the common rail carries the same text but
 # sits outside this metric); warranted growth.
-# 716418 -> 718886: ten operations skills now expose their artifact contract
+# 716418 -> 719955: ten operations skills now expose their artifact contract
 # id, machine-enforcement level, resolvable consumer (when validated), and the
-# enforcement-versus-evidence boundary (+2468 chars); warranted contract
-# visibility growth for issue #1119.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 718886
+# enforcement-versus-evidence boundary (#1119); the design family also gained
+# its named craft bar and pointers into on-demand references (the frontend,
+# design-quality-gate, and design-orchestration quality bars carry the named
+# senior-designer bar with flat-output-fails, the DESIGN.md-before-code
+# contract gate, primary-taste-direction selection, and reference-token
+# extraction). The reference bodies themselves load on demand and sit outside
+# this always-loaded budget; the canonical producer measures the combined
+# warranted growth at +3537 chars.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 719955
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
