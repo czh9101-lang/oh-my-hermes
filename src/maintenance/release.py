@@ -204,9 +204,15 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # say-not-observed carve-out for directly asked figures (renders into all
 # three handoff-guide skill bodies; the common rail carries the same text but
 # sits outside this metric); warranted growth.
-# 716418 -> 716548: the three specialist workflows gained normalized routing
-# cues for local-negation and compound-intent handling (#1112); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 716548
+# 716418 -> 717620: the three specialist workflows gained normalized routing
+# cues for local-negation and compound-intent handling (#1112, +130 chars),
+# and the design family gained its named craft bar and pointers into on-demand
+# references (+1072 chars across the frontend, design-quality-gate, and
+# design-orchestration quality bars: flat-output-fails, the DESIGN.md-before-
+# code contract gate, primary-taste-direction selection, and reference-token
+# extraction). The four reference bodies load on demand and sit outside this
+# always-loaded budget; both increments are warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 717620
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

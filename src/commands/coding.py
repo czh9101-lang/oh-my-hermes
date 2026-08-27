@@ -1607,8 +1607,11 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
         read_fanout_contract_provenance,
     )
     from ..coding.fanout_dispatch import dispatch_fanout, fanout_dispatch_preflight
+    from ..coding.parallelism_policy import read_parallelism_policy, resolve_fanout_concurrency
 
     paths = _paths(args)
+    parallelism = read_parallelism_policy(paths)
+    concurrency = resolve_fanout_concurrency(parallelism, args.concurrency)
     try:
         contract = read_fanout_contract(paths, args.fanout_id)
         read_fanout_contract_provenance(
@@ -1636,14 +1639,16 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             goal_text=goal_text,
             repo_root=repo_root,
             base_sha="",
-            concurrency=args.concurrency,
+            concurrency=concurrency["applied"],
+            per_owner_lanes=parallelism["per_owner"],
+            concurrency_policy=concurrency,
             timeout=args.timeout,
             only_units=args.unit,
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
         )
         _print_json(summary)
-        return 0
+        return 130 if summary.get("interrupted") else 0
     resolved = _subprocess.run(
         ["git", "rev-parse", args.base_ref],
         cwd=str(repo_root),
@@ -1664,7 +1669,9 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             # worktree add can re-check that the base has not moved between
             # this single resolve and the unit's own creation.
             source_ref=args.base_ref,
-            concurrency=args.concurrency,
+            concurrency=concurrency["applied"],
+            per_owner_lanes=parallelism["per_owner"],
+            concurrency_policy=concurrency,
             timeout=args.timeout,
             only_units=args.unit,
             dry_run=bool(args.dry_run),
@@ -1673,7 +1680,25 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
     _print_json(summary)
-    return 0
+    return 130 if summary.get("interrupted") else 0
+
+
+def cmd_coding_fanout_reap(args: argparse.Namespace) -> int:
+    from ..coding.fanout_reap import reap_fanout_units
+
+    paths = _paths(args)
+    report = reap_fanout_units(paths, args.fanout_id, pids=args.pid or None)
+    _print_json(report)
+    if report.get("status") != "observed":
+        return 1
+    # A candidate that survived or could not be signalled is a failed
+    # remediation; exiting 0 would let `reap && rm -rf <worktree>` proceed
+    # against a live agent.
+    failed = any(
+        row.get("status") in {"still_alive", "refused_permission"}
+        for row in report.get("candidates", [])
+    )
+    return 1 if failed else 0
 
 
 def cmd_coding_fanout_migrate_legacy(args: argparse.Namespace) -> int:
@@ -1934,7 +1959,18 @@ def _add_coding_commands(sub) -> None:
     fanout_dispatch.add_argument("--goal-file", required=True, help="File with the goal text frozen at prepare time ('-' for stdin).")
     fanout_dispatch.add_argument("--repo-root", default=".", help="Repository the unit worktrees branch from.")
     fanout_dispatch.add_argument("--base-ref", default="HEAD", help="Ref resolved once to a SHA all unit branches start from.")
-    fanout_dispatch.add_argument("--concurrency", type=int, default=2)
+    # Default None resolves through the setup profile's `parallelism` block
+    # (default_concurrency 5, global_concurrency 8 unless edited); an
+    # explicit flag still wins, clamped to the global ceiling.
+    fanout_dispatch.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help=(
+            "Pool width override; defaults to the setup profile's "
+            "parallelism.default_concurrency and is clamped to global_concurrency."
+        ),
+    )
     fanout_dispatch.add_argument("--timeout", type=int, default=1800, help="Per-unit subprocess timeout in seconds.")
     fanout_dispatch.add_argument("--unit", action="append", default=None, help="Dispatch only these unit ids (repeatable).")
     fanout_dispatch.add_argument("--dry-run", action="store_true", help="Resolve readiness, argv, and worktree paths; spawn nothing.")
@@ -1979,6 +2015,23 @@ def _add_coding_commands(sub) -> None:
     )
     fanout_status.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
     fanout_status.set_defaults(func=cmd_coding_fanout_status)
+
+    fanout_reap = fanout_sub.add_parser(
+        "reap",
+        help=(
+            "Terminate marker-named unit process groups for one fanout. Verify the dispatcher is dead "
+            "first — a live dispatcher's running units are equally marker-named. Refuses any pid the "
+            "markers do not name; never kills by process name."
+        ),
+    )
+    fanout_reap.add_argument("fanout_id", help="Fanout id whose inflight markers name the candidate pids.")
+    fanout_reap.add_argument(
+        "--pid",
+        type=int,
+        action="append",
+        help="Restrict to specific marker-named pids; default reaps every marker-named pid.",
+    )
+    fanout_reap.set_defaults(func=cmd_coding_fanout_reap)
 
     model_route = coding_sub.add_parser(
         "model-route",

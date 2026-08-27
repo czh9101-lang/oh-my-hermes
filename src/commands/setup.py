@@ -1370,6 +1370,7 @@ def _setup_operator_summary(
         "operating_model_id": operating_model_id,
         "memory_mode": memory_mode,
         "memory_policy": memory_policy if isinstance(memory_policy, dict) else {},
+        "parallelism": profile.get("parallelism", {}) if isinstance(profile, dict) else {},
         "status": status,
         "requires_hermes_reload": bool(hermes_native.get("requires_hermes_reload", False)),
         "paths": {
