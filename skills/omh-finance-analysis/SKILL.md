@@ -1,6 +1,6 @@
 ---
 name: omh-finance-analysis
-description: [omh] Turn finance and accounting inputs into a decision-ready variance, cash, and close-risk brief. Use when the user says: finance analysis, budget vs actual, month-end close, 재무 분석, 예산 대비 실적, 월마감.
+description: [omh] Turn finance and accounting inputs into a decision-ready variance, cash, and close-risk brief. Use when the user says: finance analysis, budget variance, budget vs actual, month-end close, 재무 분석, 예산 대비 실적, 월마감.
 metadata:
   hermes:
     tags: [workflow, oh-my-hermes, operations]
@@ -60,7 +60,7 @@ Bad example:
 
 Use when supplied ledger, budget, forecast, revenue, expense, cash-flow, or close context needs a bounded analysis and decision brief.
 
-    Strong routing signals: `finance analysis`, `budget vs actual`, `month-end close`, `재무 분석`, `예산 대비 실적`, `월마감`
+    Strong routing signals: `finance analysis`, `budget variance`, `budget vs actual`, `month-end close`, `재무 분석`, `예산 대비 실적`, `월마감`
 
 ## Catalog Metadata
 
