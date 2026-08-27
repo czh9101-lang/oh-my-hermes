@@ -31,6 +31,13 @@ from .expert_question_rendering import (
     expert_question_reference_lines,
     expert_questions_markdown,
 )
+from .procedure_rendering import (
+    copy_procedure_check_payloads,
+    copy_procedure_step_payloads,
+    procedure_check_payloads,
+    procedure_reference_lines,
+    procedure_step_payloads,
+)
 from ..catalogs.awesome_hermes_agent import awesome_hermes_catalog
 from ..plugin_bundle.omh.awareness import (
     awareness_shared_context_markdown,
@@ -215,13 +222,43 @@ _FRONTMATTER_TRIGGER_LIMIT = 8
 _FRONTMATTER_SAFE_TRIGGER = re.compile(r"^[0-9A-Za-z가-힣][0-9A-Za-z가-힣 _.-]*$")
 
 
-def _frontmatter_trigger_tail(definition: SkillDefinition | None) -> str:
-    if definition is None:
-        return ""
+# Why a trigger defined in the catalog never reaches the picker description.
+# The set is closed: every omission the emission rule below can produce maps
+# to exactly one of these, so a reviewer never sees an unexplained loss.
+ROUTER_CARVE_OUT = "router_carve_out"
+UNSAFE_FOR_FRONTMATTER = "unsafe_for_frontmatter"
+DUPLICATE_OF_ALIAS = "duplicate_of_alias"
+BUDGET_OVERFLOW = "budget_overflow"
+
+
+def frontmatter_trigger_emission(definition: SkillDefinition) -> tuple[list[str], list[tuple[str, str]]]:
+    """Split a definition's triggers into what the picker sees and what it loses.
+
+    Returned as `(emitted, [(trigger, reason), ...])`. `_frontmatter_trigger_tail()`
+    renders from the same call, so the review report can never describe an
+    emission rule the renderer no longer applies.
+    """
+    safe_aliases = _safe_aliases(definition)
     # The router describes plumbing, not an intent; surfacing its `omh`
     # tokens would also collide with the substring-trap detectors.
     if definition.name == "oh-my-hermes":
-        return ""
+        return [], [(trigger, ROUTER_CARVE_OUT) for trigger in definition.triggers]
+    safe_alias_keys = {alias.casefold() for alias in safe_aliases}
+    emitted: list[str] = []
+    omitted: list[tuple[str, str]] = []
+    for trigger in definition.triggers:
+        if not _FRONTMATTER_SAFE_TRIGGER.fullmatch(trigger):
+            omitted.append((trigger, UNSAFE_FOR_FRONTMATTER))
+        elif trigger.casefold() in safe_alias_keys:
+            omitted.append((trigger, DUPLICATE_OF_ALIAS))
+        elif len(emitted) >= _FRONTMATTER_TRIGGER_LIMIT:
+            omitted.append((trigger, BUDGET_OVERFLOW))
+        else:
+            emitted.append(trigger)
+    return emitted, omitted
+
+
+def _safe_aliases(definition: SkillDefinition) -> list[str]:
     safe_aliases = [
         alias
         for alias in definition.aliases
@@ -230,18 +267,18 @@ def _frontmatter_trigger_tail(definition: SkillDefinition | None) -> str:
     if len(safe_aliases) != len(definition.aliases):
         invalid = sorted(set(definition.aliases) - set(safe_aliases))
         raise ValueError(f"unsafe picker aliases for {definition.name}: {', '.join(invalid)}")
-    safe_alias_keys = {alias.casefold() for alias in safe_aliases}
-    safe_triggers = [
-        trigger
-        for trigger in definition.triggers
-        if _FRONTMATTER_SAFE_TRIGGER.fullmatch(trigger) and trigger.casefold() not in safe_alias_keys
-    ]
+    return safe_aliases
+
+
+def _frontmatter_trigger_tail(definition: SkillDefinition | None) -> str:
+    if definition is None:
+        return ""
+    safe_aliases = _safe_aliases(definition)
+    if definition.name == "oh-my-hermes":
+        return ""
+    emitted, _ = frontmatter_trigger_emission(definition)
     alias_tail = " Aliases: " + ", ".join(safe_aliases) + "." if safe_aliases else ""
-    trigger_tail = (
-        " Use when the user says: " + ", ".join(safe_triggers[:_FRONTMATTER_TRIGGER_LIMIT]) + "."
-        if safe_triggers
-        else ""
-    )
+    trigger_tail = " Use when the user says: " + ", ".join(emitted) + "." if emitted else ""
     return alias_tail + trigger_tail
 
 
@@ -395,7 +432,10 @@ def _quality_rubric_sections(definition: SkillDefinition) -> str:
 
 def _skill_metadata_block(definition: SkillDefinition) -> str:
     required_inputs = _tuple_list(definition.required_inputs)
-    expert_questions = expert_questions_markdown(definition)
+    expert_questions = expert_questions_markdown(
+        definition,
+        limit=1 if definition.procedure_steps else None,
+    )
     if expert_questions:
         required_inputs = f"{required_inputs}\n\n{expert_questions}"
     return f"""Category: `{definition.category}`
@@ -426,7 +466,11 @@ Artifact expectations:
 
 Safety rules:
 
-{_tuple_list(definition.safety_rules)}"""
+{_tuple_list(definition.safety_rules)}{_procedure_skill_suffix(definition)}"""
+
+
+def _procedure_skill_suffix(definition: SkillDefinition) -> str:
+    return "\n\nProcedure: load `references/procedure.md`." if definition.procedure_steps else ""
 
 
 def _executor_readiness_skill_note(definition: SkillDefinition) -> str:
@@ -2330,6 +2374,7 @@ def _workflow_reference_markdown_cached() -> str:
                 *[f"  - {item}" for item in definition.artifact_expectations],
                 "- Safety rules:",
                 *[f"  - {item}" for item in definition.safety_rules],
+                *procedure_reference_lines(definition),
                 "",
             ]
         )
@@ -2414,6 +2459,9 @@ def _copy_skill_payload(payload: dict[str, object]) -> dict[str, object]:
     copied["good_example"] = dict(payload["good_example"])
     copied["bad_example"] = dict(payload["bad_example"])
     copied["expert_questions"] = copy_expert_question_payloads(payload["expert_questions"])
+    if "procedure_checks" in payload:
+        copied["procedure_checks"] = copy_procedure_check_payloads(payload["procedure_checks"])
+        copied["procedure_steps"] = copy_procedure_step_payloads(payload["procedure_steps"])
     return copied
 
 
@@ -2472,6 +2520,14 @@ def _skill_payload(definition: SkillDefinition) -> dict[str, object]:
         "recovery_notes": list(definition.recovery_notes),
         "required_inputs": list(definition.required_inputs),
         "expert_questions": expert_question_payloads(definition),
+        **(
+            {
+                "procedure_checks": procedure_check_payloads(definition),
+                "procedure_steps": procedure_step_payloads(definition),
+            }
+            if definition.procedure_steps
+            else {}
+        ),
         "expected_outputs": list(definition.expected_outputs),
         "artifact_expectations": list(definition.artifact_expectations),
         "safety_rules": list(definition.safety_rules),

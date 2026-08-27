@@ -91,6 +91,16 @@ def _routing_precision_case_count() -> int:
     return int(build_routing_precision_demo()["summary"]["case_count"])
 
 
+def _routing_precision_intervention_case_count() -> int:
+    from ..quality.routing_precision import build_routing_precision_demo
+
+    summary = build_routing_precision_demo().get("summary")
+    if not isinstance(summary, dict):
+        return 0
+    count = summary.get("intervention_case_count")
+    return count if isinstance(count, int) and not isinstance(count, bool) else 0
+
+
 def _installable_skill_count() -> int:
     from ..skills.catalog import installable_skill_names
 
@@ -176,7 +186,19 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="routing_precision_case_count",
             describe="Routing precision cases",
             live=_routing_precision_case_count,
-            expected=70,
+            expected=90,
+            sites=(
+                "tests/test_cli.py",
+                "tests/test_hermes_ux_quality.py",
+                "tests/test_release_smoke.py",
+                "tests/test_routing_precision.py",
+            ),
+        ),
+        CountMetric(
+            name="routing_precision_intervention_case_count",
+            describe="Routing precision intervention cases",
+            live=_routing_precision_intervention_case_count,
+            expected=202,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",

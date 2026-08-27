@@ -17,6 +17,7 @@ from .expert_question_validation import (
     validate_expert_questions as _validate_expert_questions,
 )
 from . import structure_lint as _structure_lint
+from .procedure_validation import validate_procedure_contract as _validate_procedure_contract
 
 
 CATALOG_VALIDATION_SCHEMA_VERSION = "catalog_validation/v1"
@@ -56,6 +57,7 @@ def validate_catalog_contract() -> dict[str, object]:
         errors.extend(_validate_harness_quality_payload(quality, f"harness {harness.name} harness_quality"))
         errors.extend(_validate_harness_quality_matches_definition(quality, harness))
     errors.extend(_validate_named_harness_gates({harness.name: harness for harness in harnesses}))
+    errors.extend(_collision_declaration_errors(definitions))
 
     return {
         "schema_version": CATALOG_VALIDATION_SCHEMA_VERSION,
@@ -64,6 +66,20 @@ def validate_catalog_contract() -> dict[str, object]:
         "errors": errors,
         "warnings": warnings,
     }
+
+
+def _collision_declaration_errors(definitions: list[SkillDefinition]) -> list[str]:
+    """Fail the catalog gate when a normalized trigger collision is unreviewed.
+
+    Sharing a trigger is not treated as a defect; only shipping one that no
+    maintainer has judged is.
+    """
+    from .trigger_review import validate_collision_declarations
+
+    result = validate_collision_declarations(definitions)
+    errors = result["errors"]
+    assert isinstance(errors, list)
+    return [str(error) for error in errors]
 
 
 def validate_skill_definition_contract(definition: SkillDefinition) -> list[str]:
@@ -134,6 +150,7 @@ def _validate_skill_definition(definition: SkillDefinition, harness_names: set[s
     for field in ("triggers", "required_inputs", "expected_outputs", "artifact_expectations", "safety_rules", "quality_bar"):
         _require_text_sequence(getattr(definition, field), f"{label} {field}", errors)
     _validate_expert_questions(definition, label, errors)
+    _validate_procedure_contract(definition, label, errors)
     _require_text_sequence(definition.do_not_use_when, f"{label} do_not_use_when", errors)
     _validate_skill_example(definition.good_example, f"{label} good_example", errors)
     _validate_skill_example(definition.bad_example, f"{label} bad_example", errors)

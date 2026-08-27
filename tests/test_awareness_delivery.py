@@ -4,7 +4,6 @@ import json
 import os
 import stat
 import threading
-import time
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
@@ -46,15 +45,15 @@ class AwarenessDeliveryLedgerTests(unittest.TestCase):
 
     def test_busy_lock_drops_best_effort_counter_without_waiting(self) -> None:
         with TemporaryDirectory() as tmp:
-            with patch(
-                "omh.plugin_bundle.omh.awareness_delivery._acquire_delivery_lock",
-                return_value="none",
+            with (
+                patch(
+                    "omh.plugin_bundle.omh.awareness_delivery._acquire_delivery_lock",
+                    side_effect=TimeoutError("busy"),
+                ) as acquire_lock,
+                patch(
+                    "omh.plugin_bundle.omh.awareness_delivery._write_delivery_record",
+                ) as write_record,
             ):
-                lock_path = awareness_delivery_path(tmp).with_suffix(".lock")
-                lock_path.parent.mkdir(parents=True, exist_ok=True)
-                handle = lock_path.open("a+b")
-                handle.close()
-                started = time.monotonic()
                 result = record_awareness_delivery(
                     delivered=False,
                     route_hint=False,
@@ -62,10 +61,10 @@ class AwarenessDeliveryLedgerTests(unittest.TestCase):
                     observed_at="2026-08-12T00:00:00Z",
                     omh_home=tmp,
                 )
-                elapsed = time.monotonic() - started
 
-            self.assertIsNotNone(result)
-            self.assertLess(elapsed, 0.1)
+            self.assertIsNone(result)
+            acquire_lock.assert_called_once()
+            write_record.assert_not_called()
 
     def test_a_delivery_is_counted_with_its_size(self) -> None:
         with TemporaryDirectory() as tmp:

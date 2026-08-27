@@ -311,8 +311,8 @@ def configured_route_for_wire(
 # chain exhaustion clearing back to parent inheritance. omh_delegate_route
 # records each successful route write here so the HUD can label a fallback
 # lane as a fallback instead of rendering it indistinguishable from a head
-# route (and an exhausted chain as `category→inherit` instead of plain
-# inherit). The record is preparation evidence only: a label upgrade for an
+# route (and an exhausted chain as `category(model inherit)` — the category
+# names the lane and never changes — instead of plain inherit). The record is preparation evidence only: a label upgrade for an
 # observed child whose wire identity matches, never execution evidence and
 # never a routing input.
 DELEGATION_ROUTE_PROVENANCE_SCHEMA_VERSION = "delegation_route_provenance/v1"
@@ -965,8 +965,9 @@ def read_hermes_native_subagents(
         # Prepared-route provenance is a best-effort label upgrade, never
         # row identity: when the child's identity matches the newest route
         # prepared before its dispatch, a fallback lane says so and an
-        # exhausted chain reads `category→inherit` instead of converging
-        # into plain inherit. The upgrade carries its own source marker.
+        # exhausted chain keeps its category with an `inherit` model token
+        # (`category(model inherit)`) instead of converging into plain
+        # inherit. The upgrade carries its own source marker.
         provenance = _provenance_for_dispatch(
             route_provenance,
             started_at=child["started_at"],

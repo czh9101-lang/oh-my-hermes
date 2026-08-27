@@ -1,13 +1,23 @@
 """Effective approval-bypass (yolo) observation for the HUD.
 
-The Shift+Tab yolo toggle lives only in the host process's
-``tools.approval`` session state — nothing on disk records it — so the
-HUD can only report what the plugin's hooks observe in-process. Both
-``pre_llm_call`` (fires at each turn start, so a toggle shows up on the
-user's next message) and ``pre_tool_call`` tick this ledger with the same
-effective-bypass answer the host's own status surfaces report: global
-``approvals.mode=off``, the process-scoped ``--yolo`` env, or the
-per-session Shift+Tab flag, ORed together. Only the boolean and its
+The Shift+Tab yolo toggle lives in the host process's ``tools.approval``
+session state. Hosts that persist it give the HUD a real-time, on-disk
+signal: the classic CLI writes every ``/yolo`` toggle (both directions)
+and ``--yolo`` launches into the session row's
+``model_config.yolo_mode`` in ``state.db`` so ``--resume`` can restore
+it — the Modern TUI's gateway toggle gains the same persist upstream
+(until then its rows carry no flag and the ledger answers). The reader
+projects that row for the most recently active LIVE TUI session only —
+Hermes's own MRU discipline — inside the same freshness bound as the
+ledger, so a foreign or long-dead row can never answer for the session
+a widget is rendering. ``approvals.mode: off`` is read from
+``config.yaml`` directly and dominates, as it does in the host.
+
+The hook-observed ledger answers when no persisted surface speaks: a
+toggle before the session's first turn (Hermes creates the row lazily),
+a host that does not persist the flag, or a stale row. Both
+``pre_llm_call`` and ``pre_tool_call`` tick it with the effective-bypass
+answer the host's own status surfaces report. Only the boolean and its
 timestamp are recorded — never a session key, command, or prompt.
 """
 from __future__ import annotations
@@ -33,6 +43,12 @@ APPROVAL_BYPASS_CLAIM_BOUNDARY = (
     "Hook-observed effective approval-bypass state; it can lag Shift+Tab "
     "toggles and host restarts until the next turn or tool call, and is "
     "never approval, execution, or safety evidence."
+)
+APPROVAL_BYPASS_HOST_STATE_CLAIM_BOUNDARY = (
+    "Projected from the most recently active live TUI session row's "
+    "persisted /yolo flag and config.yaml approvals.mode — real-time on "
+    "toggles the host persists, but a projection of host state, never "
+    "approval, execution, or safety evidence."
 )
 
 
@@ -70,6 +86,166 @@ def record_approval_bypass(*, omh_home: str = "", now: float | None = None) -> N
             _write_delivery_record(path, record)
     except (OSError, ValueError, TypeError):
         return
+
+
+def _session_yolo_row(
+    hermes_home: str = "", *, now: float | None = None
+) -> tuple[bool, float] | None:
+    """The persisted /yolo flag off the most recently active live TUI session.
+
+    A host that persists the toggle writes ``model_config.yolo_mode`` on
+    every flip, so unlike the hook ledger this sees a toggle the moment it
+    happens — between turns included. The row may only ever answer for the
+    session a TUI widget is plausibly rendering: ``source='tui'``, not
+    ended/archived/hidden, not a delegation child, most recent by the
+    host's own MRU column (``last_activity_at``), and no older than the
+    ledger's freshness bound. Returns ``(enabled, activity_ts)`` or None
+    when no such row speaks (missing DB, older schema, no live TUI session,
+    or a session the host has not stamped) so the caller can fall back.
+    """
+    import json
+    import sqlite3
+    from urllib.parse import quote
+
+    current = float(now if now is not None else time.time())
+    home = Path(hermes_home).expanduser() if hermes_home else Path.home() / ".hermes"
+    path = home / "state.db"
+    if not path.exists():
+        return None
+    try:
+        connection = sqlite3.connect(
+            f"file:{quote(str(path))}?mode=ro", uri=True, timeout=0.2
+        )
+    except sqlite3.Error:
+        return None
+    try:
+        cursor = connection.execute(
+            """
+            SELECT model_config, COALESCE(last_activity_at, started_at)
+            FROM sessions
+            WHERE source = 'tui'
+              AND ended_at IS NULL
+              AND COALESCE(archived, 0) = 0
+              AND COALESCE(hidden, 0) = 0
+              AND (
+                model_config IS NULL
+                OR NOT json_valid(model_config)
+                OR json_extract(model_config, '$._delegate_from') IS NULL
+              )
+            ORDER BY COALESCE(last_activity_at, started_at) DESC
+            LIMIT 32
+            """
+        )
+        for raw_config, activity in cursor.fetchall():
+            try:
+                config = json.loads(raw_config) if raw_config else {}
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(config, dict) or config.get("_delegate_from"):
+                continue
+            if not isinstance(activity, (int, float)) or (
+                current - float(activity) > APPROVAL_BYPASS_FRESH_SECONDS
+            ):
+                # The freshest live TUI row is already too old to describe a
+                # session anyone is looking at; nothing below it is fresher.
+                return None
+            # A row without the key means the host never persisted a toggle
+            # for this session; only the hook ledger can speak for it.
+            if "yolo_mode" not in config:
+                return None
+            return bool(config.get("yolo_mode")), float(activity)
+        return None
+    except (sqlite3.Error, TypeError, ValueError):
+        return None
+    finally:
+        try:
+            connection.close()
+        except sqlite3.Error:
+            pass
+
+
+def _approvals_mode_off(hermes_home: str = "") -> bool:
+    """Whether config.yaml sets the global ``approvals.mode: off`` bypass.
+
+    A minimal text scan in the same spirit as the delegation-route reader:
+    only the top-level ``approvals:`` section's ``mode`` key is inspected,
+    and anything unreadable or oddly shaped reads as False (not bypassed) so
+    this can only ever add a truthful ON, never mask one.
+    """
+    home = Path(hermes_home).expanduser() if hermes_home else Path.home() / ".hermes"
+    try:
+        text = (home / "config.yaml").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    in_section = False
+    child_indent: int | None = None
+    for line in text.splitlines():
+        if line and not line[0].isspace() and not line.startswith("#"):
+            in_section = line.split(":", 1)[0].strip() == "approvals"
+            child_indent = None
+            continue
+        if not in_section:
+            continue
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        # Only the section's DIRECT children are approvals settings; a
+        # deeper `mode:` (e.g. approvals.tools.mode) is a different key and
+        # must never read as the global bypass.
+        if child_indent is None:
+            child_indent = indent
+        if indent != child_indent:
+            continue
+        if stripped.startswith("mode:"):
+            raw_value = stripped.partition(":")[2].split("#", 1)[0].strip()
+            quoted = (
+                len(raw_value) >= 2
+                and raw_value[0] in {"'", '"'}
+                and raw_value[-1] == raw_value[0]
+            )
+            value = raw_value[1:-1] if quoted else raw_value
+            if quoted:
+                # A quoted token is a plain string to YAML: 'false' and 'no'
+                # normalize to "manual" in the host, NOT to the bypass.
+                return value.casefold() == "off"
+            # Bare tokens pass through YAML 1.1 boolean resolution before
+            # the host normalizer maps False back to "off": off, false, and
+            # no all spell the same bypass.
+            return value.casefold() in {"off", "false", "no"}
+    return False
+
+
+def effective_approval_bypass(
+    omh_home: str = "", hermes_home: str = "", *, now: float | None = None
+) -> dict[str, Any]:
+    """Real-time yolo projection: host-persisted state first, ledger fallback.
+
+    ``approvals.mode: off`` dominates (the host's own /yolo refuses to
+    override it), then the session row's persisted toggle; only when neither
+    surface speaks does the hook-observed ledger answer — covering the
+    pre-first-turn toggle and older hosts, at turn latency.
+    """
+    config_off = _approvals_mode_off(hermes_home)
+    row = _session_yolo_row(hermes_home, now=now)
+    if config_off or row is not None:
+        current = float(now if now is not None else time.time())
+        # observed_at carries the row's own activity timestamp, not the
+        # read time: the projection must not restamp old state as fresh.
+        observed_ts = row[1] if row is not None and not config_off else current
+        observed_at = (
+            datetime.fromtimestamp(float(observed_ts), tz=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        return {
+            "status": "observed",
+            "enabled": bool(config_off or (row is not None and row[0])),
+            "observed_at": observed_at,
+            "source": "host_state",
+            "claim_boundary": APPROVAL_BYPASS_HOST_STATE_CLAIM_BOUNDARY,
+        }
+    return latest_approval_bypass(omh_home, now=now)
 
 
 def latest_approval_bypass(omh_home: str = "", *, now: float | None = None) -> dict[str, Any]:

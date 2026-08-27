@@ -1178,14 +1178,14 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Lifecycle stage: `canonical`
 - Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
 - Handoff policy: Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, implementation, review, CI, or merge claim. Prepare a connector, file, coding, or human-review handoff only when the user explicitly accepts that next step; report it only from observed evidence. Calculations are only as authoritative as supplied or observed sources and methods; no ERP, bank, ledger, tax, payment, or filing action is implied.
-- Why this exists: `finance-analysis` turns bounded accounting and finance context into a decision brief without presenting a prepared calculation as an authoritative financial action.
+- Why this exists: `finance-analysis` prepares a source-bounded decision brief without claiming an authoritative financial action.
 - Use when: Use when supplied ledger, budget, forecast, revenue, expense, cash-flow, or close context needs a bounded analysis and decision brief.
 - Do not use when:
   - The request is for a current quote, exchange rate, crypto price, or other live market lookup; use `live-info-operator`.
   - The user wants generic exploration of a supplied CSV or table without accounting periods, controls, or finance decision framing; use `data-analysis`.
   - The user asks to post journal entries, reconcile accounts, approve payments, submit tax filings, or configure an accounting system; use `connector-operator` for an explicit observed action path.
   - The user needs an enterprise or product direction decision after analysis; route that decision to `strategy-brief`.
-- Strong routing signals: `finance analysis`, `budget vs actual`, `month-end close`, `재무 분석`, `예산 대비 실적`, `월마감`
+- Strong routing signals: `finance analysis`, `budget variance`, `budget vs actual`, `month-end close`, `재무 분석`, `예산 대비 실적`, `월마감`
 - Good example:
   - Prompt: Compare Q2 actuals against budget, explain the biggest expense variances, and flag cash risks for the CFO.
   - Expected behavior: Prepare the period boundary, actual-versus-plan narrative, cash-risk register, and decision questions.
@@ -1211,18 +1211,69 @@ These surfaces are generated command references, not installed Hermes workflow s
   - calculation assumptions
 - Expert clarification questions:
   - `period`
-    - English: Which reporting period should this finance analysis cover?
-    - Korean: 이 재무 분석은 어느 기간을 대상으로 해야 하나요?
+    - English: What period, cutoff, reporting entity/perimeter, currency/units, accounting basis, comparator version, and close status apply?
+    - Korean: 어떤 기간, 마감 기준일, 보고 법인과 범위, 통화와 단위, 회계 기준, 비교 버전, 마감 상태를 적용해야 하나요?
+  - `supplied finance source`
+    - English: Which actual and comparator sources, provenance, versions, completeness checks, account mappings, and tie-out status are supplied?
+    - Korean: 어떤 실적 및 비교 자료와 출처, 버전, 완전성 점검, 계정 매핑, 대사 상태가 제공되었나요?
+  - `decision question`
+    - English: Which decision, owner, threshold or materiality boundary, and deadline should the analysis support?
+    - Korean: 이 분석이 지원할 의사결정, 책임자, 임계값 또는 중요성 기준, 기한은 무엇인가요?
+  - `calculation assumptions`
+    - English: Which formulas, approved policy sources, materiality, FX or allocation treatments, and challenged assumptions apply?
+    - Korean: 어떤 공식, 승인된 정책 근거, 중요성, 환율 또는 배부 처리, 검토할 가정을 적용해야 하나요?
 - Expected outputs:
-  - period and source-boundary statement
-  - actual-versus-plan and variance narrative with calculation/assumption gaps
-  - cash, close, control, or decision-risk register
-  - decision questions and next route such as strategy-brief, data-analysis, or human finance review
+  - finance_scope_source_record/v1
+  - finance_reconciliation_analysis_schedule/v1
+  - finance_risk_register/v1
+  - finance_decision_brief/v1
 - Artifact expectations:
   - prepared finance analysis brief when a wrapper captures it
 - Safety rules:
   - State source and calculation assumptions before presenting a variance.
   - Do not imply an ERP, bank, ledger, tax, payment, or filing action occurred.
+- Procedure checks:
+  - `finance_scope_comparability_check`
+    - Required result fields: `entity_perimeter`, `period_cutoff`, `currency_units`, `accounting_basis`, `comparator_version`, `close_status`, `source_provenance`
+    - Criterion: PASS only when scope and comparator attributes are supplied and comparable; otherwise HOLD with each missing or conflicting attribute.
+  - `finance_source_reconciliation_check`
+    - Required result fields: `totals_status`, `account_mapping_status`, `basis_units_status`, `cutoff_status`, `duplicate_missing_status`, `tie_out_status`, `unreconciled_gaps`
+    - Criterion: Record totals, mappings, basis and units, cutoff, duplicate or missing records, and tie-out evidence; never label an untied extract reconciled.
+  - `finance_policy_assumption_check`
+    - Required result fields: `formula_provenance`, `policy_provenance`, `materiality_status`, `fx_allocation_treatment`, `assumption_approval_status`
+    - Criterion: Use supplied formulas, policy, thresholds, FX, and allocations; mark every unsupplied choice an unapproved assumption and infer no accounting policy or assurance.
+  - `finance_conditional_interpretation_check`
+    - Required result fields: `analysis_applicability`, `revenue_bridge_status`, `receivables_dso_status`, `working_capital_status`, `unavailable_evidence`
+    - Criterion: Run only relevant supported analyses; distinguish bookings, billings, recognized and deferred revenue and cutoff, or calculate DSO, aging, AR, AP, inventory and working-capital movement only from stated comparable formulas and balances.
+  - `finance_validation_escalation_check`
+    - Required result fields: `recalculation_status`, `reconciliation_status`, `source_conflicts`, `control_exceptions`, `high_impact_assumptions`, `disposition`, `escalation_owner`
+    - Criterion: HOLD authoritative conclusions and escalate unresolved policy, cutoff, source conflict, control exception, failed recalculation, or high-impact assumption to a qualified finance or accounting owner.
+- Procedure steps:
+  - `finance_scope_sources` (`analysis`)
+    - Input refs: `period`, `supplied finance source`
+    - Output refs: `finance_scope_source_record/v1`
+    - Check IDs: `finance_scope_comparability_check`
+    - Instruction: Capture the reporting and comparator perimeter, units, basis, versions, close state, provenance, and explicit evidence gaps before interpreting amounts.
+  - `finance_reconcile_sources` (`validation`)
+    - Input refs: `period`, `supplied finance source`
+    - Output refs: `finance_reconciliation_analysis_schedule/v1`
+    - Check IDs: `finance_source_reconciliation_check`
+    - Instruction: Tie totals and account mappings, normalize only approved basis and units, test cutoff and duplicate or missing records, and preserve unreconciled gaps.
+  - `finance_analyze_variances` (`analysis`)
+    - Input refs: `supplied finance source`, `calculation assumptions`, `decision question`
+    - Output refs: `finance_reconciliation_analysis_schedule/v1`
+    - Check IDs: `finance_policy_assumption_check`
+    - Instruction: Recalculate comparable variances with supplied formulas and thresholds, separating facts, approved policy, proposed assumptions, and material decision effects.
+  - `finance_interpret_conditionally` (`analysis`)
+    - Input refs: `supplied finance source`, `calculation assumptions`, `decision question`
+    - Output refs: `finance_risk_register/v1`
+    - Check IDs: `finance_conditional_interpretation_check`
+    - Instruction: Apply revenue, receivables, liquidity, or working-capital interpretation only when relevant evidence exists, and mark unavailable analyses rather than forcing them.
+  - `finance_validate_brief` (`validation`)
+    - Input refs: `period`, `supplied finance source`, `decision question`, `calculation assumptions`
+    - Output refs: `finance_decision_brief/v1`
+    - Check IDs: `finance_scope_comparability_check`, `finance_source_reconciliation_check`, `finance_policy_assumption_check`, `finance_conditional_interpretation_check`, `finance_validation_escalation_check`
+    - Instruction: Report recalculation and reconciliation status, evidence-linked risks, assumptions, decision options and owners, and a PASS or HOLD disposition with mandatory escalation gaps.
 
 ### people-ops
 
@@ -1247,7 +1298,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The user only needs a one-off job-ad, rejection, or interview-email rewrite; use `content-operator`.
   - The user asks to create ATS records, send invitations, book interviews, change employment status, or modify HRIS settings; use `connector-operator` with explicit authorization and observed results.
   - The prompt asks the workflow to make an unsupported candidate decision from protected characteristics or missing interview evidence; retain the process and evidence gap instead.
-- Strong routing signals: `recruiting plan`, `interview scorecard`, `candidate debrief`, `채용 계획`, `면접 평가표`, `후보자 비교`
+- Strong routing signals: `recruiting plan`, `hiring scorecard`, `interview scorecard`, `candidate debrief`, `채용 계획`, `면접 평가표`, `후보자 비교`
 - Good example:
   - Prompt: Create an interview scorecard and debrief plan for our first senior support hire.
   - Expected behavior: Prepare role criteria, a structured scorecard, a debrief template, and decision-owner plan.
@@ -1302,14 +1353,14 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Lifecycle stage: `canonical`
 - Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
 - Handoff policy: Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, implementation, review, CI, or merge claim. Prepare a connector, file, coding, or human-review handoff only when the user explicitly accepts that next step; report it only from observed evidence. The result is a prepared review and escalation aid, not legal advice, counsel sign-off, compliance certification, contract execution, filing, or regulator communication.
-- Why this exists: `legal-compliance-review` surfaces scoped legal and compliance issues before a human legal decision without pretending Hermes is counsel or an external filing surface.
+- Why this exists: `legal-compliance-review` prepares scoped issues for human legal review without claiming counsel or filing authority.
 - Use when: Use when supplied contract, policy, product, process, or regulatory context needs a scoped issue matrix, assumptions, and counsel/escalation brief.
 - Do not use when:
   - The user needs a final jurisdiction-specific legal opinion, legal representation, or authoritative filing decision; prepare the issue and counsel brief instead.
   - The review is about code, secrets, permissions, prompt injection, dependencies, or unsafe tool behavior; use `security-safety-review`.
   - The request is a plain-language rewrite without a legal-risk review objective; use `content-operator`.
   - The user asks to sign, accept, submit, file, publish, or change a policy or contract in an external system; use `connector-operator` only after explicit authority.
-- Strong routing signals: `contract review`, `regulatory analysis`, `compliance review`, `계약서 검토`, `규제 분석`, `컴플라이언스 검토`
+- Strong routing signals: `contract review`, `contract liability clause`, `regulatory analysis`, `compliance review`, `계약서 검토`, `규제 분석`, `컴플라이언스 검토`
 - Good example:
   - Prompt: Review this vendor DPA for data-processing obligations, risky clauses, and questions for counsel.
   - Expected behavior: Prepare an authority-bound issue matrix, ranked risks, and counsel questions.
@@ -1335,18 +1386,69 @@ These surfaces are generated command references, not installed Hermes workflow s
   - review objective
 - Expert clarification questions:
   - `jurisdiction`
-    - English: Which jurisdiction should this legal or compliance review apply to?
-    - Korean: 이 법률 또는 컴플라이언스 검토는 어느 관할권을 기준으로 해야 하나요?
+    - English: Which parties, actor or data roles, operative facts, governing law and forum, and separately applicable regulatory jurisdictions are supplied?
+    - Korean: 어떤 당사자, 행위자 또는 데이터 역할, 주요 사실, 준거법과 관할, 별도 적용 규제 관할권이 제공되었나요?
+  - `document or process version`
+    - English: Which instrument type, complete document set and precedence, version, execution/effective date, amendments, and as-of date are in scope?
+    - Korean: 어떤 문서 유형, 전체 문서 세트와 우선순위, 버전, 체결일과 효력일, 개정본, 기준일이 범위에 포함되나요?
+  - `supplied authority`
+    - English: Which supplied authority identifiers, issuers, versions, effective status, exact pinpoints, hierarchy, and verification state may be used?
+    - Korean: 사용 가능한 제공 근거의 식별자, 발행기관, 버전, 효력 상태, 정확한 인용 위치, 위계, 검증 상태는 무엇인가요?
+  - `review objective`
+    - English: Which decision, risk tolerance, approval owner, deadline, and mandatory counsel questions should the review support?
+    - Korean: 이 검토가 지원할 의사결정, 위험 허용 범위, 승인 책임자, 기한, 필수 법률 자문 질문은 무엇인가요?
 - Expected outputs:
-  - jurisdiction, document/version, authority, and evidence-boundary statement
-  - clause/control/requirement matrix with issue, rationale, owner, and open question
-  - risk-ranked negotiation, remediation, or counsel-escalation brief
-  - review checklist that distinguishes supplied evidence from legal interpretation
+  - legal_scope_authority_record/v1
+  - legal_issue_traceability_matrix/v1
+  - legal_risk_counsel_hold_register/v1
+  - legal_review_disposition/v1
 - Artifact expectations:
   - prepared legal and compliance issue matrix when a wrapper captures it
 - Safety rules:
   - Distinguish supplied authority from legal interpretation and final advice.
   - Do not claim sign-off, certification, filing, execution, or regulator communication.
+- Procedure checks:
+  - `legal_scope_facts_instruments_check`
+    - Required result fields: `actors_roles`, `operative_facts`, `instrument_set`, `order_of_precedence`, `governing_law_forum`, `regulatory_jurisdictions`, `execution_effective_as_of_dates`, `assumptions_blockers`
+    - Criterion: Require material facts and roles, complete instruments and precedence, distinct contractual and regulatory jurisdictions, and temporal scope; never infer missing values.
+  - `legal_authority_citation_check`
+    - Required result fields: `source_type`, `source_identifier`, `source_version`, `effective_status`, `pinpoint`, `operative_text_summary`, `verification_status`
+    - Criterion: Each authority-dependent proposition must trace to supplied or observed authority and an exact locator and status; user summaries and inferences stay unverified.
+  - `legal_issue_matrix_check`
+    - Required result fields: `applicability_facts`, `obligation_position`, `definitions_dependencies`, `exceptions_carveouts_conflicts`, `evidence_status`, `risk_uncertainty`, `action_owner`, `recommended_disposition`, `counsel_question`, `issue_family_applicability`
+    - Criterion: Map facts to operative text, dependencies, exceptions and conflicts; when triggered cover warranty, disclaimer, indemnity and liability interactions or privacy roles, basis, transfers, security, breach, retention, rights and DPIA, marking other families not applicable.
+  - `legal_counsel_hold_check`
+    - Required result fields: `trigger_ids`, `impact`, `likelihood_applicability`, `urgency`, `evidence_confidence`, `reversibility`, `hold_status`, `counsel_owner`
+    - Criterion: Mandatory HOLD triggers include uncertain or conflicting authority, missing jurisdiction or dates, enforceability or privilege, material or uncapped liability or indemnity, regulatory deadlines, and sensitive, high-risk or cross-border privacy or DPIA uncertainty.
+  - `legal_final_determination_guard`
+    - Required result fields: `invented_authority_status`, `stale_authority_status`, `unresolved_triggers`, `disposition`
+    - Criterion: Fail closed on absent, fabricated, stale, superseded or unverified authority; invent no citation, holding, requirement or compliance conclusion and issue no final determination while a hold remains open.
+- Procedure steps:
+  - `legal_scope_facts_instruments` (`analysis`)
+    - Input refs: `jurisdiction`, `document or process version`, `review objective`
+    - Output refs: `legal_scope_authority_record/v1`
+    - Check IDs: `legal_scope_facts_instruments_check`
+    - Instruction: Record actors, roles, facts, instrument set and precedence, governing law, forum, regulatory reach, dates, objective, and every missing assumption or blocker.
+  - `legal_trace_authority` (`validation`)
+    - Input refs: `supplied authority`, `document or process version`
+    - Output refs: `legal_scope_authority_record/v1`
+    - Check IDs: `legal_authority_citation_check`, `legal_final_determination_guard`
+    - Instruction: Create a citation ledger using only supplied or observed sources, exact pinpoints and effective status; route absent authority to research or counsel instead of filling it in.
+  - `legal_map_issues_exceptions` (`analysis`)
+    - Input refs: `jurisdiction`, `document or process version`, `supplied authority`, `review objective`
+    - Output refs: `legal_issue_traceability_matrix/v1`
+    - Check IDs: `legal_issue_matrix_check`
+    - Instruction: Build clause and obligation rows with facts-to-rule traceability, definitions, dependencies, exceptions, conflicts, evidence state, uncertainty, disposition and counsel questions, adding only triggered issue families.
+  - `legal_apply_counsel_holds` (`production`)
+    - Input refs: `jurisdiction`, `supplied authority`, `review objective`
+    - Output refs: `legal_risk_counsel_hold_register/v1`
+    - Check IDs: `legal_counsel_hold_check`
+    - Instruction: Rank impact, applicability, urgency, confidence and reversibility, then impose mandatory counsel holds and owners for every triggered high-risk or authority-sensitive issue.
+  - `legal_validate_disposition` (`validation`)
+    - Input refs: `jurisdiction`, `document or process version`, `supplied authority`, `review objective`
+    - Output refs: `legal_review_disposition/v1`
+    - Check IDs: `legal_scope_facts_instruments_check`, `legal_authority_citation_check`, `legal_issue_matrix_check`, `legal_counsel_hold_check`, `legal_final_determination_guard`
+    - Instruction: Return PASS, REVISE, or HOLD with exact open triggers and counsel route; prohibit final legal or compliance determinations until all mandatory holds are resolved by qualified counsel.
 
 ### support-operations
 
@@ -1426,7 +1528,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Lifecycle stage: `canonical`
 - Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
 - Handoff policy: Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, implementation, review, CI, or merge claim. Prepare a connector, file, coding, or human-review handoff only when the user explicitly accepts that next step; report it only from observed evidence. Hermes designs an instructional plan; it does not create an LMS course, enroll learners, grade submissions, certify learning, publish materials, or claim learning outcomes occurred.
-- Why this exists: `curriculum-design` makes instructional outcomes, sequence, assessment, and learner constraints reviewable before materials, LMS, or grading work.
+- Why this exists: `curriculum-design` makes outcomes, sequence, assessment, and constraints reviewable before materials or LMS work.
 - Use when: Use when an educator or enablement owner needs outcomes, scope and sequence, lesson/module design, assessment criteria, and differentiation assumptions.
 - Do not use when:
   - The user wants an explanation of a supplied academic paper rather than a teachable sequence; use `paper-learning`.
@@ -1459,18 +1561,66 @@ These surfaces are generated command references, not installed Hermes workflow s
   - constraints
 - Expert clarification questions:
   - `learners`
-    - English: Who are the learners this curriculum should serve?
-    - Korean: 이 커리큘럼의 대상 학습자는 누구인가요?
+    - English: Which learner roles or ages and setting, baseline evidence, experience, motivations, language or culture, access needs, and relevant variability should shape the design?
+    - Korean: 어떤 학습자 역할 또는 연령과 환경, 기초 수준 근거, 경험, 동기, 언어와 문화, 접근 요구, 관련 다양성이 설계에 반영되어야 하나요?
+  - `learning goal`
+    - English: What observable learner performance, conditions, success criteria, transfer context, and priority or scope define the goal?
+    - Korean: 어떤 관찰 가능한 학습자 수행, 조건, 성공 기준, 전이 맥락, 우선순위 또는 범위가 목표를 정의하나요?
+  - `prerequisites`
+    - English: Which entry skills and knowledge can learners demonstrate, what diagnostic evidence and misconceptions exist, and what remediation path covers gaps?
+    - Korean: 학습자가 입증할 수 있는 선수 기술과 지식, 진단 근거와 오개념, 부족한 부분을 보완할 경로는 무엇인가요?
+  - `constraints`
+    - English: Which modality, cohort size, schedule, technology, accessibility, resources, assessment policy, or facilitator constraints apply?
+    - Korean: 어떤 운영 방식, 학습자 규모, 일정, 기술, 접근성, 자원, 평가 정책 또는 진행자 제약이 적용되나요?
 - Expected outputs:
-  - learner/audience, prerequisite, outcome, and constraint brief
-  - scope-and-sequence with modules/lessons and activity rationale
-  - formative/summative assessment rubric and completion evidence
-  - accessibility, adaptation, and source/rights questions plus next route
+  - curriculum_learner_outcome_brief/v1
+  - curriculum_alignment_map/v1
+  - curriculum_sequence_design/v1
+  - curriculum_validation_disposition/v1
 - Artifact expectations:
   - prepared curriculum design brief when a wrapper captures it
 - Safety rules:
   - Make learner prerequisites, accessibility, adaptation, and source-rights gaps explicit.
   - Do not claim LMS mutation, enrollment, grading, certification, publication, or learning outcomes.
+- Procedure checks:
+  - `curriculum_intake_readiness_check`
+    - Required result fields: `learner_setting`, `baseline_evidence`, `motivation_goals`, `language_culture`, `access_variability`, `outcome_performance_conditions_criteria_transfer`, `prerequisite_misconception_diagnostic_remediation`, `delivery_policy_constraints`
+    - Criterion: PASS intake only when learner variability, evidence-backed entry state, observable outcomes and relevant delivery constraints are design-ready; otherwise mark gaps and remediation assumptions.
+  - `curriculum_outcome_evidence_alignment_check`
+    - Required result fields: `outcome_id`, `performance_condition_criterion`, `assessment_evidence`, `rubric_criteria`, `formative_checks`, `coverage_status`, `orphan_mismatch_insufficient_evidence`
+    - Criterion: For every outcome map acceptable evidence and criteria before activities, reporting orphan outcomes, orphan assessments, level or condition mismatches and insufficient evidence.
+  - `curriculum_scaffolding_inclusion_check`
+    - Required result fields: `activation_diagnosis`, `modeling_examples`, `guided_practice`, `feedback`, `independent_transfer`, `scaffold_removal`, `accessible_formats_interactions`, `language_cultural_support`, `technology_barriers`, `accommodations_flexible_paths`, `equivalent_demonstration`, `barrier_addressed`
+    - Criterion: Design a domain-appropriate progression and inclusive access before final validation, linking each scaffold or adaptation to a learner barrier and preserving equivalent outcome evidence.
+  - `curriculum_validation_revision_check`
+    - Required result fields: `criterion_id`, `status`, `exact_gaps`, `learner_impact`, `required_revision`, `owner_decision`, `unresolved_evidence`, `revalidation_checks`, `review_pilot_plan`, `evidence_state`
+    - Criterion: Return PASS, REVISE, or BLOCKED per criterion, revise affected outcomes, evidence, sequence, scaffolds or access choices, and rerun affected checks; learner review or pilot plans remain prepared until observed.
+- Procedure steps:
+  - `curriculum_frame_learners_outcomes` (`analysis`)
+    - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
+    - Output refs: `curriculum_learner_outcome_brief/v1`
+    - Check IDs: `curriculum_intake_readiness_check`
+    - Instruction: Establish learner context, baseline and variability, then define a small outcome set with observable performance, conditions, criteria and transfer priority.
+  - `curriculum_define_evidence_criteria` (`production`)
+    - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
+    - Output refs: `curriculum_alignment_map/v1`
+    - Check IDs: `curriculum_outcome_evidence_alignment_check`
+    - Instruction: Before sequencing instruction, define acceptable assessment evidence, rubric criteria and formative decision points for every outcome and expose all coverage defects.
+  - `curriculum_design_sequence_scaffolds` (`production`)
+    - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
+    - Output refs: `curriculum_sequence_design/v1`
+    - Check IDs: `curriculum_scaffolding_inclusion_check`
+    - Instruction: Design activities from the evidence backward, including diagnosis, modeling where useful, guided practice, feedback, independent transfer, scaffold fading, accessible formats and equivalent demonstration paths.
+  - `curriculum_validate_alignment` (`validation`)
+    - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
+    - Output refs: `curriculum_validation_disposition/v1`
+    - Check IDs: `curriculum_intake_readiness_check`, `curriculum_outcome_evidence_alignment_check`, `curriculum_scaffolding_inclusion_check`, `curriculum_validation_revision_check`
+    - Instruction: Record criterion-level PASS, REVISE, or BLOCKED findings, exact misalignments and learner impact, required revisions, owner decisions, evidence gaps, and bounded expert or learner review plans.
+  - `curriculum_revise_revalidate` (`validation`)
+    - Input refs: `learners`, `learning goal`, `prerequisites`, `constraints`
+    - Output refs: `curriculum_alignment_map/v1`, `curriculum_sequence_design/v1`, `curriculum_validation_disposition/v1`
+    - Check IDs: `curriculum_outcome_evidence_alignment_check`, `curriculum_scaffolding_inclusion_check`, `curriculum_validation_revision_check`
+    - Instruction: Apply approved revisions to the affected artifacts, rerun the named checks, and retain BLOCKED whenever required evidence or review remains unobserved.
 
 ### localization-review
 
@@ -1550,7 +1700,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Lifecycle stage: `canonical`
 - Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
 - Handoff policy: Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, implementation, review, CI, or merge claim. Prepare a connector, file, coding, or human-review handoff only when the user explicitly accepts that next step; report it only from observed evidence. Hermes prepares research, discovery, and message guidance; it does not research unobserved facts as facts, contact prospects, create opportunities, change CRM data, book meetings, or claim revenue or progress.
-- Why this exists: `sales-development` prepares account-level discovery and qualification guidance without turning research hypotheses or draft outreach into sales execution claims.
+- Why this exists: `sales-development` prepares evidence-bounded discovery and qualification guidance without claiming sales execution.
 - Use when: Use when a seller or business-development owner needs account context, buyer hypotheses, qualification questions, value narrative, partner/outreach plan, and a non-executing next-step sequence.
 - Do not use when:
   - The user needs a company-level positioning, market-entry, or strategic-options decision rather than account-level discovery; use `strategy-brief`.
@@ -1583,18 +1733,66 @@ These surfaces are generated command references, not installed Hermes workflow s
   - sales objective
 - Expert clarification questions:
   - `account or segment`
-    - English: Which account or customer segment should this sales work focus on?
-    - Korean: 이 영업 작업은 어떤 계정 또는 고객 세그먼트에 집중해야 하나요?
+    - English: Which fit criteria and disqualifiers, offer or use case, stage and owner, geography, and evidenced stakeholders and roles define the account or segment?
+    - Korean: 어떤 적합 기준과 제외 기준, 제안 또는 사용 사례, 단계와 책임자, 지역, 근거가 있는 이해관계자와 역할이 계정 또는 세그먼트를 정의하나요?
+  - `available evidence`
+    - English: Which source locators, dates, reliability and permission states, observed facts, contradictions, and approved personalization claims are available?
+    - Korean: 어떤 출처 위치, 날짜, 신뢰도와 사용 권한 상태, 관찰된 사실, 상충 정보, 승인된 개인화 주장이 제공되나요?
+  - `buyer hypothesis`
+    - English: Which stakeholder role, problem and current approach, impact, influence, buying stage, and evidence state should discovery test?
+    - Korean: 어떤 이해관계자 역할, 문제와 현재 방식, 영향, 영향력, 구매 단계, 근거 상태를 발견 과정에서 검증해야 하나요?
+  - `sales objective`
+    - English: Which motion, measurable outcome, offer and approved proof, channel and consent constraints, deadline, owner, approver, CRM shape, and next-step criterion apply?
+    - Korean: 어떤 영업 방식, 측정 가능한 결과, 제안과 승인된 근거, 채널과 동의 제약, 기한, 책임자, 승인자, CRM 형식, 다음 단계 기준이 적용되나요?
 - Expected outputs:
-  - account/segment, buyer, problem, and evidence-gap brief
-  - discovery-question and qualification framework
-  - value narrative, objection hypotheses, and outreach-draft outline
-  - next-step/owner plan with CRM, approval, and source gaps explicit
+  - sales_opportunity_evidence_record/v1
+  - sales_qualification_state/v1
+  - sales_draft_sequence/v1
+  - sales_handoff_disposition/v1
 - Artifact expectations:
   - prepared sales development brief when a wrapper captures it
 - Safety rules:
   - Treat unsupported company and competitor information as evidence gaps, not facts.
   - Do not claim prospect contact, CRM mutation, meeting booking, opportunity creation, revenue, or progress.
+- Procedure checks:
+  - `sales_account_evidence_check`
+    - Required result fields: `fit_disqualifiers`, `offer_use_case`, `account_stage_owner`, `stakeholder_states`, `problem_current_approach_impact`, `source_locator_date_reliability_permission`, `contradictions`, `unknowns`, `claim_evidence_state`
+    - Criterion: Every account, stakeholder, problem, impact and personalization claim must point to approved supplied or observed evidence or remain a hypothesis; never fill missing customer facts.
+  - `sales_qualification_state_check`
+    - Required result fields: `stakeholder_authority_state`, `problem_current_state`, `measurable_impact`, `decision_criteria_process`, `alternatives`, `timing_urgency`, `risks_blockers`, `champion_economic_buyer_hypotheses`, `prioritized_questions`, `buyer_confirmation_evidence`, `disposition`
+    - Criterion: Maintain framework-neutral observed, asserted, hypothesis, unknown and buyer-confirmed states, prioritized questions, and explicit ADVANCE, HOLD or DISQUALIFY evidence criteria; named methods are optional mappings only.
+  - `sales_sequence_eligibility_check`
+    - Required result fields: `consent_basis`, `privacy_constraints`, `suppression_status`, `channel_eligibility`, `policy_constraints`, `audience_persona`, `timing_cadence`, `evidence_backed_personalization`, `approved_proof`, `purpose_value_cta`, `objection_hypothesis`, `validation_question`, `owner_approver`, `stop_opt_out_reply_conditions`, `draft_status`
+    - Criterion: HOLD drafting when supplied consent, privacy, suppression, channel or policy eligibility is unknown; each eligible row must remain a draft with bounded cadence and stop, opt-out and reply conditions.
+  - `sales_handoff_check`
+    - Required result fields: `proposed_confirmed_status`, `action`, `owner`, `approver`, `target_timing`, `success_exit_criterion`, `dependencies`, `evidence_refs`, `crm_object_field_value_proposals`, `unresolved_gaps`, `disposition`
+    - Criterion: Emit measurable proposed handoff and CRM field/value changes without mutation; only observed buyer response may mark a next step, objection or commitment confirmed.
+- Procedure steps:
+  - `sales_scope_account_evidence` (`analysis`)
+    - Input refs: `account or segment`, `available evidence`, `buyer hypothesis`, `sales objective`
+    - Output refs: `sales_opportunity_evidence_record/v1`
+    - Check IDs: `sales_account_evidence_check`
+    - Instruction: Record fit and disqualifiers, offer and stage, owner, evidenced stakeholders, problem and current approach signals, source provenance and permissions, contradictions, unknowns, and per-claim evidence state.
+  - `sales_build_qualification_state` (`analysis`)
+    - Input refs: `account or segment`, `available evidence`, `buyer hypothesis`, `sales objective`
+    - Output refs: `sales_qualification_state/v1`
+    - Check IDs: `sales_qualification_state_check`
+    - Instruction: Build neutral qualification fields, distinguish seller hypotheses from observed buyer responses, prioritize discovery questions, and assign ADVANCE, HOLD or DISQUALIFY criteria without forcing a named method.
+  - `sales_check_sequence_eligibility` (`validation`)
+    - Input refs: `account or segment`, `available evidence`, `sales objective`
+    - Output refs: `sales_draft_sequence/v1`
+    - Check IDs: `sales_sequence_eligibility_check`
+    - Instruction: Verify supplied consent basis, privacy and suppression restrictions, permitted channels, organizational policy, sender and approver, locale, timing and cadence before any message construction.
+  - `sales_prepare_draft_sequence` (`production`)
+    - Input refs: `account or segment`, `available evidence`, `buyer hypothesis`, `sales objective`
+    - Output refs: `sales_draft_sequence/v1`
+    - Check IDs: `sales_account_evidence_check`, `sales_sequence_eligibility_check`
+    - Instruction: Prepare eligible draft rows for audience, channel, cadence, supported personalization and proof, purpose, value, CTA, objection hypothesis and validation question, owner, approver and stop conditions; do not send.
+  - `sales_validate_handoff` (`validation`)
+    - Input refs: `account or segment`, `available evidence`, `buyer hypothesis`, `sales objective`
+    - Output refs: `sales_handoff_disposition/v1`
+    - Check IDs: `sales_account_evidence_check`, `sales_qualification_state_check`, `sales_sequence_eligibility_check`, `sales_handoff_check`
+    - Instruction: Return proposed versus confirmed actions, ownership, timing, exit criteria, dependencies, evidence refs, CRM object/field/value proposals, gaps and ADVANCE, HOLD or DISQUALIFY disposition, preserving confirmation only from observed response.
 
 ### product-brief
 
@@ -2321,8 +2519,8 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Compatibility alias: `false`
 - Lifecycle stage: `canonical`
 - Preferred usage: Use as an installed Hermes workflow skill when a rendered web, image, document, or TUI surface needs fresh visual evidence, diff review, and PASS/REVISE/BLOCK gating.
-- Handoff policy: Keep the QA plan, evidence manifest, freshness rule, and verdict narration in Hermes. Screenshots, TUI captures, image diffs, browser runs, OCR/CJK checks, and oracle reviews are observed evidence supplied by the wrapper, executor, or user.
-- Why this exists: `visual-qa` gives OMH a completion gate for rendered surfaces so layout breaks, AI-looking polish gaps, CJK text problems, and stale screenshot claims cannot be mistaken for verified quality.
+- Handoff policy: Keep the QA plan, evidence manifest, target-lineage rule, and verdict narration in Hermes. Screenshots, TUI captures, image diffs, browser runs, OCR/CJK checks, and oracle reviews are observed evidence supplied by the wrapper, executor, or user.
+- Why this exists: `visual-qa` gives OMH a completion gate for rendered surfaces so layout breaks, AI-looking polish gaps, CJK text problems, and mismatched-lineage screenshot claims cannot be mistaken for verified quality.
 - Use when: Use after or during visual surface work when Hermes must define the render evidence, viewport/state coverage, diff review, oracle review, and PASS/REVISE/BLOCK verdict without fabricating QA.
 - Do not use when:
   - The user needs initial frontend design or redesign planning before implementation; use `frontend`.
@@ -2332,16 +2530,16 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Strong routing signals: `visual-qa`, `visual qa`, `visual QA`, `visual quality assurance`, `visual check`, `web qa`, `web visual qa`, `screenshot qa`, `screenshot check`, `analyze this screenshot`, `screenshot layout problems`, `ui layout problems`, `pixel diff`, `image diff`, `visual diff`, `render qa`, `render check`, `browser screenshot`, `browser qa`, `browser interaction qa`, `click path`, `click-path audit`, `dead link check`, `console error check`, `network failure check`, `keyboard navigation check`, `viewport check`, `responsive check`, `ui looks wrong`, `looks broken`, `layout broken`, `broken layout`, `text clipping`, `cjk clipping`, `cjk layout`, `tui check`, `terminal ui check`, `비주얼 qa`, `비주얼QA`, `시각 qa`, `시각 검증`, `화면 검증`, `스크린샷 검증`, `스크린샷 ui 레이아웃`, `스크린샷 UI 레이아웃`, `스크린샷 레이아웃 문제`, `렌더 검증`, `픽셀 diff`, `픽셀 비교`, `화면 깨짐`, `레이아웃 깨짐`, `글자 잘림`, `한글 줄바꿈`, `터미널 ui`
 - Good example:
   - Prompt: visual-qa 이 랜딩페이지가 모바일/데스크톱에서 깨지는지 스크린샷 기준으로 검증해줘.
-  - Expected behavior: Prepare visual_qa_plan/v1, require fresh captures, record render_capture_manifest/v1 and visual_diff_evidence/v1 when observed, then issue PASS/REVISE/BLOCK.
+  - Expected behavior: Prepare visual_qa_plan/v1, require exact capture-to-target lineage, record render_capture_manifest/v1 and visual_diff_evidence/v1 when observed, then issue PASS/REVISE/BLOCK.
   - Why: The request is a rendered visual verification task, not just design planning.
 - Bad example:
   - Prompt: visual-qa 방금 수정했으니까 스크린샷 없이 통과라고 해줘.
-  - Expected behavior: Block PASS and request fresh render capture after the latest edit.
-  - Why: Visual QA requires observed rendered evidence newer than the last UI change.
+  - Expected behavior: Block PASS and request render captures from the package's exact repository and revision.
+  - Why: Visual QA requires observed rendered evidence bound to the target source lineage.
 - Quality bar:
   - List the exact pages, states, viewports, files, images, or TUI frames being checked.
   - Enumerate every page/state/viewport before capture and mark omitted surfaces as blockers rather than assumptions.
-  - Require evidence freshness after the last visual edit.
+  - Require exact repository and revision equality between target_lineage and every capture source_lineage.
   - Combine objective capture/diff evidence, hotspot review, alpha/transparent-background checks, and human-readable visual findings.
   - Capture interaction, click-path, and motion states when the UI has hover/focus/active/load/scroll transitions or buttons/forms/navigation that change state.
   - Record console/network health, keyboard navigation, accessibility scan boundaries, and mutating-flow safety for live browser QA claims.
@@ -2349,31 +2547,31 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Return PASS, REVISE, or BLOCK with concrete evidence IDs and missing-evidence gaps.
   - Keep implementation fixes and follow-up edits separate from the observed QA verdict.
 - Completion checklist:
-  - The visual_qa_plan/v1 lists target surfaces, references, states, viewports, locales, and freshness criteria.
+  - The visual_qa_plan/v1 lists target surfaces, references, states, viewports, locales, and target repository/revision lineage.
   - The viewport_state_capture_matrix/v1 proves the QA did not sample only one page, viewport, or state.
   - The web_visual_qa_message_card/v1 summarizes criteria, route, cost policy, and attachment status without claiming platform delivery.
-  - The render_capture_manifest/v1 is present before PASS and is newer than the last relevant edit.
+  - The render_capture_manifest/v1 is present before PASS and every capture's source lineage exactly matches the package target lineage.
   - Browser interaction traces, console/network health, click-path state traces, keyboard/accessibility traces, visual diff, hotspot review, motion capture, design-system/functional review, visual-fidelity/CJK review, and blocker status are separate fields.
   - The verdict is PASS, REVISE, or BLOCK with exact missing evidence or fix requirements.
-  - Any implementation fix is routed back to the executor/frontend workflow and rechecked with fresh evidence.
+  - Any implementation fix is routed back to the executor/frontend workflow and rechecked with evidence from the resulting repository revision.
 - Recovery notes:
   - If no capture exists, produce the QA plan and mark verdict BLOCKED_BY_MISSING_RENDER_EVIDENCE.
-  - If a capture exists but predates the latest edit, mark it stale and request the smallest fresh recapture set.
+  - If capture source lineage is missing or mismatches the target repository/revision, keep HOLD and request the smallest matching recapture set.
 - Required inputs:
   - surface type
   - target URL, route, file, image, or TUI command when available
   - intended design, baseline, or reference
   - pages, states, viewports, and locales to cover
   - complete page/state/viewport enumeration rather than a sample
-  - latest edit or source revision
+  - target repository and exact source revision
   - known risk areas such as CJK, overflow, responsiveness, or accessibility
   - motion and interaction states that need capture
   - browser interaction paths, mutating-flow boundary, and test credentials policy when a live web UI is in scope
   - console, network, accessibility, and keyboard navigation checks required for browser QA claims
-  - fresh render/capture evidence for completion claims
+  - render/capture evidence bound to the target repository and revision for completion claims
 - Expected outputs:
   - visual_qa_plan/v1
-  - web_visual_qa_package/v1
+  - web_visual_qa_package/v2
   - viewport_state_capture_matrix/v1
   - message_attachment_projection/v1 for chat attachments
   - web_visual_qa_message_card/v1 for chat message summaries
@@ -2390,12 +2588,12 @@ These surfaces are generated command references, not installed Hermes workflow s
   - visual_qa_verdict/v1
   - retry_or_blocker/v1
 - Artifact expectations:
-  - visual_qa_plan/v1 with pages, states, viewports, references, and freshness rule
-  - web_visual_qa_package/v1 with captures[], criteria[], criteria_results[], multimodal_reviews[], auto routing, and observed-only cost policy
+  - visual_qa_plan/v1 with pages, states, viewports, references, and exact target repository/revision lineage
+  - web_visual_qa_package/v2 with target_lineage, unique required_viewports, capture source_lineage, blocking_violations, criteria, reviews, auto routing, and observed-only cost policy
   - viewport_state_capture_matrix/v1 enumerates every route/page, 375/768/1280-style viewport, scroll position, modal/tab state, and CJK-heavy region to capture
   - message_attachment_projection/v1 maps eligible observed captures to chat attachment candidates without claiming upload or delivery
   - web_visual_qa_message_card/v1 projects recorded criteria, captures, routing, cost policy, and attachment hints into Discord/Slack/hosted-chat safe copy
-  - render_capture_manifest/v1 only from fresh screenshots, file renders, images, or terminal captures
+  - render_capture_manifest/v1 only from screenshots, file renders, images, or terminal captures whose source lineage matches the target package
   - browser_interaction_trace/v1 only from observed navigation, form, auth, search, modal, and critical journey runs with read-only or staging-safe boundaries recorded
   - console_network_health/v1 records observed critical console errors, failed requests, status codes, and ignored third-party noise before browser QA can pass
   - click_path_state_trace/v1 maps each user-facing button/touchpoint to its handler, ordered state reads/writes, final UI state, and undo/race/stale-closure risks when interaction behavior is in scope
@@ -2404,10 +2602,10 @@ These surfaces are generated command references, not installed Hermes workflow s
   - motion_interaction_capture/v1 only when hover/focus/active/load/scroll motion frames are observed before, during, and after transition
   - visual_hotspot_review/v1 maps diff hotspots, TUI overflow lines, or screenshot regions to concrete visual causes
   - dual_oracle_visual_review/v1 only when independent read-only review evidence exists
-  - PASS unavailable until captures are newer than the last visual edit and all blocking findings are resolved
+  - PASS unavailable until capture repository/revision lineage exactly matches the package target, every required viewport is captured, and all supplied blocking findings are resolved
 - Safety rules:
-  - Never claim PASS without fresh rendered evidence captured after the last relevant edit.
-  - Do not treat source review, screenshots from an older run, generated plans, or unobserved browser commands as visual QA evidence.
+  - Never claim PASS without rendered evidence whose repository and revision exactly match the package target lineage.
+  - Do not treat source review, captures with missing or mismatched source lineage, generated plans, or unobserved browser commands as visual QA evidence.
   - Do not sample only one good page, viewport, or state when the surface has more; missed pages, modals, scroll states, or CJK-heavy regions keep PASS unavailable.
   - Do not run destructive browser journeys such as checkout, payment, delete, or mass-update on production URLs; require staging or explicit safe test boundaries and redact credentials/PII from captures.
   - Do not claim browser interaction PASS without observed click-path/state-transition traces for the touchpoints in scope.
@@ -2415,7 +2613,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Objective diffs are evidence, not verdicts; review visual hierarchy, layout, CJK text, state coverage, and product intent separately.
   - Do not excuse diff hotspots as animation; capture settled frames and motion frames separately.
   - Run or request two read-only review perspectives when claiming high confidence: design-system/functional integrity and visual fidelity/CJK precision.
-  - CJK clipping, broken wrapping, overlapping UI, invisible text, unusable controls, or offscreen critical content block PASS.
+  - Recorded operator-supplied blocking criteria for CJK clipping, broken wrapping, overlapping UI, invisible text, unusable controls, or offscreen critical content block PASS until `_validate_pass` sees passing evidence refs.
   - Do not call browsers, image tools, LLMs, or external services from OMH core.
 
 ### build-failure-triage
@@ -6843,6 +7041,65 @@ Route implementation requests through scoped context, edit discipline, tests, re
   - Executor completion is not review, CI, merge-readiness, or merge evidence.
 - Fallback: If the request is underspecified, ask one concise clarification question before editing.
 
+### hermes-setup
+
+Walk a local Hermes setup change through prerequisite check, read-only diagnosis, guidance, diff-approved apply, and verification.
+
+- Use when: Use when the user asks Hermes to configure its own local setup surface - models, parallel tools, web search, or a mail/calendar connection.
+- Quality tier: `hermes-setup-gated`
+- Quality bar:
+  - Prerequisite check: confirm the subscription, account, or capability the step needs exists before continuing; mark unmet prerequisites "not applicable" and skip them explicitly.
+  - Read-only diagnose: read the current Hermes config, `.env` keys, and installed version without writing anything.
+  - Guide: walk the user through any account creation, OAuth, or token issuance they must complete themselves.
+  - Diff-approved apply: show the exact config or `.env` diff and write only after the user explicitly approves it.
+  - Verify: re-read the updated config and report a completion checklist covering every applicable item.
+  - Diagnosis only reads the existing Hermes config, `.env` keys, and installed version; it never writes anything on its own.
+  - Show the exact diff for any config or `.env` change and write it only after the user explicitly approves that diff.
+  - Secret values such as tokens and API keys are pasted by the user directly in chat and are never stored, logged, or echoed back beyond the immediate diff confirmation.
+  - If a prerequisite is unmet, mark that item "not applicable" and continue with the rest of the guide instead of blocking or guessing.
+  - Success is applicable-only: verification passes when every applicable item is confirmed complete, not when every possible item exists.
+- Inputs:
+  - the setup surface the user named
+  - current Hermes config and `.env` key state
+  - prerequisites the user actually has
+  - credentials the user pastes at apply time
+- Outputs:
+  - read-only diagnosis of the current state
+  - an applicable-only guidance walkthrough
+  - the exact config or `.env` diff shown before any write
+  - a completion checklist over every applicable item
+- Stop conditions:
+  - every applicable item is verified or explicitly marked not applicable
+  - no config write happened without an approved diff
+- Verification:
+  - prerequisite_check
+  - read_only_diagnose
+  - guide
+  - diff_approved_apply
+  - verify
+- Evidence ladder:
+  - `prerequisite_check_recorded`
+  - `read_only_diagnosis_recorded`
+  - `guidance_delivered`
+  - `diff_approval_recorded`
+  - `verification_recorded`
+- Wrapper actions:
+  - `show_setup_diagnosis`
+  - `approve_config_diff`
+  - `record_setup_verification`
+  - `show_status`
+- Artifact events:
+  - `setup_scoped`
+  - `diagnosis_recorded`
+  - `setup_verification_recorded`
+- Delegation expectation: Record this harness as Hermes-retained setup guidance; delegate to a selected coding owner only when the user needs a repository change rather than a local config edit.
+- Privacy default: `metadata_only`
+- Overclaim guards:
+  - A shown config diff is not an applied config change; only an approved write followed by a re-read counts.
+  - A prepared setup walkthrough is not proof that the model, tool, search backend, or connection actually works.
+  - An item marked "not applicable" is a skipped prerequisite, not a satisfied one.
+- Fallback: If a prerequisite is unmet, mark that item "not applicable" and continue the rest of the guide instead of blocking or guessing.
+
 ### goal-execution
 
 Keep long-running work tied to explicit goals, checkpoints, and durable evidence.
@@ -7762,7 +8019,7 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
 - Use when: Use when Hermes must require fresh screenshots/renders/captures, objective diff evidence, dual read-only review, CJK/text precision checks, and a PASS/REVISE/BLOCK verdict.
 - Quality tier: `visual-qa-gated`
 - Quality bar:
-  - PASS requires fresh rendered evidence captured after the last relevant visual edit.
+  - PASS requires rendered evidence whose repository and revision exactly match the package target lineage.
   - Check pages, states, viewports, files, images, or TUI frames explicitly instead of sampling vaguely.
   - Pair objective capture/diff evidence, hotspot review, and alpha/transparent-background checks with visual design, layout, accessibility visibility, and CJK/text findings.
   - Capture hover/focus/active/load/scroll motion frames, browser interactions, and click-path state transitions when interaction or animation is part of the surface.
@@ -7776,15 +8033,15 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
   - intended design, baseline, or reference
   - pages, states, viewports, and locales to cover
   - complete page/state/viewport enumeration rather than a sample
-  - latest edit or source revision
+  - target repository and exact source revision
   - known risk areas such as CJK, overflow, responsiveness, or accessibility
   - motion and interaction states that need capture
   - browser interaction paths, mutating-flow boundary, and test credentials policy when a live web UI is in scope
   - console, network, accessibility, and keyboard navigation checks required for browser QA claims
-  - fresh render/capture evidence for completion claims
+  - render/capture evidence bound to the target repository and revision for completion claims
 - Outputs:
   - visual_qa_plan/v1
-  - web_visual_qa_package/v1
+  - web_visual_qa_package/v2
   - viewport_state_capture_matrix/v1
   - message_attachment_projection/v1 for chat attachments
   - web_visual_qa_message_card/v1 for chat message summaries
@@ -7801,7 +8058,7 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
   - visual_qa_verdict/v1
   - retry_or_blocker/v1
 - Stop conditions:
-  - QA target and freshness rule are named
+  - QA target repository and exact revision lineage are named
   - page/state/viewport coverage is enumerated before capture
   - capture manifest is present for PASS
   - browser interactions, console/network health, click-path state traces, and keyboard/accessibility evidence are recorded when browser QA is in scope
@@ -7811,11 +8068,11 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
   - verdict is PASS, REVISE, or BLOCK with evidence IDs
 - Verification:
   - validate visual_qa_plan/v1
-  - validate web_visual_qa_package/v1
+  - validate web_visual_qa_package/v2 target_lineage, required_viewports, capture source_lineage, and blocking_violations
   - check message_attachment_projection/v1 does not claim upload or platform delivery
   - check web_visual_qa_message_card/v1 separates message copy from platform delivery
   - check viewport_state_capture_matrix/v1 before PASS
-  - check capture freshness after the last relevant edit
+  - check exact repository and revision equality between target_lineage and every capture source_lineage
   - check render_capture_manifest/v1 before PASS
   - check browser_interaction_trace/v1 before browser interaction PASS
   - check console_network_health/v1 for critical console errors and failed requests
@@ -7825,7 +8082,7 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
   - check visual_hotspot_review/v1 for objective diff or TUI overflow findings
   - check motion_interaction_capture/v1 when transitions, hover, focus, active, load, or scroll states are in scope
   - check dual_oracle_visual_review/v1 when high confidence is claimed
-  - block PASS on CJK clipping, overlap, invisible text, unusable controls, or missing critical states
+  - treat recorded CJK, accessibility-visibility, overlap, unusable-control, and missing-critical-state findings as operator-supplied blocking criteria that `_validate_pass` enforces once recorded
 - Evidence ladder:
   - `visual_qa_scope_recorded`
   - `web_visual_qa_package_prepared`
@@ -7865,7 +8122,7 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
   - `message_attachment_projection_prepared`
   - `web_visual_qa_message_card_prepared`
   - `viewport_state_capture_matrix_prepared`
-  - `freshness_rule_recorded`
+  - `target_lineage_recorded`
   - `render_capture_manifest_observed`
   - `browser_interaction_trace_observed_when_available`
   - `console_network_health_observed_when_available`
@@ -7881,13 +8138,13 @@ Prepare observed-only rendered visual QA gates for web, frontend, image, documen
 - Privacy default: `metadata_only`
 - Overclaim guards:
   - A visual_qa_plan/v1 artifact is not rendered QA evidence.
-  - A web_visual_qa_package/v1 artifact is not browser capture, multimodal model execution, message upload, or platform delivery evidence.
-  - A stale screenshot, source review, or unobserved browser command cannot support PASS.
+  - A web_visual_qa_package/v2 artifact is not browser capture, multimodal model execution, message upload, or platform delivery evidence.
+  - A capture with missing or mismatched source lineage, source review, or unobserved browser command cannot support PASS.
   - A browser screenshot is not click-path, console/network, accessibility, or keyboard navigation evidence unless those observations are recorded separately.
   - An automated accessibility scan is not a full accessibility PASS without keyboard and focus-order evidence.
   - Visual diff output is not a verdict without visual hierarchy, layout, text, and product-intent review.
   - One successful viewport or state does not prove visual QA for unobserved pages, states, files, or CJK-heavy regions.
-- Fallback: If fresh captures are missing or stale, return BLOCKED_BY_MISSING_RENDER_EVIDENCE and request the smallest recapture set.
+- Fallback: If capture lineage is missing or mismatches the target repository/revision, return BLOCKED_BY_MISSING_RENDER_EVIDENCE and request the smallest matching recapture set.
 
 ### workspace-audit
 

@@ -161,17 +161,22 @@ export default function register(sdk) {
     const taskId = truncateCells(safeText(row.task_id) || safeText(row.role) || 'agent', 8).padEnd(8)
     const model = [safeText(row.model), safeText(row.effort)].filter(Boolean).join(':')
     const category = safeText(row.category)
-    // Prepared-route provenance from the reader: a fallback lane carries a
-    // visible `fallback` token, and an exhausted chain reads
-    // `category→inherit` instead of converging into plain inherit.
+    // Prepared-route provenance from the reader, rendered as one shape:
+    // `category(model tag)`. The category names the LANE and never changes;
+    // only the parenthesized model (and its state token) moves — a fallback
+    // lane reads `category(model fallback)`, and an exhausted chain running
+    // the parent's model reads `category(model inherit)` instead of being
+    // relabeled away from its category.
     const routeOrigin = safeText(row.route_origin)
     const routeCategory = safeText(row.route_category)
-    const routeDetail = [model, routeOrigin === 'fallback' ? 'fallback' : ''].filter(Boolean).join(' ')
-    const route = routeOrigin === 'exhausted_to_inherit' && routeCategory
-      ? `category:${routeCategory}→inherit${model ? `(${model})` : ''}`
-      : category
-        ? `category:${category}${routeDetail ? `(${routeDetail})` : ''}`
-        : model
+    const routeTag = routeOrigin === 'fallback' ? 'fallback'
+      : routeOrigin === 'exhausted_to_inherit' ? 'inherit'
+        : ''
+    const routeDetail = [model, routeTag].filter(Boolean).join(' ')
+    const displayCategory = routeOrigin === 'exhausted_to_inherit' && routeCategory ? routeCategory : category
+    const route = displayCategory
+      ? `category:${displayCategory}${routeDetail ? `(${routeDetail})` : ''}`
+      : model
     const routeKind = routeOrigin === 'fallback' || routeOrigin === 'exhausted_to_inherit' ? 'route-fallback' : 'route'
     const turn = Number.isFinite(row.turn_count) ? `turn ${row.turn_count}` : ''
     const tools = Number.isFinite(row.tool_count) ? `${row.tool_count} tools` : ''
@@ -350,11 +355,14 @@ export default function register(sdk) {
         h(Text, { color: t.color.border }, SEPARATOR),
         h(Text, { color: active ? t.color.warn : t.color.ok }, hudStateLabel(active, agents)),
         h(Text, { color: t.color.muted }, `${metrics.cost ? ` • ${metrics.cost}` : ''} • ${metrics.ctx}`),
-        // Shift+Tab yolo state, as last observed by the plugin's turn and
-        // tool-call hooks (the host keeps the flag in process memory only).
-        // ON warns in the theme's yellow; OFF rests in the label blue —
-        // colours resolve through the active theme, never literals. An
-        // unobserved or stale ledger renders nothing rather than a guess.
+        // Shift+Tab yolo state: the reader projects the host's persisted
+        // surfaces first (the live TUI session row's /yolo flag where the
+        // host persists it, config.yaml approvals.mode) so a toggle shows
+        // on the next 2s poll, and falls back to the turn/tool-call hook
+        // ledger when neither surface speaks. ON warns in the theme's
+        // yellow; OFF rests in the label blue — colours resolve through
+        // the active theme, never literals. An unobserved or stale state
+        // renders nothing rather than a guess.
         payload.yolo && payload.yolo.status === 'observed'
           ? h(
               Text,
