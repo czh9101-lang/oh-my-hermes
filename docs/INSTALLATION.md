@@ -276,6 +276,15 @@ walks, and HUD category labels alike — until the user removes it. An invalid
 document is ignored whole (defaults apply) and reported by
 `omh_delegate_route` `action=status` as `chain_overrides: invalid: ...`.
 
+Next to those two documents, `omh_delegate_route` maintains
+`~/.omh/routing/route-provenance.json` (`delegation_route_provenance/v1`): a
+capped history of the routes it prepared (head, explicit, fallback, chain
+exhaustion, clear) that the HUD uses to label a fallback lane as a fallback
+and an exhausted chain as `category→inherit`. It is written automatically,
+carries its own `claim_boundary` (prepared routes only, never dispatch
+evidence), and is safe to delete — an absent or invalid file only means HUD
+rows fall back to plain category projection.
+
 ### Reaching models through a provider
 
 Chains name models the way a person says them (`glm-5.2`, `kimi-k3`). A host
