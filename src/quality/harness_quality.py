@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from typing import Iterable
+from datetime import datetime
+from typing import Iterable, Mapping
+
+from ..coding.skill_load_observation import (
+    skill_load_observation_is_fresh,
+    validate_skill_load_observation,
+)
 
 
 HARNESS_QUALITY_SCHEMA_VERSION = "harness_quality/v1"
@@ -82,6 +88,20 @@ def build_harness_progress(contract: dict[str, object], step_states: dict[str, s
         "complete": bool(steps) and completed == len(steps),
         "next_step": next_step,
     }
+
+
+def skill_load_evidence_state(
+    observation: Mapping[str, object], *, now: datetime | None = None
+) -> str:
+    """Consume the probe without promoting unsupported, errors, or stale data."""
+    if validate_skill_load_observation(observation):
+        return "invalid"
+    if not skill_load_observation_is_fresh(observation, now=now):
+        return "stale"
+    status = observation.get("probe_status")
+    if status != "observed":
+        return str(status)
+    return str(observation.get("load_state"))
 
 
 def _progress_state(value: str) -> str:

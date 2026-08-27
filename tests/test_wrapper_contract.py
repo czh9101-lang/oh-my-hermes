@@ -153,7 +153,7 @@ class DomainContextAttachmentTests(unittest.TestCase):
             )
             self.assertEqual(
                 applied["chat_response"]["body"],
-                "Which account or customer segment should this sales work focus on?",
+                applied["domain_routing_context"]["question"]["text"],
             )
             # Messenger rendering is the body-derived presentation, so it must
             # carry the same selected question rather than stale generic copy.
@@ -2740,7 +2740,7 @@ class WrapperContractTests(unittest.TestCase):
                     if workflow == "ops-observability-card"
                     else "skill_scout_recommendation/v1"
                     if workflow == "skill-scout"
-                    else "skill_portfolio_health_dashboard/v1"
+                    else "skill_health_card/v1"
                     if workflow == "skill-health"
                     else "agent_debug_report/v1"
                     if workflow == "agent-debug"
@@ -3514,7 +3514,7 @@ class WrapperContractTests(unittest.TestCase):
         self.assertEqual(payload["next_action"], "prepare_visual_qa")
         self.assertEqual(response["kind"], "visual_qa")
         self.assertEqual(state["artifact_schema"], "web_visual_qa_prepared_preview/v1")
-        self.assertEqual(state["package_schema"], "web_visual_qa_package/v1")
+        self.assertEqual(state["package_schema"], "web_visual_qa_package/v2")
         self.assertEqual(state["visual_qa_plan_schema"], "visual_qa_plan/v1")
         self.assertEqual(state["capture_model"], "web_visual_qa_package.captures[]")
         self.assertEqual(state["criteria_result_model"], "web_visual_qa_package.criteria_results[]")

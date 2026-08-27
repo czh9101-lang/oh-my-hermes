@@ -15,6 +15,8 @@ class HermesChildHandlers:
 
     prepare: HermesChildHandler
     dispatch: HermesChildHandler
+    skill_load_probe: HermesChildHandler
+    skill_load_status: HermesChildHandler
     status: HermesChildHandler
     cancel: HermesChildHandler
 
@@ -55,6 +57,25 @@ def configure_hermes_child_parser(
     dispatch = actions.add_parser("dispatch", help="Explicitly dispatch one bounded local Hermes --oneshot child.")
     _add_request_arguments(dispatch, dispatch=True)
     dispatch.set_defaults(func=handlers.dispatch)
+    probe = actions.add_parser(
+        "skill-load-probe",
+        help="Explicitly probe a nonce-bound machine skill inventory; unsupported hosts stay unsupported.",
+    )
+    probe.add_argument("--confirm-dispatch", action="store_true", help="Required explicit approval to start the local inventory probe.")
+    probe.add_argument("--expected-skill", action="append", default=[], help="Expected skill name; repeat for multiple skills. An empty set is valid only after a protocol response.")
+    probe.add_argument("--run-id", required=True, help="Opaque isolated probe run id.")
+    probe.add_argument("--hermes", default="hermes", help="Hermes CLI executable path.")
+    probe.add_argument("--timeout", type=float, default=10.0, help="Hard inventory protocol timeout in seconds.")
+    probe.add_argument("--termination-grace", type=float, default=0.25, help="SIGTERM grace before SIGKILL.")
+    probe.add_argument("--json", action="store_true", help="Emit skill_load_observation/v1 JSON.")
+    probe.set_defaults(func=handlers.skill_load_probe)
+    probe_status = actions.add_parser(
+        "skill-load-status",
+        help="Read a fresh authenticated skill_load_observation/v1 record.",
+    )
+    probe_status.add_argument("--run-id", required=True)
+    probe_status.add_argument("--json", action="store_true")
+    probe_status.set_defaults(func=handlers.skill_load_status)
     status = actions.add_parser("status", help="Read the metadata-only routing observation for one child run.")
     status.add_argument("--run-id", required=True)
     status.add_argument("--json", action="store_true")

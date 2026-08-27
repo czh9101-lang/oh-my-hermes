@@ -31,11 +31,18 @@ class DomainContextDocumentationTests(unittest.TestCase):
             with self.subTest(workflow=name):
                 skill = skills[name]
                 self.assertIn(required_input, skill["required_inputs"])
-                self.assertEqual(len(skill["expert_questions"]), 1)
-                question = skill["expert_questions"][0]
-                self.assertEqual(question["required_input"], required_input)
-                self.assertEqual(set(question["questions"]), {"en", "ko"})
-                self.assertTrue(all(question["questions"].values()))
+                questions = skill["expert_questions"]
+                if skill.get("procedure_steps"):
+                    self.assertEqual(
+                        {question["required_input"] for question in questions},
+                        set(skill["required_inputs"]),
+                    )
+                else:
+                    self.assertEqual(len(questions), 1)
+                self.assertEqual(questions[0]["required_input"], required_input)
+                for question in questions:
+                    self.assertEqual(set(question["questions"]), {"en", "ko"})
+                    self.assertTrue(all(question["questions"].values()))
 
 
 if __name__ == "__main__":

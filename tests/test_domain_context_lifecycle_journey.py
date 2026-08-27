@@ -7,14 +7,14 @@ from tempfile import TemporaryDirectory
 from _local_package import load_local_package
 
 load_local_package()
+from omh.skills.catalog import builtin_definitions
 
 from test_plugin_distribution import FakeHermesContext, load_installed_plugin
 
 
-KO_SALES_QUESTION = (
-    "이 영업 작업은 어떤 계정 또는 고객 세그먼트에 집중해야 하나요?"
-)
-EN_FINANCE_QUESTION = "Which reporting period should this finance analysis cover?"
+_DEFINITIONS = {definition.name: definition for definition in builtin_definitions()}
+KO_SALES_QUESTION = _DEFINITIONS["sales-development"].expert_questions[0].ko
+EN_FINANCE_QUESTION = _DEFINITIONS["finance-analysis"].expert_questions[0].en
 
 
 def _session_turn(

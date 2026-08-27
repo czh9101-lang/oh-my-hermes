@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from ..workflows.operations_contracts import ArtifactContractRef, artifact_contracts_for_workflow
+
 
 OMH_DESCRIPTION_PREFIX = "[omh] "
 
@@ -611,6 +613,23 @@ class ExpertQuestion:
 
 
 @dataclass(frozen=True)
+class ProcedureCheck:
+    check_id: str
+    required_result_fields: tuple[str, ...]
+    instruction: str
+
+
+@dataclass(frozen=True)
+class ProcedureStep:
+    step_id: str
+    kind: str
+    input_refs: tuple[str, ...]
+    output_refs: tuple[str, ...]
+    check_ids: tuple[str, ...]
+    instruction: str
+
+
+@dataclass(frozen=True)
 class SkillDefinition:
     name: str
     description: str
@@ -652,10 +671,22 @@ class SkillDefinition:
     # Catalog-owned clarification wording. The ordered first row is the stable
     # high-value question; consumers do not infer that its input is missing.
     expert_questions: tuple[ExpertQuestion, ...] = ()
+    # Machine enforcement is independent of the evidence state on produced
+    # artifacts. Operations workflows receive their single registry-owned ref.
+    artifact_contracts: tuple[ArtifactContractRef, ...] = ()
+    # Procedures are opt-in machine contracts. Input and output refs resolve
+    # against this definition; check IDs resolve against procedure_checks.
+    procedure_checks: tuple[ProcedureCheck, ...] = ()
+    procedure_steps: tuple[ProcedureStep, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "description", omh_description(self.description))
         object.__setattr__(self, "hermes_role", canonical_hermes_role(self.name, self.category, self.hermes_role))
+        registered_contracts = artifact_contracts_for_workflow(self.name)
+        if self.artifact_contracts and registered_contracts != self.artifact_contracts:
+            raise ValueError(f"artifact contracts for {self.name} must come from the operations registry")
+        if registered_contracts:
+            object.__setattr__(self, "artifact_contracts", registered_contracts)
         if self.reasoning_demand == "":
             object.__setattr__(
                 self,

@@ -9,6 +9,7 @@ from ..skills.catalog import SkillDefinition, routable_definitions
 from .domain_signals import (
     DomainOperatorOverride,
     DomainRouteSignal,
+    excluded_specialist_domain_skills,
     specialist_domain_operator_override,
     specialist_domain_route_signal,
 )
@@ -651,7 +652,7 @@ _SKILL_POLICIES = {
             "model training, verification, review, CI, or proof that future routing is fixed."
         ),
         wrapper_guidance=(
-            "Prepare skill_portfolio_health_dashboard/v1 with catalog/generated/reference surface status, "
+            "Prepare the skill health card with catalog/generated/reference surface status, "
             "observed-only failure clusters, pending amendment review, and top safe actions while routing setup "
             "health to doctor and mutation work to reviewed implementation."
         ),
@@ -1542,6 +1543,7 @@ def _scored_field(
         routing_text.scoring_text,
         domain_signal,
     )
+    excluded_domain_skills = excluded_specialist_domain_skills(normalized_query)
     scored = []
     for prepared in prepared_definitions:
         recommendation = _score_definition(
@@ -1556,6 +1558,7 @@ def _scored_field(
         )
         if recommendation is not None:
             scored.append(recommendation)
+    scored = [recommendation for recommendation in scored if recommendation.skill not in excluded_domain_skills]
     if explicit_skill != "automation-blueprint" and is_explicit_one_off_request(normalized_query, query_tokens):
         scored = [recommendation for recommendation in scored if recommendation.skill != "automation-blueprint"]
     matches = scored

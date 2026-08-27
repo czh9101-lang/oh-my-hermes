@@ -15,9 +15,197 @@ from omh.web_visual_qa import (
     validate_web_visual_qa_package,
     write_web_visual_qa_package,
 )
+from omh.workflows.web_visual_qa_contracts import WEB_VISUAL_QA_PASS_BLOCKER_IDS
+from omh.workflows.web_visual_qa_projection import build_prepared_web_visual_qa_chat_state
 
 
 class WebVisualQaTests(unittest.TestCase):
+    def test_prepared_preview_exposes_the_validator_blocker_ids(self) -> None:
+        preview = build_prepared_web_visual_qa_chat_state()
+
+        self.assertEqual(preview["package_schema"], "web_visual_qa_package/v2")
+        self.assertEqual(set(preview["pass_blocker_ids"]), set(WEB_VISUAL_QA_PASS_BLOCKER_IDS))
+
+    def test_v2_pass_requires_exact_lineage_and_all_required_viewports(self) -> None:
+        target_lineage = {"repository": "https://github.com/rlaope/oh-my-hermes", "revision": "abc123"}
+        criterion = {
+            "criterion_id": "layout",
+            "label": "Text fits",
+            "pass_rule": "No overlap",
+            "severity": "blocking",
+        }
+        result = {
+            "criterion_id": "layout",
+            "status": "pass",
+            "evidence_refs": ["desktop", "mobile"],
+            "checked_by": "operator",
+            "summary": "All required viewports passed.",
+            "blocking": True,
+        }
+        desktop = {
+            "capture_id": "desktop",
+            "role": "desktop",
+            "path_or_uri": "/tmp/desktop.png",
+            "mime_type": "image/png",
+            "viewport": "desktop-1440",
+            "source_lineage": target_lineage,
+            "evidence_summary": "Desktop captured from the target revision.",
+        }
+        mobile = {
+            "capture_id": "mobile",
+            "role": "mobile",
+            "path_or_uri": "/tmp/mobile.png",
+            "mime_type": "image/png",
+            "viewport": "mobile-390",
+            "source_lineage": target_lineage,
+            "evidence_summary": "Mobile captured from the target revision.",
+        }
+
+        matching = build_web_visual_qa_package(
+            package_id="checkout-current",
+            target="Checkout page",
+            target_lineage=target_lineage,
+            required_viewports=("desktop-1440", "mobile-390", "desktop-1440"),
+            criteria=[criterion],
+            captures=[desktop, mobile],
+            criteria_results=[result],
+            verdict="pass",
+        )
+
+        self.assertEqual(matching["schema_version"], "web_visual_qa_package/v2")
+        self.assertEqual(matching["required_viewports"], ["desktop-1440", "mobile-390"])
+        self.assertEqual(matching["verdict"], "pass")
+        self.assertEqual(matching["blocking_violations"], [])
+        self.assertEqual(validate_web_visual_qa_package(matching), [])
+
+        missing_target_lineage = build_web_visual_qa_package(
+            package_id="checkout-missing-target-lineage",
+            target="Checkout page",
+            required_viewports=("desktop-1440",),
+            criteria=[criterion],
+            captures=[desktop],
+            criteria_results=[{**result, "evidence_refs": ["desktop"]}],
+            verdict="pass",
+        )
+        self.assertEqual(missing_target_lineage["verdict"], "hold")
+        self.assertEqual(missing_target_lineage["blocking_violations"], ["target_lineage_missing"])
+
+        missing_capture_lineage = build_web_visual_qa_package(
+            package_id="checkout-missing-capture-lineage",
+            target="Checkout page",
+            target_lineage=target_lineage,
+            required_viewports=("desktop-1440",),
+            criteria=[criterion],
+            captures=[{key: value for key, value in desktop.items() if key != "source_lineage"}],
+            criteria_results=[{**result, "evidence_refs": ["desktop"]}],
+            verdict="pass",
+        )
+        self.assertEqual(missing_capture_lineage["verdict"], "hold")
+        self.assertEqual(missing_capture_lineage["blocking_violations"], ["capture_source_lineage_missing"])
+
+        mismatched_capture_lineage = build_web_visual_qa_package(
+            package_id="checkout-stale",
+            target="Checkout page",
+            target_lineage=target_lineage,
+            required_viewports=("desktop-1440",),
+            criteria=[criterion],
+            captures=[
+                {
+                    **desktop,
+                    "source_lineage": {
+                        "repository": "https://github.com/rlaope/oh-my-hermes",
+                        "revision": "old456",
+                    },
+                }
+            ],
+            criteria_results=[{**result, "evidence_refs": ["desktop"]}],
+            verdict="pass",
+        )
+        self.assertEqual(mismatched_capture_lineage["verdict"], "hold")
+        self.assertEqual(mismatched_capture_lineage["blocking_violations"], ["capture_source_lineage_mismatch"])
+
+        mismatched_repository = build_web_visual_qa_package(
+            package_id="checkout-wrong-repository",
+            target="Checkout page",
+            target_lineage=target_lineage,
+            required_viewports=("desktop-1440",),
+            criteria=[criterion],
+            captures=[
+                {
+                    **desktop,
+                    "source_lineage": {
+                        "repository": "https://github.com/example/fork",
+                        "revision": "abc123",
+                    },
+                }
+            ],
+            criteria_results=[{**result, "evidence_refs": ["desktop"]}],
+            verdict="pass",
+        )
+        self.assertEqual(mismatched_repository["verdict"], "hold")
+        self.assertEqual(mismatched_repository["blocking_violations"], ["capture_source_lineage_mismatch"])
+
+        missing_viewport = build_web_visual_qa_package(
+            package_id="checkout-partial",
+            target="Checkout page",
+            target_lineage=target_lineage,
+            required_viewports=("desktop-1440", "mobile-390"),
+            criteria=[criterion],
+            captures=[desktop],
+            criteria_results=[{**result, "evidence_refs": ["desktop"]}],
+            verdict="pass",
+        )
+        self.assertEqual(missing_viewport["verdict"], "hold")
+        self.assertEqual(missing_viewport["blocking_violations"], ["required_viewport_missing"])
+
+    def test_v1_package_remains_readable_but_cannot_pass(self) -> None:
+        package = build_web_visual_qa_package(
+            package_id="checkout-legacy",
+            target="Checkout page",
+            target_lineage={"repository": "https://github.com/rlaope/oh-my-hermes", "revision": "abc123"},
+            required_viewports=("desktop-1440",),
+            criteria=[
+                {
+                    "criterion_id": "layout",
+                    "label": "Text fits",
+                    "pass_rule": "No overlap",
+                    "severity": "blocking",
+                }
+            ],
+            captures=[
+                {
+                    "capture_id": "desktop",
+                    "role": "desktop",
+                    "path_or_uri": "/tmp/desktop.png",
+                    "mime_type": "image/png",
+                    "viewport": "desktop-1440",
+                    "source_lineage": {
+                        "repository": "https://github.com/rlaope/oh-my-hermes",
+                        "revision": "abc123",
+                    },
+                    "evidence_summary": "Desktop captured.",
+                }
+            ],
+            criteria_results=[
+                {
+                    "criterion_id": "layout",
+                    "status": "pass",
+                    "evidence_refs": ["desktop"],
+                    "checked_by": "operator",
+                    "summary": "Desktop criterion passed.",
+                    "blocking": True,
+                }
+            ],
+            verdict="pass",
+        )
+        package["schema_version"] = "web_visual_qa_package/v1"
+        package.pop("target_lineage")
+        package.pop("required_viewports")
+        package.pop("blocking_violations")
+        package["captures"][0].pop("source_lineage")
+
+        self.assertIn("legacy_package_cannot_pass", validate_web_visual_qa_package(package))
+
     def test_package_records_captures_criteria_results_and_multimodal_route(self) -> None:
         package = build_web_visual_qa_package(
             package_id="checkout-qa",
@@ -75,7 +263,7 @@ class WebVisualQaTests(unittest.TestCase):
             verdict="hold",
         )
 
-        self.assertEqual(package["schema_version"], "web_visual_qa_package/v1")
+        self.assertEqual(package["schema_version"], "web_visual_qa_package/v2")
         self.assertEqual(package["status"], "verdict_recorded")
         self.assertEqual(package["verdict"], "hold")
         self.assertEqual(package["routing"]["route"], "request_operator_review")
@@ -89,6 +277,8 @@ class WebVisualQaTests(unittest.TestCase):
         package = build_web_visual_qa_package(
             package_id="checkout-pass",
             target="Checkout page",
+            target_lineage={"repository": "https://github.com/rlaope/oh-my-hermes", "revision": "abc123"},
+            required_viewports=("desktop-1440",),
             criteria=[
                 {
                     "criterion_id": "layout",
@@ -104,6 +294,10 @@ class WebVisualQaTests(unittest.TestCase):
                     "path_or_uri": "/tmp/desktop.png",
                     "mime_type": "image/png",
                     "viewport": "desktop-1440",
+                    "source_lineage": {
+                        "repository": "https://github.com/rlaope/oh-my-hermes",
+                        "revision": "abc123",
+                    },
                     "evidence_summary": "Desktop captured.",
                 }
             ],

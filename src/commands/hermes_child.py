@@ -9,8 +9,8 @@ from pathlib import Path
 import secrets
 import signal
 
-from ..coding.hermes_child_receipts import ReceiptVerificationError, hermes_child_run_dir, observation_key_open_flags, observation_signature_valid, read_hermes_child_observation, write_signed_observation
 from ..coding.hermes_child_dispatch import DispatchConfirmationError, DispatchRecursionError, HermesChildDispatchError, HermesChildObservation, HermesChildRequest, dispatch_hermes_child
+from ..coding.hermes_child_receipts import ReceiptVerificationError, hermes_child_run_dir, observation_key_open_flags, observation_signature_valid, read_hermes_child_observation, write_signed_observation
 from ..coding.routing_observation import JsonValue, authenticate_child_observation, build_routing_observation, render_routing_status_rows, validate_routing_observation
 from ..core.errors import OmhError
 from ..system.local_store import atomic_write_json, read_json_object
@@ -26,6 +26,7 @@ from .hermes_child_process import (
     process_identity as _process_identity,
     validate_active_record as _validate_active_record,
 )
+from .hermes_child_skill_load import cmd_hermes_child_skill_load_probe, cmd_hermes_child_skill_load_status
 
 _AUDIENCE = "agent/maintainer"
 _ACTIVE_SCHEMA_VERSION = "hermes_child_active/v2"
@@ -263,6 +264,8 @@ def add_hermes_child_command(
         HermesChildHandlers(
             prepare=cmd_hermes_child_prepare,
             dispatch=cmd_hermes_child_dispatch,
+            skill_load_probe=cmd_hermes_child_skill_load_probe,
+            skill_load_status=cmd_hermes_child_skill_load_status,
             status=cmd_hermes_child_status,
             cancel=cmd_hermes_child_cancel,
         ),

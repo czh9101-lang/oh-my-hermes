@@ -185,6 +185,18 @@ class CancellationToken:
             self._callbacks.discard(callback)
 
 
+def require_hermes_child_dispatch_boundary(
+    *, dispatch_policy: str, confirmed: bool, depth: int = 0
+) -> None:
+    """Enforce the shared confirmation and depth-one child boundary."""
+    if dispatch_policy != "ask_before_dispatch" or not confirmed:
+        raise DispatchConfirmationError(
+            "isolated Hermes dispatch requires ask_before_dispatch and explicit confirmation"
+        )
+    if depth >= MAX_CHILD_DEPTH or _environment_is_child():
+        raise DispatchRecursionError("isolated Hermes child dispatch depth is limited to one")
+
+
 def dispatch_hermes_child(
     request: HermesChildRequest,
     *,
@@ -194,12 +206,9 @@ def dispatch_hermes_child(
     observe: Callable[[HermesChildObservation], None] | None = None,
 ) -> HermesChildResult:
     """Run one explicitly confirmed local Hermes child and observe its state."""
-    if dispatch_policy != "ask_before_dispatch" or not confirmed:
-        raise DispatchConfirmationError(
-            "isolated Hermes dispatch requires ask_before_dispatch and explicit confirmation"
-        )
-    if request.depth >= MAX_CHILD_DEPTH or _environment_is_child():
-        raise DispatchRecursionError("isolated Hermes child dispatch depth is limited to one")
+    require_hermes_child_dispatch_boundary(
+        dispatch_policy=dispatch_policy, confirmed=confirmed, depth=request.depth
+    )
     if not request.prompt or not request.model or request.timeout_seconds <= 0:
         raise ValueError("prompt, model, and a positive timeout are required")
     if request.evaluation_context is not None:

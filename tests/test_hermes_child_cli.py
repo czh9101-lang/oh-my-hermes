@@ -93,6 +93,73 @@ class HermesChildCliTests(unittest.TestCase):
         self.assertIn("--confirm-dispatch", stderr)
         self.assertFalse((self.root / "argv.json").exists())
 
+    def test_skill_load_probe_requires_confirmation_and_real_unsupported_is_truthful(self) -> None:
+        marker = self.root / "inventory-called"
+        unsupported = self.root / "unsupported-hermes.py"
+        unsupported.write_text(
+            "#!/usr/bin/env python3\nfrom pathlib import Path\nimport sys\n"
+            f"Path({str(marker)!r}).touch()\nraise SystemExit(2)\n",
+            encoding="utf-8",
+        )
+        unsupported.chmod(0o755)
+        command = [
+            "--omh-home", str(self.omh_home), "coding", "hermes-child",
+            "skill-load-probe", "--run-id", "probe-1", "--hermes", str(unsupported),
+            "--expected-skill", "alpha",
+        ]
+        status, stdout, stderr = run_cli(command)
+        self.assertEqual((status, stdout), (2, ""))
+        self.assertIn("--confirm-dispatch", stderr)
+        self.assertFalse(marker.exists())
+
+        status, stdout, stderr = run_cli([*command, "--confirm-dispatch"])
+        self.assertEqual(status, 0, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(
+            (payload["schema_version"], payload["probe_status"], payload["reason_code"]),
+            ("skill_load_observation/v1", "unsupported", "inventory_protocol_unavailable"),
+        )
+        self.assertNotIn("load_state", payload)
+        self.assertTrue(marker.exists())
+        stored = (
+            self.omh_home / "coding" / "hermes-child" / "probe-1"
+            / "skill-load-observation.json"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("prompt", stored)
+        self.assertNotIn("credential", stored)
+
+        status, status_stdout, stderr = run_cli([
+            "--omh-home", str(self.omh_home), "coding", "hermes-child",
+            "skill-load-status", "--run-id", "probe-1",
+        ])
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(json.loads(status_stdout)["probe_status"], "unsupported")
+
+    def test_skill_load_status_rejects_tampering(self) -> None:
+        unsupported = self.root / "unsupported.py"
+        unsupported.write_text("#!/usr/bin/env python3\nraise SystemExit(2)\n", encoding="utf-8")
+        unsupported.chmod(0o755)
+        command = [
+            "--omh-home", str(self.omh_home), "coding", "hermes-child",
+            "skill-load-probe", "--confirm-dispatch", "--run-id", "probe-tamper",
+            "--hermes", str(unsupported),
+        ]
+        self.assertEqual(run_cli(command)[0], 0)
+        path = (
+            self.omh_home / "coding" / "hermes-child" / "probe-tamper"
+            / "skill-load-observation.json"
+        )
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["probe_status"] = "observed"
+        payload["load_state"] = "all_loaded"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        status, stdout, stderr = run_cli([
+            "--omh-home", str(self.omh_home), "coding", "hermes-child",
+            "skill-load-status", "--run-id", "probe-tamper",
+        ])
+        self.assertEqual((status, stdout), (2, ""))
+        self.assertIn("invalid", stderr)
+
     def test_real_fake_cli_happy_bad_timeout_and_secret_free_argv(self) -> None:
         cases = (
             ("SECRET_HAPPY_22", "completed", 0, "2"),

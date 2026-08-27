@@ -204,24 +204,36 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # say-not-observed carve-out for directly asked figures (renders into all
 # three handoff-guide skill bodies; the common rail carries the same text but
 # sits outside this metric); warranted growth.
-# 716418 -> 717490: the design family gained its named craft bar and the
-# pointers into the new on-demand references (+1072 chars across the
-# frontend, design-quality-gate, and design-orchestration quality bars:
-# the named senior-designer bar with flat-output-fails, the
-# DESIGN.md-before-code contract gate, primary-taste-direction selection,
-# and reference-token extraction). The four reference bodies themselves
-# load on demand and sit outside this always-loaded budget; warranted
-# growth.
-# 717490 -> 717978: the ultrawork and ralplan todo-init quality-bar rules
+# 716418 -> 716734: JSON-compatible YAML quoting protects every emitted
+# frontmatter name and description from mapping, comment, and delimiter syntax
+# (+316 chars across the generated skill bodies); warranted growth.
+# 716734 -> 717343: visual-qa replaced timestamp freshness prose with exact
+# source-lineage and required-viewport contracts (+609 chars across the
+# generated skill body); warranted growth.
+# 717343 -> 717473: the three specialist workflows gained normalized routing
+# cues for local-negation and compound-intent handling (#1112, +130 chars);
+# warranted growth.
+# 717473 -> 718545: the design family gained its named craft bar and pointers
+# into four on-demand references (+1072 chars across the frontend,
+# design-quality-gate, and design-orchestration quality bars: the named
+# senior-designer bar with flat-output-fails, the DESIGN.md-before-code
+# contract gate, primary-taste-direction selection, and reference-token
+# extraction). The reference bodies themselves load on demand and sit outside
+# this always-loaded budget; warranted growth.
+# 718545 -> 719033: the ultrawork and ralplan todo-init quality-bar rules
 # gained an English-labels clause (+488 chars: phase names and task titles
 # stay English even in a non-English conversation, since the HUD todo
 # checklist is an operator surface under the repo's English-by-default
 # output contract); warranted growth.
-# 717978 -> 718026: the agent-evaluation contract now names per-task input
+# 719033 -> 721424: ten operations skills now expose their artifact contract
+# id, machine-enforcement level, resolvable consumer (when validated), and the
+# enforcement-versus-evidence boundary (#1119; +2391 chars in the merged
+# renderer); warranted growth.
+# 721424 -> 721472: the agent-evaluation contract now names per-task input
 # digests, per-dispatch time bounds, receipt-authenticated observed_at, and
 # the owning-OS-user limitation while replacing the older generic
 # provenance sentence (net +48 chars); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 718026
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 721472
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
