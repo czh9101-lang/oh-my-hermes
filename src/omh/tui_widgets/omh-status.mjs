@@ -355,11 +355,14 @@ export default function register(sdk) {
         h(Text, { color: t.color.border }, SEPARATOR),
         h(Text, { color: active ? t.color.warn : t.color.ok }, hudStateLabel(active, agents)),
         h(Text, { color: t.color.muted }, `${metrics.cost ? ` • ${metrics.cost}` : ''} • ${metrics.ctx}`),
-        // Shift+Tab yolo state, as last observed by the plugin's turn and
-        // tool-call hooks (the host keeps the flag in process memory only).
-        // ON warns in the theme's yellow; OFF rests in the label blue —
-        // colours resolve through the active theme, never literals. An
-        // unobserved or stale ledger renders nothing rather than a guess.
+        // Shift+Tab yolo state: the reader projects the host's persisted
+        // surfaces first (the live TUI session row's /yolo flag where the
+        // host persists it, config.yaml approvals.mode) so a toggle shows
+        // on the next 2s poll, and falls back to the turn/tool-call hook
+        // ledger when neither surface speaks. ON warns in the theme's
+        // yellow; OFF rests in the label blue — colours resolve through
+        // the active theme, never literals. An unobserved or stale state
+        // renders nothing rather than a guess.
         payload.yolo && payload.yolo.status === 'observed'
           ? h(
               Text,

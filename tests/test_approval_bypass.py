@@ -18,6 +18,7 @@ from pathlib import Path
 from omh.plugin_bundle.omh.approval_bypass import (
     APPROVAL_BYPASS_FRESH_SECONDS,
     approval_bypass_path,
+    effective_approval_bypass,
     latest_approval_bypass,
     record_approval_bypass,
 )
@@ -115,3 +116,234 @@ class ApprovalBypassLedgerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HostStateYoloTest(unittest.TestCase):
+    """The HUD reads the host's persisted /yolo surfaces in real time.
+
+    A host that persists the toggle writes the session row's
+    model_config.yolo_mode (the classic CLI does; the Modern TUI gains the
+    same persist upstream), so the reader projects that row for the most
+    recently active LIVE TUI session — scoped by source, liveness, and the
+    ledger's freshness bound so a foreign or dead row can never answer for
+    the session a widget is rendering ("yolomode onoff 실시간 반영이 안됨").
+    The hook ledger answers whenever no persisted surface speaks.
+    """
+
+    def setUp(self):
+        import sqlite3
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.omh_home = str(Path(self._tmp.name) / "omh")
+        self.hermes_home = Path(self._tmp.name) / "hermes"
+        self.hermes_home.mkdir()
+        self._sqlite3 = sqlite3
+
+    def _build_db(self, rows):
+        """rows: (id, config, activity, source='tui', ended_at=None, archived=0, hidden=0)."""
+        connection = self._sqlite3.connect(self.hermes_home / "state.db")
+        connection.executescript(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, source TEXT, model TEXT,
+                model_config TEXT, started_at REAL NOT NULL,
+                last_activity_at REAL, ended_at REAL,
+                archived INTEGER DEFAULT 0, hidden INTEGER DEFAULT 0
+            );
+            """
+        )
+        import json as json_module
+
+        for row in rows:
+            session_id, config, activity = row[0], row[1], row[2]
+            source = row[3] if len(row) > 3 else "tui"
+            ended_at = row[4] if len(row) > 4 else None
+            raw = (
+                config
+                if isinstance(config, (str, int, type(None)))
+                else json_module.dumps(config)
+            )
+            connection.execute(
+                "INSERT INTO sessions (id, source, model, model_config, started_at,"
+                " last_activity_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (session_id, source, "gpt-5.6-sol", raw, activity - 100, activity, ended_at),
+            )
+        connection.commit()
+        connection.close()
+
+    def _write_ledger(self, enabled: bool, *, observed_ts: float) -> None:
+        approval_bypass_path(self.omh_home).parent.mkdir(parents=True, exist_ok=True)
+        approval_bypass_path(self.omh_home).write_text(
+            '{"schema_version": "omh_approval_bypass/v1", '
+            f'"enabled": {"true" if enabled else "false"}, '
+            f'"observed_ts": {observed_ts}}}',
+            encoding="utf-8",
+        )
+
+    def _effective(self):
+        return effective_approval_bypass(self.omh_home, str(self.hermes_home), now=NOW)
+
+    def test_a_persisted_toggle_projects_on_without_any_hook_observation(self):
+        self._build_db([("s1", {"yolo_mode": True}, NOW - 60)])
+        state = self._effective()
+        self.assertEqual(state["status"], "observed")
+        self.assertTrue(state["enabled"])
+        self.assertEqual(state["source"], "host_state")
+
+    def test_a_toggle_off_beats_a_stale_hook_observation(self):
+        # The reported bug: the ledger observed ON at the last turn, the
+        # user toggled OFF between turns, and the HUD kept saying on.
+        self._write_ledger(True, observed_ts=NOW - 30)
+        self._build_db([("s1", {"yolo_mode": False}, NOW - 60)])
+        state = self._effective()
+        self.assertEqual(state["status"], "observed")
+        self.assertFalse(state["enabled"])
+
+    def test_only_a_live_tui_row_may_answer(self):
+        # A cron --yolo run and a closed TUI must never flip the display of
+        # the session a widget is actually rendering.
+        self._build_db(
+            [
+                ("cron", {"yolo_mode": True}, NOW - 5, "tool"),
+                ("closed", {"yolo_mode": True}, NOW - 10, "tui", NOW - 9),
+                ("cli", {"yolo_mode": True}, NOW - 15, "cli"),
+                ("live", {"yolo_mode": False}, NOW - 60),
+            ]
+        )
+        state = self._effective()
+        self.assertFalse(state["enabled"])
+        self.assertEqual(state["source"], "host_state")
+
+    def test_an_old_stamped_row_never_dominates_the_ledger(self):
+        # The freshest live TUI row is beyond the freshness bound: a stamp
+        # from a long-dead session says nothing about today.
+        self._build_db([("old", {"yolo_mode": True}, NOW - 7 * 3600)])
+        self._write_ledger(False, observed_ts=NOW - 30)
+        state = self._effective()
+        self.assertFalse(state["enabled"])
+        self.assertNotIn("source", state)
+
+    def test_a_child_row_is_skipped_and_the_next_live_row_answers(self):
+        self._build_db(
+            [
+                ("child", {"yolo_mode": True, "_delegate_from": "main"}, NOW - 5),
+                ("main", {"yolo_mode": False}, NOW - 60),
+            ]
+        )
+        self.assertFalse(self._effective()["enabled"])
+
+    def test_a_crowd_of_live_children_cannot_push_the_main_row_out(self):
+        # Delegate children are source='tui' too; the WHERE-level skip keeps
+        # them from consuming the row limit ahead of the eligible session.
+        rows = [
+            (f"child-{index}", {"yolo_mode": True, "_delegate_from": "main"}, NOW - index)
+            for index in range(40)
+        ]
+        rows.append(("main", {"yolo_mode": False}, NOW - 300))
+        self._build_db(rows)
+        state = self._effective()
+        self.assertFalse(state["enabled"])
+        self.assertEqual(state["source"], "host_state")
+
+    def test_an_undecodable_row_is_skipped_and_the_next_row_answers(self):
+        # A BLOB model_config exercises the decode guard; the eligible row
+        # below it still answers instead of the whole read failing.
+        import sqlite3
+
+        self._build_db([("main", {"yolo_mode": False}, NOW - 60)])
+        connection = self._sqlite3.connect(self.hermes_home / "state.db")
+        connection.execute(
+            "INSERT INTO sessions (id, source, model, model_config, started_at,"
+            " last_activity_at) VALUES (?, 'tui', 'm', ?, ?, ?)",
+            ("blob", sqlite3.Binary(b"\x00\xff\xfe"), NOW - 200, NOW - 5),
+        )
+        connection.commit()
+        connection.close()
+        self.assertFalse(self._effective()["enabled"])
+
+    def test_an_unstamped_newest_session_falls_back_to_the_ledger(self):
+        self._build_db([("s1", {}, NOW - 60)])
+        self._write_ledger(True, observed_ts=NOW - 30)
+        state = self._effective()
+        self.assertEqual(state["status"], "observed")
+        self.assertTrue(state["enabled"])
+        self.assertNotIn("source", state)
+
+    def test_the_row_activity_timestamp_is_carried_not_restamped(self):
+        self._build_db([("s1", {"yolo_mode": True}, NOW - 60)])
+        state = self._effective()
+        from datetime import datetime, timezone
+
+        expected = (
+            datetime.fromtimestamp(NOW - 60, tz=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        self.assertEqual(state["observed_at"], expected)
+
+    def test_approvals_mode_off_dominates_a_toggled_off_row(self):
+        # The host's own /yolo refuses to override approvals.mode: off, so
+        # the projection must not either.
+        (self.hermes_home / "config.yaml").write_text(
+            "approvals:\n  mode: off\n", encoding="utf-8"
+        )
+        self._build_db([("s1", {"yolo_mode": False}, NOW - 60)])
+        state = self._effective()
+        self.assertTrue(state["enabled"])
+
+    def test_a_nested_or_manual_mode_never_reads_as_bypass(self):
+        # approvals.tools.mode is a different key; mode: manual is not off;
+        # a QUOTED 'false'/'no' is a plain string the host normalizes to
+        # manual, so it must never read as the bypass.
+        for content in (
+            "approvals:\n  tools:\n    mode: off\n  mode: manual\n",
+            "approvals:\n  mode: manual\n",
+            "approvals:\n  mode: 'false'\n",
+            "approvals:\n  mode: \"no\"\n",
+            "other:\n  mode: off\n",
+            "# approvals:\n#   mode: off\n",
+        ):
+            with self.subTest(content=content):
+                (self.hermes_home / "config.yaml").write_text(content, encoding="utf-8")
+                state = self._effective()
+                self.assertEqual(state["status"], "idle")
+
+    def test_a_bare_yaml_boolean_mode_reads_as_the_bypass_it_is(self):
+        # YAML 1.1 reads bare false/no/off as boolean False and the host
+        # normalizer maps False back to "off" — quoting is what opts out.
+        for content in (
+            "approvals:\n  mode: false\n",
+            "approvals:\n  mode: no\n",
+        ):
+            with self.subTest(content=content):
+                (self.hermes_home / "config.yaml").write_text(content, encoding="utf-8")
+                self.assertTrue(self._effective()["enabled"])
+
+    def test_unreadable_state_never_breaks_the_projection(self):
+        for prepare in (
+            lambda: (self.hermes_home / "state.db").write_bytes(b"not a database"),
+            lambda: self._build_db([("s1", 42, NOW - 60)]),  # non-str model_config
+            lambda: None,  # missing db entirely
+        ):
+            with self.subTest(prepare=prepare):
+                db = self.hermes_home / "state.db"
+                if db.exists():
+                    db.unlink()
+                prepare()
+                state = self._effective()
+                self.assertEqual(state["status"], "idle")
+
+    def test_the_host_state_projection_carries_its_claim_boundary(self):
+        self._build_db([("s1", {"yolo_mode": True}, NOW - 60)])
+        state = self._effective()
+        self.assertIn("never approval, execution", state["claim_boundary"])
+        self.assertIn("real-time", state["claim_boundary"])
+
+    def test_the_hud_payload_reads_the_persisted_toggle(self):
+        # read_omh_hud runs on the wall clock, so the fixture row must be
+        # fresh relative to it (the other cases pin the clock via now=NOW).
+        self._build_db([("s1", {"yolo_mode": True}, time.time() - 60)])
+        payload = read_omh_hud(self.omh_home, str(self.hermes_home))
+        self.assertEqual(payload["yolo"]["status"], "observed")
+        self.assertTrue(payload["yolo"]["enabled"])
