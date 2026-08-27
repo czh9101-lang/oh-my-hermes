@@ -69,6 +69,32 @@ def _record_delivery(
         return
 
 
+def _primer_already_in_api_history(conversation_history: object, primer: str) -> bool:
+    """Whether Hermes already persisted this primer in an API-content sidecar.
+
+    Hermes replays prior ``api_content`` values byte-for-byte for prompt-cache
+    stability. Re-emitting the same primer on a later turn therefore grows the
+    prompt permanently. Inspect only the host-injected suffix of that sidecar,
+    subtracting the clean message prefix, so a user quoting
+    ``[OMH Awareness]`` cannot suppress guidance.
+    """
+    if not primer or not isinstance(conversation_history, (list, tuple)):
+        return False
+    for message in reversed(conversation_history):
+        if not isinstance(message, dict):
+            continue
+        api_content = message.get("api_content")
+        if not isinstance(api_content, str):
+            continue
+        clean_content = message.get("content")
+        injected_content = api_content
+        if isinstance(clean_content, str) and api_content.startswith(clean_content):
+            injected_content = api_content[len(clean_content) :]
+        if primer in injected_content:
+            return True
+    return False
+
+
 def pre_llm_call(**kwargs) -> dict[str, object] | None:
     """Inject bounded OMH role/status context without storing prompts."""
     record_active_main_agent_model(kwargs.get("model"))
@@ -124,7 +150,9 @@ def pre_llm_call(**kwargs) -> dict[str, object] | None:
         and (bool(route_hint_context) or message_matches_awareness)
     )
     if should_include_awareness:
-        context_parts.append(awareness_primer_context())
+        primer = awareness_primer_context()
+        if not _primer_already_in_api_history(kwargs.get("conversation_history"), primer):
+            context_parts.append(primer)
         payload["omh_context_brief"] = build_context_brief(
             user_message,
             source=str(kwargs.get("source") or kwargs.get("host") or "pre_llm_call"),
@@ -202,19 +230,21 @@ def pre_llm_call(**kwargs) -> dict[str, object] | None:
         degraded.append((COMPONENT_RUNTIME_STATUS_READ, safe_error_type(error_type)))
 
     if include_awareness and is_first_turn and status.get("active_executors") and not should_include_awareness:
-        context_parts.insert(0, awareness_primer_context())
-        payload["omh_context_brief"] = build_context_brief(
-            user_message,
-            source=str(kwargs.get("source") or kwargs.get("host") or "pre_llm_call"),
-            max_hints=2,
-            include_prompt_context=False,
-            route_hint_payload=route_hint_payload,
-        )
-        brief = payload.get("omh_context_brief")
-        if isinstance(brief, dict):
-            for row in brief.get("degradation", {}).get("components", []):
-                if isinstance(row, dict):
-                    degraded.append((str(row.get("component", "")), str(row.get("error_type", ""))))
+        primer = awareness_primer_context()
+        if not _primer_already_in_api_history(kwargs.get("conversation_history"), primer):
+            context_parts.insert(0, primer)
+            payload["omh_context_brief"] = build_context_brief(
+                user_message,
+                source=str(kwargs.get("source") or kwargs.get("host") or "pre_llm_call"),
+                max_hints=2,
+                include_prompt_context=False,
+                route_hint_payload=route_hint_payload,
+            )
+            brief = payload.get("omh_context_brief")
+            if isinstance(brief, dict):
+                for row in brief.get("degradation", {}).get("components", []):
+                    if isinstance(row, dict):
+                        degraded.append((str(row.get("component", "")), str(row.get("error_type", ""))))
 
     board = read_running_work_board(omh_home, limit=6)
     running_count = int(board.get("running_count", 0) or 0)
