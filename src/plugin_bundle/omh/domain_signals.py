@@ -280,6 +280,15 @@ _NEGATION_SENSITIVE_OPERATOR_SKILLS = {
     "workspace-file-operator",
 }
 
+_DOMAIN_NEGATORS = frozenset(
+    {"avoid", "except", "exclude", "excluded", "excluding", "never", "no", "not", "without"}
+)
+_INCLUSIVE_NEGATION_FOLLOWERS = frozenset({"just", "only"})
+_LOCAL_NEGATION_TOKEN_RANGE = 4
+_CLAUSE_SEPARATOR_PATTERN = re.compile(r"[,;.!?\n]+|\band\b")
+_ENGLISH_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+
+
 _STRUCTURED_OPERATOR_ACTIONS: tuple[
     tuple[str, dict[str, tuple[str, ...]]],
     ...,
@@ -370,23 +379,50 @@ _STRUCTURED_OPERATOR_ACTIONS: tuple[
     ),
 )
 
-_DOMAIN_NEGATORS = frozenset(
-    {
-        "avoid",
-        "except",
-        "exclude",
-        "excluded",
-        "excluding",
-        "never",
-        "no",
-        "not",
-        "without",
-    }
-)
-_INCLUSIVE_NEGATION_FOLLOWERS = frozenset({"just", "only"})
-_LOCAL_NEGATION_TOKEN_RANGE = 4
-_CLAUSE_SEPARATOR_PATTERN = re.compile(r"[,;.!?\n]+|\band\b")
-_ENGLISH_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+def canonical_domain_token(token: str) -> str:
+    """Project English n't contractions onto the canonical `not` token."""
+    normalized = token.replace("’", "'")
+    if re.fullmatch(r"[a-z]+n't", normalized):
+        return "not"
+    return normalized
+
+
+def canonical_domain_tokens(value: str) -> tuple[str, ...]:
+    """Return canonical English tokens for shared local-negation consumers."""
+    return tuple(
+        canonical_domain_token(token)
+        for token in re.findall(r"[a-z]+n['’]t|[a-z0-9]+", value)
+    )
+
+
+def domain_tokens_are_locally_negated(tokens: tuple[str, ...], start: int) -> bool:
+    """Apply the one canonical domain-negation window to a token position."""
+    lower = max(0, start - _LOCAL_NEGATION_TOKEN_RANGE)
+    for index in range(lower, start):
+        if tokens[index] not in _DOMAIN_NEGATORS:
+            continue
+        if (
+            tokens[index] == "not"
+            and index + 1 < len(tokens)
+            and tokens[index + 1] in _INCLUSIVE_NEGATION_FOLLOWERS
+        ):
+            continue
+        return True
+    return False
+
+
+def normalized_domain_cue_is_positive(
+    normalized_message: str,
+    cue_pattern: re.Pattern[str],
+) -> bool:
+    """Apply canonical local-negation semantics to an already-folded request."""
+    for clause in _CLAUSE_SEPARATOR_PATTERN.split(normalized_message):
+        tokens = canonical_domain_tokens(clause)
+        for match in cue_pattern.finditer(clause):
+            start = len(canonical_domain_tokens(clause[: match.start()]))
+            if not domain_tokens_are_locally_negated(tokens, start):
+                return True
+    return False
 
 
 def specialist_domain_route_signal(message: str) -> DomainRouteSignal | None:
@@ -483,24 +519,11 @@ def _contains_positive_cue_phrase(message: str, cue: str) -> bool:
 
 
 def _english_tokens(value: str) -> tuple[str, ...]:
-    normalized = _fold_for_match(value).replace("’", "'")
-    normalized = re.sub(r"\b[a-z]+n't\b", "not", normalized)
-    return tuple(_ENGLISH_TOKEN_PATTERN.findall(normalized))
+    return canonical_domain_tokens(_fold_for_match(value))
 
 
 def _locally_negated(tokens: tuple[str, ...], start: int) -> bool:
-    lower = max(0, start - _LOCAL_NEGATION_TOKEN_RANGE)
-    for index in range(lower, start):
-        if tokens[index] not in _DOMAIN_NEGATORS:
-            continue
-        if (
-            tokens[index] == "not"
-            and index + 1 < len(tokens)
-            and tokens[index + 1] in _INCLUSIVE_NEGATION_FOLLOWERS
-        ):
-            continue
-        return True
-    return False
+    return domain_tokens_are_locally_negated(tokens, start)
 
 
 def _fold_for_match(value: str) -> str:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -21,6 +23,8 @@ from omh.routing.policy import (
     explicit_skill_invocation,
 )
 from omh.routing import chat as chat_router_impl
+from omh.routing import domain_signals as domain_signals_impl
+from omh.routing.candidate_handoff import build_candidate_handoff
 from omh.routing.domain_signals import specialist_domain_route_signal
 from omh.routing.localization import normalized_phrase
 from omh.routing.recommend import recommend_skills
@@ -4332,6 +4336,387 @@ selected_workflow=ultraprocess
                 decision = route_chat_message(message, source="discord")
                 self.assertEqual(decision["selected_skill"], expected_skill)
                 self.assertEqual(decision["action"], "fallback" if expected_skill == "oh-my-hermes" else "dispatch")
+
+    def test_relevance_never_overrides_explicit_or_confident_route_authority(self) -> None:
+        explicit = route_chat_message("use finance-analysis for ASC 606 model", source="discord")
+        mixed = route_chat_message(
+            "ASC 606 model and create a product requirements document",
+            source="discord",
+        )
+        public_mixed = chat_router_impl.public_chat_route_payload(
+            "ASC 606 model and create a product requirements document",
+            source="discord",
+        )
+
+        self.assertEqual((explicit["action"], explicit["selected_skill"]), ("dispatch", "finance-analysis"))
+        self.assertTrue(explicit["explicit"])
+        self.assertNotIn("candidate_handoff", explicit)
+        for route in (mixed, public_mixed):
+            self.assertEqual((route["action"], route["selected_skill"]), ("dispatch", "product-brief"))
+            self.assertEqual(route["candidate_skill"], "product-brief")
+            self.assertEqual(route["recommendations"][0]["skill"], "product-brief")
+            self.assertNotIn("candidate_handoff", route)
+            self.assertNotIn("finance-analysis", str(route.get("clarification", "")))
+
+    def test_relevance_classification_respects_local_negation_and_segments(self) -> None:
+        cases = (
+            ("not asc 606", ()),
+            ("Do not assess ASC 606; create a product requirements document", ()),
+            ("Do not assess ASC 606; use MEDDPICC qualification", ("sales-development",)),
+            ("not only ASC 606 but revenue recognition", ("finance-analysis",)),
+        )
+
+        for message, expected in cases:
+            with self.subTest(message=message):
+                relevance = domain_signals_impl.classify_clarification_relevance(message)
+                self.assertEqual(relevance.skills or (), expected)
+
+    def test_relevance_single_scan_derives_owned_and_blocked_independently(self) -> None:
+        cases = (
+            ("plain request without specialist cues", None, ()),
+            ("MEDDPICC qualification", ("sales-development",), ()),
+            (
+                "four-fifths rule ... MEDDPICC",
+                ("sales-development",),
+                ("rules-distill",),
+            ),
+            (
+                "Bloom backward design ... MEDDPICC",
+                ("sales-development",),
+                ("curriculum-design",),
+            ),
+        )
+
+        for message, skills, blocked_skills in cases:
+            with self.subTest(message=message):
+                with (
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_normalized_relevance_message",
+                        wraps=domain_signals_impl._normalized_relevance_message,
+                    ) as normalize,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_fold_for_match",
+                        wraps=domain_signals_impl._fold_for_match,
+                    ) as fold,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_scan_normalized_relevance_message",
+                        wraps=domain_signals_impl._scan_normalized_relevance_message,
+                    ) as scan,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_full_message_relevance_scan",
+                        wraps=domain_signals_impl._full_message_relevance_scan,
+                    ) as full_scan,
+                ):
+                    relevance = domain_signals_impl.classify_clarification_relevance(message)
+
+                self.assertEqual(relevance.skills, skills)
+                self.assertEqual(relevance.blocked_skills, blocked_skills)
+                self.assertEqual(normalize.call_count, 1)
+                self.assertEqual(fold.call_count, 1)
+                self.assertEqual(scan.call_count, 1)
+                self.assertEqual(full_scan.call_count, 1)
+
+    def test_mixed_owned_and_blocked_signals_never_name_the_blocked_skill(self) -> None:
+        cases = (
+            ("four-fifths rule ... MEDDPICC", "rules-distill"),
+            ("Bloom backward design ... MEDDPICC", "curriculum-design"),
+        )
+
+        for message, blocked_skill in cases:
+            with self.subTest(message=message):
+                relevance = domain_signals_impl.classify_clarification_relevance(message)
+                direct = route_chat_message(message, source="discord")
+                public = chat_router_impl.public_chat_route_payload(message, source="discord")
+
+                self.assertIn(blocked_skill, relevance.blocked_skills)
+                for route in (direct, public):
+                    self.assertNotEqual(route["selected_skill"], blocked_skill)
+                    self.assertNotEqual(route.get("candidate_skill"), blocked_skill)
+                    self.assertNotIn(blocked_skill, [item["skill"] for item in route["recommendations"]])
+                    self.assertNotIn(blocked_skill, str(route.get("clarification", "")))
+                    self.assertIn("sales-development", [item["skill"] for item in route["recommendations"]])
+
+    def test_unowned_cues_only_yield_to_canonical_strong_owner_evidence(self) -> None:
+        strong = (
+            (
+                "Distill repeated lessons into AGENTS.md rule candidates about the four-fifths rule",
+                "rules-distill",
+                "operator_surface_fast_path:rules_distill",
+            ),
+            (
+                "Design a curriculum with learning objectives and Bloom backward design",
+                "curriculum-design",
+                "domain:learning objectives",
+            ),
+        )
+        weak = (
+            ("distill rules about the four-fifths rule", "rules-distill"),
+            ("candidate_skill=rules-distill four-fifths rule", "rules-distill"),
+            ("Bloom backward design", "curriculum-design"),
+        )
+
+        for message, skill, marker in strong:
+            with self.subTest(message=message):
+                route = route_chat_message(message, source="discord")
+                public = chat_router_impl.public_chat_route_payload(message, source="discord")
+                for payload in (route, public):
+                    self.assertEqual((payload["action"], payload["selected_skill"]), ("dispatch", skill))
+                    self.assertIn(marker, payload["recommendations"][0]["matched"])
+
+        for message, skill in weak:
+            with self.subTest(message=message):
+                for payload in (
+                    route_chat_message(message, source="discord"),
+                    chat_router_impl.public_chat_route_payload(message, source="discord"),
+                ):
+                    self.assertNotEqual(payload["selected_skill"], skill)
+                    self.assertNotEqual(payload.get("candidate_skill"), skill)
+                    self.assertNotIn(skill, [item["skill"] for item in payload["recommendations"]])
+
+    def test_contractions_share_canonical_local_not_semantics(self) -> None:
+        contractions = ("don't", "doesn't", "won't", "can't", "shouldn't", "isn't")
+        for contraction in contractions:
+            for apostrophe in ("'", "’"):
+                message = f"{contraction.replace(chr(39), apostrophe)} assess ASC 606; use MEDDPICC"
+                with self.subTest(message=message):
+                    relevance = domain_signals_impl.classify_clarification_relevance(message)
+                    self.assertEqual(relevance.skills, ("sales-development",))
+                    self.assertNotIn(
+                        "finance-analysis",
+                        [item["skill"] for item in route_chat_message(message)["recommendations"]],
+                    )
+                    self.assertNotIn(
+                        "finance-analysis",
+                        [
+                            item["skill"]
+                            for item in chat_router_impl.public_chat_route_payload(message)["recommendations"]
+                        ],
+                    )
+
+        inclusive = domain_signals_impl.classify_clarification_relevance(
+            "not only ASC 606 but revenue recognition"
+        )
+        self.assertEqual(inclusive.skills, ("finance-analysis",))
+
+    def test_composition_sensitive_negation_constants_are_defined_once(self) -> None:
+        source = Path(domain_signals_impl.__file__).parents[1] / "plugin_bundle" / "omh" / "domain_signals.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        names = (
+            "_DOMAIN_NEGATORS",
+            "_INCLUSIVE_NEGATION_FOLLOWERS",
+            "_LOCAL_NEGATION_TOKEN_RANGE",
+            "_CLAUSE_SEPARATOR_PATTERN",
+            "_ENGLISH_TOKEN_PATTERN",
+        )
+        assignments = [
+            target.id
+            for node in tree.body
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            for target in (
+                node.targets if isinstance(node, ast.Assign) else (node.target,)
+            )
+            if isinstance(target, ast.Name)
+        ]
+        for name in names:
+            with self.subTest(name=name):
+                self.assertEqual(assignments.count(name), 1)
+
+    def test_synthesized_relevance_candidates_have_machine_next_actions(self) -> None:
+        for message in (
+            "ASC 606 model",
+            "indemnity liability cap",
+            "GDPR Article 35 DPIA",
+            "MEDDPICC",
+            "burn multiple NRR",
+        ):
+            with self.subTest(message=message):
+                handoff = route_chat_message(message, source="discord")["candidate_handoff"]
+                self.assertEqual(handoff["selection_mode"], "candidate_selection")
+                for candidate in handoff["candidates"]:
+                    self.assertIsInstance(candidate["next_action"], str)
+                    self.assertTrue(candidate["next_action"])
+
+    def test_relevance_separator_variants_use_shared_normalization(self) -> None:
+        for message in (
+            "four-fifths rule",
+            "four fifths rule",
+            "four_fifths rule",
+            "4/5 rule",
+            "4 / 5 rule",
+        ):
+            with self.subTest(message=message):
+                route = route_chat_message(message, source="discord")
+                handoff = route["candidate_handoff"]
+                self.assertEqual(handoff["selection_mode"], "open_clarification")
+                self.assertEqual(handoff["candidates"], [])
+                self.assertNotIn("rules-distill", route["clarification"])
+
+        for message in ("ASC 606 model", "ASC606 model"):
+            with self.subTest(message=message):
+                route = route_chat_message(message, source="discord")
+                self.assertNotEqual(route["action"], "dispatch")
+                self.assertEqual(
+                    [candidate["skill"] for candidate in route["candidate_handoff"]["candidates"]],
+                    ["finance-analysis"],
+                )
+
+        for message in ("14/5 rule", "ASC6060 model", "fourth fifths rule"):
+            with self.subTest(message=message):
+                self.assertFalse(domain_signals_impl.classify_clarification_relevance(message).applies)
+
+    def test_relevance_classification_and_normalization_run_once_per_request(self) -> None:
+        for message in (
+            "DSO revenue cutoff",
+            "four-fifths rule",
+            "plain request without specialist cues",
+            "four-fifths rule ... MEDDPICC",
+        ):
+            with self.subTest(message=message):
+                with (
+                    mock.patch.object(
+                        chat_router_impl,
+                        "classify_clarification_relevance",
+                        wraps=domain_signals_impl.classify_clarification_relevance,
+                    ) as classify,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_normalized_relevance_message",
+                        wraps=domain_signals_impl._normalized_relevance_message,
+                    ) as normalize,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_fold_for_match",
+                        wraps=domain_signals_impl._fold_for_match,
+                    ) as fold,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_scan_normalized_relevance_message",
+                        wraps=domain_signals_impl._scan_normalized_relevance_message,
+                    ) as scan,
+                    mock.patch.object(
+                        domain_signals_impl,
+                        "_full_message_relevance_scan",
+                        wraps=domain_signals_impl._full_message_relevance_scan,
+                    ) as full_scan,
+                ):
+                    route_chat_message(message, source="discord")
+
+                self.assertEqual(classify.call_count, 1)
+                self.assertEqual(normalize.call_count, 1)
+                self.assertEqual(fold.call_count, 1)
+                self.assertEqual(scan.call_count, 1)
+                self.assertEqual(full_scan.call_count, 1)
+
+    def test_o013_unrelated_clarification_candidates_are_forbidden(self) -> None:
+        cases = (
+            ("DSO revenue cutoff", "visual-qa"),
+            ("ASC 606 model", "model-setup"),
+            ("indemnity liability cap", "model-setup"),
+            ("GDPR Article 35 DPIA", "agent-board"),
+            ("MEDDPICC", "content-operator"),
+            ("four-fifths rule", "rules-distill"),
+            ("Bloom backward design", "curriculum-design"),
+            ("burn multiple NRR", "agent-board"),
+        )
+
+        for message, forbidden_skill in cases:
+            with self.subTest(message=message, forbidden_skill=forbidden_skill):
+                handoff = build_candidate_handoff(
+                    {
+                        "action": "clarify",
+                        "confidence": "low",
+                        "recommendations": [
+                            {
+                                "skill": forbidden_skill,
+                                "description": "Unrelated scored candidate",
+                                "score": 5,
+                                "confidence": "low",
+                            }
+                        ],
+                    },
+                    message,
+                )
+
+                assert handoff is not None
+                self.assertIn(
+                    handoff["selection_mode"],
+                    {"candidate_selection", "open_clarification"},
+                )
+                self.assertEqual(handoff["relevance_policy"], "shared_domain_signal/v1")
+                self.assertNotIn(
+                    forbidden_skill,
+                    [candidate["skill"] for candidate in handoff["candidates"]],
+                )
+
+    def test_shared_domain_signals_preserve_relevant_clarification_candidates(self) -> None:
+        cases = (
+            ("DSO revenue cutoff", "finance-analysis"),
+            ("GDPR Article 35 DPIA", "legal-compliance-review"),
+            ("MEDDPICC qualification", "sales-development"),
+        )
+
+        for message, skill in cases:
+            with self.subTest(message=message, skill=skill):
+                handoff = build_candidate_handoff(
+                    {
+                        "action": "clarify",
+                        "confidence": "low",
+                        "recommendations": [
+                            {
+                                "skill": skill,
+                                "description": "Canonical domain candidate",
+                                "score": 5,
+                                "confidence": "low",
+                            }
+                        ],
+                    },
+                    message,
+                )
+
+                assert handoff is not None
+                self.assertEqual(handoff["selection_mode"], "candidate_selection")
+                self.assertEqual(handoff["relevance_policy"], "shared_domain_signal/v1")
+                self.assertEqual([candidate["skill"] for candidate in handoff["candidates"]], [skill])
+
+    def test_missing_or_malformed_specialist_candidates_fail_open_without_a_name(self) -> None:
+        routes = (
+            {"action": "clarify", "confidence": "low", "recommendations": []},
+            {"action": "clarify", "confidence": "low", "recommendations": [{"score": 5}]},
+        )
+
+        for route in routes:
+            with self.subTest(route=route):
+                handoff = build_candidate_handoff(route, "four-fifths rule")
+
+                assert handoff is not None
+                self.assertEqual(handoff["selection_mode"], "open_clarification")
+                self.assertEqual(handoff["candidate_count"], 0)
+                self.assertEqual(handoff["candidates"], [])
+                self.assertNotIn("`", handoff["question"])
+
+    def test_relevance_only_vocabulary_cannot_direct_dispatch_and_unknown_rule_stays_open(self) -> None:
+        cases = (
+            "ASC 606 model",
+            "GDPR Article 35 DPIA",
+            "MEDDPICC qualification",
+            "four-fifths rule",
+        )
+
+        for message in cases:
+            with self.subTest(message=message):
+                decision = route_chat_message(message, source="discord")
+                handoff = decision["candidate_handoff"]
+
+                self.assertNotEqual(decision["action"], "dispatch")
+                self.assertEqual(handoff["relevance_policy"], "shared_domain_signal/v1")
+                if message == "four-fifths rule":
+                    self.assertEqual(handoff["selection_mode"], "open_clarification")
+                    self.assertEqual(handoff["candidates"], [])
+                    self.assertNotIn("rules-distill", decision["clarification"])
 
     def test_specialist_domain_single_intent_route_is_preserved(self) -> None:
         decision = route_chat_message("Create a product requirements document", source="discord")

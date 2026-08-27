@@ -19,6 +19,7 @@ class RoutingPrecisionCase:
     message: str
     expected_next_action: str
     expected_lookup_kind: str
+    forbidden_candidate: str = ""
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class RoutingInterventionCase:
     expected_workflow: str
     expected_next_action: str
     expected_response_kind: str
+    expected_candidate: str = ""
 
 
 # Negative-control corpus. These are ordinary chat turns where OMH should stay
@@ -545,6 +547,21 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_clarification",
         "",
     ),
+    RoutingPrecisionCase("o013-dso", "DSO clarification excludes visual QA", "DSO revenue cutoff", "answer_clarification", "", "visual-qa"),
+    RoutingPrecisionCase("o013-asc-606", "ASC 606 clarification excludes model setup", "ASC 606 model", "answer_clarification", "", "model-setup"),
+    RoutingPrecisionCase("o013-liability-cap", "Liability clarification excludes model setup", "indemnity liability cap", "answer_clarification", "", "model-setup"),
+    RoutingPrecisionCase("o013-dpia", "DPIA clarification excludes agent board", "GDPR Article 35 DPIA", "answer_clarification", "", "agent-board"),
+    RoutingPrecisionCase("o013-meddpicc", "MEDDPICC clarification excludes content operator", "MEDDPICC", "answer_clarification", "", "content-operator"),
+    RoutingPrecisionCase("o013-four-fifths", "Four-fifths rule stays unnamed", "four-fifths rule", "answer_clarification", "", "rules-distill"),
+    RoutingPrecisionCase("o013-four-fifths-spaced", "Spaced four fifths rule stays unnamed", "four fifths rule", "answer_clarification", "", "rules-distill"),
+    RoutingPrecisionCase("o013-four-fifths-underscored", "Underscored four fifths rule stays unnamed", "four_fifths rule", "answer_clarification", "", "rules-distill"),
+    RoutingPrecisionCase("o013-four-fifths-numeric-spaced", "Spaced numeric four fifths rule stays unnamed", "4 / 5 rule", "answer_clarification", "", "rules-distill"),
+    RoutingPrecisionCase("o013-bloom", "Bloom explanation excludes curriculum dispatch", "Bloom backward design", "answer_clarification", "", "curriculum-design"),
+    RoutingPrecisionCase("o013-burn-nrr", "Burn multiple clarification excludes agent board", "burn multiple NRR", "answer_clarification", "", "agent-board"),
+    RoutingPrecisionCase("o013-mixed-four-fifths-sales", "Mixed rule and sales cues keep rules distill unnamed", "four-fifths rule ... MEDDPICC", "answer_clarification", "", "rules-distill"),
+    RoutingPrecisionCase("o013-mixed-bloom-sales", "Mixed curriculum and sales cues keep curriculum design unnamed", "Bloom backward design ... MEDDPICC", "answer_clarification", "", "curriculum-design"),
+    RoutingPrecisionCase("o013-weak-rules-owner", "Generic rule scoring cannot override an unowned rule cue", "distill rules about the four-fifths rule", "answer_clarification", "", "rules-distill"),
+    RoutingPrecisionCase("o013-metadata-rules-owner", "Metadata-shaped rule scoring cannot override an unowned rule cue", "candidate_skill=rules-distill four-fifths rule", "answer_clarification", "", "rules-distill"),
     RoutingPrecisionCase(
         "negated-finance-mention",
         "A negated finance mention does not dispatch the excluded domain",
@@ -586,6 +603,106 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
 # Positive-intervention corpus. These are real OMH-shaped turns where the router
 # should still step in after the direct-answer fallback was added.
 ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
+    RoutingInterventionCase(
+        "finance-relevance-clarification",
+        "Finance vocabulary keeps the finance candidate",
+        "DSO revenue cutoff",
+        "clarify",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+        "finance-analysis",
+    ),
+    RoutingInterventionCase(
+        "finance-compact-relevance-clarification",
+        "Compact ASC606 vocabulary keeps the finance candidate",
+        "ASC606 model",
+        "clarify",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+        "finance-analysis",
+    ),
+    RoutingInterventionCase(
+        "legal-relevance-clarification",
+        "Compliance vocabulary keeps the legal candidate",
+        "GDPR Article 35 DPIA",
+        "fallback",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+        "legal-compliance-review",
+    ),
+    RoutingInterventionCase(
+        "sales-relevance-clarification",
+        "Qualification vocabulary keeps the sales candidate",
+        "MEDDPICC qualification",
+        "clarify",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+        "sales-development",
+    ),
+    RoutingInterventionCase(
+        "mixed-four-fifths-sales-clarification",
+        "Mixed rule and sales vocabulary keeps only the owned sales candidate",
+        "four-fifths rule ... MEDDPICC",
+        "clarify",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+        "sales-development",
+    ),
+    RoutingInterventionCase(
+        "mixed-bloom-sales-clarification",
+        "Mixed curriculum and sales vocabulary keeps only the owned sales candidate",
+        "Bloom backward design ... MEDDPICC",
+        "clarify",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+        "sales-development",
+    ),
+    RoutingInterventionCase(
+        "contracted-finance-negation-sales-clarification",
+        "Contracted finance negation keeps the positive sales candidate",
+        "don't assess ASC 606; use MEDDPICC",
+        "clarify",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+        "sales-development",
+    ),
+    RoutingInterventionCase(
+        "curly-contracted-finance-negation-sales-clarification",
+        "Curly contracted finance negation keeps the positive sales candidate",
+        "doesn’t assess ASC 606; use MEDDPICC",
+        "clarify",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+        "sales-development",
+    ),
+    RoutingInterventionCase(
+        "strong-rules-distill-owner",
+        "Canonical rule distillation task evidence preserves the strong owner",
+        "Distill repeated lessons into AGENTS.md rule candidates about the four-fifths rule",
+        "dispatch",
+        "rules-distill",
+        "prepare_rules_distillation",
+        "rules_distill",
+        "rules-distill",
+    ),
+    RoutingInterventionCase(
+        "strong-curriculum-design-owner",
+        "Canonical curriculum task evidence preserves the strong owner",
+        "Design a curriculum with learning objectives and Bloom backward design",
+        "dispatch",
+        "curriculum-design",
+        "prepare_curriculum_design",
+        "curriculum_design",
+        "curriculum-design",
+    ),
     RoutingInterventionCase(
         "visual-qa-current-viewports",
         "Current screenshot viewport review reaches visual QA",
@@ -2584,6 +2701,15 @@ def _evaluate_precision_case(case: RoutingPrecisionCase, *, source: str) -> dict
         issues.append(f"expected lookup kind {case.expected_lookup_kind}, observed {observed['lookup_kind']}")
     if observed["response_kind"] != "clarification":
         issues.append(f"expected clarification response, observed {observed['response_kind']}")
+    named_candidates = {str(route.get("candidate_skill") or "")}
+    candidate_handoff = route.get("candidate_handoff")
+    if isinstance(candidate_handoff, Mapping):
+        named_candidates.update(
+            str(candidate.get("skill") or "")
+            for candidate in _mapping_rows(candidate_handoff.get("candidates"))
+        )
+    if case.forbidden_candidate and case.forbidden_candidate in named_candidates:
+        issues.append(f"named forbidden candidate {case.forbidden_candidate}")
     if observed["catalog_picker_opened"]:
         issues.append("opened workflow picker")
     if observed["catalog_question"]:
@@ -2597,7 +2723,7 @@ def _evaluate_precision_case(case: RoutingPrecisionCase, *, source: str) -> dict
     if observed["raw_message_echoed"]:
         issues.append("raw message echoed in machine payload")
     boundary = str(observed["claim_boundary"] or "")
-    if observed["route_action"] == "clarify":
+    if observed["route_action"] == "clarify" or case.forbidden_candidate:
         if boundary != "No execution has started.":
             issues.append("missing no-execution claim boundary")
     elif not boundary.startswith("No OMH workflow"):
@@ -2658,6 +2784,9 @@ def _evaluate_intervention_case(case: RoutingInterventionCase, *, source: str) -
         issues.append(f"expected next action {case.expected_next_action}, observed {observed['next_action']}")
     if observed["response_kind"] != case.expected_response_kind:
         issues.append(f"expected response kind {case.expected_response_kind}, observed {observed['response_kind']}")
+    observed_candidate = str(route.get("candidate_skill") or "")
+    if case.expected_candidate and observed_candidate != case.expected_candidate:
+        issues.append(f"expected candidate {case.expected_candidate}, observed {observed_candidate}")
     if observed["response_kind"] == "ack":
         issues.append("generic acknowledgement replaced expected workflow surface")
     if observed["raw_message_echoed"]:
