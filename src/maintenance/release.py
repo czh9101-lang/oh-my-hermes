@@ -212,7 +212,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # code contract gate, primary-taste-direction selection, and reference-token
 # extraction). The four reference bodies load on demand and sit outside this
 # always-loaded budget; both increments are warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 717620
+# 717620 -> 718108: the ultrawork and ralplan todo-init quality-bar rules
+# gained an English-labels clause (+488 chars: phase names and task titles
+# stay English even in a non-English conversation, since the HUD todo
+# checklist is an operator surface under the repo's English-by-default
+# output contract); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 718108
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

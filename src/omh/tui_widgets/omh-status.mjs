@@ -161,12 +161,23 @@ export default function register(sdk) {
     const taskId = truncateCells(safeText(row.task_id) || safeText(row.role) || 'agent', 8).padEnd(8)
     const model = [safeText(row.model), safeText(row.effort)].filter(Boolean).join(':')
     const category = safeText(row.category)
-    const route = category ? `category:${category}${model ? `(${model})` : ''}` : model
+    // Prepared-route provenance from the reader: a fallback lane carries a
+    // visible `fallback` token, and an exhausted chain reads
+    // `category→inherit` instead of converging into plain inherit.
+    const routeOrigin = safeText(row.route_origin)
+    const routeCategory = safeText(row.route_category)
+    const routeDetail = [model, routeOrigin === 'fallback' ? 'fallback' : ''].filter(Boolean).join(' ')
+    const route = routeOrigin === 'exhausted_to_inherit' && routeCategory
+      ? `category:${routeCategory}→inherit${model ? `(${model})` : ''}`
+      : category
+        ? `category:${category}${routeDetail ? `(${routeDetail})` : ''}`
+        : model
+    const routeKind = routeOrigin === 'fallback' || routeOrigin === 'exhausted_to_inherit' ? 'route-fallback' : 'route'
     const turn = Number.isFinite(row.turn_count) ? `turn ${row.turn_count}` : ''
     const tools = Number.isFinite(row.tool_count) ? `${row.tool_count} tools` : ''
     const turnTools = turn && tools ? `${turn} (${tools})` : turn || tools
     const optional = [
-      metricSegment('route', route),
+      metricSegment(routeKind, route),
       metricSegment('fallback', Number.isFinite(row.fallback_count) && row.fallback_count > 0 ? `fallback:${row.fallback_count}` : ''),
       metricSegment('turn', turnTools),
       // A subscription-billed host records no per-call cost, so the reader
@@ -240,7 +251,11 @@ export default function register(sdk) {
               ? statusColor
               : segment.kind === 'route'
                 ? t.color.label
-                : t.color.muted,
+                // A fallback or exhausted route is a warning-grade fact: the
+                // lane is NOT running the chain head the category names.
+                : segment.kind === 'route-fallback'
+                  ? t.color.warn
+                  : t.color.muted,
             key: `${segment.kind}-${index}`,
           },
           `${index ? '  ·  ' : ''}${segment.text}`,
