@@ -11,6 +11,8 @@ _STEP_ID_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 _PLACEHOLDER_PREFIX_PATTERN = re.compile(r"^\s*(?:todo|tbd)(?=$|[^a-z0-9])", re.IGNORECASE)
 _PLACEHOLDER_PREFIX_WRAPPERS = frozenset("`'\"*_~([{<")
 _LEADING_MARKER_CONFUSABLES = str.maketrans("ТтВвΟοОоᎠꭰ", "TtBbOoOoDd")
+_TOKEN_SEPARATOR_CONTROLS = frozenset("\t\n\r")
+_MAX_PLACEHOLDER_SKELETON_CHARS = 5
 
 
 def _normalized_placeholder_candidate(value: str) -> str:
@@ -20,13 +22,24 @@ def _normalized_placeholder_candidate(value: str) -> str:
         character = normalized[index]
         if (
             character.isspace()
-            or unicodedata.category(character) == "Cf"
+            or unicodedata.category(character) in {"Cc", "Cf"}
             or character in _PLACEHOLDER_PREFIX_WRAPPERS
         ):
             index += 1
             continue
         break
-    return normalized[index:]
+
+    skeleton: list[str] = []
+    for character in normalized[index:]:
+        category = unicodedata.category(character)
+        if category == "Cf" or (
+            category == "Cc" and character not in _TOKEN_SEPARATOR_CONTROLS
+        ):
+            continue
+        skeleton.append(character)
+        if len(skeleton) == _MAX_PLACEHOLDER_SKELETON_CHARS:
+            break
+    return "".join(skeleton)
 
 
 def _has_placeholder_prefix(value: object) -> bool:
