@@ -255,13 +255,16 @@ class SkillLoadObservationTests(unittest.TestCase):
         for label, runtime_digit in (("first", "1"), ("second", "2")):
             binary_dir = self.root / label
             binary_dir.mkdir()
-            executable = binary_dir / "hermes"
+            executable = binary_dir / ("hermes.py" if os.name == "nt" else "hermes")
             self.executable(executable, runtime_digit)
+            env = {"PATH": os.pathsep.join((str(binary_dir), os.defpath))}
+            if os.name == "nt":
+                env["PATHEXT"] = ".PY"
             payload = probe_skill_load(
                 SkillLoadProbeRequest(
                     expected_skills=("alpha", "beta"),
                     hermes="hermes",
-                    env={"PATH": os.pathsep.join((str(binary_dir), os.defpath))},
+                    env=env,
                 ),
                 confirmed=True,
             )
