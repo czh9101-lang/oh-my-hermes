@@ -463,8 +463,12 @@ class TuiWidgetPackTests(unittest.TestCase):
         # `category→inherit` instead of converging into plain inherit.
         self.assertIn("route_origin", widget)
         self.assertIn("route-fallback", widget)
-        self.assertIn("routeOrigin === 'fallback' ? 'fallback' : ''", widget)
-        self.assertIn("→inherit", widget)
+        # One label shape for every lane: category(model tag). The category
+        # names the lane and never changes; only the parenthesized model and
+        # its state token (fallback / inherit) move.
+        self.assertIn("routeOrigin === 'fallback' ? 'fallback'", widget)
+        self.assertIn("routeOrigin === 'exhausted_to_inherit' ? 'inherit'", widget)
+        self.assertNotIn("→inherit", widget)
         self.assertIn("row.route_category", widget)
         self.assertIn("tools", widget)
         self.assertIn("tok/s", widget)
