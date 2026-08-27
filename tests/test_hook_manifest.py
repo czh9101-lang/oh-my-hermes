@@ -11,7 +11,7 @@ load_local_package()
 
 from omh.capabilities.hooks import hook_manifest
 from omh.install.hook_integrity import HOOK_REVIEWS, VALID_HOOK_EVENTS
-from omh.plugin_bundle.omh.awareness import awareness_route_hint
+from omh.plugin_bundle.omh.awareness import awareness_primer_context, awareness_route_hint
 from omh.plugin_bundle.omh.awareness_delivery import read_awareness_delivery
 from omh.plugin_bundle.omh.hooks.llm_hooks import pre_llm_call
 from omh.plugin_bundle.omh.hooks.tool_hooks import pre_tool_call
@@ -270,6 +270,84 @@ class HookManifestTests(unittest.TestCase):
                 serialized = handle.read()
             for raw_identifier in ("session-a", "session-b", "task-a", "task-b", "turn-1"):
                 self.assertNotIn(raw_identifier, serialized)
+
+    def test_prior_api_content_primer_is_not_replayed_for_a_new_route(self) -> None:
+        with TemporaryDirectory() as omh_home:
+            primer = awareness_primer_context()
+            result = pre_llm_call(
+                user_message="review this PR",
+                conversation_history=[
+                    {
+                        "role": "user",
+                        "content": "make an image explaining the cron feature",
+                        "api_content": "make an image explaining the cron feature\n\n" + primer,
+                    }
+                ],
+                is_first_turn=False,
+                session_id="session-a",
+                task_id="task-a",
+                turn_id="turn-2",
+                omh_home=omh_home,
+            )
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertNotIn("[OMH Awareness]", result["context"])
+            self.assertIn("[OMH Route Hint]", result["context"])
+
+    def test_prior_api_content_primer_suppresses_primer_only_match(self) -> None:
+        with TemporaryDirectory() as omh_home:
+            primer = awareness_primer_context()
+            with (
+                patch(
+                    "omh.plugin_bundle.omh.hooks.llm_hooks.awareness_context_matches_message",
+                    return_value=True,
+                ),
+                patch(
+                    "omh.plugin_bundle.omh.hooks.llm_hooks.awareness_route_hint",
+                    return_value={"status": "no_hint"},
+                ),
+                patch(
+                    "omh.plugin_bundle.omh.hooks.llm_hooks.awareness_route_hint_context_from_payload",
+                    return_value="",
+                ),
+            ):
+                result = pre_llm_call(
+                    user_message="is OMH memory compatible with codebase memory?",
+                    conversation_history=[
+                        {
+                            "role": "user",
+                            "content": "prepare a safe feature plan",
+                            "api_content": "prepare a safe feature plan\n\n" + primer,
+                        }
+                    ],
+                    is_first_turn=False,
+                    session_id="session-a",
+                    omh_home=omh_home,
+                )
+
+            self.assertIsNone(result)
+
+    def test_user_pasted_primer_in_sidecar_content_does_not_suppress_delivery(self) -> None:
+        with TemporaryDirectory() as omh_home:
+            primer = awareness_primer_context()
+            result = pre_llm_call(
+                user_message="review this PR",
+                conversation_history=[
+                    {
+                        "role": "user",
+                        "content": primer,
+                        "api_content": primer + "\n\n[Other Plugin] unrelated context",
+                    }
+                ],
+                is_first_turn=False,
+                session_id="session-a",
+                omh_home=omh_home,
+            )
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertIn("[OMH Awareness]", result["context"])
 
     def test_first_turn_route_failure_keeps_degradation_signal(self) -> None:
         route_failure = {

@@ -77,6 +77,10 @@ INFLIGHT_MARKER_FIELDS: Final[tuple[str, ...]] = (
     "run_ref",
     "worktree",
     "started_at",
+    # Group-leader pid of the spawned unit, recorded by the signal-safe
+    # runner. It does not upgrade the liveness claim — presence is still not
+    # liveness — but it is the only pid the fanout reaper will ever touch.
+    "pid",
 )
 
 DEFAULT_INFLIGHT_READ_LIMIT: Final[int] = 20
@@ -132,7 +136,9 @@ def clear_inflight_marker(paths: OmhPaths, fanout_id: str, unit_id: str) -> bool
     return True
 
 
-def read_inflight_markers(paths: OmhPaths, *, limit: int = DEFAULT_INFLIGHT_READ_LIMIT) -> list[dict[str, Any]]:
+def read_inflight_markers(
+    paths: OmhPaths, *, limit: int = DEFAULT_INFLIGHT_READ_LIMIT, fanout_id: str = ""
+) -> list[dict[str, Any]]:
     """List markers across every fanout, newest-sorting last, never raising.
 
     Ordering is `(started_at, unit_id, fanout_id)` so repeated reads of the
@@ -140,13 +146,17 @@ def read_inflight_markers(paths: OmhPaths, *, limit: int = DEFAULT_INFLIGHT_READ
     `INFLIGHT_MARKER_STATUSES` — a marker that vanished between listing and
     reading is `absent`, one that could not be parsed is `unreadable`, and
     neither reports a path or an error string. No entry claims the unit is
-    alive: compare `started_at` against your own threshold.
+    alive: compare `started_at` against your own threshold. `fanout_id`
+    filters BEFORE the limit slice — a reader asking about one fanout must
+    never lose its markers to older fanouts' backlog.
     """
     if limit <= 0:
         return []
     entries: list[dict[str, Any]] = []
-    for marker_path, fanout_id, unit_id in _marker_files(paths):
-        entries.append(_entry_for(marker_path, fanout_id, unit_id))
+    for marker_path, marker_fanout_id, unit_id in _marker_files(paths):
+        if fanout_id and marker_fanout_id != fanout_id:
+            continue
+        entries.append(_entry_for(marker_path, marker_fanout_id, unit_id))
     entries.sort(key=lambda entry: (entry["started_at"], entry["unit_id"], entry["fanout_id"]))
     return entries[:limit]
 

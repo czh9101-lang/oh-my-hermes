@@ -18,6 +18,8 @@ from .web_visual_qa_contracts import (
     ids,
     now,
     object_list,
+    object_value,
+    strings,
     text,
     valid_id,
 )
@@ -39,6 +41,8 @@ class WebVisualQaCaptureFileImport:
     redaction_status: str
     attachment: str
     mime_type: str = ""
+    source_repository: str = ""
+    source_revision: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +83,8 @@ def import_web_visual_qa_capture_file(paths: OmhPaths, request: WebVisualQaCaptu
     updated = build_web_visual_qa_package(
         package_id=package_id,
         target=text(current.get("target")),
+        target_lineage=object_value(current.get("target_lineage")),
+        required_viewports=strings(current.get("required_viewports")),
         source=text(current.get("source")) or "generic",
         risk_level=text(current.get("risk_level")) or "unknown",
         estimated_cost_tier=text(current.get("estimated_cost_tier")) or "none",
@@ -91,6 +97,10 @@ def import_web_visual_qa_capture_file(paths: OmhPaths, request: WebVisualQaCaptu
                 "path_or_uri": str(destination),
                 "mime_type": detected_mime,
                 "viewport": request.viewport.strip() or "unspecified",
+                "source_lineage": {
+                    "repository": request.source_repository.strip(),
+                    "revision": request.source_revision.strip(),
+                },
                 "captured_at": observed_at,
                 "evidence_summary": request.summary.strip(),
                 "observer": request.observer.strip() or "wrapper_or_user",

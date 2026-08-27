@@ -161,12 +161,28 @@ export default function register(sdk) {
     const taskId = truncateCells(safeText(row.task_id) || safeText(row.role) || 'agent', 8).padEnd(8)
     const model = [safeText(row.model), safeText(row.effort)].filter(Boolean).join(':')
     const category = safeText(row.category)
-    const route = category ? `category:${category}${model ? `(${model})` : ''}` : model
+    // Prepared-route provenance from the reader, rendered as one shape:
+    // `category(model tag)`. The category names the LANE and never changes;
+    // only the parenthesized model (and its state token) moves — a fallback
+    // lane reads `category(model fallback)`, and an exhausted chain running
+    // the parent's model reads `category(model inherit)` instead of being
+    // relabeled away from its category.
+    const routeOrigin = safeText(row.route_origin)
+    const routeCategory = safeText(row.route_category)
+    const routeTag = routeOrigin === 'fallback' ? 'fallback'
+      : routeOrigin === 'exhausted_to_inherit' ? 'inherit'
+        : ''
+    const routeDetail = [model, routeTag].filter(Boolean).join(' ')
+    const displayCategory = routeOrigin === 'exhausted_to_inherit' && routeCategory ? routeCategory : category
+    const route = displayCategory
+      ? `category:${displayCategory}${routeDetail ? `(${routeDetail})` : ''}`
+      : model
+    const routeKind = routeOrigin === 'fallback' || routeOrigin === 'exhausted_to_inherit' ? 'route-fallback' : 'route'
     const turn = Number.isFinite(row.turn_count) ? `turn ${row.turn_count}` : ''
     const tools = Number.isFinite(row.tool_count) ? `${row.tool_count} tools` : ''
     const turnTools = turn && tools ? `${turn} (${tools})` : turn || tools
     const optional = [
-      metricSegment('route', route),
+      metricSegment(routeKind, route),
       metricSegment('fallback', Number.isFinite(row.fallback_count) && row.fallback_count > 0 ? `fallback:${row.fallback_count}` : ''),
       metricSegment('turn', turnTools),
       // A subscription-billed host records no per-call cost, so the reader
@@ -240,7 +256,11 @@ export default function register(sdk) {
               ? statusColor
               : segment.kind === 'route'
                 ? t.color.label
-                : t.color.muted,
+                // A fallback or exhausted route is a warning-grade fact: the
+                // lane is NOT running the chain head the category names.
+                : segment.kind === 'route-fallback'
+                  ? t.color.warn
+                  : t.color.muted,
             key: `${segment.kind}-${index}`,
           },
           `${index ? '  ·  ' : ''}${segment.text}`,
@@ -302,10 +322,25 @@ export default function register(sdk) {
     const metrics = sessionMetrics(payload)
     const maestro = payload.maestro || {}
     const mainRows = active && Array.isArray(maestro.rows) ? maestro.rows.slice(0, 1) : []
-    const activityLimit = Math.max(1, Math.min(3, viewportRows - 3))
-    const rows = active && Array.isArray(agents.rows)
-      ? agents.rows.slice(0, Math.max(0, activityLimit - mainRows.length))
-      : []
+    // Row budget learned from OMO's DAG status widget: five rows by default,
+    // but a RUNNING agent lane is never hidden by the cap — with many lanes
+    // executing at once the dock must tell that story. The viewport still
+    // wins: the dock keeps its chrome (Rule + header) plus prompt margin out
+    // of the budget, the `+N more` overflow line pays for a row of its own,
+    // and anything hidden — here or by the reader's own cap — is named by
+    // that line instead of vanishing.
+    const allAgentRows = active && Array.isArray(agents.rows) ? agents.rows : []
+    const runningAgents = allAgentRows
+      .filter(row => !row.state || row.state === 'running').length
+    const viewportBudget = Math.max(1, viewportRows - 5)
+    const agentBudget = Math.min(
+      Math.max(Math.max(5 - mainRows.length, 1), runningAgents),
+      Math.max(0, viewportBudget - mainRows.length),
+    )
+    let rows = allAgentRows.slice(0, agentBudget)
+    if (allAgentRows.length > rows.length && rows.length > 1) rows = rows.slice(0, rows.length - 1)
+    const hiddenRows =
+      Math.max(0, allAgentRows.length - rows.length) + (active ? Number(agents.hidden_rows) || 0 : 0)
     return h(
       Box,
       { flexDirection: 'column', width: '100%' },
@@ -320,11 +355,14 @@ export default function register(sdk) {
         h(Text, { color: t.color.border }, SEPARATOR),
         h(Text, { color: active ? t.color.warn : t.color.ok }, hudStateLabel(active, agents)),
         h(Text, { color: t.color.muted }, `${metrics.cost ? ` • ${metrics.cost}` : ''} • ${metrics.ctx}`),
-        // Shift+Tab yolo state, as last observed by the plugin's turn and
-        // tool-call hooks (the host keeps the flag in process memory only).
-        // ON warns in the theme's yellow; OFF rests in the label blue —
-        // colours resolve through the active theme, never literals. An
-        // unobserved or stale ledger renders nothing rather than a guess.
+        // Shift+Tab yolo state: the reader projects the host's persisted
+        // surfaces first (the live TUI session row's /yolo flag where the
+        // host persists it, config.yaml approvals.mode) so a toggle shows
+        // on the next 2s poll, and falls back to the turn/tool-call hook
+        // ledger when neither surface speaks. ON warns in the theme's
+        // yellow; OFF rests in the label blue — colours resolve through
+        // the active theme, never literals. An unobserved or stale state
+        // renders nothing rather than a guess.
         payload.yolo && payload.yolo.status === 'observed'
           ? h(
               Text,
@@ -342,6 +380,9 @@ export default function register(sdk) {
         ? ([...mainRows, ...rows].some(row => !row.state || row.state === 'running')
             ? h(LiveActivityRows, { columns, mainRows, receivedAt: state.receivedAt, rows, t })
             : h(ActivityRows, { columns, extraSeconds: 0, frame: 0, mainRows, rows, t }))
+        : null,
+      hiddenRows
+        ? h(Text, { color: t.color.muted, wrap: 'truncate-end' }, `  +${hiddenRows} more`)
         : null,
     )
   }
@@ -425,13 +466,13 @@ export default function register(sdk) {
         h(Rule, { columns, t }),
       )
     }
-    // The whole plan by default, bounded at seven visible item rows. Every
+    // The whole plan by default, bounded at eight visible item rows. Every
     // phase renders its name as a header row with one indented item per row
     // beneath it — even a phase with a single task. The old space-saving
     // merge (`Research [•] task`) collapsed exactly the structure the owner
     // wants to read ('[] 이거 탭한번쳐서 한개여도. 그 구조로 나오게'), so a
     // lone task indents under its header like any other. When the plan
-    // exceeds seven items the window anchors just before the first
+    // exceeds eight items the window anchors just before the first
     // remaining item so current work is always on screen, and hidden
     // neighbours fold into muted `... (N earlier/later tasks)` lines.
     const shown = Array.isArray(todo.items) ? todo.items : []
@@ -444,7 +485,7 @@ export default function register(sdk) {
       const depth = Number(item.depth)
       return Number.isInteger(depth) && depth > 0 ? Math.min(depth, 3) : 0
     }
-    const TODO_DISPLAY_ROWS = 7
+    const TODO_DISPLAY_ROWS = 8
     const total = shown.length
     const firstRemaining = shown.findIndex(item => item.state !== 'done')
     const anchor = firstRemaining < 0 ? 0 : Math.max(0, firstRemaining - 1)

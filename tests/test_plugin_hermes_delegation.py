@@ -17,10 +17,13 @@ from pathlib import Path
 
 from omh.plugin_bundle.omh.hermes_delegation import (
     COMPLETED_LINGER_SECONDS,
+    DELEGATION_ROUTE_PROVENANCE_SCHEMA_VERSION,
     HERMES_MIXTURE_CATEGORY_CHAINS,
     MIXTURE_CHAIN_OVERRIDES_SCHEMA_VERSION,
     RECENT_ACTIVITY_SECONDS,
+    append_delegation_route_provenance,
     effective_mixture_category_chains,
+    load_delegation_route_provenance,
     load_mixture_chain_overrides,
     mixture_category_for,
     mixture_chain_overrides_path,
@@ -686,7 +689,296 @@ class HudMergeTest(unittest.TestCase):
             # gpt-5.6-terra:high is the deep chain head and differs from the
             # parent model, so the routed category is visible in the HUD row.
             self.assertEqual(rows[0]["category"], "deep")
+            # Nothing was dropped, so the disclosed hidden-row count is zero.
+            self.assertEqual(payload["subagents"]["hidden_rows"], 0)
+
+    def test_read_omh_hud_caps_many_native_rows_and_discloses_the_drop(self):
+        from omh.plugin_bundle.omh.runtime_reader import ACTIVITY_ROW_LIMIT, read_omh_hud
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            omh_home = root / "omh"
+            hermes_home = root / "hermes"
+            omh_home.mkdir()
+            hermes_home.mkdir()
+            base = time.time()
+            _build_state_db(
+                hermes_home,
+                [
+                    {
+                        "id": f"20260818_1001{index:02d}_child{index:02d}",
+                        "model": "gpt-5.6-terra",
+                        "effort": "high",
+                        "started_at": base - 300 + index,
+                        "usage": {
+                            "api_calls": 1,
+                            "output_tokens": 10,
+                            "last_seen": base - 1,
+                        },
+                    }
+                    # One more child than the merge cap admits.
+                    for index in range(ACTIVITY_ROW_LIMIT + 1)
+                ],
+            )
+            payload = read_omh_hud(omh_home, hermes_home)
+            rows = payload["subagents"]["rows"]
+            self.assertEqual(len(rows), ACTIVITY_ROW_LIMIT)
+            # Every carried row is running (running rows outrank settled ones
+            # in the merged ordering) and the one capped row is disclosed so
+            # the widget can render `+N more` instead of silently truncating.
+            self.assertTrue(all(row["state"] == "running" for row in rows))
+            self.assertEqual(payload["subagents"]["hidden_rows"], 1)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _write_provenance(omh_home: Path, records: list[dict]) -> None:
+    path = omh_home / "routing" / "route-provenance.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": DELEGATION_ROUTE_PROVENANCE_SCHEMA_VERSION,
+                "records": records,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _record(**overrides) -> dict:
+    record = {
+        "origin": "fallback",
+        "category": "visual-engineering",
+        "alias": "glm-5.2-ultrafast",
+        "wire_model": "z-ai/glm-5.2-ultrafast",
+        "provider": "gateway",
+        "reasoning_effort": "low",
+        "from_alias": "claude-fable-5",
+        "written_at": NOW - 120,
+    }
+    record.update(overrides)
+    return record
+
+
+class RouteProvenanceStoreTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name)
+
+    def test_append_roundtrips_and_caps_history(self):
+        for index in range(40):
+            status = append_delegation_route_provenance(
+                _record(alias=f"m{index}", written_at=1000.0 + index), self.home
+            )
+            self.assertEqual(status, "recorded")
+        records = load_delegation_route_provenance(self.home)
+        self.assertEqual(len(records), 32)
+        self.assertEqual(records[-1]["alias"], "m39")
+        self.assertEqual(records[0]["alias"], "m8")
+
+    def test_an_invalid_record_is_refused_not_written(self):
+        self.assertEqual(
+            append_delegation_route_provenance(_record(origin="nope"), self.home),
+            "unrecorded: invalid record",
+        )
+        self.assertEqual(load_delegation_route_provenance(self.home), [])
+
+    def test_an_invalid_document_reads_empty_whole(self):
+        path = self.home / "routing" / "route-provenance.json"
+        path.parent.mkdir(parents=True)
+        for document in (
+            "not json",
+            json.dumps({"schema_version": "wrong/v9", "records": []}),
+            json.dumps(
+                {
+                    "schema_version": DELEGATION_ROUTE_PROVENANCE_SCHEMA_VERSION,
+                    "records": [{"origin": "nope", "written_at": 1.0}],
+                }
+            ),
+        ):
+            with self.subTest(document=document[:30]):
+                path.write_text(document, encoding="utf-8")
+                self.assertEqual(load_delegation_route_provenance(self.home), [])
+
+
+class RouteProvenanceProjectionTest(unittest.TestCase):
+    """Prepared-route provenance upgrades HUD labels for matching children."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name)
+        route_path = self.home / "routing" / "model-providers.json"
+        route_path.parent.mkdir(parents=True)
+        route_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "model_provider_routes/v1",
+                    "models": {
+                        "glm-5.2-ultrafast": {
+                            "provider": "gateway",
+                            "model": "z-ai/glm-5.2-ultrafast",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _row(self, child_model: str) -> dict:
+        _build_state_db(
+            self.home,
+            [
+                {
+                    "id": "20260818_100200_lane",
+                    "model": child_model,
+                    "effort": "low",
+                    "started_at": NOW - 60,
+                    "usage": {"last_seen": NOW - 5, "output_tokens": 10},
+                }
+            ],
+        )
+        return read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+
+    def test_a_fallback_route_labels_its_child_with_category_and_origin(self):
+        _write_provenance(self.home, [_record()])
+        row = self._row("z-ai/glm-5.2-ultrafast")
+        self.assertEqual(row["category"], "visual-engineering")
+        self.assertEqual(row["route_origin"], "fallback")
+        self.assertEqual(row["category_source"], "route_provenance")
+
+    def test_an_exhausted_chain_child_reads_route_category_to_inherit(self):
+        # The child runs the parent model, so the plain projection says
+        # inherit; the provenance says WHY — the category chain exhausted.
+        _write_provenance(
+            self.home,
+            [_record(origin="exhausted_to_inherit", alias="", wire_model="", provider="")],
+        )
+        row = self._row("gpt-5.6-sol")
+        self.assertEqual(row["category"], "inherit")
+        self.assertEqual(row["route_origin"], "exhausted_to_inherit")
+        self.assertEqual(row["route_category"], "visual-engineering")
+
+    def _rows(self, children: list[dict]) -> dict:
+        _build_state_db(self.home, children)
+        payload = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)
+        return {row["task_id"]: row for row in payload["rows"]}
+
+    def test_an_exhaustion_record_labels_only_the_earliest_inherit_child(self):
+        # The record describes exactly one dispatch — the next inherit child
+        # after the chain cleared. A later inherit lane is an ordinary
+        # unrouted delegation and must NOT be claimed.
+        _write_provenance(
+            self.home,
+            [_record(origin="exhausted_to_inherit", alias="", wire_model="", provider="")],
+        )
+        rows = self._rows(
+            [
+                {
+                    "id": "20260818_100300_first",
+                    "model": "gpt-5.6-sol",
+                    "effort": "medium",
+                    "started_at": NOW - 90,
+                    "usage": {"last_seen": NOW - 5, "output_tokens": 10},
+                },
+                {
+                    "id": "20260818_100400_second",
+                    "model": "gpt-5.6-sol",
+                    "effort": "medium",
+                    "started_at": NOW - 40,
+                    "usage": {"last_seen": NOW - 5, "output_tokens": 10},
+                },
+            ]
+        )
+        self.assertEqual(rows["first"]["route_origin"], "exhausted_to_inherit")
+        self.assertNotIn("route_origin", rows["second"])
+        self.assertEqual(rows["second"]["category"], "inherit")
+
+    def test_an_exhaustion_record_beyond_its_tight_window_claims_nothing(self):
+        # 800s after the chain cleared, an inherit lane is an ordinary
+        # unrouted delegation, not the exhausted chain's re-dispatch.
+        _write_provenance(
+            self.home,
+            [
+                _record(
+                    origin="exhausted_to_inherit",
+                    alias="",
+                    wire_model="",
+                    provider="",
+                    written_at=NOW - 860,
+                )
+            ],
+        )
+        row = self._row("gpt-5.6-sol")
+        self.assertEqual(row["category"], "inherit")
+        self.assertNotIn("route_origin", row)
+
+    def test_a_cleared_route_supersedes_the_record_before_it(self):
+        _write_provenance(
+            self.home,
+            [
+                _record(written_at=NOW - 300),
+                {"origin": "cleared", "written_at": NOW - 200},
+            ],
+        )
+        row = self._row("z-ai/glm-5.2-ultrafast")
+        self.assertNotIn("route_origin", row)
+        self.assertNotIn("category_source", row)
+        self.assertEqual(row["category"], "quick")
+
+    def test_inherit_wins_over_a_matching_routed_record(self):
+        # The parent's own model can also be a chain member; a child that
+        # inherited it was NOT routed, whatever the prepared route said.
+        _write_provenance(
+            self.home,
+            [_record(alias="gpt-5.6-sol", wire_model="gpt-5.6-sol", provider="")],
+        )
+        row = self._row("gpt-5.6-sol")
+        self.assertEqual(row["category"], "inherit")
+        self.assertNotIn("route_origin", row)
+        self.assertNotIn("category_source", row)
+
+    def test_a_newer_unrelated_record_blocks_an_older_matching_one(self):
+        # Only the newest record written before the dispatch describes it;
+        # an older matching record was already replaced for this lane.
+        _write_provenance(
+            self.home,
+            [
+                _record(written_at=NOW - 300),
+                _record(
+                    origin="head",
+                    category="ultrabrain",
+                    alias="gpt-5.6-sol",
+                    wire_model="gpt-5.6-sol",
+                    provider="",
+                    written_at=NOW - 100,
+                ),
+            ],
+        )
+        row = self._row("z-ai/glm-5.2-ultrafast")
+        self.assertNotIn("route_origin", row)
+        self.assertEqual(row["category"], "quick")
+
+    def test_the_written_document_carries_a_claim_boundary(self):
+        append_delegation_route_provenance(_record(), self.home)
+        document = json.loads(
+            (self.home / "routing" / "route-provenance.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("Prepared routes only", document["claim_boundary"])
+
+    def test_stale_or_mismatched_provenance_never_upgrades_a_label(self):
+        for records in (
+            [_record(written_at=NOW - 2000)],           # older than freshness
+            [_record(written_at=NOW - 10)],             # written after dispatch
+            [_record(wire_model="other/model", alias="other")],  # different route
+        ):
+            with self.subTest(records=records):
+                _write_provenance(self.home, records)
+                (self.home / "state.db").unlink(missing_ok=True)
+                row = self._row("z-ai/glm-5.2-ultrafast")
+                self.assertNotIn("route_origin", row)
+                self.assertEqual(row["category"], "quick")

@@ -41,6 +41,7 @@ def validate_catalog_contract() -> dict[str, object]:
         errors.extend(_validate_harness_quality_payload(quality, f"harness {harness.name} harness_quality"))
         errors.extend(_validate_harness_quality_matches_definition(quality, harness))
     errors.extend(_validate_named_harness_gates({harness.name: harness for harness in harnesses}))
+    errors.extend(_collision_declaration_errors(definitions))
 
     return {
         "schema_version": CATALOG_VALIDATION_SCHEMA_VERSION,
@@ -49,6 +50,20 @@ def validate_catalog_contract() -> dict[str, object]:
         "errors": errors,
         "warnings": warnings,
     }
+
+
+def _collision_declaration_errors(definitions: list[SkillDefinition]) -> list[str]:
+    """Fail the catalog gate when a normalized trigger collision is unreviewed.
+
+    Sharing a trigger is not treated as a defect; only shipping one that no
+    maintainer has judged is.
+    """
+    from .trigger_review import validate_collision_declarations
+
+    result = validate_collision_declarations(definitions)
+    errors = result["errors"]
+    assert isinstance(errors, list)
+    return [str(error) for error in errors]
 
 
 def validate_skill_definition_contract(definition: SkillDefinition) -> list[str]:

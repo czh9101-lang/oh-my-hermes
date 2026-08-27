@@ -25,8 +25,10 @@ mixture routing is visible as such instead of masquerading as a routed one.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
+import tempfile
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -302,6 +304,203 @@ def configured_route_for_wire(
         if model == wire_model
     }
     return next(iter(matches)) if len(matches) == 1 else (model, "")
+
+
+# Prepared-route provenance. Hermes persists which model a child ran, but not
+# WHY that model was chosen — chain head, fallback after a dead candidate, or
+# chain exhaustion clearing back to parent inheritance. omh_delegate_route
+# records each successful route write here so the HUD can label a fallback
+# lane as a fallback instead of rendering it indistinguishable from a head
+# route (and an exhausted chain as `category(model inherit)` — the category
+# names the lane and never changes — instead of plain inherit). The record is preparation evidence only: a label upgrade for an
+# observed child whose wire identity matches, never execution evidence and
+# never a routing input.
+DELEGATION_ROUTE_PROVENANCE_SCHEMA_VERSION = "delegation_route_provenance/v1"
+_PROVENANCE_RECORD_LIMIT = 32
+# A route write immediately precedes its dispatch (the tool contract is
+# set → dispatch per lane). A record this much older than a child's start
+# no longer describes that dispatch, so it stops upgrading labels.
+_PROVENANCE_FRESHNESS_SECONDS = 900.0
+# An exhaustion record describes only the immediate re-dispatch after the
+# chain cleared — the agent retries within seconds, and every inherit child
+# beyond this window is an ordinary unrouted lane, so the claim window is
+# much tighter than the routed one.
+_EXHAUSTION_FRESHNESS_SECONDS = 120.0
+_PROVENANCE_ORIGINS = (
+    "head",
+    "explicit",
+    "fallback",
+    "exhausted_to_inherit",
+    "cleared",
+)
+
+
+def delegation_route_provenance_path(omh_home: str | Path | None = None) -> Path:
+    root = Path(omh_home).expanduser() if omh_home else Path.home() / ".omh"
+    return root / "routing" / "route-provenance.json"
+
+
+def _valid_provenance_record(record: object) -> dict[str, Any] | None:
+    if not isinstance(record, dict):
+        return None
+    origin = record.get("origin")
+    if origin not in _PROVENANCE_ORIGINS:
+        return None
+    written_at = record.get("written_at")
+    if (
+        isinstance(written_at, bool)
+        or not isinstance(written_at, (int, float))
+        or not written_at == written_at
+    ):
+        return None
+    cleaned: dict[str, Any] = {"origin": origin, "written_at": float(written_at)}
+    for field in ("category", "alias", "wire_model", "provider", "reasoning_effort", "from_alias"):
+        value = record.get(field, "")
+        if not isinstance(value, str) or len(value) > 160:
+            return None
+        cleaned[field] = value
+    return cleaned
+
+
+def load_delegation_route_provenance(
+    omh_home: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Read prepared-route records, oldest first; absent or invalid is empty.
+
+    Provenance only ever upgrades a HUD label — it never gates routing — so
+    every failure mode reads as "no provenance" rather than an error.
+    """
+    path = delegation_route_provenance_path(omh_home)
+    try:
+        raw = _strict_json_loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeDecodeError, ValueError):
+        return []
+    if not isinstance(raw, dict):
+        return []
+    if raw.get("schema_version") != DELEGATION_ROUTE_PROVENANCE_SCHEMA_VERSION:
+        return []
+    records = raw.get("records")
+    if not isinstance(records, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for record in records:
+        valid = _valid_provenance_record(record)
+        if valid is None:
+            return []
+        cleaned.append(valid)
+    return cleaned
+
+
+def append_delegation_route_provenance(
+    record: dict[str, Any],
+    omh_home: str | Path | None = None,
+) -> str:
+    """Append one prepared-route record; returns ``recorded`` or ``unrecorded: <reason>``."""
+    valid = _valid_provenance_record(record)
+    if valid is None:
+        return "unrecorded: invalid record"
+    records = load_delegation_route_provenance(omh_home)
+    records.append(valid)
+    records = records[-_PROVENANCE_RECORD_LIMIT:]
+    payload = {
+        "schema_version": DELEGATION_ROUTE_PROVENANCE_SCHEMA_VERSION,
+        "records": records,
+    }
+    payload["claim_boundary"] = (
+        "Prepared routes only: each record says what omh_delegate_route wrote "
+        "into delegation.* before a dispatch, not that any dispatch ran, "
+        "which model a child actually used, or that the lane completed. The "
+        "history is read-modify-write without a lock; concurrent appends may "
+        "drop a record, which degrades to a missing HUD label."
+    )
+    path = delegation_route_provenance_path(omh_home)
+    temp_name = ""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temp_name = tempfile.mkstemp(
+            prefix=".omh-route-provenance-", dir=str(path.parent)
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+        os.replace(temp_name, path)
+    except OSError:
+        if temp_name:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+        return "unrecorded: provenance write failed"
+    return "recorded"
+
+
+def _child_is_inherit(
+    child: Mapping[str, Any],
+    parent_models: Mapping[str, str],
+    provider_routes: Mapping[str, tuple[str, str]],
+) -> bool:
+    """Mirror the projection's inherit test: child alias == parent model."""
+    parent_model = _text(parent_models.get(child.get("parent_id", ""), ""))
+    if not parent_model:
+        return False
+    alias, _ = configured_route_for_wire(child["model"], provider_routes)
+    return _text(alias).casefold() == parent_model.casefold()
+
+
+def _provenance_for_dispatch(
+    records: list[dict[str, Any]],
+    *,
+    started_at: float,
+    wire_model: str,
+    alias: str,
+    is_inherit: bool,
+    session_id: str = "",
+    exhaustion_claims: Mapping[int, str] | None = None,
+) -> dict[str, Any] | None:
+    """Best-effort pairing of a child with the route prepared before it.
+
+    Like the manifest/task pairing above, this is best-effort context, never
+    row identity: only the newest record written before the child's start is
+    considered (later writes replaced it for later lanes), the child must
+    still match the record's identity, and every ambiguity degrades to "no
+    record" — a missing label is acceptable, a wrong one is not.
+    """
+    for index in range(len(records) - 1, -1, -1):
+        record = records[index]
+        # written_at and the child's started_at come from the same machine
+        # clock, and the tool contract writes the route BEFORE dispatching
+        # the lane, so a record stamped after the child started cannot be
+        # the route that dispatch read.
+        if record["written_at"] > started_at:
+            continue
+        if started_at - record["written_at"] > _PROVENANCE_FRESHNESS_SECONDS:
+            return None
+        if record["origin"] == "cleared":
+            # The route was explicitly cleared before this dispatch: the
+            # child inherited on purpose, and no older record describes it.
+            return None
+        if record["origin"] == "exhausted_to_inherit":
+            # An exhaustion record describes exactly one dispatch — the
+            # next inherit child after the chain cleared. The caller
+            # precomputes that claim, the window is tight, and every other
+            # inherit child is an ordinary unrouted lane.
+            if not is_inherit:
+                return None
+            if started_at - record["written_at"] > _EXHAUSTION_FRESHNESS_SECONDS:
+                return None
+            claimed = (exhaustion_claims or {}).get(index, "")
+            return record if session_id and session_id == claimed else None
+        if is_inherit:
+            # `inherit` wins over any chain match (the projection's
+            # documented invariant): a child on the parent session's own
+            # model was not routed, whatever the prepared route said.
+            return None
+        matched = (wire_model and wire_model == record["wire_model"]) or (
+            alias and alias == record["alias"]
+        )
+        return record if matched else None
+    return None
 
 
 def _strict_json_loads(text: str) -> object:
@@ -617,6 +816,7 @@ def read_hermes_native_subagents(
     # overrides so a customized chain labels its children like a shipped one.
     active_chains = effective_mixture_category_chains(omh_home)
     provider_routes, _ = load_model_provider_routes(omh_home)
+    route_provenance = load_delegation_route_provenance(omh_home)
     payload: dict[str, Any] = {
         "status": "idle",
         "rows": [],
@@ -651,6 +851,27 @@ def read_hermes_native_subagents(
         for task, child in zip(manifest["tasks"], window_children):
             matched_tasks[child["session_id"]] = task
             matched_delegations[child["session_id"]] = manifest["delegation_id"]
+
+    # One-shot exhaustion claims: an exhaustion record describes exactly the
+    # next dispatch after its chain cleared, so only the EARLIEST inherit
+    # child started after the record may carry its label (best-effort
+    # pairing, never row identity — same discipline as the manifest match).
+    parent_models = state.get("parent_models", {})
+    exhaustion_claims: dict[int, str] = {}
+    for index, record in enumerate(route_provenance):
+        if record["origin"] != "exhausted_to_inherit":
+            continue
+        candidates = [
+            child
+            for child in children
+            if 0.0
+            <= child["started_at"] - record["written_at"]
+            <= _EXHAUSTION_FRESHNESS_SECONDS
+            and _child_is_inherit(child, parent_models, provider_routes)
+        ]
+        if candidates:
+            claimed = min(candidates, key=lambda item: item["started_at"])
+            exhaustion_claims[index] = claimed["session_id"]
 
     rows: list[dict[str, Any]] = []
     running = 0
@@ -741,6 +962,33 @@ def read_hermes_native_subagents(
         }
         if route_provider:
             row["provider_source"] = "model_provider_routes"
+        # Prepared-route provenance is a best-effort label upgrade, never
+        # row identity: when the child's identity matches the newest route
+        # prepared before its dispatch, a fallback lane says so and an
+        # exhausted chain keeps its category with an `inherit` model token
+        # (`category(model inherit)`) instead of converging into plain
+        # inherit. The upgrade carries its own source marker.
+        provenance = _provenance_for_dispatch(
+            route_provenance,
+            started_at=child["started_at"],
+            wire_model=child["model"],
+            alias=route_alias,
+            is_inherit=row["category"] == "inherit",
+            session_id=child["session_id"],
+            exhaustion_claims=exhaustion_claims,
+        )
+        if provenance is not None:
+            if provenance["origin"] == "exhausted_to_inherit":
+                if provenance["category"]:
+                    row["route_origin"] = "exhausted_to_inherit"
+                    row["route_category"] = provenance["category"]
+                    row["category_source"] = "route_provenance"
+            else:
+                if provenance["category"]:
+                    row["category"] = provenance["category"]
+                    row["category_source"] = "route_provenance"
+                if provenance["origin"] == "fallback":
+                    row["route_origin"] = "fallback"
         if failure_hint:
             row["failure_hint"] = failure_hint
         api_calls = usage.get("api_calls")
@@ -762,6 +1010,9 @@ def read_hermes_native_subagents(
         elif row_state == "done":
             completed += 1
 
+    # The per-source bound is disclosed, not silent: the HUD merge adds this
+    # to its own drop count so the widget's `+N more` line stays honest.
+    payload["hidden"] = max(0, len(rows) - max(1, int(limit)))
     rows = rows[: max(1, int(limit))]
     payload["rows"] = rows
     payload["running"] = running

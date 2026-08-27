@@ -9,8 +9,10 @@ from ..plugin_bundle.omh.domain_signals import (
     domain_tokens_are_locally_negated,
     DomainOperatorOverride,
     DomainRouteSignal,
+    excluded_specialist_domain_skills,
     specialist_domain_operator_override,
     specialist_domain_route_signal,
+    specialist_domain_route_signals,
 )
 
 RELEVANCE_POLICY = "shared_domain_signal/v1"
@@ -154,6 +156,8 @@ __all__ = (
     "RELEVANCE_POLICY",
     "clarification_relevance_skills",
     "classify_clarification_relevance",
+    "excluded_specialist_domain_skills",
     "specialist_domain_operator_override",
     "specialist_domain_route_signal",
+    "specialist_domain_route_signals",
 )

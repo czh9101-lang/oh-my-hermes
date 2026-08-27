@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+from concurrent.futures import FIRST_COMPLETED
+from concurrent.futures import CancelledError as FuturesCancelledError
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from concurrent.futures import wait as futures_wait
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import subprocess
+import sys
+import threading
 import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -15,6 +22,7 @@ from ..runtime.artifacts import append_journal_observation, create_run, show_run
 from ..system.local_store import atomic_write_json, ensure_dir, locked_json_update, utc_now
 from ..system.metadata_safety import redact_metadata_text
 from ..system.paths import OmhPaths
+from ._hermes_child_process import terminate_process_group
 from .action_gate import recheck_safety_profile_revision
 from .coding_contracts import STRUCTURAL_SEARCH_GUIDANCE
 from .executor_capability_snapshots import (
@@ -37,6 +45,124 @@ from .fanout_unit_results import validate_check_rows, validate_unit_result
 from .unit_telemetry import parse_unit_telemetry
 
 FANOUT_DISPATCH_SCHEMA_VERSION = "fanout_dispatch_summary/v1"
+
+# Grace between SIGTERM and SIGKILL when a unit group must die — OMO's
+# launcher uses the same 10s window before re-raising on itself.
+UNIT_TERMINATE_GRACE_SECONDS = 10.0
+
+# Live unit process groups, registered by the signal-safe default runner so
+# an interrupt terminates them instead of orphaning them to pid 1. OMO
+# shipped exactly this incident: a launcher blocked in spawnSync died on
+# SIGTERM and its engine reparented to init, still writing into the tree.
+# Injected test runners never register here. The lock is reentrant because
+# the SIGTERM handler can fire while the main thread already holds it.
+_LIVE_UNIT_LOCK = threading.RLock()
+_LIVE_UNIT_GROUPS: dict[int, subprocess.Popen] = {}
+
+# Set BEFORE any group is terminated, checked by workers before and after
+# the owner gate and by the runner immediately after registering its child
+# (register-then-check): either the terminator's snapshot contains the
+# process, or the worker sees the flag — no spawn slips through the gap.
+# One dispatch per process is the supported shape; the flag is cleared at
+# dispatch entry.
+_INTERRUPT_FLAG = threading.Event()
+
+
+def _register_live_unit(process: subprocess.Popen) -> None:
+    with _LIVE_UNIT_LOCK:
+        _LIVE_UNIT_GROUPS[process.pid] = process
+
+
+def _unregister_live_unit(process: subprocess.Popen) -> None:
+    with _LIVE_UNIT_LOCK:
+        _LIVE_UNIT_GROUPS.pop(process.pid, None)
+
+
+def terminate_live_unit_groups(*, grace: float = UNIT_TERMINATE_GRACE_SECONDS) -> list[int]:
+    """SIGTERM every live unit group, escalating to SIGKILL after `grace`.
+
+    Sets the interrupt flag first so a worker that has not spawned yet
+    refuses to, and a spawn racing this snapshot terminates itself on the
+    runner's register-then-check.
+    """
+    _INTERRUPT_FLAG.set()
+    with _LIVE_UNIT_LOCK:
+        processes = list(_LIVE_UNIT_GROUPS.values())
+    terminated: list[int] = []
+    for process in processes:
+        # The child may have been reaped between snapshot and signal; a
+        # freed pid must not be signalled — the reaper refuses recycled
+        # pids and the in-process path holds the same line.
+        if process.poll() is None:
+            terminate_process_group(process, grace, signal.SIGTERM)
+        terminated.append(process.pid)
+        _unregister_live_unit(process)
+    return terminated
+
+
+def signal_safe_unit_runner(
+    argv: Sequence[str],
+    *,
+    cwd: str | None = None,
+    env: Mapping[str, str] | None = None,
+    text: bool | None = None,
+    errors: str | None = None,
+    capture_output: bool = False,
+    timeout: float | None = None,
+    on_spawn: Callable[[subprocess.Popen], None] | None = None,
+) -> subprocess.CompletedProcess:
+    """Drop-in for `subprocess.run` that owns each child as a process group.
+
+    A blocking `subprocess.run` orphans the agent CLI when the dispatcher
+    dies: the child reparents to pid 1 and keeps writing into the worktree.
+    A session-leader child can be terminated as a group on interrupt or
+    timeout, and its pid is real state the fanout reaper can verify against
+    the inflight marker. `on_spawn` hands the live process to the caller
+    (the dispatch path records the pid in the unit's inflight marker).
+    """
+    pipe = subprocess.PIPE if capture_output else None
+    process = subprocess.Popen(
+        list(argv),
+        cwd=cwd,
+        env=dict(env) if env is not None else None,
+        text=text,
+        errors=errors,
+        stdout=pipe,
+        stderr=pipe,
+        start_new_session=os.name != "nt",
+    )
+    with process:
+        _register_live_unit(process)
+        try:
+            # Register-then-check: a spawn racing the interrupt either lands
+            # in the terminator's snapshot or sees the flag here and dies at
+            # once instead of outliving the dispatcher.
+            if _INTERRUPT_FLAG.is_set():
+                terminate_process_group(process, UNIT_TERMINATE_GRACE_SECONDS, signal.SIGTERM)
+            try:
+                if on_spawn is not None:
+                    on_spawn(process)
+            except Exception:
+                # A raising hook must not leak the child it was handed.
+                terminate_process_group(process, UNIT_TERMINATE_GRACE_SECONDS, signal.SIGTERM)
+                raise
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # The whole group dies with the leader — a timed-out unit must
+            # not leave grandchildren running against the worktree.
+            terminate_process_group(process, UNIT_TERMINATE_GRACE_SECONDS, signal.SIGTERM)
+            raise
+        finally:
+            _unregister_live_unit(process)
+    return subprocess.CompletedProcess(list(argv), int(process.returncode or 0), stdout, stderr)
+
+
+# Capability marker, not an identity check: a wrapper (functools.partial, a
+# retry decorator) can propagate it so the dispatch path keeps recording the
+# reapable pid instead of silently dropping it.
+signal_safe_unit_runner.accepts_on_spawn = True  # type: ignore[attr-defined]
+
+
 DISPATCH_CLAIM_BOUNDARY = (
     "A dispatch summary records observed local subprocess activity only. It is not verification, review, CI, "
     "merge-readiness, or merge evidence, and omh never merges unit branches itself."
@@ -713,14 +839,18 @@ def dispatch_fanout(
     repo_root: Path,
     base_sha: str,
     source_ref: str = "",
+    # Conservative library fallback only: the CLI resolves the pool width
+    # from the setup profile's `parallelism` block (default 5, ceiling 8).
     concurrency: int = 2,
     timeout: int = 1800,
     only_units: Sequence[str] | None = None,
     dry_run: bool = False,
     run_verification: bool = False,
-    runner: Callable[..., Any] = subprocess.run,
+    runner: Callable[..., Any] = signal_safe_unit_runner,
     readiness: Callable[..., dict[str, object]] = probe_executor_readiness,
     live_safety_profile_revision: str | None = None,
+    per_owner_lanes: Mapping[str, int] | None = None,
+    concurrency_policy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Both boundary re-checks run first, before discovery, readiness probing,
     # any unit spawn, and any summary write: nothing downstream should observe a
@@ -829,52 +959,163 @@ def dispatch_fanout(
             results[unit_id] = _skipped(unit, "not_selected")
 
     pending = [unit_id for unit_id in order if unit_id not in results]
-    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+    # Per-owner lanes (OMO's per-provider limiter, reduced to what this
+    # blocking pool can honor): only owners the policy names get a lane
+    # semaphore — the global pool alone governs everyone else. The gate
+    # wraps the unit's WHOLE lifecycle (readiness probe, worktree, spawn,
+    # and local verification when requested), so an over-subscribed owner
+    # holds a pool slot while it waits and can delay other owners' ready
+    # units queued behind it; with the pool sized to the global
+    # ceiling that is the same trade OMO's global permit makes.
+    owner_gates = {
+        owner: threading.BoundedSemaphore(int(width))
+        for owner, width in (per_owner_lanes or {}).items()
+        if isinstance(width, int) and not isinstance(width, bool) and int(width) >= 1
+    }
+
+    def _dispatch_with_owner_gate(unit: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
+        # A worker that reaches its turn after the interrupt — queued in the
+        # pool, or parked on the owner gate while the batch died — must not
+        # start a fresh agent CLI nobody will ever collect.
+        if _INTERRUPT_FLAG.is_set():
+            return _skipped(unit, "interrupted")
+        gate = owner_gates.get(str(unit.get("owner") or "choose"))
+        if gate is None:
+            return _dispatch_unit(paths, unit, **kwargs)
+        with gate:
+            if _INTERRUPT_FLAG.is_set():
+                return _skipped(unit, "interrupted")
+            return _dispatch_unit(paths, unit, **kwargs)
+
+    # SIGTERM must not orphan the spawned agent CLIs (OMO's launcher
+    # incident): the handler terminates every live unit group and raises so
+    # the interrupt path below records the batch honestly, then the original
+    # signal is re-raised to the caller — a supervisor still observes the
+    # death it asked for. Installed only in the main thread; anywhere else
+    # Python forbids signal.signal and the default disposition stands.
+    # One dispatch per process is the supported shape, so clearing the
+    # interrupt flag here cannot strand another run's interrupt.
+    _INTERRUPT_FLAG.clear()
+    installed_term = False
+    previous_term: Any = None
+    interrupted_by: BaseException | None = None
+    futures: dict[str, Any] = {}
+    pool = ThreadPoolExecutor(max_workers=max(1, concurrency))
+    try:
+        if threading.current_thread() is threading.main_thread():
+            def _on_sigterm(signum: int, frame: Any) -> None:
+                terminate_live_unit_groups()
+                raise SystemExit(128 + signum)
+
+            previous_term = signal.signal(signal.SIGTERM, _on_sigterm)
+            installed_term = True
+        # Dependency-frontier admission, learned from OMO's DAG scheduler: a
+        # unit is admitted the moment EVERY unit it depends on completed —
+        # never because a wave boundary was reached — so an unrelated slow
+        # sibling cannot starve ready dependents behind a barrier the
+        # contract never promised. `merge_order`'s wave grouping is
+        # informational from here on; admission is per-completion.
+        def _submit(unit_id: str) -> None:
+            futures[unit_id] = pool.submit(
+                _dispatch_with_owner_gate,
+                units[unit_id],
+                goal_text=goal_text,
+                repo_root=repo_root,
+                base_sha=base_sha,
+                source_ref=source_ref,
+                timeout=timeout,
+                dry_run=dry_run,
+                run_verification=run_verification,
+                runner=runner,
+                readiness=readiness,
+                current_catalog_digest=current_catalog_digest,
+                fanout_id=fanout_id,
+                discoveries=discoveries,
+                capability_precheck=capability_prechecks[unit_id],
+            )
+
+        def _admit_frontier() -> None:
+            # Blocking on a failed dependency is safe to do eagerly here:
+            # unit failure is terminal in this engine (no revive), unlike the
+            # OMO scheduler whose quiescence-gated cascade protects revivable
+            # nodes. The no-progress fallback below still catches a pending
+            # set that can neither run nor block (validated cycles aside).
+            for unit_id in list(pending):
+                if unit_id in futures:
+                    continue
+                if any(_dependency_failed(results.get(dep)) for dep in units[unit_id].get("depends_on", [])):
+                    results[unit_id] = _blocked(units[unit_id], results)
+                    pending.remove(unit_id)
+            for unit_id in list(pending):
+                if unit_id in futures:
+                    continue
+                if all(_dependency_satisfied(results.get(dep)) for dep in units[unit_id].get("depends_on", [])):
+                    _submit(unit_id)
+
+        _admit_frontier()
         while pending:
-            ready = [
-                unit_id
-                for unit_id in pending
-                if all(_dependency_satisfied(results.get(dep)) for dep in units[unit_id].get("depends_on", []))
-            ]
-            blocked = [
-                unit_id
-                for unit_id in pending
-                if any(_dependency_failed(results.get(dep)) for dep in units[unit_id].get("depends_on", []))
-            ]
-            for unit_id in blocked:
-                results[unit_id] = _blocked(units[unit_id], results)
-                pending.remove(unit_id)
-            ready = [unit_id for unit_id in ready if unit_id in pending]
-            if not ready:
-                if pending and not blocked:
-                    for unit_id in list(pending):
-                        results[unit_id] = _blocked(units[unit_id], results)
-                        pending.remove(unit_id)
+            inflight = {unit_id: futures[unit_id] for unit_id in pending if unit_id in futures}
+            if not inflight:
+                # Nothing running and nothing admissible: the remainder can
+                # only be waiting on units that will never complete.
+                for unit_id in list(pending):
+                    results[unit_id] = _blocked(units[unit_id], results)
+                    pending.remove(unit_id)
+                break
+            done, _ = futures_wait(inflight.values(), return_when=FIRST_COMPLETED)
+            for unit_id, future in inflight.items():
+                if future in done:
+                    results[unit_id] = future.result()
+                    pending.remove(unit_id)
+            _admit_frontier()
+        pool.shutdown(wait=True)
+    except (KeyboardInterrupt, SystemExit) as exc:
+        # Ctrl-C or a handled SIGTERM: stop admitting work, kill every live
+        # unit group (children run in their own sessions now, so the tty no
+        # longer delivers SIGINT to them), collect what the killed workers
+        # still return, and mark everything never started as interrupted —
+        # a unit silently missing from the rollup would read as never
+        # planned rather than cut short.
+        interrupted_by = exc
+        _INTERRUPT_FLAG.set()
+        pool.shutdown(wait=False, cancel_futures=True)
+        terminate_live_unit_groups()
+        for unit_id, future in list(futures.items()):
+            if unit_id in results:
                 continue
-            futures = {
-                unit_id: pool.submit(
-                    _dispatch_unit,
-                    paths,
-                    units[unit_id],
-                    goal_text=goal_text,
-                    repo_root=repo_root,
-                    base_sha=base_sha,
-                    source_ref=source_ref,
-                    timeout=timeout,
-                    dry_run=dry_run,
-                    run_verification=run_verification,
-                    runner=runner,
-                    readiness=readiness,
-                    current_catalog_digest=current_catalog_digest,
-                    fanout_id=fanout_id,
-                    discoveries=discoveries,
-                    capability_precheck=capability_prechecks[unit_id],
-                )
-                for unit_id in ready
-            }
-            for unit_id, future in futures.items():
-                results[unit_id] = future.result()
+            try:
+                results[unit_id] = future.result(timeout=UNIT_TERMINATE_GRACE_SECONDS + 5)
+            except (
+                FuturesCancelledError,
+                FuturesTimeoutError,
+                KeyboardInterrupt,
+                SystemExit,
+            ):
+                results[unit_id] = _skipped(units[unit_id], "interrupted")
+            if unit_id in pending:
                 pending.remove(unit_id)
+        for unit_id in list(pending):
+            if unit_id not in results:
+                results[unit_id] = _skipped(units[unit_id], "interrupted")
+            pending.remove(unit_id)
+        # A group-terminated unit exits with a negative signal code and would
+        # otherwise read as a genuine model failure in the merged summary;
+        # the flag keeps a re-dispatch decision from blaming the model.
+        for entry in results.values():
+            exit_code = entry.get("exit_code")
+            if isinstance(exit_code, int) and exit_code < 0:
+                entry["interrupted"] = True
+    finally:
+        # Idempotent after the success/interrupt shutdowns; without it, a
+        # worker exception re-raised by future.result() leaks live pool
+        # threads that the interpreter then joins at exit. A plain exception
+        # unwinding here (not the handled interrupt) must also not orphan
+        # live agent groups — the same hazard the signal path closes.
+        if sys.exc_info()[0] is not None and interrupted_by is None:
+            terminate_live_unit_groups()
+        pool.shutdown(wait=False, cancel_futures=True)
+        if installed_term:
+            signal.signal(signal.SIGTERM, previous_term)
 
     summary_units = [results[unit_id] for unit_id in order]
     _apply_integration_readiness(summary_units)
@@ -899,6 +1140,15 @@ def dispatch_fanout(
         "base_sha": base_sha,
         "claim_boundary": f"{DISPATCH_CLAIM_BOUNDARY} {FANOUT_CLAIM_BOUNDARY}",
     }
+    if concurrency_policy:
+        # How the pool width was chosen (policy default vs flag, any clamp)
+        # so a dispatch record answers "why did only N run at once".
+        summary["concurrency"] = dict(concurrency_policy)
+    if interrupted_by is not None:
+        # A cut-short batch says so; units that never started carry the
+        # `interrupted` status rather than silently vanishing from the
+        # rollup as if they were never planned.
+        summary["interrupted"] = True
     if not dry_run and fanout_id:
         from .fanout_artifacts import fanout_dispatch_summary_path
 
@@ -920,6 +1170,12 @@ def dispatch_fanout(
         # so `already_completed` still means "I did not re-run this".
         summary["units"] = _with_carried_recovery(summary["units"], stored.get("units", []))
         summary["recovery_available_units"] = _recovery_available(summary["units"])
+    if isinstance(interrupted_by, SystemExit):
+        # The summary is written; now honor the termination that was asked
+        # for, so a supervisor still observes the death it requested (OMO's
+        # launcher discipline). Ctrl-C returns the summary instead — the
+        # operator is at the keyboard reading it.
+        raise interrupted_by
     return summary
 
 
@@ -1288,8 +1544,33 @@ def _dispatch_unit(
             "started_at": started_at,
         },
     )
+    spawn_kwargs: dict[str, Any] = {}
+    if getattr(runner, "accepts_on_spawn", False):
+        # The signal-safe runner hands back the live process so the marker
+        # carries the real group-leader pid the fanout reaper verifies
+        # against; injected test runners keep the plain protocol.
+        def _record_pid(process: subprocess.Popen) -> None:
+            _write_inflight(
+                paths,
+                fanout_id,
+                unit_id,
+                {
+                    "owner": owner,
+                    "owner_host": owner_host,
+                    "model": routed_model,
+                    "reasoning_effort": routed_effort,
+                    "run_ref": run_ref,
+                    "worktree": str(worktree),
+                    "started_at": started_at,
+                    "pid": str(process.pid),
+                },
+            )
+
+        spawn_kwargs["on_spawn"] = _record_pid
     try:
-        completed = runner(argv, cwd=str(worktree), text=True, capture_output=True, timeout=timeout)
+        completed = runner(
+            argv, cwd=str(worktree), text=True, capture_output=True, timeout=timeout, **spawn_kwargs
+        )
         exit_code = int(getattr(completed, "returncode", 1))
         stdout_text = str(getattr(completed, "stdout", "") or "")
         output_tail = stdout_text[-2000:]
@@ -1900,10 +2181,13 @@ def _dependency_failed(result: dict[str, Any] | None) -> bool:
 
 def _blocked(unit: Mapping[str, Any], results: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
     entry = _skipped(unit, "blocked_by_dependency")
-    entry["blocked_on"] = [
-        str(dep)
-        for dep in unit.get("depends_on", []) or []
-        if _dependency_failed(results.get(str(dep)))
+    deps = [str(dep) for dep in unit.get("depends_on", []) or []]
+    failed = [dep for dep in deps if _dependency_failed(results.get(dep))]
+    # A dependency stuck in a non-terminal verdict (for example
+    # model_choice_required) is neither satisfied nor failed; the entry must
+    # still name what it was waiting on rather than blocking on nothing.
+    entry["blocked_on"] = failed or [
+        dep for dep in deps if not _dependency_satisfied(results.get(dep))
     ]
     return entry
 

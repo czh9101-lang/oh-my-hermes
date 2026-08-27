@@ -907,7 +907,7 @@ _DEFINITIONS = [
             "[capability:delivery_boundary] End a delivery cycle with a PR-ready or PR-observed report that separates prepared, executed, reviewed, verified, CI, and PR evidence.",
             "[capability:delivery_boundary] For implementation, default to Hermes-native delegation with a per-lane `omh_delegate_route` mixture route and acceptance criteria and verification commands attached; hand off to the `durable_checkpoint` capability for work that must survive sessions, and prepare a selected external executor/runtime path only on the user's explicit owner acceptance.",
             "Route each Hermes-native lane before dispatch: an inherit-labeled delegation wave is an unrouted wave, not mixture routing — re-route it or state why parent inheritance is intended.",
-            "Initialize the phase todo before engine work: declare numbered phases in delivery order with `omh_todo` (todo init) — bootstrap, one implement/verify/deliver task per lane or work unit, independent review lanes, and an evidence-and-cleanup close, with one task per observable outcome — keep exactly one item active while working, and update states as lanes complete; the run walks a bounded, HUD-visible checklist instead of an open-ended reasoning loop.",
+            "Initialize the phase todo before engine work: declare numbered phases in delivery order with `omh_todo` (todo init) — bootstrap, one implement/verify/deliver task per lane or work unit, independent review lanes, and an evidence-and-cleanup close, with one task per observable outcome — keep exactly one item active while working, and update states as lanes complete; the run walks a bounded, HUD-visible checklist instead of an open-ended reasoning loop. Phase names and task titles are written in English — short, operator-legible labels — even when the conversation runs in another language, since the HUD todo checklist is an operator surface under the repo's English-by-default output contract.",
             ENGINE_INTERJECTION_RESUME_RULE,
             "Close a completed run with the localized run summary: call `omh_run_summary` with the conversation's language and print its summary_text verbatim as the final lines (elapsed seconds, token usage, and models used from observed host accounting — never numbers the model estimated).",
             "[capability:single_owner_persistence] Do not enter a finish-until-done loop until scope, acceptance criteria, and verification commands are concrete.",
@@ -2642,7 +2642,7 @@ _DEFINITIONS = [
         quality_tier="design-orchestration-gated",
         quality_bar=(
             "Make the design job, context boundary, direction, downstream lane ownership, and visual evidence requirements readable before handoff.",
-            "Reject generic default drift by naming hierarchy, palette, typography, layout, signature element, and avoid patterns deliberately.",
+            "Reject generic default drift by naming hierarchy, palette, typography, layout, signature element, and avoid patterns deliberately — the direction vocabulary and anti-slop patterns live in the frontend skill's `omh-frontend/references/taste-foundations.md`; prepared directions inherit its named bar (technically clean but flat fails).",
             "Require the selected executor and fresh visual evidence separately before any implementation or quality completion claim.",
         ),
         why_this_exists=(
@@ -2743,7 +2743,7 @@ _DEFINITIONS = [
         ),
         quality_tier="design-pro-gated",
         quality_bar=(
-            "Define superior design quality with references, audience, hierarchy, style, and measurable QA gates.",
+            "Define superior design quality with references, audience, hierarchy, style, and measurable QA gates. The bar is named, not relative: what a senior product designer at a top-tier product company (the Linear/Stripe/Supabase class) would sign off on — technically clean but flat output fails it. Load `references/design-critique-rubric.md` and judge every axis with named evidence.",
             "State why the result should be better than ordinary output, including content depth, visual hierarchy, spacing, typography, and interaction or export polish.",
             "Review content accuracy and hierarchy before visual polish.",
             "Use design-system/reference rules for web, deck, PDF, and poster surfaces.",
@@ -2891,8 +2891,9 @@ _DEFINITIONS = [
         quality_tier="frontend-design-gated",
         quality_bar=(
             "Name the product goal, audience, target surfaces, routes, states, and visual quality bar.",
-            "Use references and domain fit to avoid generic AI-looking frontend output.",
-            "Prepare a concrete design-system contract before implementation handoff.",
+            "Hold the named bar: what a senior product designer at a top-tier product company (the Linear/Stripe/Supabase class) would sign off on — technically clean but flat output fails it. Load `references/taste-foundations.md`, name one primary taste direction, and reject the anti-slop patterns it lists.",
+            "Use references and domain fit to avoid generic AI-looking frontend output; when the user supplies a visual reference, load `references/reference-token-extraction.md` and extract tokens into the contract instead of eyeballing.",
+            "Prepare a concrete design-system contract before implementation handoff: load `references/design-system-contract.md` and write DESIGN.md before the first component — no component code before the contract exists.",
             "For first-time UI creation, name the initial generation branch, reference direction, reusable primitives, state coverage, and required visual QA path.",
             "Cover responsive layout, empty/loading/error states, hover/focus/active states, CJK text, accessibility, and performance expectations.",
             "Prefer native UI controls, stable dimensions, and realistic content over decorative cards, blobs, and placeholder-heavy screens.",
@@ -3127,7 +3128,7 @@ _DEFINITIONS = [
         hermes_role="retained-cognition",
         delegation_boundary="retained-catalog-intent",
         handoff_policy=(
-            "Keep the QA plan, evidence manifest, freshness rule, and verdict narration in Hermes. "
+            "Keep the QA plan, evidence manifest, target-lineage rule, and verdict narration in Hermes. "
             "Screenshots, TUI captures, image diffs, browser runs, OCR/CJK checks, and oracle reviews are observed evidence supplied by the wrapper, executor, or user."
         ),
         required_inputs=(
@@ -3136,16 +3137,16 @@ _DEFINITIONS = [
             "intended design, baseline, or reference",
             "pages, states, viewports, and locales to cover",
             "complete page/state/viewport enumeration rather than a sample",
-            "latest edit or source revision",
+            "target repository and exact source revision",
             "known risk areas such as CJK, overflow, responsiveness, or accessibility",
             "motion and interaction states that need capture",
             "browser interaction paths, mutating-flow boundary, and test credentials policy when a live web UI is in scope",
             "console, network, accessibility, and keyboard navigation checks required for browser QA claims",
-            "fresh render/capture evidence for completion claims",
+            "render/capture evidence bound to the target repository and revision for completion claims",
         ),
         expected_outputs=(
             "visual_qa_plan/v1",
-            "web_visual_qa_package/v1",
+            "web_visual_qa_package/v2",
             "viewport_state_capture_matrix/v1",
             "message_attachment_projection/v1 for chat attachments",
             "web_visual_qa_message_card/v1 for chat message summaries",
@@ -3163,12 +3164,12 @@ _DEFINITIONS = [
             "retry_or_blocker/v1",
         ),
         artifact_expectations=(
-            "visual_qa_plan/v1 with pages, states, viewports, references, and freshness rule",
-            "web_visual_qa_package/v1 with captures[], criteria[], criteria_results[], multimodal_reviews[], auto routing, and observed-only cost policy",
+            "visual_qa_plan/v1 with pages, states, viewports, references, and exact target repository/revision lineage",
+            "web_visual_qa_package/v2 with target_lineage, unique required_viewports, capture source_lineage, blocking_violations, criteria, reviews, auto routing, and observed-only cost policy",
             "viewport_state_capture_matrix/v1 enumerates every route/page, 375/768/1280-style viewport, scroll position, modal/tab state, and CJK-heavy region to capture",
             "message_attachment_projection/v1 maps eligible observed captures to chat attachment candidates without claiming upload or delivery",
             "web_visual_qa_message_card/v1 projects recorded criteria, captures, routing, cost policy, and attachment hints into Discord/Slack/hosted-chat safe copy",
-            "render_capture_manifest/v1 only from fresh screenshots, file renders, images, or terminal captures",
+            "render_capture_manifest/v1 only from screenshots, file renders, images, or terminal captures whose source lineage matches the target package",
             "browser_interaction_trace/v1 only from observed navigation, form, auth, search, modal, and critical journey runs with read-only or staging-safe boundaries recorded",
             "console_network_health/v1 records observed critical console errors, failed requests, status codes, and ignored third-party noise before browser QA can pass",
             "click_path_state_trace/v1 maps each user-facing button/touchpoint to its handler, ordered state reads/writes, final UI state, and undo/race/stale-closure risks when interaction behavior is in scope",
@@ -3177,11 +3178,11 @@ _DEFINITIONS = [
             "motion_interaction_capture/v1 only when hover/focus/active/load/scroll motion frames are observed before, during, and after transition",
             "visual_hotspot_review/v1 maps diff hotspots, TUI overflow lines, or screenshot regions to concrete visual causes",
             "dual_oracle_visual_review/v1 only when independent read-only review evidence exists",
-            "PASS unavailable until captures are newer than the last visual edit and all blocking findings are resolved",
+            "PASS unavailable until capture repository/revision lineage exactly matches the package target, every required viewport is captured, and all supplied blocking findings are resolved",
         ),
         safety_rules=(
-            "Never claim PASS without fresh rendered evidence captured after the last relevant edit.",
-            "Do not treat source review, screenshots from an older run, generated plans, or unobserved browser commands as visual QA evidence.",
+            "Never claim PASS without rendered evidence whose repository and revision exactly match the package target lineage.",
+            "Do not treat source review, captures with missing or mismatched source lineage, generated plans, or unobserved browser commands as visual QA evidence.",
             "Do not sample only one good page, viewport, or state when the surface has more; missed pages, modals, scroll states, or CJK-heavy regions keep PASS unavailable.",
             "Do not run destructive browser journeys such as checkout, payment, delete, or mass-update on production URLs; require staging or explicit safe test boundaries and redact credentials/PII from captures.",
             "Do not claim browser interaction PASS without observed click-path/state-transition traces for the touchpoints in scope.",
@@ -3189,14 +3190,14 @@ _DEFINITIONS = [
             "Objective diffs are evidence, not verdicts; review visual hierarchy, layout, CJK text, state coverage, and product intent separately.",
             "Do not excuse diff hotspots as animation; capture settled frames and motion frames separately.",
             "Run or request two read-only review perspectives when claiming high confidence: design-system/functional integrity and visual fidelity/CJK precision.",
-            "CJK clipping, broken wrapping, overlapping UI, invisible text, unusable controls, or offscreen critical content block PASS.",
+            "Recorded operator-supplied blocking criteria for CJK clipping, broken wrapping, overlapping UI, invisible text, unusable controls, or offscreen critical content block PASS until `_validate_pass` sees passing evidence refs.",
             "Do not call browsers, image tools, LLMs, or external services from OMH core.",
         ),
         quality_tier="visual-qa-gated",
         quality_bar=(
             "List the exact pages, states, viewports, files, images, or TUI frames being checked.",
             "Enumerate every page/state/viewport before capture and mark omitted surfaces as blockers rather than assumptions.",
-            "Require evidence freshness after the last visual edit.",
+            "Require exact repository and revision equality between target_lineage and every capture source_lineage.",
             "Combine objective capture/diff evidence, hotspot review, alpha/transparent-background checks, and human-readable visual findings.",
             "Capture interaction, click-path, and motion states when the UI has hover/focus/active/load/scroll transitions or buttons/forms/navigation that change state.",
             "Record console/network health, keyboard navigation, accessibility scan boundaries, and mutating-flow safety for live browser QA claims.",
@@ -3206,7 +3207,7 @@ _DEFINITIONS = [
         ),
         why_this_exists=(
             "`visual-qa` gives OMH a completion gate for rendered surfaces so layout breaks, AI-looking polish gaps, CJK text problems, "
-            "and stale screenshot claims cannot be mistaken for verified quality."
+            "and mismatched-lineage screenshot claims cannot be mistaken for verified quality."
         ),
         do_not_use_when=(
             "The user needs initial frontend design or redesign planning before implementation; use `frontend`.",
@@ -3216,26 +3217,26 @@ _DEFINITIONS = [
         ),
         good_example=SkillExample(
             prompt="visual-qa 이 랜딩페이지가 모바일/데스크톱에서 깨지는지 스크린샷 기준으로 검증해줘.",
-            expected="Prepare visual_qa_plan/v1, require fresh captures, record render_capture_manifest/v1 and visual_diff_evidence/v1 when observed, then issue PASS/REVISE/BLOCK.",
+            expected="Prepare visual_qa_plan/v1, require exact capture-to-target lineage, record render_capture_manifest/v1 and visual_diff_evidence/v1 when observed, then issue PASS/REVISE/BLOCK.",
             why="The request is a rendered visual verification task, not just design planning.",
         ),
         bad_example=SkillExample(
             prompt="visual-qa 방금 수정했으니까 스크린샷 없이 통과라고 해줘.",
-            expected="Block PASS and request fresh render capture after the latest edit.",
-            why="Visual QA requires observed rendered evidence newer than the last UI change.",
+            expected="Block PASS and request render captures from the package's exact repository and revision.",
+            why="Visual QA requires observed rendered evidence bound to the target source lineage.",
         ),
         final_checklist=(
-            "The visual_qa_plan/v1 lists target surfaces, references, states, viewports, locales, and freshness criteria.",
+            "The visual_qa_plan/v1 lists target surfaces, references, states, viewports, locales, and target repository/revision lineage.",
             "The viewport_state_capture_matrix/v1 proves the QA did not sample only one page, viewport, or state.",
             "The web_visual_qa_message_card/v1 summarizes criteria, route, cost policy, and attachment status without claiming platform delivery.",
-            "The render_capture_manifest/v1 is present before PASS and is newer than the last relevant edit.",
+            "The render_capture_manifest/v1 is present before PASS and every capture's source lineage exactly matches the package target lineage.",
             "Browser interaction traces, console/network health, click-path state traces, keyboard/accessibility traces, visual diff, hotspot review, motion capture, design-system/functional review, visual-fidelity/CJK review, and blocker status are separate fields.",
             "The verdict is PASS, REVISE, or BLOCK with exact missing evidence or fix requirements.",
-            "Any implementation fix is routed back to the executor/frontend workflow and rechecked with fresh evidence.",
+            "Any implementation fix is routed back to the executor/frontend workflow and rechecked with evidence from the resulting repository revision.",
         ),
         recovery_notes=(
             "If no capture exists, produce the QA plan and mark verdict BLOCKED_BY_MISSING_RENDER_EVIDENCE.",
-            "If a capture exists but predates the latest edit, mark it stale and request the smallest fresh recapture set.",
+            "If capture source lineage is missing or mismatches the target repository/revision, keep HOLD and request the smallest matching recapture set.",
         ),
     ),
     SkillDefinition(
@@ -4584,7 +4585,7 @@ _DEFINITIONS = [
         quality_tier="reviewed-plan-gated",
         quality_bar=(
             "Start from observed repo facts and source/web evidence when freshness or external behavior matters.",
-            "Initialize the plan todo before the first planning step: declare the planning stages as `omh_todo` items (todo init) — repo facts and evidence check, options and tradeoffs, risk review, acceptance criteria and verification commands, plan record and acceptance — keep exactly one item active, and when the evidence check reveals a gap rewrite the list (`omh_todo` action=set) to insert the research stage; update the list as stages complete so the HUD todo panel shows plan progress as a bounded checklist, and treat items as declarations, never execution evidence.",
+            "Initialize the plan todo before the first planning step: declare the planning stages as `omh_todo` items (todo init) — repo facts and evidence check, options and tradeoffs, risk review, acceptance criteria and verification commands, plan record and acceptance — keep exactly one item active, and when the evidence check reveals a gap rewrite the list (`omh_todo` action=set) to insert the research stage; update the list as stages complete so the HUD todo panel shows plan progress as a bounded checklist, and treat items as declarations, never execution evidence. Phase names and task titles are written in English — short, operator-legible labels — even when the conversation runs in another language, since the HUD todo checklist is an operator surface under the repo's English-by-default output contract.",
             "Include planner view, critic/risk review, alternative paths, rejected options, and a testability check before handoff.",
             "Produce testable acceptance criteria and exact verification commands or explain why they are not yet knowable.",
             "Record unresolved tradeoffs and evidence gaps instead of flattening uncertainty.",

@@ -69,6 +69,9 @@ def build_route_decision_contract(decision: dict[str, Any]) -> dict[str, Any]:
         contract["explicit"] = True
     if bool(decision.get("ambiguous", False)):
         contract["ambiguous"] = True
+        ambiguity_kind = str(decision.get("ambiguity_kind", ""))
+        if ambiguity_kind:
+            contract["ambiguity_kind"] = ambiguity_kind
     if action == "fallback":
         contract["fallback"] = True
     if router_stage in {"guarded", "candidate_handoff", "fallback"} or action != "dispatch":

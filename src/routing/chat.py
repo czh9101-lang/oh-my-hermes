@@ -16,6 +16,7 @@ from .catalog_questions import (
     is_native_entrypoint_question,
     is_skill_catalog_question,
 )
+from .compound_intent import distinct_complete_domain_signals
 from .action_copy import next_action_label as _route_next_action_label
 from .candidate_handoff import build_candidate_handoff
 from .decision_contract import build_route_decision_contract
@@ -80,6 +81,7 @@ DIRECT_ANSWER_REASON = (
     "Plain user question; answer directly in chat instead of opening an OMH workflow or picker."
 )
 ROUTE_EXPLANATION_SCHEMA_VERSION = "route_explanation/v1"
+MULTIPLE_COMPLETE_DOMAIN_INTENTS = "multiple_complete_domain_intents"
 _ROUTER_SKILL = "oh-my-hermes"
 _SPECIFIC_CAPABILITY_CATALOG_MIN_SCORE = 6
 _SPECIFIC_CAPABILITY_EXCLUDED_SKILLS = frozenset(
@@ -1305,6 +1307,7 @@ class ChatRouteDecision:
     learning_candidate_card: dict[str, object] | None
     recommendations: tuple[dict[str, object], ...]
     route_next_action: str = ""
+    ambiguity_kind: str = ""
     # Which script the request arrived in, and whether the trigger tables carry
     # entries for it at all. Trigger coverage was previously an implicit
     # Latin/Hangul accident; naming it here keeps a zero score on a Japanese or
@@ -1346,6 +1349,8 @@ class ChatRouteDecision:
             payload["input_language"] = dict(self.input_language)
         if self.alias_resolution:
             payload["alias_resolution"] = dict(self.alias_resolution)
+        if self.ambiguity_kind:
+            payload["ambiguity_kind"] = self.ambiguity_kind
         return payload
 
 
@@ -1642,6 +1647,9 @@ def _route_chat_message_cached(
     if fast_explicit_skill_decision is not None:
         return fast_explicit_skill_decision.to_dict()
     specialist_domain_signal = specialist_domain_route_signal(routing_message)
+    compound_domain_signals = distinct_complete_domain_signals(routing_message)
+    if len(compound_domain_signals) == 1:
+        specialist_domain_signal = compound_domain_signals[0]
     specialist_operator_override = specialist_domain_operator_override(
         routing_message,
         specialist_domain_signal,
@@ -1753,6 +1761,13 @@ def _route_chat_message_cached(
         )
     ):
         return fast_product_shaping_decision.to_dict()
+    if len(compound_domain_signals) > 1 and specialist_operator_override is None:
+        return _multiple_complete_domain_intents_decision(
+            message,
+            signals=compound_domain_signals,
+            source=source,
+            min_confidence=min_confidence,
+        ).to_dict()
     if specialist_domain_signal is not None and specialist_operator_override is None:
         return _specialist_domain_fast_path_decision(
             message,
@@ -4942,6 +4957,51 @@ def _specialist_domain_fast_path_decision(
         workflow_route_plan=None,
         learning_candidate_card=None,
         recommendations=(recommendation,),
+    )
+
+
+def _multiple_complete_domain_intents_decision(
+    message: str,
+    *,
+    signals: tuple[DomainRouteSignal, ...],
+    source: str,
+    min_confidence: str,
+) -> ChatRouteDecision:
+    candidate_skill = signals[0].skill
+    candidate_harness = primary_harness_for_skill(candidate_skill)
+    selected_harness = primary_harness_for_skill(_ROUTER_SKILL)
+    reason = "Multiple complete specialist-domain intents require the user to choose which outcome to handle first."
+    recommendations = tuple(
+        recommendation_for_definition(
+            _skill_definition_by_name(signal.skill),
+            message,
+            matched=tuple(f"domain:{cue}" for cue in signal.matched_cues),
+            score=54,
+            why=reason,
+        )
+        for signal in signals
+    )
+    return ChatRouteDecision(
+        schema_version=1,
+        source=source,
+        action="clarify",
+        selected_skill=_ROUTER_SKILL,
+        selected_harness=selected_harness,
+        candidate_skill=candidate_skill,
+        candidate_harness=candidate_harness,
+        confidence="high",
+        score=54,
+        threshold=min_confidence,
+        explicit=False,
+        ambiguous=True,
+        reason=reason,
+        clarification=_clarification("clarify", candidate_skill, "high", min_confidence, reason),
+        routing_prompt=_routing_prompt("clarify", _ROUTER_SKILL, candidate_skill, reason, message),
+        task_card=None,
+        workflow_route_plan=None,
+        learning_candidate_card=None,
+        recommendations=recommendations,
+        ambiguity_kind=MULTIPLE_COMPLETE_DOMAIN_INTENTS,
     )
 
 

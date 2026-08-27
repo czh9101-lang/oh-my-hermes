@@ -351,7 +351,8 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertIn("last.phase === phase", widget)
         self.assertNotIn("isMerged", widget)
         self.assertNotIn("phaseColumn", widget)
-        self.assertIn("const TODO_DISPLAY_ROWS = 7", widget)
+        # Eight body rows matches the senpi/OMO todo widget's visible budget.
+        self.assertIn("const TODO_DISPLAY_ROWS = 8", widget)
         self.assertIn("depthOf", widget)
         self.assertIn("(!phase && depthOf(item) > 0)", widget)
         self.assertIn("'  '.repeat(depthOf(item) + (group.phase ? 1 : 0))", widget)
@@ -441,11 +442,34 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertIn("payload.yolo && payload.yolo.status === 'observed'", widget)
         self.assertIn("payload.yolo.enabled ? t.color.warn : t.color.label", widget)
         self.assertNotIn("• parallel shot", widget)
-        self.assertIn("Math.min(3,", widget)
+        # Five-row activity budget with running AGENT lanes exempt from the
+        # cap (OMO DAG-widget pattern) — the old hard `Math.min(3, …)` clamp
+        # hid running lanes silently, which is the complaint that removed it.
+        # The viewport still bounds the dock (chrome included), and both the
+        # widget's own drop and the reader's cap surface as `+N more`.
+        self.assertNotIn("Math.min(3, viewportRows", widget)
+        self.assertIn("Math.max(Math.max(5 - mainRows.length, 1), runningAgents)", widget)
+        self.assertIn("viewportRows - 5", widget)
+        self.assertIn("const hiddenRows", widget)
+        self.assertIn("Number(agents.hidden_rows) || 0", widget)
+        self.assertIn("+${hiddenRows} more", widget)
+        self.assertIn("hiddenRows\n        ? h(Text", widget)
         self.assertNotIn("spinnerTimerKey", widget)
         self.assertIn("ActivityRow", widget)
         self.assertIn("truncateCells", widget)
         self.assertIn("category:", widget)
+        # Prepared-route provenance renders: a fallback lane carries a
+        # warning-colored `fallback` token, and an exhausted chain reads
+        # `category→inherit` instead of converging into plain inherit.
+        self.assertIn("route_origin", widget)
+        self.assertIn("route-fallback", widget)
+        # One label shape for every lane: category(model tag). The category
+        # names the lane and never changes; only the parenthesized model and
+        # its state token (fallback / inherit) move.
+        self.assertIn("routeOrigin === 'fallback' ? 'fallback'", widget)
+        self.assertIn("routeOrigin === 'exhausted_to_inherit' ? 'inherit'", widget)
+        self.assertNotIn("→inherit", widget)
+        self.assertIn("row.route_category", widget)
         self.assertIn("tools", widget)
         self.assertIn("tok/s", widget)
         self.assertIn("cache_hit_percentage", widget)

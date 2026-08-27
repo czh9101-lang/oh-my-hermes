@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from .web_visual_qa_contracts import JsonObject, attachment_projection, auto_routing
+from .web_visual_qa_contracts import (
+    WEB_VISUAL_QA_PACKAGE_SCHEMA_VERSION,
+    WEB_VISUAL_QA_PASS_BLOCKER_IDS,
+    JsonObject,
+    attachment_projection,
+    auto_routing,
+)
 
 
 def build_prepared_web_visual_qa_chat_state() -> JsonObject:
@@ -11,7 +17,8 @@ def build_prepared_web_visual_qa_chat_state() -> JsonObject:
     verdict = "not_observed"
     return {
         "artifact_schema": "web_visual_qa_prepared_preview/v1",
-        "package_schema": "web_visual_qa_package/v1",
+        "package_schema": WEB_VISUAL_QA_PACKAGE_SCHEMA_VERSION,
+        "pass_blocker_ids": list(WEB_VISUAL_QA_PASS_BLOCKER_IDS),
         "visual_qa_plan_schema": "visual_qa_plan/v1",
         "package_lifecycle_status": "prepared",
         "capture_model": "web_visual_qa_package.captures[]",
