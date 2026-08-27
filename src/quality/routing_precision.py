@@ -545,12 +545,76 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_clarification",
         "",
     ),
+    RoutingPrecisionCase(
+        "visual-inspection-concept-direct",
+        "A visual inspection concept question stays direct",
+        "what does visual inspection mean?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "responsive-viewport-concept-clarifies",
+        "A responsive viewport concept question does not dispatch visual QA",
+        "explain responsive viewport sizes in simple terms",
+        "answer_clarification",
+        "",
+    ),
+    RoutingPrecisionCase(
+        "wcag-concept-direct",
+        "A WCAG concept question stays direct",
+        "what is WCAG in simple terms?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "design-system-concept-direct",
+        "A design-system concept question stays direct",
+        "what is a design system?",
+        "answer_directly",
+        "direct_answer",
+    ),
 )
 
 
 # Positive-intervention corpus. These are real OMH-shaped turns where the router
 # should still step in after the direct-answer fallback was added.
 ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
+    RoutingInterventionCase(
+        "visual-qa-current-viewports",
+        "Current screenshot viewport review reaches visual QA",
+        "visual-qa review these current screenshots at desktop and mobile viewports",
+        "dispatch",
+        "visual-qa",
+        "prepare_visual_qa",
+        "visual_qa",
+    ),
+    RoutingInterventionCase(
+        "design-quality-gate-reference-review",
+        "Reference-backed multi-surface review reaches design quality gate",
+        "design-quality-gate review this landing page and deck against the reference",
+        "dispatch",
+        "design-quality-gate",
+        "prepare_design_quality_gate",
+        "design_quality_gate",
+    ),
+    RoutingInterventionCase(
+        "frontend-dashboard-redesign",
+        "Dashboard redesign reaches frontend",
+        "frontend redesign this dashboard layout and design system",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+    ),
+    RoutingInterventionCase(
+        "accessibility-audit-checkout",
+        "Checkout accessibility review reaches accessibility audit",
+        "accessibility-audit this checkout flow for WCAG keyboard and screen reader behavior",
+        "dispatch",
+        "accessibility-audit",
+        "prepare_accessibility_audit",
+        "accessibility_audit",
+    ),
     RoutingInterventionCase(
         "safe-feature-plan",
         "Safe feature work routes to planning",

@@ -22,6 +22,8 @@ from omh.workflows.web_visual_qa_contracts import (
     JsonObject,
     now,
     object_list,
+    object_value,
+    strings,
     text,
 )
 
@@ -33,6 +35,11 @@ def cmd_web_qa_package(args: argparse.Namespace) -> int:
         package = build_web_visual_qa_package(
             package_id=args.package_id,
             target=args.target,
+            target_lineage={
+                "repository": args.target_repository,
+                "revision": args.target_revision,
+            },
+            required_viewports=args.required_viewport or (),
             source=args.source,
             risk_level=args.risk_level,
             estimated_cost_tier=args.estimated_cost_tier,
@@ -40,6 +47,10 @@ def cmd_web_qa_package(args: argparse.Namespace) -> int:
             captures=[
                 _parse_capture(
                     value,
+                    source_lineage={
+                        "repository": args.capture_source_repository,
+                        "revision": args.capture_source_revision,
+                    },
                     redaction_status=_require_choice(
                         args.capture_redaction_status,
                         SUPPORTED_REDACTION_STATUSES,
@@ -77,6 +88,10 @@ def cmd_web_qa_observe_capture(args: argparse.Namespace) -> int:
                     "path_or_uri": args.path,
                     "mime_type": args.mime_type,
                     "viewport": args.viewport,
+                    "source_lineage": {
+                        "repository": args.source_repository,
+                        "revision": args.source_revision,
+                    },
                     "captured_at": observed_at,
                     "evidence_summary": args.summary,
                     "observer": args.observer,
@@ -118,6 +133,8 @@ def cmd_web_qa_capture_file(args: argparse.Namespace) -> int:
                 "--attachment",
             ),
             mime_type=args.mime_type,
+            source_repository=args.source_repository,
+            source_revision=args.source_revision,
         )
         saved = import_web_visual_qa_capture_file(_paths(args), request)
     except (OSError, ValueError) as exc:
@@ -175,6 +192,8 @@ def _rebuild(
     return build_web_visual_qa_package(
         package_id=text(current.get("package_id")),
         target=text(current.get("target")),
+        target_lineage=object_value(current.get("target_lineage")),
+        required_viewports=strings(current.get("required_viewports")),
         source=text(current.get("source")) or "generic",
         risk_level=text(current.get("risk_level")) or "unknown",
         estimated_cost_tier=text(current.get("estimated_cost_tier")) or "none",
@@ -194,7 +213,13 @@ def _parse_criterion(value: str) -> JsonObject:
     return {"criterion_id": criterion_id, "label": label, "pass_rule": pass_rule, "severity": severity}
 
 
-def _parse_capture(value: str, *, redaction_status: str = "unknown", attachment: str = "eligible") -> JsonObject:
+def _parse_capture(
+    value: str,
+    *,
+    source_lineage: JsonObject | None = None,
+    redaction_status: str = "unknown",
+    attachment: str = "eligible",
+) -> JsonObject:
     head = value.split(":", 5)
     # A Windows drive-letter path ("C:\...") contributes a colon of its own in
     # the path field; re-join the drive letter with its path segment.
@@ -215,6 +240,7 @@ def _parse_capture(value: str, *, redaction_status: str = "unknown", attachment:
         "path_or_uri": path,
         "mime_type": mime_type,
         "viewport": viewport,
+        "source_lineage": source_lineage or {},
         "evidence_summary": summary,
         "redaction_status": redaction_status,
         "attachment": attachment,
@@ -319,14 +345,19 @@ def _add_web_qa_commands(sub) -> None:
     )
     web_qa_sub = web_qa.add_subparsers(dest="web_qa_command", required=True)
 
-    package = web_qa_sub.add_parser("package", help="Create a web_visual_qa_package/v1 from supplied metadata.")
+    package = web_qa_sub.add_parser("package", help="Create a web_visual_qa_package/v2 from supplied metadata.")
     package.add_argument("--package-id", default="")
     package.add_argument("--target", required=True)
+    package.add_argument("--target-repository", default="")
+    package.add_argument("--target-revision", default="")
+    package.add_argument("--required-viewport", action="append")
     package.add_argument("--source", choices=("discord", "slack", "hermes", "generic"), default="generic")
     package.add_argument("--risk-level", choices=("low", "medium", "high", "critical", "unknown"), default="unknown")
     package.add_argument("--estimated-cost-tier", choices=("none", "low", "medium", "high", "unknown"), default="none")
     package.add_argument("--criterion", action="append", required=True, metavar="ID:LABEL:PASS_RULE:SEVERITY")
     package.add_argument("--capture", action="append", metavar="ID:ROLE:PATH:MIME:VIEWPORT:SUMMARY")
+    package.add_argument("--capture-source-repository", default="")
+    package.add_argument("--capture-source-revision", default="")
     package.add_argument("--capture-redaction-status", default="unknown")
     package.add_argument("--capture-attachment", default="eligible")
     package.add_argument("--criteria-result", action="append", metavar="CRITERION:STATUS:REFS:CHECKED_BY:SUMMARY:BLOCKING")
@@ -345,6 +376,8 @@ def _add_web_qa_commands(sub) -> None:
     capture_file.add_argument("--role", default="current")
     capture_file.add_argument("--mime-type", default="")
     capture_file.add_argument("--viewport", default="unspecified")
+    capture_file.add_argument("--source-repository", default="")
+    capture_file.add_argument("--source-revision", default="")
     capture_file.add_argument("--summary", required=True)
     capture_file.add_argument("--observer", default="wrapper_or_user")
     capture_file.add_argument("--redaction-status", default="unknown")
@@ -359,6 +392,8 @@ def _add_web_qa_commands(sub) -> None:
     observe.add_argument("--path", required=True)
     observe.add_argument("--mime-type", default="")
     observe.add_argument("--viewport", default="unspecified")
+    observe.add_argument("--source-repository", default="")
+    observe.add_argument("--source-revision", default="")
     observe.add_argument("--summary", required=True)
     observe.add_argument("--observer", default="wrapper_or_user")
     observe.add_argument("--redaction-status", default="unknown")
