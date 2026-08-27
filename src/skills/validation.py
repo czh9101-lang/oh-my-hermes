@@ -16,6 +16,7 @@ from .catalog import (
 from .expert_question_validation import (
     validate_expert_questions as _validate_expert_questions,
 )
+from .procedure_validation import validate_procedure_contract as _validate_procedure_contract
 
 
 CATALOG_VALIDATION_SCHEMA_VERSION = "catalog_validation/v1"
@@ -140,6 +141,7 @@ def _validate_skill_definition(definition: SkillDefinition, harness_names: set[s
     for field in ("triggers", "required_inputs", "expected_outputs", "artifact_expectations", "safety_rules", "quality_bar"):
         _require_text_sequence(getattr(definition, field), f"{label} {field}", errors)
     _validate_expert_questions(definition, label, errors)
+    _validate_procedure_contract(definition, label, errors)
     _require_text_sequence(definition.do_not_use_when, f"{label} do_not_use_when", errors)
     _validate_skill_example(definition.good_example, f"{label} good_example", errors)
     _validate_skill_example(definition.bad_example, f"{label} bad_example", errors)

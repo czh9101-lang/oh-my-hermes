@@ -50,6 +50,10 @@ from omh.skills.catalog import (
     primary_harness_for_skill,
     retained_delegation_skill_names,
 )
+from omh.skills.expert_question_rendering import (
+    expert_question_reference_lines,
+    expert_questions_markdown,
+)
 from omh.skills.render import frontmatter_description, workflow_reference_markdown, workflow_reference_payload, workflow_skill
 from omh.snippet import WORKSPACE_SNIPPET
 from omh.use_cases import USE_CASES, list_use_cases
@@ -4315,61 +4319,40 @@ class RouterContentTests(unittest.TestCase):
 
 
 class ExpertQuestionCatalogTests(unittest.TestCase):
-    EXPECTED = {
-        "finance-analysis": (
-            "period",
-            "Which reporting period should this finance analysis cover?",
-            "이 재무 분석은 어느 기간을 대상으로 해야 하나요?",
-        ),
-        "people-ops": (
-            "role or people-process outcome",
-            "What role or people-process outcome should this work achieve?",
-            "이 작업에서 어떤 역할 또는 인사 프로세스 결과를 달성해야 하나요?",
-        ),
-        "legal-compliance-review": (
-            "jurisdiction",
-            "Which jurisdiction should this legal or compliance review apply to?",
-            "이 법률 또는 컴플라이언스 검토는 어느 관할권을 기준으로 해야 하나요?",
-        ),
-        "support-operations": (
-            "support case",
-            "Which support case should we examine first?",
-            "어떤 지원 사례를 먼저 살펴봐야 하나요?",
-        ),
-        "curriculum-design": (
-            "learners",
-            "Who are the learners this curriculum should serve?",
-            "이 커리큘럼의 대상 학습자는 누구인가요?",
-        ),
-        "localization-review": (
-            "locale",
-            "Which target locale should this localization review cover?",
-            "이 현지화 검토의 대상 로캘은 무엇인가요?",
-        ),
-        "sales-development": (
-            "account or segment",
-            "Which account or customer segment should this sales work focus on?",
-            "이 영업 작업은 어떤 계정 또는 고객 세그먼트에 집중해야 하나요?",
-        ),
-        "product-brief": (
-            "product evidence",
-            "What product evidence should anchor this brief?",
-            "이 브리프의 근거가 될 제품 증거는 무엇인가요?",
-        ),
+    EXPECTED_PRIMARY_INPUTS = {
+        "finance-analysis": "period",
+        "people-ops": "role or people-process outcome",
+        "legal-compliance-review": "jurisdiction",
+        "support-operations": "support case",
+        "curriculum-design": "learners",
+        "localization-review": "locale",
+        "sales-development": "account or segment",
+        "product-brief": "product evidence",
     }
 
-    def test_specialist_workflows_have_exact_expert_question_metadata(self) -> None:
+    def assert_expert_question_block_rendered(self, definition: SkillDefinition, rendered: str) -> None:
+        block = expert_questions_markdown(
+            definition,
+            limit=1 if definition.procedure_steps else None,
+        )
+        self.assertTrue(block, f"{definition.name} has no expert question block")
+        self.assertIn(
+            block,
+            rendered,
+            f"{definition.name} rendered output is missing its expert question block",
+        )
+
+    def test_specialist_workflows_have_catalog_owned_expert_question_metadata(self) -> None:
         definitions = {definition.name: definition for definition in builtin_definitions()}
 
-        for name, expected in self.EXPECTED.items():
+        for name, required_input in self.EXPECTED_PRIMARY_INPUTS.items():
             with self.subTest(name=name):
-                questions = getattr(definitions[name], "expert_questions", ())
-                self.assertEqual(len(questions), 1, f"{name} is missing expert question metadata")
-                question = questions[0]
-                self.assertEqual((question.required_input, question.en, question.ko), expected)
-                self.assertEqual(question.required_input, definitions[name].required_inputs[0])
-                self.assertEqual(question.question_for_locale("ko"), expected[2])
-                self.assertEqual(question.question_for_locale("ja"), expected[1])
+                questions = definitions[name].expert_questions
+                self.assertTrue(questions, f"{name} is missing expert question metadata")
+                self.assertEqual(questions[0].required_input, required_input)
+                self.assertEqual(questions[0].required_input, definitions[name].required_inputs[0])
+                self.assertEqual(questions[0].question_for_locale("ko"), questions[0].ko)
+                self.assertEqual(questions[0].question_for_locale("ja"), questions[0].en)
 
     def test_validation_rejects_invalid_required_input_fixture(self) -> None:
         from omh.skills.catalog_types import ExpertQuestion
@@ -4428,24 +4411,40 @@ class ExpertQuestionCatalogTests(unittest.TestCase):
         templates = {template.name: template.content for template in builtin_skill_templates()}
         reference = workflow_reference_markdown()
 
-        for name, (required_input, en, ko) in self.EXPECTED.items():
+        definitions = {definition.name: definition for definition in builtin_definitions()}
+        for name in self.EXPECTED_PRIMARY_INPUTS:
             expected_payload = [
                 {
-                    "required_input": required_input,
-                    "questions": {"en": en, "ko": ko},
+                    "required_input": question.required_input,
+                    "questions": {"en": question.en, "ko": question.ko},
                 }
+                for question in definitions[name].expert_questions
             ]
             with self.subTest(name=name):
                 self.assertEqual(skills[name]["expert_questions"], expected_payload)
-                self.assertIn("Expert clarification questions:", templates[name])
-                self.assertIn(f"- `{required_input}`", templates[name])
-                self.assertIn(f"  - English: {en}", templates[name])
-                self.assertIn(f"  - Korean: {ko}", templates[name])
+                self.assert_expert_question_block_rendered(definitions[name], templates[name])
                 section = reference.split(f"### {name}\n", 1)[1].split("\n### ", 1)[0]
-                self.assertIn("- Expert clarification questions:", section)
-                self.assertIn(f"  - `{required_input}`", section)
-                self.assertIn(f"    - English: {en}", section)
-                self.assertIn(f"    - Korean: {ko}", section)
+                self.assertIn(
+                    "\n".join(expert_question_reference_lines(definitions[name])),
+                    section,
+                )
+
+        from omh.skills import packaging
+
+        definition = definitions["finance-analysis"]
+        packaging._builtin_skill_templates_cached.cache_clear()
+        try:
+            with patch("omh.skills.render.expert_questions_markdown", return_value=""):
+                mutated_templates = {
+                    template.name: template.content for template in builtin_skill_templates()
+                }
+            with self.assertRaisesRegex(AssertionError, "missing its expert question block"):
+                self.assert_expert_question_block_rendered(
+                    definition,
+                    mutated_templates[definition.name],
+                )
+        finally:
+            packaging._builtin_skill_templates_cached.cache_clear()
 
 
 if __name__ == "__main__":

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from .catalog import installable_skill_definitions
+from .catalog import installable_skill_definitions, workflow_reference_definitions
+from .procedure_rendering import specialist_procedure_reference_markdown
 from .render import (
     SkillReferenceTemplate,
     SkillTemplate,
@@ -39,6 +40,15 @@ def builtin_skill_reference_templates() -> list[SkillReferenceTemplate]:
         *context_reference_templates(),
         *buzz_reference_templates(),
         *loop_reference_templates(),
+        *[
+            SkillReferenceTemplate(
+                definition.name,
+                "references/procedure.md",
+                specialist_procedure_reference_markdown(definition),
+            )
+            for definition in workflow_reference_definitions()
+            if definition.procedure_steps
+        ],
         *design_reference_templates(),
     ]
 

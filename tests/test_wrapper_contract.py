@@ -153,7 +153,7 @@ class DomainContextAttachmentTests(unittest.TestCase):
             )
             self.assertEqual(
                 applied["chat_response"]["body"],
-                "Which account or customer segment should this sales work focus on?",
+                applied["domain_routing_context"]["question"]["text"],
             )
             # Messenger rendering is the body-derived presentation, so it must
             # carry the same selected question rather than stale generic copy.

@@ -16,7 +16,7 @@ This is a Hermes-native `finance-analysis` workflow skill.
 
 ## Why This Exists
 
-`finance-analysis` turns bounded accounting and finance context into a decision brief without presenting a prepared calculation as an authoritative financial action.
+`finance-analysis` prepares a source-bounded decision brief without claiming an authoritative financial action.
 
 ## Do Not Use When
 
@@ -88,15 +88,15 @@ Required inputs:
 
 Expert clarification questions:
 - `period`
-  - English: Which reporting period should this finance analysis cover?
-  - Korean: 이 재무 분석은 어느 기간을 대상으로 해야 하나요?
+  - English: What period, cutoff, reporting entity/perimeter, currency/units, accounting basis, comparator version, and close status apply?
+  - Korean: 어떤 기간, 마감 기준일, 보고 법인과 범위, 통화와 단위, 회계 기준, 비교 버전, 마감 상태를 적용해야 하나요?
 
 Expected outputs:
 
-- period and source-boundary statement
-- actual-versus-plan and variance narrative with calculation/assumption gaps
-- cash, close, control, or decision-risk register
-- decision questions and next route such as strategy-brief, data-analysis, or human finance review
+- finance_scope_source_record/v1
+- finance_reconciliation_analysis_schedule/v1
+- finance_risk_register/v1
+- finance_decision_brief/v1
 
 Artifact expectations:
 
@@ -106,6 +106,8 @@ Safety rules:
 
 - State source and calculation assumptions before presenting a variance.
 - Do not imply an ERP, bank, ledger, tax, payment, or filing action occurred.
+
+Procedure: load `references/procedure.md`.
 
 ## Runtime Evidence
 
