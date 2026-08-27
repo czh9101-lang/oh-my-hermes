@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from ..delegation_routing import read_delegation_route, write_delegation_route
 from ..hermes_delegation import (
     HERMES_MIXTURE_CATEGORY_CHAINS,
+    append_delegation_route_provenance,
     chain_alias_for,
     load_mixture_chain_overrides,
     load_model_provider_routes,
@@ -173,6 +175,14 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
 
     if action == "clear":
         result = write_delegation_route(hermes_home, clear=True)
+        if result.get("status") == "cleared":
+            # A cleared route must supersede the head/fallback record that
+            # preceded it, or a later child on a coincidentally matching
+            # model would still inherit that record's label.
+            result["route_provenance"] = append_delegation_route_provenance(
+                {"origin": "cleared", "written_at": time.time()},
+                omh_home,
+            )
         result["evidence_boundary"] = _EVIDENCE_BOUNDARY
         return json.dumps(attach_public_observation(result, observation), sort_keys=True)
 
@@ -279,6 +289,15 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
             )
             if result.get("status") == "cleared":
                 result["status"] = "exhausted_to_inherit"
+                result["route_provenance"] = append_delegation_route_provenance(
+                    {
+                        "origin": "exhausted_to_inherit",
+                        "category": category,
+                        "from_alias": current_alias,
+                        "written_at": time.time(),
+                    },
+                    omh_home,
+                )
             result["category"] = category
             result["from"] = current_model
             result["evidence_boundary"] = _EVIDENCE_BOUNDARY
@@ -308,6 +327,19 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
             result["applied"]["alias"] = next_model
             result["category"] = category
             result["from"] = current_model
+            result["route_provenance"] = append_delegation_route_provenance(
+                {
+                    "origin": "fallback",
+                    "category": category,
+                    "alias": next_model,
+                    "wire_model": wire_model,
+                    "provider": next_provider,
+                    "reasoning_effort": next_effort,
+                    "from_alias": current_alias,
+                    "written_at": time.time(),
+                },
+                omh_home,
+            )
             result["fallback_candidates"] = [
                 _chain_entry(alias, chain_effort, provider_routes)
                 for alias, chain_effort in chain[index + 2 :]
@@ -374,6 +406,18 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
     if result.get("status") == "routed":
         result["applied"]["alias"] = alias
         result["category"] = category
+        result["route_provenance"] = append_delegation_route_provenance(
+            {
+                "origin": "head" if category and not model else "explicit",
+                "category": category,
+                "alias": alias,
+                "wire_model": wire_model,
+                "provider": provider,
+                "reasoning_effort": effort,
+                "written_at": time.time(),
+            },
+            omh_home,
+        )
         chain = chains.get(category, ())
         result["fallback_candidates"] = [
             _chain_entry(alias, chain_effort, provider_routes)

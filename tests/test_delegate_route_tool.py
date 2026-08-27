@@ -19,6 +19,7 @@ from omh.plugin_bundle.omh.delegation_routing import (
     read_delegation_route,
     write_delegation_route,
 )
+from omh.plugin_bundle.omh.hermes_delegation import load_delegation_route_provenance
 from omh.plugin_bundle.omh.tools.delegate_route_tool import omh_delegate_route_handler
 
 
@@ -650,3 +651,169 @@ class DelegateRouteToolTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StockConfigRouteTest(unittest.TestCase):
+    """Hermes's own stock config spells "inherit" as empty delegation values.
+
+    Observed live: a vanilla install ships `model: ''` / `provider: ''`, the
+    old reader classified the empty quoted string as an unsupported mapping,
+    every category set was refused, and the lanes silently dispatched as
+    inherit while the HUD had no route to explain why.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name)
+        self.config = self.home / "config.yaml"
+
+    def test_stock_empty_values_read_as_no_route_and_are_writable(self):
+        self.config.write_text(
+            "delegation:\n"
+            "  model: ''\n"
+            "  reasoning_effort: medium\n"
+            "  max_iterations: 250\n"
+            "  provider: ''\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(read_delegation_route(self.home), {"reasoning_effort": "medium"})
+
+        result = write_delegation_route(
+            self.home, model="kimi", reasoning_effort="high", provider="og"
+        )
+
+        self.assertEqual(result["status"], "routed")
+        text = self.config.read_text(encoding="utf-8")
+        self.assertIn("max_iterations: 250", text)
+        self.assertIn("model: 'kimi'", text)
+        self.assertNotIn("model: ''", text)
+
+    def test_null_values_are_the_same_inherit_family(self):
+        for value in (" null", " ~"):
+            with self.subTest(value=value):
+                self.config.write_text(
+                    f"delegation:\n  model:{value}\n  provider: og\n", encoding="utf-8"
+                )
+                self.assertEqual(read_delegation_route(self.home), {"provider": "og"})
+                self.assertEqual(
+                    write_delegation_route(self.home, model="kimi")["status"], "routed"
+                )
+
+    def test_a_bare_empty_value_stays_refused_because_it_may_head_a_block(self):
+        # `model:` with nothing after the colon may be a block-mapping header;
+        # treating it as an empty scalar would let the writer drop the header
+        # and orphan its more-indented children into unparseable YAML.
+        content = (
+            "delegation:\n"
+            "  model:\n"
+            "    primary: 'gpt-5'\n"
+            "    secondary: 'kimi'\n"
+            "  provider: og\n"
+        )
+        self.config.write_text(content, encoding="utf-8")
+        before = self.config.read_bytes()
+
+        self.assertEqual(read_delegation_route(self.home), {})
+        result = write_delegation_route(self.home, model="sonnet")
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("unsupported delegation mapping", result["error"])
+        self.assertEqual(self.config.read_bytes(), before)
+
+    def test_a_plain_scalar_with_a_deeper_continuation_line_is_refused(self):
+        # null, ~, and ordinary tokens are PLAIN scalars, which YAML
+        # continues onto a more-indented following line: OMH would read one
+        # value while Hermes resolves the continuation, and the writer would
+        # orphan that continuation. The lookahead refuses all three shapes.
+        for value in ("null", "~", "sonnet"):
+            with self.subTest(value=value):
+                content = f"delegation:\n  model: {value}\n    junk line\n"
+                self.config.write_text(content, encoding="utf-8")
+                before = self.config.read_bytes()
+
+                self.assertEqual(read_delegation_route(self.home), {})
+                result = write_delegation_route(self.home, model="kimi")
+
+                self.assertEqual(result["status"], "error")
+                self.assertIn("unsupported delegation mapping", result["error"])
+                self.assertEqual(self.config.read_bytes(), before)
+
+    def test_a_deeper_comment_after_a_null_value_is_not_a_continuation(self):
+        self.config.write_text(
+            "delegation:\n  model: null\n    # a comment, not a value\n  provider: og\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(read_delegation_route(self.home), {"provider": "og"})
+        self.assertEqual(write_delegation_route(self.home, model="kimi")["status"], "routed")
+
+    def test_an_empty_last_occurrence_unsets_the_earlier_value(self):
+        self.config.write_text(
+            "delegation:\n  model: first\n  model: ''\n", encoding="utf-8"
+        )
+        self.assertEqual(read_delegation_route(self.home), {})
+
+    def test_the_refusal_names_the_inherit_consequence(self):
+        # A refused write is exactly the moment a lane silently inherits; the
+        # error must say so, so the calling agent never labels the lane with
+        # the category it asked for.
+        self.config.write_text("delegation:\n  model: true\n", encoding="utf-8")
+        result = write_delegation_route(self.home, model="kimi")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("unsupported delegation mapping", result["error"])
+        self.assertIn("inherits the parent model", result["error"])
+
+
+class RouteProvenanceRecordingTest(unittest.TestCase):
+    """Every successful route write records why the next dispatch runs what it runs."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name)
+        self.config = self.home / "config.yaml"
+        self.omh_home = self.home / ".omh"
+
+    def _call(self, **args) -> dict:
+        return json.loads(
+            omh_delegate_route_handler(
+                {"hermes_home": str(self.home), "omh_home": str(self.omh_home), **args}
+            )
+        )
+
+    def test_set_fallback_and_exhaustion_each_record_their_origin(self):
+        first = self._call(action="set", category="quick")
+        self.assertEqual(first["route_provenance"], "recorded")
+        self._call(action="fallback", category="quick")
+        self._call(action="fallback", category="quick")
+        self._call(action="fallback", category="quick")
+        last = self._call(action="fallback", category="quick")
+        self.assertEqual(last["status"], "exhausted_to_inherit")
+        self.assertEqual(last["route_provenance"], "recorded")
+
+        records = load_delegation_route_provenance(self.omh_home)
+        self.assertEqual(
+            [record["origin"] for record in records],
+            ["head", "fallback", "fallback", "fallback", "exhausted_to_inherit"],
+        )
+        self.assertEqual(records[0]["alias"], "glm-5.2-ultrafast")
+        self.assertEqual(records[1]["from_alias"], "glm-5.2-ultrafast")
+        self.assertEqual(records[1]["alias"], "kimi-k3")
+        self.assertEqual(records[-1]["category"], "quick")
+        self.assertEqual(records[-1]["from_alias"], "claude-fable-5")
+
+    def test_clear_records_a_superseding_cleared_origin(self):
+        # Without this record, a later child on a coincidentally matching
+        # model would still inherit the pre-clear record's label.
+        self._call(action="set", category="quick")
+        result = self._call(action="clear")
+        self.assertEqual(result["route_provenance"], "recorded")
+        records = load_delegation_route_provenance(self.omh_home)
+        self.assertEqual([record["origin"] for record in records], ["head", "cleared"])
+
+    def test_an_explicit_model_override_records_explicit_origin(self):
+        self._call(action="set", category="quick", model="my-model")
+        records = load_delegation_route_provenance(self.omh_home)
+        self.assertEqual(records[-1]["origin"], "explicit")
+        self.assertEqual(records[-1]["category"], "quick")
+        self.assertEqual(records[-1]["wire_model"], "my-model")
