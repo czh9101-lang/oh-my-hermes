@@ -102,6 +102,12 @@ Artifact expectations:
 
 - prepared support case brief when a wrapper captures it
 
+Artifact contracts:
+
+This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+
+- contract_id: `support-operations`; enforcement_level: `guidance_only`; consumer_id: `none`
+
 Safety rules:
 
 - Keep customer-safe facts, unknowns, and escalation recommendations distinct.

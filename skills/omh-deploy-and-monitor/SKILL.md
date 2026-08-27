@@ -98,6 +98,12 @@ Artifact expectations:
 
 - release operation status record when the wrapper captures deploy or monitor observations
 
+Artifact contracts:
+
+This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+
+- contract_id: `deploy-and-monitor`; enforcement_level: `guidance_only`; consumer_id: `none`
+
 Safety rules:
 
 - Do not claim deployment, health checks, rollback, or incident response happened from a prepared checklist.

@@ -430,6 +430,23 @@ def _quality_rubric_sections(definition: SkillDefinition) -> str:
 {_tuple_list(definition.recovery_notes)}"""
 
 
+def _artifact_contract_block(definition: SkillDefinition) -> str:
+    if not definition.artifact_contracts:
+        return ""
+    rows = "\n".join(
+        f"- contract_id: `{ref.contract_id}`; enforcement_level: `{ref.enforcement_level}`; "
+        f"consumer_id: `{ref.consumer_id or 'none'}`"
+        for ref in definition.artifact_contracts
+    )
+    return f"""
+
+Artifact contracts:
+
+This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+
+{rows}"""
+
+
 def _skill_metadata_block(definition: SkillDefinition) -> str:
     required_inputs = _tuple_list(definition.required_inputs)
     expert_questions = expert_questions_markdown(
@@ -462,7 +479,7 @@ Expected outputs:
 
 Artifact expectations:
 
-{_tuple_list(definition.artifact_expectations)}
+{_tuple_list(definition.artifact_expectations)}{_artifact_contract_block(definition)}
 
 Safety rules:
 
@@ -2372,6 +2389,19 @@ def _workflow_reference_markdown_cached() -> str:
                 *[f"  - {item}" for item in definition.expected_outputs],
                 "- Artifact expectations:",
                 *[f"  - {item}" for item in definition.artifact_expectations],
+                *(
+                    [
+                        "- Artifact contract enforcement:",
+                        "  - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.",
+                        *[
+                            f"  - contract_id: `{ref.contract_id}`; enforcement_level: `{ref.enforcement_level}`; "
+                            f"consumer_id: `{ref.consumer_id or 'none'}`"
+                            for ref in definition.artifact_contracts
+                        ],
+                    ]
+                    if definition.artifact_contracts
+                    else []
+                ),
                 "- Safety rules:",
                 *[f"  - {item}" for item in definition.safety_rules],
                 *procedure_reference_lines(definition),
@@ -2530,6 +2560,14 @@ def _skill_payload(definition: SkillDefinition) -> dict[str, object]:
         ),
         "expected_outputs": list(definition.expected_outputs),
         "artifact_expectations": list(definition.artifact_expectations),
+        "artifact_contracts": [
+            {
+                "contract_id": ref.contract_id,
+                "enforcement_level": ref.enforcement_level,
+                "consumer_id": ref.consumer_id,
+            }
+            for ref in definition.artifact_contracts
+        ],
         "safety_rules": list(definition.safety_rules),
     }
 

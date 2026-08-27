@@ -98,9 +98,15 @@ Expected outputs:
 
 Artifact expectations:
 
-- readiness_matrix/v1 covering build, tests, CI, security, performance, accessibility when relevant, deploy, rollback, observability, docs, support, and owners
+- readiness_matrix/v1 covering build, tests, CI, security/privacy, performance, observability, rollback, docs/support, and release communication
 - release_gate_verdict/v1 with GO, HOLD, or BLOCK plus missing evidence
 - rollback_and_monitoring_plan/v1 with health signals, owner, threshold, and recovery path
+
+Artifact contracts:
+
+This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+
+- contract_id: `readiness_matrix/v1`; enforcement_level: `executable_validated`; consumer_id: `parse_readiness_matrix`
 
 Safety rules:
 

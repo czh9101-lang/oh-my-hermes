@@ -96,6 +96,12 @@ Artifact expectations:
 
 - agent-ops-review/v1 metadata-only runtime or wrapper card when recorded
 
+Artifact contracts:
+
+This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+
+- contract_id: `agent_operator_productivity/v1`; enforcement_level: `executable_validated`; consumer_id: `validate_agent_operator_productivity_card`
+
 Safety rules:
 
 - An agent ops review card is not source retrieval, executor dispatch, coding progress, implementation, review, verification, CI, merge, platform delivery, provider billing, or live runtime telemetry evidence. If Hermes is the coding owner, summarize `hermes_coding_harness/v1` stage, lane owner, next action, and missing evidence.

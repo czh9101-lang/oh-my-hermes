@@ -1508,6 +1508,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - missing repro, account, entitlement, or approval evidence list
 - Artifact expectations:
   - prepared support case brief when a wrapper captures it
+- Artifact contract enforcement:
+  - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+  - contract_id: `support-operations`; enforcement_level: `guidance_only`; consumer_id: `none`
 - Safety rules:
   - Keep customer-safe facts, unknowns, and escalation recommendations distinct.
   - Do not claim ticket mutation, message send, refund, account action, or case outcome.
@@ -1909,6 +1912,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - follow-up actions
 - Artifact expectations:
   - ops review record or status artifact when a wrapper captures it
+- Artifact contract enforcement:
+  - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+  - contract_id: `ops-review`; enforcement_level: `guidance_only`; consumer_id: `none`
 - Safety rules:
   - Do not infer status from missing evidence.
   - Separate observed facts, risks, blockers, decisions, and follow-up actions.
@@ -2686,6 +2692,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - minimal_fix_handoff/v1 names the selected executor, affected files, smallest patch direction, and rejected broad refactors
   - rerun_plan/v1 orders targeted rerun, broader local check, CI rerun, and stale-check blocker
   - build_failure_triage_verdict/v1 returns FIX_READY, NEEDS_MORE_LOGS, BLOCKED_BY_ENVIRONMENT, or ROUTE_TO_VERIFICATION_GATE
+- Artifact contract enforcement:
+  - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+  - contract_id: `build_failure_triage_plan/v1`; enforcement_level: `guidance_only`; consumer_id: `none`
 - Safety rules:
   - Do not claim the build, tests, CI, DCO, or merge-readiness are fixed from a triage plan.
   - Do not install dependencies, clear caches, rerun CI, or edit code unless a separate observed executor or operator action performs it.
@@ -2816,9 +2825,12 @@ These surfaces are generated command references, not installed Hermes workflow s
   - risk_register/v1
   - not-evidence boundary
 - Artifact expectations:
-  - readiness_matrix/v1 covering build, tests, CI, security, performance, accessibility when relevant, deploy, rollback, observability, docs, support, and owners
+  - readiness_matrix/v1 covering build, tests, CI, security/privacy, performance, observability, rollback, docs/support, and release communication
   - release_gate_verdict/v1 with GO, HOLD, or BLOCK plus missing evidence
   - rollback_and_monitoring_plan/v1 with health signals, owner, threshold, and recovery path
+- Artifact contract enforcement:
+  - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+  - contract_id: `readiness_matrix/v1`; enforcement_level: `executable_validated`; consumer_id: `parse_readiness_matrix`
 - Safety rules:
   - Do not claim production deploy, security scan, live traffic, monitoring health, rollback readiness, or support readiness without observed evidence.
   - Do not perform deploy, infra, credential, production, or external-platform actions from the audit lane.
@@ -3282,6 +3294,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - prompt_injection_risk_review/v1 with untrusted input boundaries and tool-use constraints
   - safe_action_policy/v1 with allowed, confirmation-gated, blocked, and observed-only actions
   - plugin_risk_audit/v1 with bounded aggregate local risk categories and no source disclosure
+- Artifact contract enforcement:
+  - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+  - contract_id: `security_safety_review_plan/v1`; enforcement_level: `guidance_only`; consumer_id: `none`
 - Safety rules:
   - Never print secret values, tokens, private keys, cookies, or credentials.
   - Do not run security scanners, mutate dependencies, change permissions, or execute destructive commands from the review lane.
@@ -3406,7 +3421,10 @@ These surfaces are generated command references, not installed Hermes workflow s
   - evidence and missing-evidence list
   - remediation follow-up boundary
 - Artifact expectations:
-  - operation_artifact/v1 reliability-review artifact when a wrapper or CLI records it
+  - omh_operation_artifact/v1 reliability-review artifact when a wrapper or CLI records it
+- Artifact contract enforcement:
+  - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+  - contract_id: `omh_operation_artifact/v1`; enforcement_level: `shared_operation_validated`; consumer_id: `validate_operation_artifact`
 - Safety rules:
   - Do not claim SLO pass, healthy error budget, incident closure, or remediation completion without source, metric, or reference evidence.
   - Do not treat a reliability narrative as verification, review, CI, merge, or deploy evidence.
@@ -3585,6 +3603,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - post-deploy status boundary
 - Artifact expectations:
   - release operation status record when the wrapper captures deploy or monitor observations
+- Artifact contract enforcement:
+  - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+  - contract_id: `deploy-and-monitor`; enforcement_level: `guidance_only`; consumer_id: `none`
 - Safety rules:
   - Do not claim deployment, health checks, rollback, or incident response happened from a prepared checklist.
   - Keep release readiness, deploy decision, monitor signals, and rollback as separate evidence steps.
@@ -6309,6 +6330,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - external_metric_provider/v1 supplied metric payload when available
   - external_metric_provider_adapter/v1 connector-ready adapter metadata when available
   - ops_service_quality_board/v1 evidence-gated service-quality board
+- Artifact contract enforcement:
+  - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+  - contract_id: `ops_service_quality_board/v1`; enforcement_level: `executable_validated`; consumer_id: `validate_ops_service_quality_board`
 - Safety rules:
   - An ops observability card is not billing truth, provider quota truth, live metric-provider access, complete tracing, SLO pass, incident closure, root-cause proof, remediation completion, performance proof, or successful workflow completion evidence.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
@@ -6424,6 +6448,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - prepared-vs-observed boundary
 - Artifact expectations:
   - agent-ops-review/v1 metadata-only runtime or wrapper card when recorded
+- Artifact contract enforcement:
+  - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+  - contract_id: `agent_operator_productivity/v1`; enforcement_level: `executable_validated`; consumer_id: `validate_agent_operator_productivity_card`
 - Safety rules:
   - An agent ops review card is not source retrieval, executor dispatch, coding progress, implementation, review, verification, CI, merge, platform delivery, provider billing, or live runtime telemetry evidence. If Hermes is the coding owner, summarize `hermes_coding_harness/v1` stage, lane owner, next action, and missing evidence.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
@@ -6552,6 +6579,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - propagation_gap_map/v1 for missing context, lost stack, ignored async rejection, empty catch, null/empty default, or log-only handling
   - false_green_status_review/v1 comparing PASS/green claims against observed checks and missing signals
   - remediation_handoff/v1 only after findings are accepted and the selected owner is explicit
+- Artifact contract enforcement:
+  - This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+  - contract_id: `failure_signal_audit_plan/v1`; enforcement_level: `guidance_only`; consumer_id: `none`
 - Safety rules:
   - A failure signal audit is not remediation, code modification, runtime repair, console/network pass, incident closure, verification, review, CI, merge-readiness, merge, or proof that hidden failures no longer exist.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
@@ -8234,7 +8264,7 @@ Evaluate release, deploy, security, observability, rollback, docs, and support r
   - deploy and live-health claims remain observed-only
 - Verification:
   - validate readiness_matrix/v1
-  - check build/test/CI/security/observability/rollback/doc/support coverage
+  - check build/tests/CI/security-privacy/performance/observability/rollback/docs-support/release-communication coverage
   - verify release_gate_verdict/v1 cites observed evidence or missing-evidence gaps
   - check remediation handoffs separately from audit verdict
 - Evidence ladder:
@@ -9048,7 +9078,7 @@ Review incidents, SLOs, error budgets, and remediation follow-ups with strict ob
   - missing evidence is recorded
   - closure claims remain observed-only
 - Verification:
-  - validate operation_artifact/v1
+  - validate omh_operation_artifact/v1
   - require source/metric/reference for observed claims
   - check remediation status separately
 - Evidence ladder:

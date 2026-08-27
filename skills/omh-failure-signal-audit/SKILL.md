@@ -106,6 +106,12 @@ Artifact expectations:
 - false_green_status_review/v1 comparing PASS/green claims against observed checks and missing signals
 - remediation_handoff/v1 only after findings are accepted and the selected owner is explicit
 
+Artifact contracts:
+
+This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+
+- contract_id: `failure_signal_audit_plan/v1`; enforcement_level: `guidance_only`; consumer_id: `none`
+
 Safety rules:
 
 - A failure signal audit is not remediation, code modification, runtime repair, console/network pass, incident closure, verification, review, CI, merge-readiness, merge, or proof that hidden failures no longer exist.

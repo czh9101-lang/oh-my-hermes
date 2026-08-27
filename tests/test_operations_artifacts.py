@@ -549,6 +549,20 @@ class OperationsArtifactTests(unittest.TestCase):
         )
         self.assertEqual(validate_operation_artifact(record), [])
 
+    def test_legacy_reliability_artifact_is_read_only_and_cannot_be_relabelled_for_write(self) -> None:
+        legacy = json.loads(
+            Path("tests/fixtures/operations/legacy-reliability-artifact.json").read_text(encoding="utf-8")
+        )
+        legacy["artifact_id"] = "new-legacy-write"
+        self.assertEqual(validate_operation_artifact(legacy), [])
+        with TemporaryDirectory() as tmp:
+            paths = _paths_from_tmp(tmp)
+
+            with self.assertRaisesRegex(ValueError, "new persisted artifacts require omh_operation_artifact/v1"):
+                write_operation_artifact(paths, legacy)
+
+            self.assertEqual(list_operation_artifacts(paths), [])
+
     def test_index_is_cache_not_authority(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = _paths_from_tmp(tmp)

@@ -3776,7 +3776,7 @@ _DEFINITIONS = [
             "not-evidence boundary",
         ),
         artifact_expectations=(
-            "readiness_matrix/v1 covering build, tests, CI, security, performance, accessibility when relevant, deploy, rollback, observability, docs, support, and owners",
+            "readiness_matrix/v1 covering build, tests, CI, security/privacy, performance, observability, rollback, docs/support, and release communication",
             "release_gate_verdict/v1 with GO, HOLD, or BLOCK plus missing evidence",
             "rollback_and_monitoring_plan/v1 with health signals, owner, threshold, and recovery path",
         ),
@@ -4543,7 +4543,7 @@ _DEFINITIONS = [
         handoff_policy="Keep incident/SLO/error-budget review in Hermes; prepare remediation handoffs only after an accepted fix direction exists and record closure only from observed evidence.",
         required_inputs=("service or incident scope", "time window", "metric/source references", "known remediation items or gaps"),
         expected_outputs=("reliability review", "evidence and missing-evidence list", "remediation follow-up boundary"),
-        artifact_expectations=("operation_artifact/v1 reliability-review artifact when a wrapper or CLI records it",),
+        artifact_expectations=("omh_operation_artifact/v1 reliability-review artifact when a wrapper or CLI records it",),
         safety_rules=(
             "Do not claim SLO pass, healthy error budget, incident closure, or remediation completion without source, metric, or reference evidence.",
             "Do not treat a reliability narrative as verification, review, CI, merge, or deploy evidence.",

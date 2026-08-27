@@ -103,6 +103,12 @@ Artifact expectations:
 - external_metric_provider_adapter/v1 connector-ready adapter metadata when available
 - ops_service_quality_board/v1 evidence-gated service-quality board
 
+Artifact contracts:
+
+This label denotes the machine-enforcement level, not a skill quality score and not an observed evidence state.
+
+- contract_id: `ops_service_quality_board/v1`; enforcement_level: `executable_validated`; consumer_id: `validate_ops_service_quality_board`
+
 Safety rules:
 
 - An ops observability card is not billing truth, provider quota truth, live metric-provider access, complete tracing, SLO pass, incident closure, root-cause proof, remediation completion, performance proof, or successful workflow completion evidence.

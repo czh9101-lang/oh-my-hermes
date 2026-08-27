@@ -225,7 +225,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # stay English even in a non-English conversation, since the HUD todo
 # checklist is an operator surface under the repo's English-by-default
 # output contract); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 719033
+# 719033 -> 721424: ten operations skills now expose their artifact contract
+# id, machine-enforcement level, resolvable consumer (when validated), and the
+# enforcement-versus-evidence boundary (#1119; +2391 chars in the merged
+# renderer); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 721424
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
