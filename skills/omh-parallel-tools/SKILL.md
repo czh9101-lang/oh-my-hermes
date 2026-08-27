@@ -1,6 +1,6 @@
 ---
-name: omh-parallel-tools
-description: [omh] Hermes Parallel Tools workflow: check version currency and parallel-tool capability status, then apply an update only after diff approval. Use when the user says: parallel-tools, parallel tools, hermes parallel tools setup, update hermes for parallel tools, check parallel tool support, enable parallel tool calls, verify parallel tools capability, check hermes version for parallel tools.
+name: "omh-parallel-tools"
+description: "[omh] Hermes Parallel Tools workflow: check version currency and parallel-tool capability status, then apply an update only after diff approval. Use when the user says: parallel-tools, parallel tools, hermes parallel tools setup, update hermes for parallel tools, check parallel tool support, enable parallel tool calls, verify parallel tools capability, check hermes version for parallel tools."
 metadata:
   hermes:
     tags: [workflow, oh-my-hermes, hermes-setup]

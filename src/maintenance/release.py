@@ -204,25 +204,28 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # say-not-observed carve-out for directly asked figures (renders into all
 # three handoff-guide skill bodies; the common rail carries the same text but
 # sits outside this metric); warranted growth.
-# 716418 -> 717027: visual-qa replaced timestamp freshness prose with exact
+# 716418 -> 716734: JSON-compatible YAML quoting protects every emitted
+# frontmatter name and description from mapping, comment, and delimiter syntax
+# (+316 chars across the generated skill bodies); warranted growth.
+# 716734 -> 717343: visual-qa replaced timestamp freshness prose with exact
 # source-lineage and required-viewport contracts (+609 chars across the
 # generated skill body); warranted growth.
-# 717027 -> 717157: the three specialist workflows gained normalized routing
+# 717343 -> 717473: the three specialist workflows gained normalized routing
 # cues for local-negation and compound-intent handling (#1112, +130 chars);
 # warranted growth.
-# 717157 -> 718229: the design family gained its named craft bar and pointers
+# 717473 -> 718545: the design family gained its named craft bar and pointers
 # into four on-demand references (+1072 chars across the frontend,
 # design-quality-gate, and design-orchestration quality bars: the named
 # senior-designer bar with flat-output-fails, the DESIGN.md-before-code
 # contract gate, primary-taste-direction selection, and reference-token
 # extraction). The reference bodies themselves load on demand and sit outside
 # this always-loaded budget; warranted growth.
-# 718229 -> 718717: the ultrawork and ralplan todo-init quality-bar rules
+# 718545 -> 719033: the ultrawork and ralplan todo-init quality-bar rules
 # gained an English-labels clause (+488 chars: phase names and task titles
 # stay English even in a non-English conversation, since the HUD todo
 # checklist is an operator surface under the repo's English-by-default
 # output contract); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 718717
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 719033
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

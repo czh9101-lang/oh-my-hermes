@@ -248,3 +248,18 @@ def _matching_observation(observed: object, selected_policy: Mapping[str, object
         and dict(observed.get("source", {})) == dict(source)
         and observed.get("policy_identity") == policy_decision_identity(selected_policy, executor=executor, source=source)
     )
+
+
+def skill_structure_lint_report() -> dict[str, object]:
+    """Expose the offline skill structure lint as a governance report surface.
+
+    Governance owns "which skills may be selected"; this reports "is a tracked
+    skill structurally valid". Both are deterministic, fail-closed, and
+    metadata-only, so the report is surfaced here while the rules themselves
+    stay with the catalog contract in `src/skills/validation.py`. Runtime
+    conformance is deliberately not consulted: `src/conformance/` owns runtime
+    evidence-claim safety, which is a different verdict.
+    """
+    from ..skills.validation import skill_structure_lint_payload
+
+    return skill_structure_lint_payload()

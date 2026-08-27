@@ -16,10 +16,25 @@ from .catalog import (
 from .expert_question_validation import (
     validate_expert_questions as _validate_expert_questions,
 )
+from . import structure_lint as _structure_lint
 from .procedure_validation import validate_procedure_contract as _validate_procedure_contract
 
 
 CATALOG_VALIDATION_SCHEMA_VERSION = "catalog_validation/v1"
+SKILL_STRUCTURE_LINT_SCHEMA_VERSION = _structure_lint.SKILL_STRUCTURE_LINT_SCHEMA_VERSION
+STRUCTURE_LINT_RULE_IDS = _structure_lint.STRUCTURE_LINT_RULE_IDS
+STRUCTURE_LINT_SKILL_BODY_BYTE_CEILING = _structure_lint.STRUCTURE_LINT_SKILL_BODY_BYTE_CEILING
+
+
+def skill_structure_lint_payload(
+    *, definitions: list[SkillDefinition] | None = None
+) -> dict[str, object]:
+    full_catalog = definitions is None
+    resolved = list(builtin_definitions() if full_catalog else definitions)
+    inputs = _structure_lint.StructureLintInputs(
+        resolved, builtin_harnesses(), full_catalog, validate_skill_definition_contract
+    )
+    return _structure_lint.build_skill_structure_lint_payload(inputs)
 
 
 def validate_catalog_contract() -> dict[str, object]:
@@ -68,13 +83,7 @@ def _collision_declaration_errors(definitions: list[SkillDefinition]) -> list[st
 
 
 def validate_skill_definition_contract(definition: SkillDefinition) -> list[str]:
-    """Validate one definition against the same field contract the catalog gate uses.
-
-    `validate_catalog_contract()` answers "is the shipped catalog renderable".
-    A caller holding a definition that is deliberately NOT in the catalog - a
-    reviewable skill draft, for instance - needs the same per-definition answer
-    without registering anything, so the loop body is exposed rather than copied.
-    """
+    """Validate one definition against the same contract as the full catalog gate."""
     return _validate_skill_definition(definition, {harness.name for harness in builtin_harnesses()})
 
 

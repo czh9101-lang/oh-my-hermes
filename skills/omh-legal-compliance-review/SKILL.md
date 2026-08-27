@@ -1,6 +1,6 @@
 ---
-name: omh-legal-compliance-review
-description: [omh] Surface contract and compliance risks, questions, and escalation points before a legal decision or action. Use when the user says: contract review, contract liability clause, regulatory analysis, compliance review, 계약서 검토, 규제 분석, 컴플라이언스 검토.
+name: "omh-legal-compliance-review"
+description: "[omh] Surface contract and compliance risks, questions, and escalation points before a legal decision or action. Use when the user says: contract review, contract liability clause, regulatory analysis, compliance review, 계약서 검토, 규제 분석, 컴플라이언스 검토."
 metadata:
   hermes:
     tags: [workflow, oh-my-hermes, review]

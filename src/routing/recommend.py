@@ -653,7 +653,7 @@ _SKILL_POLICIES = {
             "model training, verification, review, CI, or proof that future routing is fixed."
         ),
         wrapper_guidance=(
-            "Prepare skill_portfolio_health_dashboard/v1 with catalog/generated/reference surface status, "
+            "Prepare the skill health card with catalog/generated/reference surface status, "
             "observed-only failure clusters, pending amendment review, and top safe actions while routing setup "
             "health to doctor and mutation work to reviewed implementation."
         ),

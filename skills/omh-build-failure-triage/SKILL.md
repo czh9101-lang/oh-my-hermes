@@ -1,6 +1,6 @@
 ---
-name: omh-build-failure-triage
-description: [omh] Hermes Build Failure Triage workflow: classify build, typecheck, lint, test, CI, and DCO failures into minimal safe fix handoffs. Use when the user says: build-failure-triage, build failure triage, build failure, 빌드 실패, 배포 파이프라인, 파이프라인 깨짐, 파이프라인 실패, 배포 실패.
+name: "omh-build-failure-triage"
+description: "[omh] Hermes Build Failure Triage workflow: classify build, typecheck, lint, test, CI, and DCO failures into minimal safe fix handoffs. Use when the user says: build-failure-triage, build failure triage, build failure, 빌드 실패, 배포 파이프라인, 파이프라인 깨짐, 파이프라인 실패, 배포 실패."
 metadata:
   hermes:
     tags: [workflow, oh-my-hermes, verification]

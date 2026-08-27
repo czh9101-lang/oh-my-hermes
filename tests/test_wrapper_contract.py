@@ -2740,7 +2740,7 @@ class WrapperContractTests(unittest.TestCase):
                     if workflow == "ops-observability-card"
                     else "skill_scout_recommendation/v1"
                     if workflow == "skill-scout"
-                    else "skill_portfolio_health_dashboard/v1"
+                    else "skill_health_card/v1"
                     if workflow == "skill-health"
                     else "agent_debug_report/v1"
                     if workflow == "agent-debug"

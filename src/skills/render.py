@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+import json
 import re
 
 from .catalog import (
@@ -295,8 +296,10 @@ def _frontmatter(name: str, description: str) -> str:
     phase = definition.phase if definition else "general"
     description = frontmatter_description(definition) if definition else omh_description(description)
     display_name = omh_skill_display_name(name)
+    encoded_name = json.dumps(display_name, ensure_ascii=False)
+    encoded_description = json.dumps(description, ensure_ascii=False)
     return (
-        f"---\nname: {display_name}\ndescription: {description}\nmetadata:\n"
+        f"---\nname: {encoded_name}\ndescription: {encoded_description}\nmetadata:\n"
         f"  hermes:\n    tags: [workflow, oh-my-hermes, {category}]\n"
         f"    category: {category}\n    phase: {phase}\n"
         f"    role: {definition.hermes_role if definition else 'guide'}\n"

@@ -6731,14 +6731,11 @@ These surfaces are generated command references, not installed Hermes workflow s
   - delivery or status expectation
   - known missing evidence
 - Expected outputs:
-  - skill_portfolio_health_dashboard/v1
-  - skill_failure_pattern_clusters/v1 when observed
-  - pending_skill_amendment_review/v1
-  - skill_health_action_plan/v1
+  - catalog, generated, reference, harness, and capability-surface status
+  - observed failure signals, or an explicit statement that none were supplied
+  - pending amendment review slots and top safe actions with owner lane and verification path
 - Artifact expectations:
-  - skill_portfolio_health_dashboard/v1 with catalog, generated, reference, harness, and capability-surface status
-  - skill_failure_pattern_clusters/v1 only from supplied traces, tests, reviews, missed routes, or wrapper observations
-  - skill_health_action_plan/v1 with top actions, owner lane, verification path, and non-mutation boundary
+  - skill_health_card/v1 metadata-only wrapper card recording surface status, observed-only failure signals, pending amendments, and the non-mutation boundary
 - Safety rules:
   - A skill health dashboard is not install/setup health, live skill execution success, automatic skill mutation, model training, verification, review, CI, or proof that future routing is fixed.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
@@ -11046,10 +11043,10 @@ Prepare a metadata-only health dashboard for OMH skills, observed failure signal
   - observed failure signals or explicit missing-signal statement
   - pending amendment sources when available
 - Outputs:
-  - skill_portfolio_health_dashboard/v1
-  - skill_failure_pattern_clusters/v1 when observed
-  - pending_skill_amendment_review/v1
-  - skill_health_action_plan/v1
+  - catalog, generated, reference, harness, and capability-surface status
+  - observed failure signals, or an explicit statement that none were supplied
+  - pending amendment review slots
+  - top safe actions with owner lane and verification path
 - Stop conditions:
   - card is prepared or a missing decision is surfaced
   - observed evidence is separated from prepared guidance

@@ -154,7 +154,7 @@ class JitLearnCatalogContractTests(unittest.TestCase):
             return
 
         frontmatter = template.content.split("---", 2)[1]
-        self.assertIn("\nname: omh-jit-learn\n", frontmatter)
+        self.assertIn('\nname: "omh-jit-learn"\n', frontmatter)
         self.assertIn("\n    phase: learning-target\n", frontmatter)
         self.assertIn("\n    quality_tier: source-gated\n", frontmatter)
 

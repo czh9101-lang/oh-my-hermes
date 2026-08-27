@@ -143,7 +143,7 @@ class InstallerSkillProfileTests(unittest.TestCase):
             self.assertFalse(legacy.exists(), "pre-relabel directory survived the refresh")
             self.assertIn(victim, result["flat_layout_skills_removed"])
             self.assertIn(
-                f"name: {skill_directory_name(victim)}",
+                f'name: "{skill_directory_name(victim)}"',
                 (categorized / "SKILL.md").read_text(encoding="utf-8"),
             )
 

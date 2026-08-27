@@ -3089,10 +3089,10 @@ _FEATURE_SURFACE_HARNESSES = (
             "pending amendment sources when available",
         ),
         (
-            "skill_portfolio_health_dashboard/v1",
-            "skill_failure_pattern_clusters/v1 when observed",
-            "pending_skill_amendment_review/v1",
-            "skill_health_action_plan/v1",
+            "catalog, generated, reference, harness, and capability-surface status",
+            "observed failure signals, or an explicit statement that none were supplied",
+            "pending amendment review slots",
+            "top safe actions with owner lane and verification path",
         ),
         quality_tier="skill-health-gated",
         evidence_ladder=(
