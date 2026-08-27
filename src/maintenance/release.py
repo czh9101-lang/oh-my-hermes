@@ -206,7 +206,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # sits outside this metric); warranted growth.
 # 716418 -> 716734: JSON-compatible YAML quoting now protects every emitted
 # frontmatter name and description from mapping, comment, and delimiter syntax.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 716734
+# Re-measured from the canonical `skill_context_cost_payload()` producer after
+# merging #1117's quoted-frontmatter skill/docs growth with main's design-family
+# craft bar and on-demand-reference pointers: the full profile is 717806 Python
+# str characters. The four reference bodies remain outside this always-loaded
+# metric; this ceiling exactly preserves both required growth paths.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 717806
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
