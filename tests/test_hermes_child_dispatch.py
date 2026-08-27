@@ -22,8 +22,17 @@ from omh.coding.hermes_child_dispatch import (  # noqa: E402
     CancellationToken,
     DispatchConfirmationError,
     DispatchRecursionError,
+    HermesChildEvaluationContext,
     HermesChildRequest,
     dispatch_hermes_child,
+)
+from omh.coding.hermes_child_receipts import (  # noqa: E402
+    load_hermes_child_receipt,
+    write_signed_observation,
+)
+from omh.coding.routing_observation import (  # noqa: E402
+    authenticate_child_observation,
+    build_routing_observation,
 )
 from omh.coding._hermes_child_process import (  # noqa: E402
     BoundedStreamCapture,
@@ -220,6 +229,61 @@ class HermesChildDispatchTests(unittest.TestCase):
         if os.name != "nt":
             self.assertEqual((self.root / "usage-mode").read_text(encoding="utf-8"), "0o600")
         self.assertNotIn(secret, "".join(path.read_text(encoding="utf-8") for path in self.omh_home.rglob("*") if path.is_file()))
+
+    def test_real_dispatch_seals_actual_model_and_timeout_into_evaluation_receipt(self) -> None:
+        context = HermesChildEvaluationContext(
+            "task-1",
+            "criteria-1",
+            "a" * 64,
+            "baseline",
+            "hermes",
+            "b" * 64,
+            "rev-1",
+        )
+        events = []
+        dispatch_hermes_child(
+            self.request(
+                model="actual-model",
+                timeout_seconds=3.0,
+                evaluation_context=context,
+            ),
+            dispatch_policy="ask_before_dispatch",
+            confirmed=True,
+            observe=events.append,
+        )
+        terminal = events[-1]
+        receipt_home = self.omh_home.resolve()
+        run_dir = receipt_home / "coding" / "hermes-child" / "child-456"
+        run_dir.mkdir(parents=True)
+        caller_payload = build_routing_observation(
+            route={
+                "selected_model": "caller/forged-model",
+                "selected_reasoning_effort": "high",
+                "role": "agent_maintainer",
+                "executor_profile": "hermes_child",
+                "chain": [],
+            },
+            child_dispatch=authenticate_child_observation(
+                {"status": "completed", "run_id": "child-456"}
+            ),
+            run_id="child-456",
+        )
+        caller_payload["evaluation_binding"] = {
+            "task_id": "task-1",
+            "acceptance_criteria_ref": "criteria-1",
+            "input_digest": "a" * 64,
+            "arm": "baseline",
+            "executor": "hermes",
+            "model": "forged-model",
+            "exposure_digest": "b" * 64,
+            "execution_revision": "rev-1",
+            "timeout_seconds": 1,
+        }
+        write_signed_observation(run_dir, caller_payload, terminal)
+
+        binding = load_hermes_child_receipt(receipt_home, "child-456").evaluation_binding
+        self.assertIsNotNone(binding)
+        self.assertEqual((binding.model, binding.timeout_seconds), ("actual-model", 3.0))
 
     def test_env_override_cannot_remove_parent_recursion_marker(self) -> None:
         with patch.dict(os.environ, {"OMH_ISOLATED_HERMES_PARENT": "v1.opaque.signature"}):

@@ -217,7 +217,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # stay English even in a non-English conversation, since the HUD todo
 # checklist is an operator surface under the repo's English-by-default
 # output contract); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 717978
+# 717978 -> 718026: the agent-evaluation contract now names per-task input
+# digests, per-dispatch time bounds, receipt-authenticated observed_at, and
+# the owning-OS-user limitation while replacing the older generic
+# provenance sentence (net +48 chars); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 718026
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

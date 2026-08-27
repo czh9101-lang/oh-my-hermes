@@ -1264,11 +1264,7 @@ _HARNESSES = [
             "observed run artifacts when available",
         ),
         (
-            "agent_eval_plan/v1",
-            "task_benchmark_set/v1",
-            "run_result_matrix/v1 when observed",
-            "scorecard/v1",
-            "selection_recommendation/v1",
+            "paired_run_decision/v1",
         ),
         (
             "candidate set and tasks are explicit",
@@ -1277,17 +1273,17 @@ _HARNESSES = [
             "recommendation is scenario-specific with confidence and caveats",
         ),
         (
-            "validate task_benchmark_set/v1",
+            "validate paired_run_decision/v1",
             "check same inputs and acceptance criteria across candidates",
-            "check observed run provenance before scoring",
-            "verify selection_recommendation/v1 does not claim universal superiority",
+            "check observed run provenance before comparison",
+            "verify paired_run_decision/v1 does not claim universal superiority",
         ),
-        "If no observed runs exist, prepare the benchmark design and mark the scorecard not_observed.",
+        "If no observed runs exist, prepare paired_run_decision/v1 and keep every result not_observed.",
         (
             "agent_eval_scope_recorded",
             "task_benchmark_set_prepared",
             "run_results_observed_when_available",
-            "scorecard_prepared",
+            "paired_run_decision_prepared",
             "selection_recommendation_recorded",
         ),
         "Record agent-evaluation as Hermes-retained evaluation design and synthesis; record executor runs, costs, timings, code edits, verification, and reviews only from observed artifacts.",
@@ -1302,7 +1298,7 @@ _HARNESSES = [
             "agent_eval_scope_recorded",
             "task_benchmark_set_prepared",
             "run_results_observed_when_available",
-            "scorecard_prepared",
+            "paired_run_decision_prepared",
             "selection_recommendation_recorded",
         ),
         wrapper_actions=(
@@ -1316,8 +1312,8 @@ _HARNESSES = [
             "show_status",
         ),
         overclaim_guards=(
-            "An agent_eval_plan/v1 artifact is not proof that any executor ran, edited code, used tools, incurred cost, passed tests, or completed review.",
-            "A scorecard without observed comparable runs is a benchmark design, not an evidence-backed ranking.",
+            "A prepared paired_run_decision/v1 design is not proof that any executor ran, edited code, used tools, incurred cost, passed tests, or completed review.",
+            "A paired_run_decision/v1 without authenticated comparable runs remains a prepared design, not an evidence-backed comparison.",
         ),
     ),
     HarnessDefinition(
