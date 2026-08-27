@@ -76,6 +76,34 @@ isolated child, and records `routing_observation/v1`. Status, tool count, token
 usage, and cost are shown only when Hermes produced observed telemetry; OMH
 does not estimate missing values.
 
+The same boundary has a separate, explicit loaded-skill capability probe:
+
+```bash
+omh coding hermes-child skill-load-probe --confirm-dispatch \
+  --run-id load-1 --expected-skill ulw-work --json
+omh coding hermes-child skill-load-status --run-id load-1 --json
+```
+
+This command implements `skill_load_observation/v1`. `probe_status` is
+orthogonal to `load_state`: only a validated, fresh
+`hermes_skill_inventory/v1` response bound to the generated nonce, expected-set
+digest, inventory digest, and executable fingerprint can emit `observed`.
+Observed inventories contain sorted expected, observed, missing, and unexpected
+skill-name sets. An empty expected set becomes `not_applicable` only after that
+valid response. Unsupported and failed probes omit `load_state` and every
+inventory claim, retain only closed reason codes and fingerprints, and never
+persist command output.
+
+Hermes Agent v0.20.5 at upstream `5259f565` has no such inventory command. Its
+`--skills` option preloads prompt content and `hermes skills list
+--enabled-only` lists configured candidates, but neither returns a nonce-bound
+runtime inventory. The real host probe therefore reports
+`inventory_protocol_unavailable`; child success, model self-report, static
+scheduler source, and installed/enabled listings are deliberately insufficient.
+The complete observed host capability remains blocked on an external Hermes
+machine-inventory protocol. This OMH contract does not patch Hermes, execute a
+skill body, mutate config, call a provider directly, or run by default.
+
 Model routing preferences are also an agent/operator surface:
 
 ```bash

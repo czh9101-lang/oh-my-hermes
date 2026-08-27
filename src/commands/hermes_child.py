@@ -28,6 +28,12 @@ from ..coding.routing_observation import (
     render_routing_status_rows,
     validate_routing_observation,
 )
+from ..coding.skill_load_observation import (
+    SkillLoadProbeRequest,
+    probe_skill_load,
+    skill_load_observation_is_fresh,
+    validate_skill_load_observation,
+)
 from ..installer import OmhError
 from ..local_store import atomic_write_json, read_json_object
 from ..system.metadata_safety import require_opaque_metadata_ref
@@ -111,6 +117,58 @@ def cmd_hermes_child_dispatch(args: argparse.Namespace) -> int:
     _write_observation(args, observation)
     _emit(args, observation)
     return 0 if result.status == "completed" else 1
+
+
+def cmd_hermes_child_skill_load_probe(args: argparse.Namespace) -> int:
+    if not args.confirm_dispatch:
+        raise OmhError("Hermes skill-load probe requires --confirm-dispatch")
+    _validate_run_id(args.run_id)
+    run_dir = _run_dir(args)
+    run_dir.mkdir(mode=0o700, exist_ok=True)
+    reservation_path = run_dir / "skill-load-probe.reserved"
+    try:
+        reservation = os.open(
+            reservation_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+    except FileExistsError as exc:
+        raise OmhError(f"Hermes skill-load probe run already exists: {args.run_id}") from exc
+    os.close(reservation)
+    try:
+        observation = probe_skill_load(
+            SkillLoadProbeRequest(
+                expected_skills=tuple(args.expected_skill),
+                hermes=args.hermes,
+                timeout_seconds=args.timeout,
+                termination_grace_seconds=args.termination_grace,
+            ),
+            confirmed=True,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise OmhError(str(exc)) from exc
+    _write_skill_load_observation(args, observation)
+    _emit_skill_load(args, observation)
+    return 1 if observation["probe_status"] == "probe_error" else 0
+
+
+def cmd_hermes_child_skill_load_status(args: argparse.Namespace) -> int:
+    _validate_run_id(args.run_id)
+    try:
+        observation = read_json_object(_run_dir(args) / "skill-load-observation.json")
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise OmhError(f"Hermes skill-load observation is unreadable: {exc}") from exc
+    if observation is None:
+        raise OmhError(f"Hermes skill-load probe not found: {args.run_id}")
+    if (
+        validate_skill_load_observation(observation)
+        or not _skill_load_signature_valid(args, observation)
+    ):
+        raise OmhError("Hermes skill-load observation is invalid")
+    if not skill_load_observation_is_fresh(observation):
+        raise OmhError("Hermes skill-load observation is expired")
+    _emit_skill_load(args, observation)
+    return 0
 
 
 def cmd_hermes_child_status(args: argparse.Namespace) -> int:
@@ -440,6 +498,70 @@ def _write_observation(args: argparse.Namespace, observation: dict[str, object])
     )
 
 
+def _write_skill_load_observation(
+    args: argparse.Namespace,
+    observation: dict[str, object],
+) -> None:
+    run_dir = _run_dir(args)
+    atomic_write_json(run_dir / "skill-load-observation.json", observation, private=True)
+    signature = hmac.new(
+        _observation_key(args),
+        _skill_load_signature_message(args.run_id, observation),
+        hashlib.sha256,
+    ).hexdigest()
+    atomic_write_json(
+        run_dir / "skill-load-observation.signature.json",
+        {
+            "schema_version": "skill_load_observation_signature/v2",
+            "run_id": args.run_id,
+            "hmac_sha256": signature,
+        },
+        private=True,
+    )
+
+
+def _skill_load_signature_valid(
+    args: argparse.Namespace,
+    observation: dict[str, object],
+) -> bool:
+    try:
+        signature = read_json_object(
+            _run_dir(args) / "skill-load-observation.signature.json"
+        )
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    if not isinstance(signature, dict) or set(signature) != {
+        "schema_version", "run_id", "hmac_sha256"
+    }:
+        return False
+    if (
+        signature.get("schema_version") != "skill_load_observation_signature/v2"
+        or signature.get("run_id") != args.run_id
+    ):
+        return False
+    observed = signature.get("hmac_sha256")
+    if not isinstance(observed, str):
+        return False
+    expected = hmac.new(
+        _observation_key(args),
+        _skill_load_signature_message(args.run_id, observation),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(observed, expected)
+
+
+def _skill_load_signature_message(
+    run_id: str,
+    observation: dict[str, object],
+) -> bytes:
+    return (
+        b"omh-skill-load-observation-signature/v2\0"
+        + run_id.encode("utf-8")
+        + b"\0"
+        + _canonical_observation(observation)
+    )
+
+
 def _observation_signature_valid(
     args: argparse.Namespace,
     observation: dict[str, object],
@@ -505,6 +627,17 @@ def _emit(args: argparse.Namespace, observation: dict[str, object]) -> None:
     print("\n".join(render_routing_status_rows(observation)))
 
 
+def _emit_skill_load(args: argparse.Namespace, observation: dict[str, object]) -> None:
+    if _wants_json(args):
+        _print_json(observation)
+        return
+    print(f"AUDIENCE {_AUDIENCE}")
+    print(f"PROBE {observation['probe_status']}")
+    print(f"REASON {observation['reason_code']}")
+    if "load_state" in observation:
+        print(f"LOAD {observation['load_state']}")
+
+
 def _add_request_arguments(parser: argparse.ArgumentParser, *, dispatch: bool) -> None:
     parser.add_argument("--prompt-file", default="-", help="Prompt file, or '-' for stdin (default). Prompt text is never accepted on argv.")
     parser.add_argument("--model", required=True, help="Hermes model alias metadata and --model value.")
@@ -537,6 +670,25 @@ def add_hermes_child_command(coding_sub: argparse._SubParsersAction) -> None:
     dispatch = actions.add_parser("dispatch", help="Explicitly dispatch one bounded local Hermes --oneshot child.")
     _add_request_arguments(dispatch, dispatch=True)
     dispatch.set_defaults(func=cmd_hermes_child_dispatch)
+    probe = actions.add_parser(
+        "skill-load-probe",
+        help="Explicitly probe a nonce-bound machine skill inventory; unsupported hosts stay unsupported.",
+    )
+    probe.add_argument("--confirm-dispatch", action="store_true", help="Required explicit approval to start the local inventory probe.")
+    probe.add_argument("--expected-skill", action="append", default=[], help="Expected skill name; repeat for multiple skills. An empty set is valid only after a protocol response.")
+    probe.add_argument("--run-id", required=True, help="Opaque isolated probe run id.")
+    probe.add_argument("--hermes", default="hermes", help="Hermes CLI executable path.")
+    probe.add_argument("--timeout", type=float, default=10.0, help="Hard inventory protocol timeout in seconds.")
+    probe.add_argument("--termination-grace", type=float, default=0.25, help="SIGTERM grace before SIGKILL.")
+    probe.add_argument("--json", action="store_true", help="Emit skill_load_observation/v1 JSON.")
+    probe.set_defaults(func=cmd_hermes_child_skill_load_probe)
+    probe_status = actions.add_parser(
+        "skill-load-status",
+        help="Read a fresh authenticated skill_load_observation/v1 record.",
+    )
+    probe_status.add_argument("--run-id", required=True)
+    probe_status.add_argument("--json", action="store_true")
+    probe_status.set_defaults(func=cmd_hermes_child_skill_load_status)
     status = actions.add_parser("status", help="Read the metadata-only routing observation for one child run.")
     status.add_argument("--run-id", required=True)
     status.add_argument("--json", action="store_true")
