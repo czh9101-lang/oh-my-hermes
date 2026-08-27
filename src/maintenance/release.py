@@ -206,12 +206,20 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # sits outside this metric); warranted growth.
 # 716418 -> 716734: JSON-compatible YAML quoting now protects every emitted
 # frontmatter name and description from mapping, comment, and delimiter syntax.
+# The design family then gained its named craft bar and pointers into new
+# on-demand references across frontend, design-quality-gate, and
+# design-orchestration: the senior-designer bar with flat-output-fails, the
+# DESIGN.md-before-code gate, primary-taste-direction selection, and
+# reference-token extraction. The four reference bodies remain outside this
+# always-loaded metric.
 # Re-measured from the canonical `skill_context_cost_payload()` producer after
-# merging #1117's quoted-frontmatter skill/docs growth with main's design-family
-# craft bar and on-demand-reference pointers: the full profile is 717806 Python
-# str characters. The four reference bodies remain outside this always-loaded
-# metric; this ceiling exactly preserves both required growth paths.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 717806
+# merging #1117's quoted-frontmatter skill/docs growth with that main design
+# growth: the full profile was 717806 Python str characters.
+# 717806 -> 718294: the ultrawork and ralplan todo-init quality-bar rules gained
+# the English-labels clause for short, operator-legible phase and task titles in
+# non-English conversations. Re-measured from the same canonical producer;
+# warranted growth under the HUD's English-by-default output contract.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 718294
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

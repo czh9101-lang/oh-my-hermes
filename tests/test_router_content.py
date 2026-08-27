@@ -2886,6 +2886,17 @@ class RouterContentTests(unittest.TestCase):
                 for item in ralplan_bar
             )
         )
+        # The owner runs sessions in Korean; the HUD todo checklist is an operator
+        # surface and must stay English-labeled even when the conversation runs in
+        # another language, so both todo-init instructions carry the English-labels
+        # clause -- ultrawork's phase todo and ralplan's plan todo.
+        english_labels_clause = "written in English"
+        self.assertTrue(any(english_labels_clause in item for item in ralplan_bar))
+        ultrawork_bar = definitions["ultrawork"].quality_bar
+        self.assertTrue(
+            any("`omh_todo`" in item and "todo init" in item for item in ultrawork_bar)
+        )
+        self.assertTrue(any(english_labels_clause in item for item in ultrawork_bar))
         # The todo rule stays off the shared `planning` harness and off the lighter
         # `plan` skill on purpose: `plan`, `curriculum-design`, and `product-brief`
         # share that harness and should not gain a HUD checklist obligation.

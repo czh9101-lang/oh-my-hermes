@@ -76,7 +76,12 @@ def _read_delegation_route_text(text: str) -> dict[str, str]:
                 value = _yaml_string_token(raw)
                 if value is None:
                     return {}
-                values[key] = value
+                # An empty value is Hermes's stock "inherit" spelling for the
+                # key; last occurrence wins, so it unsets an earlier value.
+                if value:
+                    values[key] = value
+                else:
+                    values.pop(key, None)
     return values
 
 
@@ -118,7 +123,11 @@ def write_delegation_route(
     if _has_unsupported_delegation(lines):
         return {
             "status": "error",
-            "error": "unsupported delegation mapping; refusing to rewrite it",
+            "error": (
+                "unsupported delegation mapping; refusing to rewrite it — "
+                "no route was written, so the next delegate_task dispatch "
+                "inherits the parent model"
+            ),
         }
     child_indents = _delegation_child_indents(lines)
     output: list[str] = []
@@ -280,6 +289,24 @@ def _has_unsupported_delegation(lines: list[str]) -> bool:
         _, _, raw = line.partition(":")
         if _yaml_string_token(raw) is None:
             return True
+        # A plain scalar (null, ~, or an ordinary token) continues onto a
+        # more-indented following line in YAML: OMH would read one value
+        # while Hermes resolves the continuation, and the writer would drop
+        # the key line and orphan that continuation into unparseable YAML.
+        # Refuse any routable key whose next content line sits deeper — the
+        # guard is about whether a continuation follows, not which token
+        # appeared.
+        if _continuation_follows(lines, index, child_indent):
+            return True
+    return False
+
+
+def _continuation_follows(lines: list[str], index: int, indent: int) -> bool:
+    for following in lines[index + 1 :]:
+        stripped = following.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        return len(following) - len(stripped) > indent
     return False
 
 
@@ -314,12 +341,28 @@ def _yaml_string_token(raw: str) -> str | None:
         and value[-1] == value[0]
     ):
         token = value[1:-1]
+        if not token:
+            # `model: ''` is Hermes's own stock config shape for "no route,
+            # inherit the parent". It is an absent value, not an unsupported
+            # mapping — refusing it locked routing out of every vanilla
+            # install (observed live: all category sets refused, lanes
+            # silently dispatched as inherit).
+            return ""
         return token if _VALUE_RE.fullmatch(token) else None
     lowered = value.casefold()
+    if lowered in {"~", "null"}:
+        # Same inherit family. These are PLAIN scalars, which YAML continues
+        # onto a more-indented following line — that continuation case is
+        # refused by the lookahead in _has_unsupported_delegation, not here.
+        return ""
+    if not lowered:
+        # A BARE empty value is different: `model:` with nothing after the
+        # colon may be a block-mapping header whose children live on the next,
+        # more-indented lines. Treating it as an empty scalar would let the
+        # writer drop the header and orphan those children into unparseable
+        # YAML, so it stays refused.
+        return None
     if lowered in {
-        "",
-        "~",
-        "null",
         "true",
         "false",
         "yes",
