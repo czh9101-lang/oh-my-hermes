@@ -2926,7 +2926,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Strong routing signals: `agent-evaluation`, `agent evaluation`, `agent eval`, `agent benchmark`, `executor evaluation`, `executor benchmark`, `compare agents`, `compare codex claude`, `agent tournament`, `which agent is better`, `에이전트 평가`, `에이전트 비교`, `실행자 평가`, `코덱스 클로드 비교`
 - Good example:
   - Prompt: agent-evaluation Codex와 Claude Code를 같은 버그 수정 태스크로 비교해서 어떤 런타임을 기본으로 둘지 판단해줘.
-  - Expected behavior: Prepare task_benchmark_set/v1, run_result_matrix/v1 requirements, scorecard/v1, and scenario-specific recommendation.
+  - Expected behavior: Prepare paired_run_decision/v1 requirements and a scenario-specific recommendation.
   - Why: The request compares executor choices and needs fair evaluation boundaries.
 - Bad example:
   - Prompt: agent-evaluation 실행 증거 없이 Codex가 항상 최고라고 결론내줘.
@@ -2935,6 +2935,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Quality bar:
   - Define tasks, rubric, isolation, budgets, and stop rules before comparing agents.
   - Use the same inputs and success criteria across candidates unless the difference is the variable under test.
+  - Require receipt-authenticated observed_at provenance before public parse or validation can return pass or fail.
   - Report quality, correctness, time, cost, tool coverage, verification, and review gaps separately.
   - Recommend executor choice per scenario and confidence, not as a universal ranking.
 - Completion checklist:
@@ -2951,20 +2952,15 @@ These surfaces are generated command references, not installed Hermes workflow s
   - allowed tools, budget, timebox, and isolation policy
   - observed run artifacts when comparing completed attempts
 - Expected outputs:
-  - agent_eval_plan/v1
-  - task_benchmark_set/v1
-  - run_result_matrix/v1 when observed
-  - scorecard/v1
-  - selection_recommendation/v1
+  - paired_run_decision/v1
   - not-evidence boundary
 - Artifact expectations:
-  - task_benchmark_set/v1 with reproducible tasks, fixtures, budgets, allowed tools, and acceptance criteria
-  - run_result_matrix/v1 with quality, correctness, time, cost, context, tool, verification, and review evidence when observed
-  - selection_recommendation/v1 with confidence, caveats, and winner-by-scenario rather than global mythology
+  - paired_run_decision/v1 with per-task input digests, explicit criteria, baseline and variant exposure, attempted-run and per-dispatch time budgets, signed observed_at receipt provenance, and a scoped Pareto outcome
 - Safety rules:
   - Do not claim an executor is better from anecdotes, brand names, or unobserved runs.
   - Do not send secrets, credentials, private data, or production tasks into evaluation without explicit authority.
   - Keep benchmark design, observed run evidence, scoring, and executor selection separate.
+  - A signed local Hermes-child receipt proves that OMH recorded a process-sealed confirmed local dispatch event; it does not prove executor internals or protect evidence from the owning OS user.
 
 ### rules-distill
 
@@ -8441,26 +8437,22 @@ Compare executor or agent choices on reproducible tasks using quality, cost, tim
   - allowed tools, budget, timebox, and isolation policy
   - observed run artifacts when available
 - Outputs:
-  - agent_eval_plan/v1
-  - task_benchmark_set/v1
-  - run_result_matrix/v1 when observed
-  - scorecard/v1
-  - selection_recommendation/v1
+  - paired_run_decision/v1
 - Stop conditions:
   - candidate set and tasks are explicit
   - rubric, budget, and isolation are fair
   - run results are observed or marked not_observed
   - recommendation is scenario-specific with confidence and caveats
 - Verification:
-  - validate task_benchmark_set/v1
+  - validate paired_run_decision/v1
   - check same inputs and acceptance criteria across candidates
-  - check observed run provenance before scoring
-  - verify selection_recommendation/v1 does not claim universal superiority
+  - check observed run provenance before comparison
+  - verify paired_run_decision/v1 does not claim universal superiority
 - Evidence ladder:
   - `agent_eval_scope_recorded`
   - `task_benchmark_set_prepared`
   - `run_results_observed_when_available`
-  - `scorecard_prepared`
+  - `paired_run_decision_prepared`
   - `selection_recommendation_recorded`
 - Wrapper actions:
   - `prepare_agent_evaluation`
@@ -8475,14 +8467,14 @@ Compare executor or agent choices on reproducible tasks using quality, cost, tim
   - `agent_eval_scope_recorded`
   - `task_benchmark_set_prepared`
   - `run_results_observed_when_available`
-  - `scorecard_prepared`
+  - `paired_run_decision_prepared`
   - `selection_recommendation_recorded`
 - Delegation expectation: Record agent-evaluation as Hermes-retained evaluation design and synthesis; record executor runs, costs, timings, code edits, verification, and reviews only from observed artifacts.
 - Privacy default: `metadata_only`
 - Overclaim guards:
-  - An agent_eval_plan/v1 artifact is not proof that any executor ran, edited code, used tools, incurred cost, passed tests, or completed review.
-  - A scorecard without observed comparable runs is a benchmark design, not an evidence-backed ranking.
-- Fallback: If no observed runs exist, prepare the benchmark design and mark the scorecard not_observed.
+  - A prepared paired_run_decision/v1 design is not proof that any executor ran, edited code, used tools, incurred cost, passed tests, or completed review.
+  - A paired_run_decision/v1 without authenticated comparable runs remains a prepared design, not an evidence-backed comparison.
+- Fallback: If no observed runs exist, prepare paired_run_decision/v1 and keep every result not_observed.
 
 ### rules-distill
 

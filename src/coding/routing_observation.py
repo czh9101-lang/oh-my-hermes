@@ -8,11 +8,18 @@ logs, or summaries; only the explicit scalar allowlist below can reach output.
 
 from __future__ import annotations
 
+from datetime import datetime
 import math
 from dataclasses import dataclass
-from typing import Final, Mapping, Sequence
+import re
+from typing import Final, Mapping, Sequence, TypeAlias, TypeGuard, TypeVar
 
 from ..system.metadata_safety import require_opaque_metadata_ref
+from .hermes_child_evaluation import evaluation_binding_errors
+
+JsonScalar: TypeAlias = str | int | float | bool | None
+JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
+_BindingCandidate = TypeVar("_BindingCandidate")
 
 ROUTING_OBSERVATION_SCHEMA_VERSION: Final[str] = "routing_observation/v1"
 ROUTING_OBSERVATION_CLAIMS: Final[tuple[str, ...]] = ("prepared", "observed")
@@ -71,6 +78,9 @@ _NUMERIC_METRIC_FIELDS: Final[tuple[str, ...]] = (
 _METRIC_FIELDS: Final[tuple[str, ...]] = (*_INTEGER_METRIC_FIELDS, *_NUMERIC_METRIC_FIELDS)
 _OBSERVATION_AUTHORITY: Final[object] = object()
 _OBSERVATION_SOURCES: Final[tuple[str, ...]] = ("hermes_child", "executor")
+_UTC_Z: Final = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +126,8 @@ _PAYLOAD_FIELDS: Final[frozenset[str]] = frozenset(
         "routing_provenance",
         *_METRIC_FIELDS,
         "current_action",
+        "observed_at",
+        "evaluation_binding",
     }
 )
 
@@ -129,7 +141,7 @@ def build_routing_observation(
     child_session_id: str = "",
     run_id: str = "",
     task_index: int = 0,
-) -> dict[str, object]:
+) -> dict[str, JsonValue]:
     """Join prepared and observed routing metadata into one canonical payload.
 
     Unknown metrics are always ``None``. A genuine observed zero is retained.
@@ -160,9 +172,11 @@ def build_routing_observation(
     selected_model = route_model
     selected_reasoning = _safe_ref(route.get("selected_reasoning_effort"), field="selected_reasoning")
 
-    child_usage = (
-        observed_child.get("usage")
-        if isinstance(observed_child.get("usage"), Mapping)
+    raw_child_usage = observed_child.get("usage")
+    child_usage: Mapping[str, object] = (
+        raw_child_usage
+        if isinstance(raw_child_usage, Mapping)
+        and all(isinstance(key, str) for key in raw_child_usage)
         else {}
     )
     observed_provider, observed_model = _observed_provider_model(observed_session)
@@ -219,12 +233,18 @@ def build_routing_observation(
         field="current_action",
     )
     fallback_index = _fallback_index(fallback_chain, selected_provider, selected_model)
+    fallback_payload: list[JsonValue] = []
+    for item in fallback_chain:
+        normalized_item: dict[str, JsonValue] = {}
+        for key, value in item.items():
+            normalized_item[key] = value
+        fallback_payload.append(normalized_item)
 
     from .model_routing import canonical_model_category
 
     raw_category = route.get("category") or route.get("requested_category")
     category = canonical_model_category(raw_category) if isinstance(raw_category, str) else ""
-    payload: dict[str, object] = {
+    payload: dict[str, JsonValue] = {
         "schema_version": ROUTING_OBSERVATION_SCHEMA_VERSION,
         "claim": "observed" if observed else "prepared",
         "status": status,
@@ -241,7 +261,7 @@ def build_routing_observation(
         "selected_provider": selected_provider,
         "selected_model": selected_model,
         "selected_reasoning": selected_reasoning,
-        "fallback_chain": fallback_chain,
+        "fallback_chain": fallback_payload,
         "fallback_index": fallback_index,
         "reason": f"{reason_source}_{status}",
         "provenance": provenance,
@@ -308,6 +328,21 @@ def validate_routing_observation(payload: Mapping[str, object] | object) -> list
         or fallback_index >= len(chain)
     ):
         errors.append("fallback_index is invalid")
+    evaluation_binding = payload.get("evaluation_binding")
+    if evaluation_binding is not None:
+        if _is_evaluation_binding_value(evaluation_binding):
+            errors.extend(evaluation_binding_errors(evaluation_binding))
+        else:
+            errors.append("evaluation_binding must be a scalar object")
+    observed_at = payload.get("observed_at")
+    if observed_at is not None:
+        if isinstance(observed_at, str) and _UTC_Z.fullmatch(observed_at) is not None:
+            try:
+                datetime.fromisoformat(observed_at.removesuffix("Z") + "+00:00")
+            except ValueError:
+                errors.append("observed_at must be an exact UTC-Z timestamp")
+        else:
+            errors.append("observed_at must be an exact UTC-Z timestamp")
     for field in _METRIC_FIELDS:
         value = payload.get(field)
         if payload.get("claim") == "prepared" and value is not None:
@@ -325,6 +360,19 @@ def validate_routing_observation(payload: Mapping[str, object] | object) -> list
         ):
             errors.append(f"{field} must be a non-negative observed number or null")
     return errors
+
+
+def _is_evaluation_binding_value(
+    value: _BindingCandidate,
+) -> TypeGuard[dict[str, JsonValue]]:
+    return isinstance(value, dict) and all(
+        isinstance(key, str)
+        and (
+            item is None
+            or isinstance(item, (str, int, float, bool))
+        )
+        for key, item in value.items()
+    )
 
 
 def render_routing_status_rows(payload: Mapping[str, object]) -> tuple[str, ...]:
@@ -419,9 +467,18 @@ def _hermes_child(record: Mapping[str, object], task_index: int) -> Mapping[str,
     if isinstance(tasks, Sequence) and not isinstance(tasks, (str, bytes)):
         for task in tasks:
             if isinstance(task, Mapping) and task.get("index") == task_index:
-                return task
-        if 0 <= task_index < len(tasks) and isinstance(tasks[task_index], Mapping):
-            return tasks[task_index]
+                return {
+                    key: value
+                    for key, value in task.items()
+                    if isinstance(key, str)
+                }
+        indexed_task = tasks[task_index] if 0 <= task_index < len(tasks) else None
+        if isinstance(indexed_task, Mapping):
+            return {
+                key: value
+                for key, value in indexed_task.items()
+                if isinstance(key, str)
+            }
         return {}
     return record
 

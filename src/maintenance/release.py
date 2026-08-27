@@ -229,7 +229,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # id, machine-enforcement level, resolvable consumer (when validated), and the
 # enforcement-versus-evidence boundary (#1119; +2391 chars in the merged
 # renderer); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 721424
+# 721424 -> 721472: the agent-evaluation contract now names per-task input
+# digests, per-dispatch time bounds, receipt-authenticated observed_at, and
+# the owning-OS-user limitation while replacing the older generic
+# provenance sentence (net +48 chars); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 721472
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

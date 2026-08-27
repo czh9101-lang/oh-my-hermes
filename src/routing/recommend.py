@@ -596,8 +596,7 @@ _SKILL_POLICIES = {
             "passed tests, or completed review."
         ),
         wrapper_guidance=(
-            "Prepare agent_eval_plan/v1, task_benchmark_set/v1, observed run_result_matrix/v1 when available, "
-            "scorecard/v1, and scenario-specific selection_recommendation/v1."
+            "Prepare paired_run_decision/v1; retain not_observed until authenticated persisted receipt evidence exists."
         ),
     ),
     "rules-distill": RecommendationPolicy(

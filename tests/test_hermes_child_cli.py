@@ -78,6 +78,15 @@ class HermesChildCliTests(unittest.TestCase):
         stored = (self.omh_home / "coding" / "hermes-child" / "child-456" / "observation.json").read_text(encoding="utf-8")
         self.assertNotIn(secret, stored)
 
+    def test_prepare_reports_invalid_integrity_key_as_cli_error(self) -> None:
+        root = self.omh_home / "coding" / "hermes-child"
+        root.mkdir(parents=True)
+        (root / ".observation-hmac-key").write_bytes(b"short")
+        status, _, stderr = run_cli(self.base("prepare"), stdin_text="prepared prompt")
+        self.assertEqual(status, 2)
+        self.assertIn("Hermes child observation integrity key is invalid", stderr)
+        self.assertNotIn("Traceback", stderr)
+
     def test_dispatch_requires_confirmation_before_fake_cli_starts(self) -> None:
         status, stdout, stderr = run_cli(self.base("dispatch"), stdin_text="do work")
         self.assertEqual((status, stdout), (2, ""))

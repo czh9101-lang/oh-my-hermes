@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import hmac
 import os
@@ -24,6 +25,10 @@ from threading import Event, Lock, Thread
 import time
 from typing import Final
 
+from .hermes_child_evaluation import (
+    HermesChildEvaluationContext,
+    seal_evaluation_binding,
+)
 from ._hermes_child_process import (
     BoundedStreamCapture,
     PipeDrainer,
@@ -46,6 +51,7 @@ _DEPTH_ENV: Final = "OMH_ISOLATED_HERMES_DEPTH"
 _MARKER_KEY: Final = secrets.token_bytes(32)
 _DISPATCH_GUARD = Lock()
 _DISPATCH_ACTIVE = False
+_DISPATCH_OBSERVATION_AUTHORITY: Final = object()
 _SAFE_ENV_NAMES: Final = frozenset(
     {
         "PATH", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "TERM",
@@ -102,6 +108,7 @@ class HermesChildRequest:
     cwd: Path | None = None
     env: Mapping[str, str] | None = None
     depth: int = 0
+    evaluation_context: HermesChildEvaluationContext | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +118,21 @@ class HermesChildObservation:
     run_id: str
     depth: int
     model: str
-    pid: int | None = None
+    pid: int | None
+    observed_at: str
+    evaluation_context: HermesChildEvaluationContext | None
+    request_model: str
+    timeout_seconds: float
+    _authority: object
+
+    def has_dispatch_authority(self) -> bool:
+        """Return whether this event was sealed by the real dispatcher."""
+        return self._authority is _DISPATCH_OBSERVATION_AUTHORITY
+
+
+def is_dispatch_observation(value: HermesChildObservation) -> bool:
+    """Return whether the event came from this process's real dispatcher."""
+    return value.has_dispatch_authority()
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +211,12 @@ def dispatch_hermes_child(
     )
     if not request.prompt or not request.model or request.timeout_seconds <= 0:
         raise ValueError("prompt, model, and a positive timeout are required")
+    if request.evaluation_context is not None:
+        seal_evaluation_binding(
+            request.evaluation_context,
+            request.model,
+            request.timeout_seconds,
+        )
     _enter_dispatch_guard()
     try:
         return _dispatch_guarded(request, cancellation=cancellation, observe=observe)
@@ -211,7 +238,19 @@ def _dispatch_guarded(
         nonlocal observer_error
         try:
             notify(HermesChildObservation(
-                status, request.parent_run_id, request.run_id, depth, request.model, pid
+                status,
+                request.parent_run_id,
+                request.run_id,
+                depth,
+                request.model,
+                pid,
+                datetime.now(timezone.utc).isoformat(timespec="microseconds").replace(
+                    "+00:00", "Z"
+                ),
+                request.evaluation_context,
+                request.model,
+                request.timeout_seconds,
+                _DISPATCH_OBSERVATION_AUTHORITY,
             ))
         except RuntimeError as exc:
             if status == "prepared":

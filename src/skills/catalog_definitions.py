@@ -3927,27 +3927,23 @@ _DEFINITIONS = [
             "observed run artifacts when comparing completed attempts",
         ),
         expected_outputs=(
-            "agent_eval_plan/v1",
-            "task_benchmark_set/v1",
-            "run_result_matrix/v1 when observed",
-            "scorecard/v1",
-            "selection_recommendation/v1",
+            "paired_run_decision/v1",
             "not-evidence boundary",
         ),
         artifact_expectations=(
-            "task_benchmark_set/v1 with reproducible tasks, fixtures, budgets, allowed tools, and acceptance criteria",
-            "run_result_matrix/v1 with quality, correctness, time, cost, context, tool, verification, and review evidence when observed",
-            "selection_recommendation/v1 with confidence, caveats, and winner-by-scenario rather than global mythology",
+            "paired_run_decision/v1 with per-task input digests, explicit criteria, baseline and variant exposure, attempted-run and per-dispatch time budgets, signed observed_at receipt provenance, and a scoped Pareto outcome",
         ),
         safety_rules=(
             "Do not claim an executor is better from anecdotes, brand names, or unobserved runs.",
             "Do not send secrets, credentials, private data, or production tasks into evaluation without explicit authority.",
             "Keep benchmark design, observed run evidence, scoring, and executor selection separate.",
+            "A signed local Hermes-child receipt proves that OMH recorded a process-sealed confirmed local dispatch event; it does not prove executor internals or protect evidence from the owning OS user.",
         ),
         quality_tier="agent-eval-gated",
         quality_bar=(
             "Define tasks, rubric, isolation, budgets, and stop rules before comparing agents.",
             "Use the same inputs and success criteria across candidates unless the difference is the variable under test.",
+            "Require receipt-authenticated observed_at provenance before public parse or validation can return pass or fail.",
             "Report quality, correctness, time, cost, tool coverage, verification, and review gaps separately.",
             "Recommend executor choice per scenario and confidence, not as a universal ranking.",
         ),
@@ -3963,7 +3959,7 @@ _DEFINITIONS = [
         ),
         good_example=SkillExample(
             prompt="agent-evaluation Codex와 Claude Code를 같은 버그 수정 태스크로 비교해서 어떤 런타임을 기본으로 둘지 판단해줘.",
-            expected="Prepare task_benchmark_set/v1, run_result_matrix/v1 requirements, scorecard/v1, and scenario-specific recommendation.",
+            expected="Prepare paired_run_decision/v1 requirements and a scenario-specific recommendation.",
             why="The request compares executor choices and needs fair evaluation boundaries.",
         ),
         bad_example=SkillExample(
