@@ -302,10 +302,25 @@ export default function register(sdk) {
     const metrics = sessionMetrics(payload)
     const maestro = payload.maestro || {}
     const mainRows = active && Array.isArray(maestro.rows) ? maestro.rows.slice(0, 1) : []
-    const activityLimit = Math.max(1, Math.min(3, viewportRows - 3))
-    const rows = active && Array.isArray(agents.rows)
-      ? agents.rows.slice(0, Math.max(0, activityLimit - mainRows.length))
-      : []
+    // Row budget learned from OMO's DAG status widget: five rows by default,
+    // but a RUNNING agent lane is never hidden by the cap — with many lanes
+    // executing at once the dock must tell that story. The viewport still
+    // wins: the dock keeps its chrome (Rule + header) plus prompt margin out
+    // of the budget, the `+N more` overflow line pays for a row of its own,
+    // and anything hidden — here or by the reader's own cap — is named by
+    // that line instead of vanishing.
+    const allAgentRows = active && Array.isArray(agents.rows) ? agents.rows : []
+    const runningAgents = allAgentRows
+      .filter(row => !row.state || row.state === 'running').length
+    const viewportBudget = Math.max(1, viewportRows - 5)
+    const agentBudget = Math.min(
+      Math.max(Math.max(5 - mainRows.length, 1), runningAgents),
+      Math.max(0, viewportBudget - mainRows.length),
+    )
+    let rows = allAgentRows.slice(0, agentBudget)
+    if (allAgentRows.length > rows.length && rows.length > 1) rows = rows.slice(0, rows.length - 1)
+    const hiddenRows =
+      Math.max(0, allAgentRows.length - rows.length) + (active ? Number(agents.hidden_rows) || 0 : 0)
     return h(
       Box,
       { flexDirection: 'column', width: '100%' },
@@ -320,11 +335,31 @@ export default function register(sdk) {
         h(Text, { color: t.color.border }, SEPARATOR),
         h(Text, { color: active ? t.color.warn : t.color.ok }, hudStateLabel(active, agents)),
         h(Text, { color: t.color.muted }, `${metrics.cost ? ` • ${metrics.cost}` : ''} • ${metrics.ctx}`),
+        // Shift+Tab yolo state, as last observed by the plugin's turn and
+        // tool-call hooks (the host keeps the flag in process memory only).
+        // ON warns in the theme's yellow; OFF rests in the label blue —
+        // colours resolve through the active theme, never literals. An
+        // unobserved or stale ledger renders nothing rather than a guess.
+        payload.yolo && payload.yolo.status === 'observed'
+          ? h(
+              Text,
+              {},
+              h(Text, { color: t.color.muted }, ' • yolo mode: '),
+              h(
+                Text,
+                { bold: true, color: payload.yolo.enabled ? t.color.warn : t.color.label },
+                payload.yolo.enabled ? 'on' : 'off',
+              ),
+            )
+          : null,
       ),
       mainRows.length || rows.length
         ? ([...mainRows, ...rows].some(row => !row.state || row.state === 'running')
             ? h(LiveActivityRows, { columns, mainRows, receivedAt: state.receivedAt, rows, t })
             : h(ActivityRows, { columns, extraSeconds: 0, frame: 0, mainRows, rows, t }))
+        : null,
+      hiddenRows
+        ? h(Text, { color: t.color.muted, wrap: 'truncate-end' }, `  +${hiddenRows} more`)
         : null,
     )
   }
@@ -386,7 +421,7 @@ export default function register(sdk) {
     // above the input renders unconditionally so the composer frame never
     // blinks with the plan lifecycle.
     if (todo.status !== 'established' && todo.status !== 'all_done') {
-      return h(FrameRule, { columns, payload, t })
+      return h(Rule, { columns, t })
     }
     const counts = todo.counts || {}
     const title = safeText(todo.title)
@@ -403,17 +438,18 @@ export default function register(sdk) {
           title ? h(Text, { color: t.color.muted }, ` ${title}`) : null,
           h(Text, { color: t.color.border }, SEPARATOR),
           h(Text, { color: t.color.ok }, `✓ ${counts.done ?? 0}/${counts.total ?? 0}`),
+          planShotBadge(payload, t),
         ),
-        h(FrameRule, { columns, payload, t }),
+        h(Rule, { columns, t }),
       )
     }
-    // The whole plan by default, bounded at seven visible item rows. Every
+    // The whole plan by default, bounded at eight visible item rows. Every
     // phase renders its name as a header row with one indented item per row
     // beneath it — even a phase with a single task. The old space-saving
     // merge (`Research [•] task`) collapsed exactly the structure the owner
     // wants to read ('[] 이거 탭한번쳐서 한개여도. 그 구조로 나오게'), so a
     // lone task indents under its header like any other. When the plan
-    // exceeds seven items the window anchors just before the first
+    // exceeds eight items the window anchors just before the first
     // remaining item so current work is always on screen, and hidden
     // neighbours fold into muted `... (N earlier/later tasks)` lines.
     const shown = Array.isArray(todo.items) ? todo.items : []
@@ -426,7 +462,7 @@ export default function register(sdk) {
       const depth = Number(item.depth)
       return Number.isInteger(depth) && depth > 0 ? Math.min(depth, 3) : 0
     }
-    const TODO_DISPLAY_ROWS = 7
+    const TODO_DISPLAY_ROWS = 8
     const total = shown.length
     const firstRemaining = shown.findIndex(item => item.state !== 'done')
     const anchor = firstRemaining < 0 ? 0 : Math.max(0, firstRemaining - 1)
@@ -502,37 +538,29 @@ export default function register(sdk) {
         h(Text, { color: t.color.border }, SEPARATOR),
         h(Text, { color: t.color.warn }, `${counts.done ?? 0}/${counts.total ?? 0}`),
         phaseCount > 1 ? h(Text, { color: t.color.muted }, ` · ${phaseCount} phases`) : null,
+        planShotBadge(payload, t),
         hasActive ? h(PlanPulse, { t }) : null,
       ),
       ...rows,
-      h(FrameRule, { columns, payload, t }),
+      h(Rule, { columns, t }),
     )
   }
 
-  // The upper half of the composer frame — the todo panel's closing line.
-  // It also carries the parallel-shot badge: a fresh concurrent tool-call
-  // batch (observed by the pre_tool_call hook) reads meaningfully only near
-  // the transcript's collapsed "Tool calls (N)" group, and that group is
-  // host-owned rendering OMH cannot decorate — this rule in the top dock is
-  // the closest OMH-owned surface to it, and the badge sat unread down in
-  // the bottom dock ('하단에 뜨면 의미가없지'). Idle bursts render a plain
-  // rule, so the frame stays byte-stable outside the 90s freshness window.
-  function FrameRule({ columns, payload, t }) {
-    const width = Math.max(1, columns - 2)
-    const shot = payload.parallel_shot
-    if (!shot || shot.status !== 'observed') {
-      return h(Rule, { columns, t })
-    }
-    const label = ` parallel shot ×${Number(shot.size) || 0} `
-    const lead = 3
-    return h(
-      Text,
-      { wrap: 'truncate-end' },
-      h(Text, { color: t.color.border }, '─'.repeat(lead)),
-      h(Text, { color: t.color.label }, label),
-      h(Text, { color: t.color.border }, '─'.repeat(Math.max(1, width - lead - cellWidth(label)))),
-    )
-  }
+  // The parallel-shot badge rides the [Plan] header — the owner moved it
+  // here from the frame rule ('parallel shot을 지금 위치에 두지말고 여기
+  // 위치 옆에 뜨게'), the line sitting directly under the host status rule.
+  // A fresh concurrent tool-call batch (observed by the pre_tool_call hook)
+  // is the only thing it brands, and the reader's seconds-scale freshness
+  // window makes it vanish right after the batch lands instead of lingering
+  // as standing chrome.
+  const planShotBadge = (payload, t) =>
+    payload.parallel_shot && payload.parallel_shot.status === 'observed'
+      ? h(
+          Text,
+          { color: t.color.label },
+          ` · parallel shot ×${Number(payload.parallel_shot.size) || 0}`,
+        )
+      : null
 
   const sharedInit = () => ({ payload: null, receivedAt: 0, tick: 0 })
   const sharedReduce = (state, input) =>
@@ -541,8 +569,8 @@ export default function register(sdk) {
       : state
 
   // The todo panel reads above the input, where the owner always looked for
-  // it; the panel itself ends with the FrameRule that tops the composer
-  // frame, so the dock never renders taller than the plan plus one line.
+  // it; the panel itself ends with the rule that tops the composer frame,
+  // so the dock never renders taller than the plan plus one line.
   const todoApp = defineWidgetApp({
     id: 'omh-todo',
     help: 'OMH plan todo and the composer frame above the prompt input',

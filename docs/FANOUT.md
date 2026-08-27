@@ -91,6 +91,47 @@ Rules:
 
 ## Dispatch bridge semantics
 
+- **Concurrency is a profile tunable.** The dispatch pool width comes from
+  the setup profile's `parallelism` block — `default_concurrency` (5) sized
+  against a `global_concurrency` ceiling (8), the same defaults OMO's task
+  engine ships. A fresh `omh setup` writes the block into the profile so it
+  is visible and editable; an explicit `--concurrency` flag still wins,
+  clamped to the ceiling, and the dispatch summary's `concurrency` block
+  records the requested and applied widths plus their source. `per_owner`
+  maps an executor owner (for example `codex: 2`) to its own lane width so
+  one rate-limited provider is not hammered by the whole pool; owners not
+  named there are governed by the global pool alone. A gated owner's units
+  hold pool slots while they wait for a lane, so many same-owner units
+  queued ahead can delay another owner's ready units — size
+  `per_owner` with that trade in mind. An install written before this
+  block existed resolves to the same defaults without showing the block;
+  re-running `omh setup` writes it out, and rewrites the whole profile
+  while doing so. `lane_budget_default` is advisory context for
+  Hermes-native lanes — OMH never enforces a lane count inside Hermes.
+- **Admission is dependency-frontier, not wave-barrier.** A unit starts the
+  moment every unit it depends on has completed and a pool slot is free —
+  never because a wave boundary was reached — so an unrelated slow sibling
+  cannot starve ready dependents (OMO's DAG scheduler discipline). The
+  wave grouping in `merge_order` is informational; merge order itself is
+  unchanged. A seeded chaos bench (`tests/test_fanout_chaos.py`, replay
+  with `SEED=<n>`) drives random DAGs, outcomes, pool widths, and owner
+  lanes through the real engine and holds the scheduler invariants.
+- **Units are process groups; interrupts are honest.** The default runner
+  spawns each unit as its own session/process group and records the leader
+  pid in the unit's inflight marker. A timeout kills the whole group (no
+  surviving grandchildren against the worktree). Ctrl-C stops admitting
+  work, terminates every live group, marks never-started units
+  `interrupted`, prints the summary with `"interrupted": true`, and exits
+  130. SIGTERM writes the same summary FILE but prints nothing: the
+  original termination is re-raised after the write so a supervisor
+  observes the death it asked for, and the process exits 143. If the
+  dispatcher dies without cleanup, `omh coding fanout reap` terminates the
+  marker-named groups — liveness is judged at the GROUP level (a dead
+  leader with live grandchildren stays reapable), a live pid no longer
+  leading its own group is refused as recycled, and a pid the markers do
+  not name is refused whatever its process name. The reaper does not check
+  that the dispatcher is dead — verify that first; a live dispatcher's
+  running units are equally marker-named.
 - **Spawnability is data.** `DISPATCH_COMMAND_TEMPLATES` in
   `src/coding/fanout_dispatch.py` maps profiles with a local headless CLI to
   fixed argv templates — currently codex (`codex exec`), claude-code
@@ -436,8 +477,11 @@ omh coding fanout status --fanout-id <fanout-id> [--json]
 omh coding fanout migrate-legacy <fanout-id> \
   [--confirm-contract-sha256 <digest>]  # operator/maintenance only
 omh coding fanout dispatch <fanout-id> --goal-file goal.txt \
-  [--repo-root .] [--base-ref HEAD] [--concurrency 2] [--timeout 1800] \
+  [--repo-root .] [--base-ref HEAD] [--concurrency N] [--timeout 1800] \
   [--unit <id> ...] [--dry-run] [--run-verification]
+omh coding fanout reap <fanout-id> [--pid N ...]  # terminate marker-named
+  # unit process groups (verify the dispatcher is dead first); refuses any
+  # pid the inflight markers do not name — never kills by process name
 omh coding model-route [--executor <profile>] [--role <role>] [--model <id>] [--effort <level>] [--domain <name>] [--explain] [--from-inventory] [--json]
 omh coding model-inventory [--json]
 omh coding composition-guide [--model <id>] [--json]

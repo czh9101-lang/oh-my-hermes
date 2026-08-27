@@ -2653,3 +2653,306 @@ the full rule set; this file only covers the reviewee's side.
 Reading a finding is not fixing it. A fix is observed only when the command that
 demonstrated the defect no longer does.
 """
+
+
+def design_reference_templates() -> list[SkillReferenceTemplate]:
+    return list(_design_reference_templates_cached())
+
+
+@lru_cache(maxsize=1)
+def _design_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
+    return (
+        SkillReferenceTemplate(
+            "frontend",
+            "references/design-system-contract.md",
+            _design_system_contract_reference(),
+        ),
+        SkillReferenceTemplate(
+            "frontend",
+            "references/taste-foundations.md",
+            _taste_foundations_reference(),
+        ),
+        SkillReferenceTemplate(
+            "frontend",
+            "references/reference-token-extraction.md",
+            _reference_token_extraction_reference(),
+        ),
+        SkillReferenceTemplate(
+            "design-quality-gate",
+            "references/design-critique-rubric.md",
+            _design_critique_rubric_reference(),
+        ),
+    )
+
+
+# The one sentence every design surface holds the work to. Defined once so a
+# future re-cut of the bar (a brand analogy going stale) is a single edit.
+DESIGN_NAMED_BAR = (
+    "what a senior product designer at a top-tier product company — the "
+    "Linear/Stripe/Supabase class — would sign off on"
+)
+
+# Concept lineage only. The wording in these references is OMH's own — the
+# nearest upstream architecture (oh-my-openagent's frontend skill) is under
+# the Sustainable Use License, so no upstream text is reproduced anywhere in
+# this family; its permissively licensed design upstreams are credited as
+# the idea sources they are.
+_DESIGN_CRAFT_ATTRIBUTION = """## Attribution
+
+The idea of pairing a design-system contract file with taste-direction
+material and an evidence-bound critique lane adapts concepts from the
+`frontend` skill of `code-yeongyu/oh-my-openagent@9c62b62` (Sustainable Use
+License 1.0) and its permissively licensed design upstreams:
+`Leonxlnx/taste-skill` (MIT), `nextlevelbuilder/ui-ux-pro-max-skill` (MIT),
+`Owl-Listener/designpowers` (MIT), and `nexu-io/open-design` (Apache-2.0).
+No upstream text is reproduced; the wording here is OMH's own, and OMH keeps
+its deterministic no-render boundary. Product names appear as quality
+analogies only; OMH is not affiliated with, endorsed by, or sponsored by any
+named company."""
+
+
+def _design_system_contract_reference() -> str:
+    return f"""# Design System Contract (DESIGN.md)
+
+**The gate: no component code before `DESIGN.md` exists.** Design decisions
+that live only in chat evaporate between screens; a contract file makes every
+later component answer to the same tokens. When a project already has one,
+read it and follow it — and when the work introduces a token, primitive,
+interaction state, motion rule, or piece of accepted debt the contract
+lacks, amend the contract before touching the code.
+
+## Structure
+
+`DESIGN.md` carries these sections, in order. An empty section is written as
+an explicit decision ("no elevation system; flat surfaces only") — silence is
+not a decision.
+
+0. **Research Log** (greenfield builds) — an entry for every research lane
+   that ran: the source consulted, what was taken from it (layout rhythm,
+   color logic, type pairing choices), and any skipped lane with its
+   reason. No log entry means the lane did not run.
+1. **Atmosphere & Identity** — three adjectives the surface must read as,
+   the chosen taste direction (primary, plus any deliberately borrowed
+   elements with their reasons), the one signature element a template would
+   not have, and the audience.
+2. **Color** — the full palette as tokens: background layers, text
+   hierarchy, accent budget, semantic states, borders. Name the proportion
+   discipline (for example 60/30/10) and the contrast floor (WCAG AA at
+   minimum).
+3. **Typography** — the pairing (at most two families), a modular scale with
+   named steps, weights in use, and line-height rules for body versus
+   display. When the audience reads CJK: the fallback stacks, CJK
+   line-height and letter-spacing rules, and `word-break`/truncation
+   behavior for the heavy script.
+4. **Spacing & Layout** — the base unit, the spacing scale, container
+   widths, the grid, and which element owns scroll on every screen shape.
+5. **Components** — the reusable primitives (button, input, card, nav,
+   table, ...) with their variants and every interaction state: default,
+   hover, focus-visible, active, disabled, loading, error, empty.
+6. **Motion & Interaction** — duration and easing tokens, what animates and
+   what never does, and the `prefers-reduced-motion` behavior. Motion is
+   punctuation, not decoration.
+7. **Depth & Surface** — the elevation system (shadows, borders, blur) or
+   the explicit decision not to have one.
+8. **Accessibility Constraints & Accepted Debt** — the constraints honored
+   (keyboard paths, focus order, contrast) and the debt knowingly accepted,
+   each with its reason.
+
+## Workflow
+
+- Greenfield: design research is a build step, not optional exploration —
+  consult references and real product surfaces, record each lane in section
+  0, and write the contract BEFORE the first component.
+- Existing UI without a contract: stop and ask the user which path they
+  want — either match the existing visual language and keep new styling
+  local to the code it touches, or pause to extract the contract and shared
+  primitives before continuing. Never decide silently.
+- Every implementation cites the token it uses. A value that appears in
+  code but not in `DESIGN.md` is drift: either the contract or the code is
+  wrong, and one of them gets fixed.
+
+## Boundary
+
+`DESIGN.md` is a prepared contract, not rendered evidence: implementation,
+screenshots, accessibility checks, and visual verdicts stay observed-only
+through the visual-QA and web-QA owners.
+
+{_DESIGN_CRAFT_ATTRIBUTION}
+"""
+
+
+def _taste_foundations_reference() -> str:
+    return f"""# Taste Foundations
+
+**Hold the work to {DESIGN_NAMED_BAR}. Technically clean output that reads
+flat does not clear this bar — flatness is a defect to fix, not a baseline
+to accept.** Generic output is not a neutral outcome; it is the specific
+failure this reference exists to prevent.
+
+## Name one primary direction
+
+Taste directions pull in different directions; blending them by accident
+produces mud. Name ONE primary direction in `DESIGN.md` section 1. An
+element genuinely borrowed from another direction is allowed — named there
+with its reason — so a hybrid brief (a premium marketing shell over an
+operational product) stays expressible without dissolving into no direction
+at all.
+
+- **Operational** — dense internal tools and dashboards where utility
+  leads: information density over drama, native controls, stable
+  dimensions, restrained color. Typical failure: settling here when the
+  brief wants a public, polished surface.
+- **Minimalist / editorial** — briefs that want whitespace-led calm and
+  reading-first structure: generous space, a strict type scale doing the
+  hierarchy work, a single accent, almost no ornament. Typical failure:
+  emptiness without rhythm — minimal is a spacing system, not an absence.
+- **Premium / soft** — surfaces that should feel costly and unhurried:
+  layered depth, soft large-radius shadows, muted-but-saturated palette,
+  slow small motion. Typical failure: gloss layered over weak hierarchy.
+- **Bold / expressive** — statement pages that lead with oversized display
+  type and hard contrast, breaking one grid rule at a time on purpose.
+  Typical failure: every element shouting, so nothing leads.
+
+## Anti-slop checklist — reject on sight
+
+- Template gravity: rows of three equal cards, hero-icon-grid boilerplate,
+  floating decorative shapes with no content role.
+- One-note palette: a single flood color plus gray, no layered backgrounds,
+  no semantic states.
+- Weak hierarchy: adjacent text sizes doing three jobs, everything at
+  medium weight, headings that do not organize scanning.
+- Arrhythmic spacing: values off the scale, sections that touch, sibling
+  padding that differs for no stated reason.
+- Placeholder gravity: lorem-shaped copy, unrealistic content, empty states
+  never designed.
+- Missing states: any interactive primitive without hover, focus-visible,
+  active, disabled, loading, error, and empty treatments.
+- Motion as decoration: animation that communicates neither state nor
+  causality, or that ignores `prefers-reduced-motion`.
+- CJK as an afterthought: Latin-tuned line-height and truncation applied
+  unchanged to a Korean, Japanese, or Chinese audience.
+
+## Content before chrome
+
+Before laying anything out, list what the surface must say and decide what
+each block is for: draw attention, explain, build trust, support
+comparison, drive the action, or help people find their way. Sequence
+sections in the order a visitor actually decides; visual symmetry never
+outranks that sequence. Review content accuracy and hierarchy before any
+polish — a beautiful wrong page fails first on content.
+
+## Boundary
+
+Taste guidance shapes the prepared direction and contract. It never
+substitutes for observed rendered evidence: the visual-QA owner judges what
+actually shipped.
+
+{_DESIGN_CRAFT_ATTRIBUTION}
+"""
+
+
+def _reference_token_extraction_reference() -> str:
+    return f"""# Reference Token Extraction
+
+A user-supplied reference is the visual contract. The work is extraction
+into `DESIGN.md`, not admiration: a reference that is only glanced at
+degrades into a vague mood, the contract inherits none of its precision,
+and the output lands back at generic — which is what the gate exists to
+stop.
+
+## Static reference (screenshot, mockup, Figma export)
+
+Extract into `DESIGN.md`, naming the reference in the Research Log:
+
+- palette samples per background layer, text level, and accent;
+- the type scale as measured ratios (display/heading/body/caption), the
+  weights in play, and how line-height behaves;
+- layout geometry: container width, column rhythm, section spacing values;
+- component anatomy: radii, borders, shadows, and every state treatment the
+  reference shows;
+- copy tone and density — the real shape of the content, not lorem
+  geometry.
+
+## Live URL reference
+
+When the user's selected executor or browser lane can drive a page, extract
+runtime truth instead of guessing from pixels: computed styles for tokens,
+the actual default/hover/focus/active states, transition durations and
+easings, and responsive behavior at the breakpoints that matter. Record
+what was extracted in the Research Log. OMH itself never launches a
+browser, network call, or daemon — extraction happens in the lane the user
+selected, and only its recorded findings enter the contract.
+
+## Fidelity discipline
+
+- Extract tokens and layout grammar; never copy logos, trademarks, or
+  brand copy.
+- Recombine into project-specific primitives — the reference calibrates
+  quality; it does not become the product.
+- Final QA for reference-driven work goes to the visual-QA owner: request a
+  `visual_qa_plan/v1` whose references name the supplied reference, with
+  the visual-fidelity review perspective comparing the rendered result
+  against it side by side — and verify the implementation is a reusable
+  design-system build, not a screenshot-matched one-off.
+
+## Boundary
+
+Extraction produces a prepared contract. Rendered comparisons, screenshots,
+and PASS verdicts belong to the visual-QA owner and stay observed-only.
+
+{_DESIGN_CRAFT_ATTRIBUTION}
+"""
+
+
+def _design_critique_rubric_reference() -> str:
+    return f"""# Design Critique Rubric
+
+The critique lane's question is never "is it correct?" — it is "does this
+clear {DESIGN_NAMED_BAR}?". **Technically clean but flat fails.** Judge each
+axis explicitly; a PASS with no named evidence per axis is not a review.
+
+## Axes
+
+- **Hierarchy** — one glance names what leads, what supports, what recedes.
+  FAIL: adjacent elements competing at equal weight; headings that do not
+  organize scanning.
+- **Type discipline** — a modular scale is in use; display and body behave
+  differently on purpose. FAIL: arbitrary sizes, one step doing three jobs,
+  broken CJK line-height.
+- **Spacing rhythm** — values come from the scale; sibling gaps agree;
+  sections breathe in proportion to their weight. FAIL: off-scale values,
+  touching sections, arrhythmic padding.
+- **Color system** — layered backgrounds, text hierarchy through color, a
+  deliberate accent budget, semantic states. FAIL: one flood color plus
+  gray; decorative gradients with no role; contrast under the floor.
+- **State coverage** — primitives show hover, focus-visible, active,
+  disabled, loading, error, and empty. FAIL: any interactive element with
+  only a default state.
+- **Signature** — at least one deliberate element a template would not
+  have. FAIL: nothing distinguishes this surface from its framework's
+  example app.
+- **Motion restraint** — animation communicates state or causality within
+  duration tokens and respects reduced motion. FAIL: decorative motion,
+  scroll hijacking, ignored `prefers-reduced-motion`.
+- **CJK and localization fit** — when the audience needs it: fallback
+  stacks, line-height, and truncation behave in the heavy script. FAIL:
+  Latin-tuned metrics breaking CJK text.
+
+## Verdict discipline
+
+- Review content accuracy and hierarchy before visual polish; a beautiful
+  wrong page fails first on content.
+- Name the taste direction the work claims — the primary direction
+  (operational, minimalist/editorial, premium/soft, or bold/expressive)
+  declared per the frontend skill's
+  `omh-frontend/references/taste-foundations.md` — then judge inside it: an
+  operational tool is not failed for lacking gloss, and a premium surface
+  is failed for it.
+- Every FAIL names the axis, the evidence, and the smallest change that
+  would flip it.
+- A PASS requires fresh rendered evidence from the visual-QA owner across
+  the declared pages, states, and viewports; the rubric never passes work
+  from description alone.
+
+{_DESIGN_CRAFT_ATTRIBUTION}
+"""

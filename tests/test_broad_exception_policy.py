@@ -68,6 +68,16 @@ class ClassifiedSite(NamedTuple):
 
 CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
     ClassifiedSite(
+        "src/coding/fanout_dispatch.py",
+        "signal_safe_unit_runner",
+        INTENTIONAL,
+        "A raising on_spawn hook must not leak the process group it was just handed: the "
+        "handler terminates the group it created, then immediately re-raises the same "
+        "exception so the caller still sees the hook's failure. Nothing is swallowed or "
+        "relabeled; the broad catch exists only so no exception type can leave a live "
+        "orphan behind.",
+    ),
+    ClassifiedSite(
         "src/workflows/domain_intelligence_store_security.py",
         "_open_store_lock_descriptor",
         INTENTIONAL,
@@ -202,14 +212,23 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "all unexpected failures, persist the interrupted or failed operation state and "
         "re-raise, so callers never read a crashed resume as a completed memory operation.",
     ),
+    ClassifiedSite(
+        "src/plugin_bundle/omh/approval_bypass.py",
+        "record_approval_bypass",
+        INTENTIONAL,
+        "Host-surface probe boundary: importing or calling tools.approval can fail in any "
+        "host-specific way (unit tests, a stripped embed, an older Hermes), and the hook that "
+        "feeds the model must never break for an optional HUD observation. The handler records "
+        "nothing, so an absent surface reads as an idle ledger, never as an observed state.",
+    ),
 )
 
 # Ruff reports one hit per handler; the inventory is keyed per enclosing
 # function. `_write_candidate_batch`, `_is_catalog_question`, `pre_llm_call`,
 # and `_resume_unlocked` each hold two handlers, so the handler count is four
 # above the anchor count.
-EXPECTED_HANDLER_COUNT = 20
-EXPECTED_ANCHOR_COUNT = 16
+EXPECTED_HANDLER_COUNT = 22
+EXPECTED_ANCHOR_COUNT = 18
 
 
 class DerivedSite(NamedTuple):

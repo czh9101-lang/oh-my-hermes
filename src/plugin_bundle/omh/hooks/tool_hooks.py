@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from ..approval_bypass import record_approval_bypass
 from ..host_observation import observe_plugin_hook_call
 from ..omh_roles import extract_role_marker, resolve_role_name, role_aliases, role_names
 from ..tool_bursts import record_tool_call
@@ -11,6 +12,10 @@ from ..toolcall_rules import toolcall_rule_directive
 def pre_tool_call(**kwargs) -> dict[str, object] | None:
     """Return only host-supported pre-tool directives or role warnings."""
     observe_plugin_hook_call("pre_tool_call", kwargs)
+    # The approval-bypass ledger observes session state, not this call's
+    # outcome, so it ticks before the rule gate — a blocked call still sees
+    # the same Shift+Tab flag.
+    record_approval_bypass(omh_home=str(kwargs.get("omh_home", "") or ""))
     # User-authored toolcall rules intervene first: a block directive is the
     # strongest host-supported response (hermes_cli/plugins.py,
     # `_get_pre_tool_call_directive_details`: "``block`` vetoes the tool call

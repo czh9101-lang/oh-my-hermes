@@ -11,6 +11,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
+from .approval_bypass import latest_approval_bypass
 from .hermes_delegation import read_hermes_native_subagents
 from .tool_bursts import latest_parallel_shot
 from .metadata import (
@@ -41,6 +42,10 @@ TODO_STALE_SECONDS = 86400
 # How long a fully-done plan keeps rendering after its last update.
 ALL_DONE_TODO_LINGER_SECONDS = 15 * 60
 TODO_DISPLAY_ITEM_LIMIT = 3
+# Merged activity rows carried to HUD surfaces. Matches the native reader's
+# own per-source bound (`hermes_delegation._ROW_LIMIT`); the TUI widget
+# applies its viewport clamp on top and names anything hidden with `+N more`.
+ACTIVITY_ROW_LIMIT = 8
 HUD_REQUIRED_TOOLS = PROVIDED_TOOLS
 HUD_REQUIRED_HOOKS = REQUIRED_HOOKS
 HUD_OPTIONAL_HOOKS = OPTIONAL_HOOKS
@@ -614,6 +619,26 @@ def _later_status(current: str, candidate: str) -> str:
         return candidate
 
 
+def _ordered_activity_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Running first, then blocked, then done; settled rows newest-first.
+
+    Display-priority ordering learned from OMO's DAG status widget: running
+    work outranks everything, and a late failure must never be pushed off
+    screen by older completed rows. Running rows keep dispatch order. The
+    helper orders only — the call site applies ACTIVITY_ROW_LIMIT and counts
+    what it drops, so a capped row is disclosed rather than silently gone.
+    """
+    def observed(row: dict[str, Any]) -> str:
+        return str(row.get("observed_at", ""))
+
+    running = [row for row in rows if str(row.get("state", "running")) not in {"blocked", "failed", "done"}]
+    blocked = [row for row in rows if str(row.get("state", "")) in {"blocked", "failed"}]
+    done = [row for row in rows if str(row.get("state", "")) == "done"]
+    blocked.sort(key=observed, reverse=True)
+    done.sort(key=observed, reverse=True)
+    return running + blocked + done
+
+
 def read_omh_hud(
     omh_home: str | Path | None = None,
     hermes_home: str | Path | None = None,
@@ -651,6 +676,10 @@ def read_omh_hud(
         # Concurrent tool-call batches observed by the pre_tool_call hook;
         # the [OMH] status line brands a fresh batch as a parallel shot.
         "parallel_shot": latest_parallel_shot(str(home)),
+        # Effective approval-bypass (yolo) state observed by the pre_llm_call
+        # and pre_tool_call hooks; the [OMH] status line renders it as
+        # "yolo mode: on/off".
+        "yolo": latest_approval_bypass(str(home)),
         "evidence_boundary": (
             "HUD is metadata-only. Prepared handoffs are not execution, review, CI, merge, or token-usage evidence. "
             "Todo items are plan declarations, not execution evidence."
@@ -662,12 +691,27 @@ def read_omh_hud(
         "status": "observed" if payload["subagents"]["maestro_rows"] else "idle",
         "rows": payload["subagents"].pop("maestro_rows"),
     }
+    # Display-priority ordering applies to BOTH sources: the OMH-side rows
+    # keep dispatch order at their producer and can put a blocked row ahead
+    # of a running one, which the widget's running-exempt budget would then
+    # hide. Anything the cap drops is counted, never silently discarded.
+    ordered = _ordered_activity_rows(list(payload["subagents"]["rows"]))
+    payload["subagents"]["hidden_rows"] = int(payload["subagents"].get("hidden_rows", 0)) + max(
+        0, len(ordered) - ACTIVITY_ROW_LIMIT
+    )
+    payload["subagents"]["rows"] = ordered[:ACTIVITY_ROW_LIMIT]
     # Hermes-native delegate_task children are work the HUD must show even
     # though they never touch the OMH runtime store; see hermes_delegation.
     native = read_hermes_native_subagents(hermes, omh_home=home)
     if native["rows"]:
         merged = payload["subagents"]
-        merged["rows"] = (list(merged["rows"]) + list(native["rows"]))[:5]
+        combined = _ordered_activity_rows(list(merged["rows"]) + list(native["rows"]))
+        merged["hidden_rows"] = (
+            max(0, len(combined) - ACTIVITY_ROW_LIMIT)
+            + int(merged.get("hidden_rows", 0))
+            + int(native.get("hidden", 0))
+        )
+        merged["rows"] = combined[:ACTIVITY_ROW_LIMIT]
         merged["active"] = int(merged.get("active", 0)) + int(native["active"])
         merged["running"] = int(merged.get("running", 0)) + int(native["running"])
         merged["blocked"] = int(merged.get("blocked", 0)) + int(native["blocked"])
@@ -1054,7 +1098,11 @@ def _hud_subagent_summary(status: dict[str, Any]) -> dict[str, Any]:
             maestro_rows.append(projected)
         else:
             subagent_rows.append(projected)
+    # Executors past the projection bound are disclosed, not silently gone;
+    # the HUD carries the count into the widget's `+N more` line.
+    hidden_rows = max(0, sum(1 for row in active if isinstance(row, dict)) - 5)
     return {
+        "hidden_rows": hidden_rows,
         "status": "observed" if active or stale or progress else "idle",
         "active": len(active),
         "running": max(0, len(active) - blocked),

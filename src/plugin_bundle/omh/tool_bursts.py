@@ -30,8 +30,11 @@ MAX_TOOL_BURST_ENTRIES = 40
 # round-trip.
 BURST_WINDOW_SECONDS = 1.5
 # The HUD shows the latest burst only while it is recent enough to still
-# describe "what just happened".
-BURST_FRESH_SECONDS = 90.0
+# describe "what just happened". Seconds, not minutes, by owner direction
+# ('한 몇초만 지나면 바로없어지게'): the badge flags the batch as it lands
+# and vanishes right after, refreshed continuously through a busy wave by
+# the next batch's ticks.
+BURST_FRESH_SECONDS = 8.0
 TOOL_BURST_CLAIM_BOUNDARY = (
     "Burst grouping observes pre_tool_call start ticks only; it is evidence "
     "the host dispatched the calls as one batch, not proof every call "

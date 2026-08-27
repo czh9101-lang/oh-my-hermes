@@ -11,6 +11,16 @@ from .team import inspect_operating_model, operating_model_ids
 
 SETUP_PROFILE_SCHEMA_VERSION = "setup_profile/v1"
 PROJECT_MEMORY_POLICY_SCHEMA_VERSION = "project_memory_policy/v1"
+PARALLELISM_POLICY_SCHEMA_VERSION = "parallelism_policy/v1"
+# OMO's task engine ships a per-lane default of 5 and a global ceiling of 8;
+# the owner asked for the same defaults installed by setup and editable in the
+# profile. `per_owner` maps an executor owner (codex, claude-code, ...) to its
+# own lane width; an absent owner is governed by the global pool alone.
+PARALLELISM_DEFAULTS: dict[str, int] = {
+    "default_concurrency": 5,
+    "global_concurrency": 8,
+    "lane_budget_default": 5,
+}
 PROJECT_MEMORY_MODES = ("off", "review-first", "auto-safe")
 
 SETUP_PROFILE_CATEGORIES = (
@@ -69,6 +79,21 @@ def setup_profile_choices() -> list[dict[str, str]]:
     return [{key: str(value) for key, value in item.items()} for item in SETUP_PROFILE_CATEGORIES]
 
 
+def build_parallelism_settings() -> dict[str, Any]:
+    """The editable parallelism block a fresh setup writes into the profile.
+
+    A strict subset of the resolved policy payload
+    (`omh.coding.parallelism_policy.build_parallelism_policy`), which adds
+    read-time fields (`ignored_keys`, `claim_boundary`) under the same
+    schema id — the stored block carries only what a user would edit.
+    """
+    return {
+        "schema_version": PARALLELISM_POLICY_SCHEMA_VERSION,
+        **dict(PARALLELISM_DEFAULTS),
+        "per_owner": {},
+    }
+
+
 def build_setup_profile(
     values: list[str] | tuple[str, ...] | None = None,
     *,
@@ -97,6 +122,10 @@ def build_setup_profile(
         # all six families are offered, so an install written before this key
         # existed keeps working without a migration.
         "capability_policy": build_capability_policy(),
+        # Additive and optional: readers fall back to the same defaults when
+        # the key is absent, so pre-existing installs keep working while a
+        # fresh setup writes the block out for the user to see and edit.
+        "parallelism": build_parallelism_settings(),
         "normal_user_surface": "Hermes Agent chat and installed Hermes skills",
         "local_only": True,
         "network_calls": False,

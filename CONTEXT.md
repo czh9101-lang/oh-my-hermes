@@ -224,8 +224,9 @@ _Avoid_: assuming dock-bottom means above the input
 `omh-status.mjs`, the managed Modern-TUI widget file OMH installs into
 `$HERMES_HOME/tui-widgets/`. It registers two ambient apps that frame the
 composer like the classic REPL: a `dock-top` app renders the plan-todo
-checklist above the input, closed by the frame rule that also carries the
-`parallel shot ×N` badge, and a `dock-bottom` app opens with the frame rule
+checklist above the input — its `[Plan]` header carries the transient
+`parallel shot ×N` badge — closed by the frame rule above the composer,
+and a `dock-bottom` app opens with the frame rule
 below the input and renders the status HUD (header always visible when
 installed; activity rows only during live work).
 _Avoid_: statusline (that is a different, host-owned surface), HUD (the widget
