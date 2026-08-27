@@ -1354,6 +1354,7 @@ class RouterContentTests(unittest.TestCase):
         self.assertEqual(
             {
                 "coding-handling",
+                "hermes-setup",
                 "goal-execution",
                 "planning",
                 "research",
@@ -4485,3 +4486,82 @@ class UltraperfCatalogContractTests(unittest.TestCase):
         from omh.skills.catalog_types import ULW_ENGINE_SKILL_NAMES
         self.assertIn("ultraperf", ULW_ENGINE_SKILL_NAMES)
         self.assertEqual(primary_harness_for_skill("ultraperf"), "goal-execution")
+
+
+class HermesSetupHarnessContractTests(unittest.TestCase):
+    """Issue #1113: the hermes-setup category owns its own harness.
+
+    The four setup-guide skills used to inherit `primary_harness_for_skill`'s
+    coding fallback, so a user enabling `morning-brief` was pointed at the
+    coding pipeline. These lock the dedicated harness, the explicit mapping,
+    and a category-level guard against the coding fallback returning.
+    """
+
+    HERMES_SETUP_SKILLS = ("model-setup", "parallel-tools", "websearch-setup", "morning-brief")
+
+    def test_existing_explicit_harness_mapping_is_unchanged(self) -> None:
+        """Characterization control: an unrelated explicit mapping still holds."""
+        self.assertEqual(primary_harness_for_skill("visual-qa"), "visual-qa")
+        self.assertEqual(primary_harness_for_skill("ai-slop-cleaner"), "coding-handling")
+
+    def test_hermes_setup_harness_is_defined_with_the_five_step_contract(self) -> None:
+        harnesses = {harness.name: harness for harness in builtin_harnesses()}
+        self.assertIn("hermes-setup", harnesses)
+        harness = harnesses["hermes-setup"]
+        self.assertEqual(harness.quality_tier, "hermes-setup-gated")
+        self.assertEqual(harness.privacy_default, "metadata_only")
+        self.assertEqual(
+            harness.verification,
+            (
+                "prerequisite_check",
+                "read_only_diagnose",
+                "guide",
+                "diff_approved_apply",
+                "verify",
+            ),
+        )
+        self.assertEqual(
+            harness.evidence_ladder,
+            (
+                "prerequisite_check_recorded",
+                "read_only_diagnosis_recorded",
+                "guidance_delivered",
+                "diff_approval_recorded",
+                "verification_recorded",
+            ),
+        )
+        self.assertEqual(harness.quality_bar[: len(_HERMES_SETUP_FIVE_STEP_BAR)], _HERMES_SETUP_FIVE_STEP_BAR)
+        self.assertIn("approve_config_diff", harness.wrapper_actions)
+        self.assertIn("record_setup_verification", harness.wrapper_actions)
+
+    def test_setup_skills_resolve_to_the_hermes_setup_harness(self) -> None:
+        for skill in self.HERMES_SETUP_SKILLS:
+            with self.subTest(skill=skill):
+                self.assertEqual(primary_harness_for_skill(skill), "hermes-setup")
+
+    def test_no_hermes_setup_skill_falls_back_to_the_coding_harness(self) -> None:
+        harnesses = {harness.name for harness in builtin_harnesses()}
+        setup_skills = [
+            definition.name for definition in builtin_definitions() if definition.category == "hermes-setup"
+        ]
+        self.assertEqual(sorted(setup_skills), sorted(self.HERMES_SETUP_SKILLS))
+        for name in setup_skills:
+            with self.subTest(skill=name):
+                harness = primary_harness_for_skill(name)
+                self.assertNotEqual(
+                    harness,
+                    "coding-handling",
+                    f"{name} is a hermes-setup skill and must not inherit the coding harness fallback",
+                )
+                self.assertIn(harness, harnesses)
+
+    def test_generated_setup_skills_render_the_hermes_setup_runtime_record(self) -> None:
+        templates = {template.name: template for template in builtin_skill_templates()}
+        for skill in self.HERMES_SETUP_SKILLS:
+            with self.subTest(skill=skill):
+                content = templates[skill].content
+                self.assertIn(
+                    f"omh runtime record --skill {skill} --harness hermes-setup --status started",
+                    content,
+                )
+                self.assertNotIn("--harness coding-handling", content)

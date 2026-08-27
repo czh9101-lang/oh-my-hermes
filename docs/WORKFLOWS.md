@@ -6846,6 +6846,65 @@ Route implementation requests through scoped context, edit discipline, tests, re
   - Executor completion is not review, CI, merge-readiness, or merge evidence.
 - Fallback: If the request is underspecified, ask one concise clarification question before editing.
 
+### hermes-setup
+
+Walk a local Hermes setup change through prerequisite check, read-only diagnosis, guidance, diff-approved apply, and verification.
+
+- Use when: Use when the user asks Hermes to configure its own local setup surface - models, parallel tools, web search, or a mail/calendar connection.
+- Quality tier: `hermes-setup-gated`
+- Quality bar:
+  - Prerequisite check: confirm the subscription, account, or capability the step needs exists before continuing; mark unmet prerequisites "not applicable" and skip them explicitly.
+  - Read-only diagnose: read the current Hermes config, `.env` keys, and installed version without writing anything.
+  - Guide: walk the user through any account creation, OAuth, or token issuance they must complete themselves.
+  - Diff-approved apply: show the exact config or `.env` diff and write only after the user explicitly approves it.
+  - Verify: re-read the updated config and report a completion checklist covering every applicable item.
+  - Diagnosis only reads the existing Hermes config, `.env` keys, and installed version; it never writes anything on its own.
+  - Show the exact diff for any config or `.env` change and write it only after the user explicitly approves that diff.
+  - Secret values such as tokens and API keys are pasted by the user directly in chat and are never stored, logged, or echoed back beyond the immediate diff confirmation.
+  - If a prerequisite is unmet, mark that item "not applicable" and continue with the rest of the guide instead of blocking or guessing.
+  - Success is applicable-only: verification passes when every applicable item is confirmed complete, not when every possible item exists.
+- Inputs:
+  - the setup surface the user named
+  - current Hermes config and `.env` key state
+  - prerequisites the user actually has
+  - credentials the user pastes at apply time
+- Outputs:
+  - read-only diagnosis of the current state
+  - an applicable-only guidance walkthrough
+  - the exact config or `.env` diff shown before any write
+  - a completion checklist over every applicable item
+- Stop conditions:
+  - every applicable item is verified or explicitly marked not applicable
+  - no config write happened without an approved diff
+- Verification:
+  - prerequisite_check
+  - read_only_diagnose
+  - guide
+  - diff_approved_apply
+  - verify
+- Evidence ladder:
+  - `prerequisite_check_recorded`
+  - `read_only_diagnosis_recorded`
+  - `guidance_delivered`
+  - `diff_approval_recorded`
+  - `verification_recorded`
+- Wrapper actions:
+  - `show_setup_diagnosis`
+  - `approve_config_diff`
+  - `record_setup_verification`
+  - `show_status`
+- Artifact events:
+  - `setup_scoped`
+  - `diagnosis_recorded`
+  - `setup_verification_recorded`
+- Delegation expectation: Record this harness as Hermes-retained setup guidance; delegate to a selected coding owner only when the user needs a repository change rather than a local config edit.
+- Privacy default: `metadata_only`
+- Overclaim guards:
+  - A shown config diff is not an applied config change; only an approved write followed by a re-read counts.
+  - A prepared setup walkthrough is not proof that the model, tool, search backend, or connection actually works.
+  - An item marked "not applicable" is a skipped prerequisite, not a satisfied one.
+- Fallback: If a prerequisite is unmet, mark that item "not applicable" and continue the rest of the guide instead of blocking or guessing.
+
 ### goal-execution
 
 Keep long-running work tied to explicit goals, checkpoints, and durable evidence.
