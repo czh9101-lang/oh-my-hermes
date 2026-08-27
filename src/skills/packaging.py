@@ -13,6 +13,7 @@ from .render import (
     context_reference_templates,
     context_skill,
     deep_interview_skill,
+    design_reference_templates,
     jit_learn_skill,
     loop_reference_templates,
     loop_skill,
@@ -48,6 +49,7 @@ def builtin_skill_reference_templates() -> list[SkillReferenceTemplate]:
             for definition in workflow_reference_definitions()
             if definition.procedure_steps
         ],
+        *design_reference_templates(),
     ]
 
 
