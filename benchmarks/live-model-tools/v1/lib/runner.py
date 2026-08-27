@@ -24,7 +24,7 @@ def _snapshot(root: Path) -> dict[str, bytes]:
         if path.is_symlink():
             continue
         if path.is_file() and "__pycache__" not in path.parts and ".venv" not in path.parts and ".pytest_cache" not in path.parts:
-            snapshot[str(path.relative_to(root))] = path.read_bytes()
+            snapshot[path.relative_to(root).as_posix()] = path.read_bytes()
     return snapshot
 
 
