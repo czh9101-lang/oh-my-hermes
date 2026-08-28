@@ -650,6 +650,13 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "",
         "context-budget-review",
     ),
+    RoutingPrecisionCase(
+        "new-project-file-concept-direct",
+        "New-project file concept question stays a lookup, not an app delivery loop",
+        "what files should a new project have",
+        "answer_file_lookup",
+        "file_or_text",
+    ),
 )
 
 
@@ -2579,6 +2586,42 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "prepare_context_budget_review",
         "context_budget_review",
         "context-budget-review",
+    ),
+    RoutingInterventionCase(
+        "greenfield-bootstrap-the-project",
+        "'Bootstrap the project' reaches the app delivery loop for the greenfield bootstrap pass",
+        "bootstrap the project",
+        "dispatch",
+        "idea-to-deploy",
+        "present_app_delivery_loop",
+        "app_delivery_loop",
+    ),
+    RoutingInterventionCase(
+        "greenfield-project-scaffolding",
+        "'Project scaffolding' reaches the app delivery loop for the greenfield bootstrap pass",
+        "project scaffolding",
+        "dispatch",
+        "idea-to-deploy",
+        "present_app_delivery_loop",
+        "app_delivery_loop",
+    ),
+    RoutingInterventionCase(
+        "greenfield-scaffold-a-new-project",
+        "'Scaffold a new project' reaches the app delivery loop for the greenfield bootstrap pass",
+        "scaffold a new project",
+        "dispatch",
+        "idea-to-deploy",
+        "present_app_delivery_loop",
+        "app_delivery_loop",
+    ),
+    RoutingInterventionCase(
+        "greenfield-set-up-a-new-repo",
+        "'Set up a new repo' reaches the app delivery loop for the greenfield bootstrap pass",
+        "set up a new repo",
+        "dispatch",
+        "idea-to-deploy",
+        "present_app_delivery_loop",
+        "app_delivery_loop",
     ),
 )
 

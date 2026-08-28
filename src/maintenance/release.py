@@ -256,7 +256,14 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # recapture-until-the-difference-list-is-empty contract, plus the pointer to
 # the on-demand references/screenshot-loop.md; the reference body loads on
 # demand and sits outside this always-loaded budget); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 726112
+# 726112 -> 726847: idea-to-deploy gained the greenfield project-bootstrap
+# pass (+735 chars: six new trigger phrases, a widened use-when clause naming
+# a fresh or empty repository, and the quality-bar rule requiring the
+# bootstrap pass before delivery planning with the explicit throwaway-work
+# skip, plus the pointer to the on-demand references/project-bootstrap.md;
+# the reference body loads on demand and sits outside this always-loaded
+# budget); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 726847
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
