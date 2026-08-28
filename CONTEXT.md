@@ -138,7 +138,8 @@ the chosen CLI and never runs it. Its facade rejects the `hermes` profile
 code; keep them separate in prose too. Prepared handoffs, executor capability
 snapshots, executor prompting contracts, throughput overlays, and the handoff
 sections of `wrapper-routing.md` all belong to this lane, not to the default
-lane.
+lane. The lane's skill-facing surface is the `ulw-maestro` engine (canonical
+`maestro`), whose explicit-owner precondition is the same gate stated here.
 _Avoid_: treating Maestro surfaces as the default coding path, legacy (it is
 current, just not default), "coding delegation" as a synonym for all coding
 work

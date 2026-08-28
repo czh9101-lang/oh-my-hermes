@@ -1017,9 +1017,10 @@ _DEFINITIONS = [
         handoff_policy=(
             "Convert an explicitly chosen external coding owner into a prepared handoff: claude-code as a "
             "prompt-only `coding_prompt_handoff/v1` (never dispatchable, never described as a run), codex as a "
-            "dispatchable `executor_handoff/v1`, and omx-runtime/omo-runtime/omc-runtime as `runtime_handoff/v1`. "
+            "dispatchable `coding_executor_handoff/v1`, and omx-runtime/omo-runtime/omc-runtime as "
+            "`coding_runtime_handoff/v1`. "
             f"This engine loads only after that choice is made -- {HERMES_HARNESS_DEFAULT_WORDING} -- and it "
-            "never substitutes for that default or picks the owner itself."
+            "never substitutes for the Hermes harness path or picks the owner itself."
         ),
         required_inputs=(
             "explicit coding-owner choice for this run",
@@ -1053,9 +1054,10 @@ _DEFINITIONS = [
             "recommendation, a plan mention, or a previous run's owner is not a choice for this run. With no "
             "owner, two owners, or an unready owner, ask `choose_executor` once and stop; never pick the owner "
             "on the user's behalf.",
-            "State the handoff mode before composing: claude-code is prompt-only (`coding_prompt_handoff/v1`, "
-            "never dispatchable -- never call it a run), codex is a dispatchable `executor_handoff/v1`, and "
-            "omx-runtime/omo-runtime/omc-runtime are `runtime_handoff/v1`.",
+            "State the handoff mode before composing: claude-code is prompt-only (`coding_prompt_handoff/v1` -- "
+            "the prepared handoff record is never dispatchable and never described as a run; only `omh coding "
+            "fanout dispatch` ever spawns a CLI), codex is a dispatchable `coding_executor_handoff/v1`, and "
+            "omx-runtime/omo-runtime/omc-runtime are `coding_runtime_handoff/v1`.",
             "Compose the prompt from the selected profile's DISCOVERED skills via `omh coding executor-skills "
             "--profile <profile>`: arrange the returned skills by the unit's role recipe, one named skill per "
             "step, using each skill's own invocation string verbatim (`/name`, `/pack:name` from its manifest, "

@@ -125,15 +125,35 @@ class MaestroQualityBarContentTests(unittest.TestCase):
         definition = _maestro_definition()
         combined = " ".join(definition.quality_bar)
         self.assertIn("prompt-only", combined)
-        self.assertIn("coding_prompt_handoff/v1", combined)
         self.assertIn("dispatchable", combined)
-        self.assertIn("executor_handoff/v1", combined)
+        # The schema identifiers must be the real constants, not shorthand:
+        # a truncated identifier in the mode-statement rule is exactly the
+        # defect review caught, so assert against the source of truth.
+        from omh.coding.executors import (
+            EXECUTOR_HANDOFF_SCHEMA_VERSION,
+            PROMPT_HANDOFF_SCHEMA_VERSION,
+            RUNTIME_HANDOFF_SCHEMA_VERSION,
+        )
+        for schema in (
+            PROMPT_HANDOFF_SCHEMA_VERSION,
+            EXECUTOR_HANDOFF_SCHEMA_VERSION,
+            RUNTIME_HANDOFF_SCHEMA_VERSION,
+        ):
+            self.assertIn(f"`{schema}`", combined)
 
 
 class MaestroExecutorNeutralityTests(unittest.TestCase):
     def test_no_quality_bar_or_why_this_exists_line_co_locates_default_with_a_cli_name(self) -> None:
         definition = _maestro_definition()
-        lines = tuple(definition.quality_bar) + (definition.why_this_exists,)
+        # Scan every prose surface the definition ships, not just the quality
+        # bar: review found the one violating string living in handoff_policy,
+        # the surface the narrower scan missed.
+        lines = (
+            tuple(definition.quality_bar)
+            + tuple(definition.safety_rules)
+            + tuple(definition.do_not_use_when)
+            + (definition.why_this_exists, definition.handoff_policy)
+        )
         findings = _owner_neutrality_findings(lines)
         self.assertEqual(findings, [], f"owner_neutrality_lost findings: {findings}")
 
