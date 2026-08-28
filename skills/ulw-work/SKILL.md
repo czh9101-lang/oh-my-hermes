@@ -78,7 +78,7 @@ Bad example:
 
 Use when an accepted implementation plan can be split into independent, reviewable work lanes.
 
-    Strong routing signals: `ultrawork`, `$ultrawork`, `ulw`, `$ulw`, `parallel work`, `parallel implementation`, `high throughput`, `coding team`, `coordinated workers`, `finish until done`, `persistent execution`, `implement`, `one-cycle delivery`, `single-cycle delivery`, `end-to-end process`, `delivery process`, `research plan implement review docs pr`, `plan implement review docs pr`, `prepare a pr`, `make a pr`, `open a pr`, `pr-ready`
+    Strong routing signals: `ultrawork`, `$ultrawork`, `ulw`, `$ulw`, `parallel work`, `parallel implementation`, `high throughput`, `coding team`, `coordinated workers`, `finish until done`, `persistent execution`, `implement`, `one-cycle delivery`, `single-cycle delivery`, `end-to-end process`, `delivery process`, `research plan implement review docs pr`, `plan implement review docs pr`, `prepare a pr`, `make a pr`, `open a pr`, `pr-ready`, `red green refactor`, `red-green refactor`, `red-green`, `failing test first`
 
 ## Catalog Metadata
 
@@ -94,6 +94,7 @@ Quality bar:
 - Require disjoint lane ownership before preparing multiple coding runtime handoffs.
 - Attach acceptance criteria, verification commands, and review expectations to each lane.
 - Keep dispatch, execution, review, CI, and merge status evidence separate.
+- For a tests-first (TDD or red-green) run, hold every implementation lane to the observed red/green contract: the new test's failing (non-zero) output is pasted before any implementation edit, the passing (zero) output plus full-suite result before any done claim, and a test is never edited, deleted, skipped, xfail-marked, or weakened to make it pass - load `references/tdd-red-green.md` for the full discipline.
 - [capability:coordinated_scope] Keep Hermes as coordinator and status narrator for lane framing and status while coding lanes become runtime handoffs with explicit ownership.
 - [capability:delivery_boundary] Complete exactly one plan-to-PR delivery cycle, then stop with status, evidence gaps, or a next recommended workflow.
 - [capability:delivery_boundary] Start a delivery cycle with codebase/source research and a ralplan-style decision record before implementation handoff.
@@ -160,6 +161,12 @@ Safety rules:
 - [capability:delivery_boundary] Do not skip planning when the delivery request is broad, risky, or user-visible; a ralplan-style or reviewed plan names acceptance criteria, risks, and verification commands.
 - [capability:delivery_boundary] Run docs sync only when behavior, setup, commands, examples, or public claims changed.
 - [capability:delivery_boundary] Keep web research source-backed and permission-aware; do not run hidden network or LLM calls from OMH core.
+
+## Tests-First Delivery
+
+When the user asks for TDD, tests first, or red-green delivery, every implementation lane runs under the red/green contract. The iron law: no implementation line before a failing test - write the test that describes the missing behavior, run it, and watch it fail for the right reason before any implementation edit. A cycle is observed only when a failing (non-zero) run of the lane's test command precedes a passing (zero) run, both with pasted output; a lane that shows only green is `prepared_not_observed` on its red phase and does not count as tests-first delivery. Never edit, delete, skip, xfail, or weaken a test to make it pass - a failing test means fix the code - and a test that passes on its first run proves nothing: make it fail first. Commit the failing test as a checkpoint before implementing, so any later test edit is diff-visible.
+
+Hermes bundles the superpowers `test-driven-development` skill; when it is loaded, follow its cycle - this contract reinforces it with OMH's evidence vocabulary and never overrides it. Load `references/tdd-red-green.md` for the full discipline: the evidence ledger, forbidden moves, the rationalization table, and the observed red-before-green rule.
 
 ## Runtime Evidence
 

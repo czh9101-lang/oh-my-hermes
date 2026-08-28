@@ -40,7 +40,7 @@ from .fanout_contracts import (
     verification_command_argv,
 )
 from .inflight import InflightMarkerError, clear_inflight_marker, write_inflight_marker
-from .unit_prompt_protocol import unit_protocol_lines
+from .unit_prompt_protocol import shared_unit_preamble_lines, unit_protocol_lines
 from .fanout_unit_results import validate_check_rows, validate_unit_result
 from .unit_telemetry import parse_unit_telemetry
 
@@ -161,6 +161,39 @@ def signal_safe_unit_runner(
 # retry decorator) can propagate it so the dispatch path keeps recording the
 # reapable pid instead of silently dropping it.
 signal_safe_unit_runner.accepts_on_spawn = True  # type: ignore[attr-defined]
+
+
+# Spacing between real agent-CLI spawn starts of one fanout. Providers cache
+# prompt prefixes by exact bytes, and a cache entry is readable only once the
+# first response starts streaming — parallel identical-prefix requests each
+# pay a full cache write. Two seconds gives the first dispatch a head start
+# at writing the cache its siblings read without materially delaying a batch.
+CACHE_WARM_SPAWN_STAGGER_SECONDS: float = 2.0
+
+
+class _SpawnStagger:
+    """Spaces real agent-CLI spawn starts so the first request writes the
+    provider prompt cache the siblings read; parallel identical requests
+    would each pay a full cache write."""
+
+    def __init__(self, interval: float) -> None:
+        self._interval = max(0.0, interval)
+        self._lock = threading.Lock()
+        self._next = 0.0
+
+    def reserve(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            slot = max(now, self._next)
+            self._next = slot + self._interval
+        # time.sleep can wake up to a timer tick early on Windows waitable
+        # timers, which would collapse the spacing; loop until the slot is
+        # actually reached on the monotonic clock.
+        while True:
+            now = time.monotonic()
+            if now >= slot:
+                return
+            time.sleep(slot - now)
 
 
 DISPATCH_CLAIM_BOUNDARY = (
@@ -368,17 +401,19 @@ def build_unit_prompt(
     boundary = unit.get("boundary", {}) if isinstance(unit.get("boundary"), Mapping) else {}
     file_scope = ", ".join(str(path) for path in boundary.get("file_scope", []))
     do_not_touch = ", ".join(str(path) for path in boundary.get("do_not_touch", []))
-    lines = [
-        f"Work unit: {unit.get('title', unit.get('unit_id'))}",
-        f"Overall goal: {goal_text.strip()}",
-        f"Stay strictly inside these paths: {file_scope}.",
-    ]
+    # Shared preamble first: sibling prompts must share a byte-identical head
+    # so provider prefix caches serve every unit after the first (see
+    # PROMPT_CACHE_COMPOSITION_PROTOCOL).
+    lines = shared_unit_preamble_lines(goal_text)
+    lines.append(f"Work unit: {unit.get('title', unit.get('unit_id'))}")
+    lines.append(f"Stay strictly inside these paths: {file_scope}.")
     if do_not_touch:
         lines.append(f"Do not touch: {do_not_touch} (owned by sibling units).")
     lines.append(f"Work on branch {unit.get('branch_suggestion', '')} in the current worktree.")
-    # Goal echo-back, pre-declared completion criteria (absorbing the unit's
-    # integration checks), bounded verification discipline, and — on
-    # high-effort routes — the per-family over-verification calibration.
+    # Pre-declared completion criteria (absorbing the unit's integration
+    # checks) and — on high-effort routes — the per-family over-verification
+    # calibration; the unit-invariant discipline blocks already rode the
+    # shared preamble above.
     lines.extend(unit_protocol_lines(unit))
     # Skills the operator actually has, named with the invocation form their
     # source directory implies. Absent discovery (the default, and every
@@ -972,6 +1007,11 @@ def dispatch_fanout(
         for owner, width in (per_owner_lanes or {}).items()
         if isinstance(width, int) and not isinstance(width, bool) and int(width) >= 1
     }
+    # One stagger per run: real spawns of this fanout space out so the first
+    # request writes the provider prompt cache the siblings read. It engages
+    # only for runners carrying the real-runner `accepts_on_spawn` seam, so
+    # injected test runners and dry runs never wait.
+    spawn_stagger = _SpawnStagger(CACHE_WARM_SPAWN_STAGGER_SECONDS)
 
     def _dispatch_with_owner_gate(unit: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
         # A worker that reaches its turn after the interrupt — queued in the
@@ -1032,6 +1072,7 @@ def dispatch_fanout(
                 fanout_id=fanout_id,
                 discoveries=discoveries,
                 capability_precheck=capability_prechecks[unit_id],
+                spawn_stagger=spawn_stagger,
             )
 
         def _admit_frontier() -> None:
@@ -1333,6 +1374,7 @@ def _dispatch_unit(
     fanout_id: str = "",
     discoveries: Mapping[str, Mapping[str, Any]] | None = None,
     capability_precheck: tuple[str, dict[str, Any] | None, list[str]],
+    spawn_stagger: _SpawnStagger | None = None,
 ) -> dict[str, Any]:
     from .model_inventory import catalog_fingerprint_note
 
@@ -1567,6 +1609,11 @@ def _dispatch_unit(
             )
 
         spawn_kwargs["on_spawn"] = _record_pid
+        # Real spawns only (the same seam as the pid hook): stagger this
+        # unit's start so the first dispatch of the fanout writes the
+        # provider prompt cache the byte-identical sibling preambles read.
+        if spawn_stagger is not None:
+            spawn_stagger.reserve()
     try:
         completed = runner(
             argv, cwd=str(worktree), text=True, capture_output=True, timeout=timeout, **spawn_kwargs
@@ -1623,6 +1670,7 @@ def _dispatch_unit(
         base_sha=base_sha,
         worktree=worktree,
         owner=owner,
+        stdout_text=stdout_text,
     )
     # Both rungs below it must already hold: a unit whose process failed has
     # nothing to verify, and one whose sidecar did not validate has not yet
@@ -1726,13 +1774,39 @@ def _intake_unit_result(
     base_sha: str,
     worktree: Path,
     owner: str,
+    stdout_text: str = "",
 ) -> dict[str, Any]:
-    """Read one sidecar after process exit and classify shape, never truth."""
+    """Read one unit return after process exit and classify shape, never truth.
+
+    The sidecar file is the primary machine-read return. When a sidecar was
+    contracted but the executor never wrote the file, the return protocol's
+    redundant fenced ```json block is the fallback: the last fenced block in
+    captured stdout goes through the same provenance, schema, and dispatch
+    identity validation the sidecar gets. Only a missing sidecar with no
+    fenced block at all stays `unit_result_missing`.
+    """
     if sidecar_path is None or not sidecar_path.is_file():
+        if sidecar_path is not None:
+            fallback = _intake_stdout_unit_result(
+                paths,
+                stdout_text=stdout_text,
+                run_ref=run_ref,
+                unit_id=unit_id,
+                fanout_id=fanout_id,
+                base_sha=base_sha,
+                worktree=worktree,
+                owner=owner,
+            )
+            if fallback is not None:
+                return fallback
         return _unit_result_failure(
             paths,
             event="unit_result_missing",
-            reason="sidecar is missing",
+            reason=(
+                "sidecar is missing"
+                if sidecar_path is None
+                else "sidecar is missing and stdout has no fenced json block"
+            ),
             sidecar_path=None,
             run_ref=run_ref,
             unit_id=unit_id,
@@ -1741,14 +1815,8 @@ def _intake_unit_result(
         )
     try:
         payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
-        if isinstance(payload, Mapping):
-            # Enforce executor provenance before the general shape validator,
-            # so even an internally inconsistent laundering attempt receives
-            # the intake contract's stable checks[i].reported_by error.
-            _validate_executor_sidecar_checks(payload)
-        validated = validate_unit_result(payload)
-        _validate_unit_result_identity(
-            validated,
+        validated = _validated_unit_result_payload(
+            payload,
             unit_id=unit_id,
             run_ref=run_ref,
             fanout_id=fanout_id,
@@ -1784,8 +1852,124 @@ def _intake_unit_result(
     return {
         "unit_result_status": "unit_result_validated",
         "result_schema_valid": True,
+        "unit_result_source": "sidecar",
         "unit_result": _bounded_unit_result(validated),
     }
+
+
+def _stdout_fenced_json_blocks(stdout_text: str) -> list[str]:
+    """Bodies of fenced ```json blocks in stdout, in order of appearance.
+
+    A deliberately plain line scan: a block opens on a line that is exactly
+    ```json (after strip) and closes on the next line that is exactly ```.
+    An unclosed trailing block is dropped rather than guessed at.
+    """
+    blocks: list[str] = []
+    body: list[str] | None = None
+    for line in stdout_text.splitlines():
+        stripped = line.strip()
+        if body is None:
+            if stripped == "```json":
+                body = []
+        elif stripped == "```":
+            blocks.append("\n".join(body))
+            body = None
+        else:
+            body.append(line)
+    return blocks
+
+
+def _intake_stdout_unit_result(
+    paths: OmhPaths,
+    *,
+    stdout_text: str,
+    run_ref: str,
+    unit_id: str,
+    fanout_id: str,
+    base_sha: str,
+    worktree: Path,
+    owner: str,
+) -> dict[str, Any] | None:
+    """Fallback intake from the fenced stdout block when the sidecar is absent.
+
+    Returns None when stdout carries no fenced ```json block (the caller then
+    reports `unit_result_missing`). The report protocol says the final report
+    ENDS with the block, so the last one is the return; it faces exactly the
+    validation the sidecar faces, and a block that fails it is reported as
+    `unit_result_invalid` rather than silently ignored.
+    """
+    blocks = _stdout_fenced_json_blocks(stdout_text)
+    if not blocks:
+        return None
+    try:
+        payload = json.loads(blocks[-1])
+        validated = _validated_unit_result_payload(
+            payload,
+            unit_id=unit_id,
+            run_ref=run_ref,
+            fanout_id=fanout_id,
+            base_sha=base_sha,
+        )
+    except (ValueError, TypeError) as exc:
+        return _unit_result_failure(
+            paths,
+            event="unit_result_invalid",
+            reason=f"stdout fenced json block (sidecar missing): {exc}",
+            sidecar_path=None,
+            run_ref=run_ref,
+            unit_id=unit_id,
+            worktree=worktree,
+            owner=owner,
+        )
+    append_journal_observation(
+        paths,
+        {
+            "target_type": "run",
+            "target_id": run_ref,
+            "run_id": run_ref,
+            "event": "unit_result_validated",
+            "status": "observed",
+            "summary": (
+                f"fanout unit result shape validated for {unit_id} "
+                "from stdout fenced json block (sidecar missing)"
+            ),
+            "worker_ref": unit_id,
+            "worktree_ref": str(worktree),
+            "runtime_profile": owner,
+            "evidence_refs": [],
+        },
+    )
+    return {
+        "unit_result_status": "unit_result_validated",
+        "result_schema_valid": True,
+        "unit_result_source": "stdout_fenced_block",
+        "unit_result": _bounded_unit_result(validated),
+    }
+
+
+def _validated_unit_result_payload(
+    payload: Any,
+    *,
+    unit_id: str,
+    run_ref: str,
+    fanout_id: str,
+    base_sha: str,
+) -> dict[str, Any]:
+    """One validation ladder for both return lanes (sidecar and stdout block)."""
+    if isinstance(payload, Mapping):
+        # Enforce executor provenance before the general shape validator,
+        # so even an internally inconsistent laundering attempt receives
+        # the intake contract's stable checks[i].reported_by error.
+        _validate_executor_sidecar_checks(payload)
+    validated = validate_unit_result(payload)
+    _validate_unit_result_identity(
+        validated,
+        unit_id=unit_id,
+        run_ref=run_ref,
+        fanout_id=fanout_id,
+        base_sha=base_sha,
+    )
+    return validated
 
 
 def _validate_unit_result_identity(

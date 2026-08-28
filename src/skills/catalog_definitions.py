@@ -851,6 +851,13 @@ _DEFINITIONS = [
             "make a pr",
             "open a pr",
             "pr-ready",
+            # Tests-first delivery vocabulary: the retiring `ultraprocess`
+            # definition already carries the plain TDD phrases and dissolves
+            # to this engine, so only the red/green phrasing lands here.
+            "red green refactor",
+            "red-green refactor",
+            "red-green",
+            "failing test first",
         ),
         "Use when an accepted implementation plan can be split into independent, reviewable work lanes.",
         aliases=("ulw",),
@@ -902,6 +909,7 @@ _DEFINITIONS = [
             "Require disjoint lane ownership before preparing multiple coding runtime handoffs.",
             "Attach acceptance criteria, verification commands, and review expectations to each lane.",
             "Keep dispatch, execution, review, CI, and merge status evidence separate.",
+            "For a tests-first (TDD or red-green) run, hold every implementation lane to the observed red/green contract: the new test's failing (non-zero) output is pasted before any implementation edit, the passing (zero) output plus full-suite result before any done claim, and a test is never edited, deleted, skipped, xfail-marked, or weakened to make it pass - load `references/tdd-red-green.md` for the full discipline.",
             "[capability:coordinated_scope] Keep Hermes as coordinator and status narrator for lane framing and status while coding lanes become runtime handoffs with explicit ownership.",
             "[capability:delivery_boundary] Complete exactly one plan-to-PR delivery cycle, then stop with status, evidence gaps, or a next recommended workflow.",
             "[capability:delivery_boundary] Start a delivery cycle with codebase/source research and a ralplan-style decision record before implementation handoff.",
@@ -3057,7 +3065,7 @@ _DEFINITIONS = [
     ),
     SkillDefinition(
         "frontend",
-        "Hermes frontend workflow: prepare design-system-driven web UI creation, redesign, polish, accessibility, performance, and visual QA handoffs.",
+        "Hermes frontend workflow: prepare design-system-driven web and terminal (TUI) UI creation, redesign, polish, accessibility, performance, and visual QA handoffs.",
         (
             "frontend",
             "front-end",
@@ -3091,6 +3099,9 @@ _DEFINITIONS = [
             "layout broken",
             "frontend qa",
             "frontend layout",
+            "tui design",
+            "terminal ui design",
+            "tui layout",
             "프론트엔드",
             "웹 ui",
             "웹 화면",
@@ -3108,7 +3119,7 @@ _DEFINITIONS = [
             "반응형",
             "접근성",
         ),
-        "Use when Hermes should shape or improve a web/frontend surface before implementation: layout, design system, responsive states, accessibility, performance, motion, and anti-generic visual quality.",
+        "Use when Hermes should shape or improve a web/frontend or terminal (TUI) surface before implementation: layout, design system, responsive states, accessibility, performance, motion, and anti-generic visual quality.",
         category="materials",
         phase="frontend-design",
         hermes_role="retained-cognition",
@@ -3165,10 +3176,12 @@ _DEFINITIONS = [
         quality_bar=(
             "Name the product goal, audience, target surfaces, routes, states, and visual quality bar.",
             "Hold the named bar: what a senior product designer at a top-tier product company (the Linear/Stripe/Supabase class) would sign off on — technically clean but flat output fails it. Load `references/taste-foundations.md`, name one primary taste direction, and reject the anti-slop patterns it lists.",
+            "When the target surface is a terminal UI (TUI), load `references/tui-craft.md` and hold the same bar there: default widgets are scaffolding, not finished UI; borders spent sparingly with spacing and a muted-color ladder doing the hierarchy; one named terminal aesthetic; verification rendered at 80x24 and 120x40 minimum with the pasted output as the screenshot-equivalent.",
             "Use references and domain fit to avoid generic AI-looking frontend output; when the user supplies a visual reference, load `references/reference-token-extraction.md` and extract tokens into the contract instead of eyeballing.",
             "Prepare a concrete design-system contract before implementation handoff: load `references/design-system-contract.md` and write DESIGN.md before the first component — no component code before the contract exists.",
             "For first-time UI creation, name the initial generation branch, reference direction, reusable primitives, state coverage, and required visual QA path.",
             "Cover responsive layout, empty/loading/error states, hover/focus/active states, CJK text, accessibility, and performance expectations.",
+            "After implementation lands on a web surface, load `references/screenshot-loop.md` and require the screenshot iteration loop live-environment-first: capture the running UI at 1440/768/375px, compare against the supplied target or DESIGN.md, list every difference triaged Blocker/High/Medium/Nit with its capture attached, fix, and recapture until the difference list is empty.",
             "Prefer native UI controls, stable dimensions, and realistic content over decorative cards, blobs, and placeholder-heavy screens.",
             "Keep implementation, browser verification, accessibility/performance checks, visual QA, and deployment as observed-only evidence.",
         ),
@@ -3469,6 +3482,7 @@ _DEFINITIONS = [
         quality_tier="visual-qa-gated",
         quality_bar=(
             "List the exact pages, states, viewports, files, images, or TUI frames being checked.",
+            "For TUI surfaces, bind every capture to an explicit terminal size — 80x24 and 120x40 at minimum — and treat pasted rendered output at a named size as the screenshot-equivalent; a capture without its recorded size is not visual QA evidence.",
             "Enumerate every page/state/viewport before capture and mark omitted surfaces as blockers rather than assumptions.",
             "Require exact repository and revision equality between target_lineage and every capture source_lineage.",
             "Combine objective capture/diff evidence, hotspot review, alpha/transparent-background checks, and human-readable visual findings.",
@@ -4244,6 +4258,9 @@ _DEFINITIONS = [
             "token budget review",
             "token budget",
             "prompt budget",
+            "prompt caching",
+            "prompt cache",
+            "cache hygiene",
             "context compaction",
             "compact context",
             "too much context",
@@ -4295,6 +4312,7 @@ _DEFINITIONS = [
             "Separate durable requirements, volatile status, file refs, verification evidence, and open blockers.",
             "Define checkpoint cadence, overflow recovery, and continuity verification.",
             "Use bounded copy while preserving the full objective and evidence gaps.",
+            "Keep prompt-prefix placement cache-stable: fixed section order, volatile bytes never above the fold, mid-run changes as appended messages never system-prompt mutations — load `references/cache-placement.md` for the placement rules.",
         ),
         why_this_exists=(
             "`context-budget-review` ports ECC's context-budget and token-budget instincts into OMH as a compactness gate "

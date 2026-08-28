@@ -36,6 +36,7 @@ from omh.coding.fanout_dispatch import (  # noqa: E402
     _apply_integration_readiness,
     _owner_skill_discoveries,
     _parse_numstat,
+    _stdout_fenced_json_blocks,
     _unit_verification_is_observed,
     dispatch_fanout,
     verify_goal_matches_contract,
@@ -287,6 +288,90 @@ class FanoutUnitResultIntakeTests(unittest.TestCase):
             self.assertEqual(missing["status"], "observed")
             self.assertEqual(missing["evidence_refs"], [])
             self.assertIn("missing", missing["summary"])
+
+    def _stdout_block_runner(self, stdout: str, *, sidecar_payload: dict[str, object] | None = None, sidecar: Path | None = None):
+        """Fake agent spawn that emits `stdout` and optionally writes a sidecar."""
+        spawned: list[list[str]] = []
+
+        def runner(argv, **kwargs):
+            if argv[0] == "git":
+                return subprocess.run(argv, **kwargs)
+            spawned.append(list(argv))
+            if sidecar_payload is not None and sidecar is not None:
+                sidecar.parent.mkdir(parents=True, exist_ok=True)
+                sidecar.write_text(json.dumps(sidecar_payload), encoding="utf-8")
+            return _FakeCompleted(0, stdout)
+
+        runner.spawned = spawned
+        return runner
+
+    def test_missing_sidecar_falls_back_to_validated_stdout_block(self) -> None:
+        """The return protocol's redundant fenced block is machine-read when the
+        contracted sidecar file never appears: same schema, same identity
+        validation, and the LAST block is the return (the report ends with it)."""
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, sidecar, script = self._setup(tmp)
+            payload = _unit_result_payload(contract, sha)
+            stdout = (
+                "Earlier tool output that quotes a block:\n"
+                "```json\n{\"not\": \"the return\"}\n```\n"
+                "Final report prose.\n"
+                "```json\n" + json.dumps(payload, indent=2) + "\n```\n"
+            )
+            runner = self._stdout_block_runner(stdout)
+
+            summary = self._dispatch(paths, repo, sha, contract, runner)
+
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertTrue(core["process_succeeded"])
+            self.assertTrue(core["result_schema_valid"])
+            self.assertEqual(core["unit_result_status"], "unit_result_validated")
+            self.assertEqual(core["unit_result_source"], "stdout_fenced_block")
+            self.assertEqual(core["unit_result"]["schema_version"], "fanout_unit_result/v1")
+            events = show_run(paths, core["run_ref"])["journal_events"]
+            validated = next(event for event in events if event["event"] == "unit_result_validated")
+            self.assertEqual(validated["status"], "observed")
+            self.assertEqual(validated["evidence_refs"], [])
+            self.assertIn("stdout fenced json block", validated["summary"])
+
+    def test_stdout_block_faces_the_same_identity_validation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, sidecar, script = self._setup(tmp)
+            payload = _unit_result_payload(contract, sha, base_sha="f" * 40)
+            stdout = "```json\n" + json.dumps(payload) + "\n```\n"
+            runner = self._stdout_block_runner(stdout)
+
+            summary = self._dispatch(paths, repo, sha, contract, runner)
+
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertTrue(core["process_succeeded"])
+            self.assertFalse(core["result_schema_valid"])
+            self.assertEqual(core["unit_result_status"], "unit_result_invalid")
+            self.assertIn("stdout fenced json block", core["unit_result_error"])
+            self.assertIn("base_sha", core["unit_result_error"])
+            self.assertNotIn("unit_result", core)
+
+    def test_a_written_sidecar_stays_primary_over_a_disagreeing_stdout_block(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, sidecar, script = self._setup(tmp)
+            stdout = "```json\n{\"schema_version\": \"garbage\"}\n```\n"
+            runner = self._stdout_block_runner(
+                stdout,
+                sidecar_payload=_unit_result_payload(contract, sha),
+                sidecar=sidecar,
+            )
+
+            summary = self._dispatch(paths, repo, sha, contract, runner)
+
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertTrue(core["result_schema_valid"])
+            self.assertEqual(core["unit_result_source"], "sidecar")
+
+    def test_fenced_block_scan_takes_closed_blocks_only(self) -> None:
+        self.assertEqual(_stdout_fenced_json_blocks(""), [])
+        self.assertEqual(_stdout_fenced_json_blocks("prose only\n"), [])
+        text = "a\n```json\n{\"x\": 1}\n```\nb\n  ```json  \n{\"y\": 2}\n```\n```json\n{\"unclosed\": true}\n"
+        self.assertEqual(_stdout_fenced_json_blocks(text), ['{"x": 1}', '{"y": 2}'])
 
     def test_invalid_sidecar_names_the_validator_field_error(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -2753,6 +2838,96 @@ class FanoutDispatchVerificationCliTests(unittest.TestCase):
                 status, _stdout, stderr = run_cli(argv + ["--run-verification"])
             self.assertEqual(status, 0, stderr)
             self.assertTrue(captured["run_verification"])
+
+
+class SpawnStaggerTests(unittest.TestCase):
+    """Cache-warm dispatch spacing: the first real spawn writes the provider
+    prompt cache the byte-identical sibling preambles read, so real spawns are
+    staggered while injected test runners stay untouched."""
+
+    def test_reserve_spaces_consecutive_slots(self) -> None:
+        import time as _time
+
+        from omh.coding.fanout_dispatch import _SpawnStagger
+
+        stagger = _SpawnStagger(0.05)
+        starts: list[float] = []
+        for _ in range(3):
+            stagger.reserve()
+            starts.append(_time.monotonic())
+        # Scheduler slack tolerance downward: sleeps may wake a hair early.
+        self.assertGreaterEqual(starts[1] - starts[0], 0.045)
+        self.assertGreaterEqual(starts[2] - starts[1], 0.045)
+
+    def test_injected_runner_without_marker_never_staggers(self) -> None:
+        import time as _time
+
+        import omh.coding.fanout_dispatch as engine
+
+        units = [
+            {"unit_id": "core", "title": "Core", "owner": "codex", "file_scope": ["src/core/"]},
+            {"unit_id": "docs", "title": "Docs", "owner": "claude-code", "file_scope": ["docs/"]},
+        ]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
+            started = _time.monotonic()
+            with mock.patch.object(engine, "CACHE_WARM_SPAWN_STAGGER_SECONDS", 60.0):
+                summary = dispatch_fanout(
+                    paths,
+                    contract,
+                    goal_text=_GOAL,
+                    repo_root=repo,
+                    base_sha=sha,
+                    runner=_agent_runner(),
+                    readiness=_ready,
+                )
+            elapsed = _time.monotonic() - started
+            statuses = {entry["unit_id"]: entry["status"] for entry in summary["units"]}
+            self.assertEqual(statuses, {"core": "completed", "docs": "completed"})
+            # A 60s interval that engaged would hold the second spawn for a
+            # minute; injected runners without accepts_on_spawn never wait.
+            self.assertLess(elapsed, 30.0)
+
+    def test_marked_runner_spawns_are_spaced(self) -> None:
+        import time as _time
+
+        import omh.coding.fanout_dispatch as engine
+
+        units = [
+            {"unit_id": "core", "title": "Core", "owner": "codex", "file_scope": ["src/core/"]},
+            {"unit_id": "docs", "title": "Docs", "owner": "claude-code", "file_scope": ["docs/"]},
+        ]
+        spawn_times: list[float] = []
+
+        def runner(argv, **kwargs):
+            if argv[0] == "git":
+                return subprocess.run(argv, **kwargs)
+            spawn_times.append(_time.monotonic())
+            return _FakeCompleted(0, "done")
+
+        runner.accepts_on_spawn = True
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
+            with mock.patch.object(engine, "CACHE_WARM_SPAWN_STAGGER_SECONDS", 0.3):
+                summary = dispatch_fanout(
+                    paths,
+                    contract,
+                    goal_text=_GOAL,
+                    repo_root=repo,
+                    base_sha=sha,
+                    runner=runner,
+                    readiness=_ready,
+                )
+            statuses = {entry["unit_id"]: entry["status"] for entry in summary["units"]}
+            self.assertEqual(statuses, {"core": "completed", "docs": "completed"})
+            self.assertEqual(len(spawn_times), 2)
+            self.assertGreaterEqual(spawn_times[1] - spawn_times[0], 0.25)
 
 
 if __name__ == "__main__":

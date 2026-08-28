@@ -73,6 +73,11 @@ _DEFAULT_ALLOWLIST = (
     "uv run python -m omh.cli docs workflows --check",
     "uv run python -m omh.cli harness validate",
     "git diff --check",
+    # Read-only prefix for the tests-first red-commit tamper probe
+    # (`git diff <red-commit>.. -- <test paths>`), named by
+    # `ulw-work/references/tdd-red-green.md`. Kept alongside the narrower
+    # "git diff --check" entry for config compatibility.
+    "git diff",
 )
 
 

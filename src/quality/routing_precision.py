@@ -547,6 +547,28 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_clarification",
         "",
     ),
+    # Negative controls for the tests-first delivery triggers on `ultrawork`
+    # ("red green refactor", "red-green refactor", "red-green",
+    # "failing test first"): a concept question and a why-is-it-failing
+    # diagnosis must stay off the tests-first delivery engine. The concept
+    # case follows the chain-models-concept shape (no forbidden_candidate:
+    # the direct-answer fallback may name low-score candidates while the
+    # case still fails on any dispatch, workflow card, or handoff action).
+    RoutingPrecisionCase(
+        "red-green-refactor-concept",
+        "A red-green-refactor concept question stays direct, not a tests-first run",
+        "explain what red green refactor means",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "tests-failing-question",
+        "A why-are-tests-failing question stays a clarification, not a tests-first run",
+        "why are the tests failing",
+        "answer_clarification",
+        "",
+        "ultrawork",
+    ),
     RoutingPrecisionCase("o013-dso", "DSO clarification excludes visual QA", "DSO revenue cutoff", "answer_clarification", "", "visual-qa"),
     RoutingPrecisionCase("o013-asc-606", "ASC 606 clarification excludes model setup", "ASC 606 model", "answer_clarification", "", "model-setup"),
     RoutingPrecisionCase("o013-liability-cap", "Liability clarification excludes model setup", "indemnity liability cap", "answer_clarification", "", "model-setup"),
@@ -596,6 +618,37 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "what is a design system?",
         "answer_directly",
         "direct_answer",
+    ),
+    # The TUI concept case follows the chain-models-concept shape (no
+    # forbidden_candidate: the direct-answer fallback may name low-score
+    # candidates while the case still fails on any dispatch, workflow card,
+    # or handoff action) — it guards the new "tui design"/"tui layout"
+    # frontend triggers from claiming a concept question.
+    RoutingPrecisionCase(
+        "tui-concept-question",
+        "A TUI concept question stays a direct answer",
+        "what is a tui and how is it different from a gui?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    # Infra-cache maintenance guards for the "prompt caching"/"prompt cache"/
+    # "cache hygiene" triggers: build- and HTTP-cache work shares the word
+    # "cache" but has nothing to do with prompt-prefix placement.
+    RoutingPrecisionCase(
+        "npm-cache-clear-direct",
+        "Build-cache maintenance never dispatches context budget review",
+        "clear the npm cache and rerun the build",
+        "answer_clarification",
+        "",
+        "context-budget-review",
+    ),
+    RoutingPrecisionCase(
+        "stale-browser-cache-direct",
+        "HTTP cache debugging never dispatches context budget review",
+        "the browser cache is serving a stale bundle, fix the cache headers",
+        "answer_clarification",
+        "",
+        "context-budget-review",
     ),
 )
 
@@ -729,6 +782,33 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "frontend",
         "prepare_frontend_handoff",
         "frontend_handoff",
+    ),
+    RoutingInterventionCase(
+        "tui-design-status-dashboard",
+        "A TUI design request reaches the frontend craft lane",
+        "tui design pass on this status dashboard so it stops looking like default widgets",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+    ),
+    RoutingInterventionCase(
+        "tui-layout-short-terminal",
+        "A TUI layout restructure request reaches frontend, not visual QA",
+        "terminal ui design for the log pane: restructure the layout so short terminals stop crushing it",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+    ),
+    RoutingInterventionCase(
+        "tui-check-stays-visual-qa",
+        "A TUI render check stays on the visual-qa lane",
+        "tui check this screen for clipped korean text",
+        "dispatch",
+        "visual-qa",
+        "prepare_visual_qa",
+        "visual_qa",
     ),
     RoutingInterventionCase(
         "accessibility-audit-checkout",
@@ -1355,6 +1435,24 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "owner-learning-ulw-delivery",
         "ULW coding delivery opens the owner-choice handoff",
         "research, plan, implement, verify, and review this coding change in one cycle",
+        "dispatch",
+        "ultrawork",
+        "choose_executor",
+        "handoff",
+    ),
+    RoutingInterventionCase(
+        "tdd-implementation-red-green",
+        "TDD implementation requests open ultrawork's tests-first delivery",
+        "tdd implementation of the retry queue: write tests first, then make them pass",
+        "dispatch",
+        "ultrawork",
+        "choose_executor",
+        "handoff",
+    ),
+    RoutingInterventionCase(
+        "red-green-refactor-delivery",
+        "Red-green delivery requests open ultrawork's tests-first delivery",
+        "implement the parser with a failing test first, red-green",
         "dispatch",
         "ultrawork",
         "choose_executor",
@@ -2471,6 +2569,16 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "finance-analysis",
         "prepare_finance_analysis",
         "finance_analysis",
+    ),
+    RoutingInterventionCase(
+        "prompt-cache-hygiene-budget-review",
+        "Prompt-cache hygiene reaches context budget review",
+        "set up prompt caching hygiene before this long agent run",
+        "dispatch",
+        "context-budget-review",
+        "prepare_context_budget_review",
+        "context_budget_review",
+        "context-budget-review",
     ),
 )
 

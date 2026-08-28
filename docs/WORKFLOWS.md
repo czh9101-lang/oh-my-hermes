@@ -552,7 +552,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - [capability:durable_checkpoint] One concrete, already-scoped task only needs one owner to finish and verify; use the `single_owner_persistence` capability.
   - [capability:durable_checkpoint] The next work must be discovered or reframed repeatedly through research and feedback cycles; use `loop`.
   - [capability:durable_checkpoint] Acceptance criteria, current checkpoint, and final gate expectations are too vague to make a goal inspectable.
-- Strong routing signals: `ultrawork`, `$ultrawork`, `ulw`, `$ulw`, `parallel work`, `parallel implementation`, `high throughput`, `coding team`, `coordinated workers`, `finish until done`, `persistent execution`, `implement`, `one-cycle delivery`, `single-cycle delivery`, `end-to-end process`, `delivery process`, `research plan implement review docs pr`, `plan implement review docs pr`, `prepare a pr`, `make a pr`, `open a pr`, `pr-ready`
+- Strong routing signals: `ultrawork`, `$ultrawork`, `ulw`, `$ulw`, `parallel work`, `parallel implementation`, `high throughput`, `coding team`, `coordinated workers`, `finish until done`, `persistent execution`, `implement`, `one-cycle delivery`, `single-cycle delivery`, `end-to-end process`, `delivery process`, `research plan implement review docs pr`, `plan implement review docs pr`, `prepare a pr`, `make a pr`, `open a pr`, `pr-ready`, `red green refactor`, `red-green refactor`, `red-green`, `failing test first`
 - Good example:
   - Prompt: $ultrawork split the accepted docs refresh, CLI output polish, and test updates into parallel implementation lanes.
   - Expected behavior: Create disjoint lane prompts with acceptance criteria, verification commands, and review evidence requirements.
@@ -566,6 +566,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Require disjoint lane ownership before preparing multiple coding runtime handoffs.
   - Attach acceptance criteria, verification commands, and review expectations to each lane.
   - Keep dispatch, execution, review, CI, and merge status evidence separate.
+  - For a tests-first (TDD or red-green) run, hold every implementation lane to the observed red/green contract: the new test's failing (non-zero) output is pasted before any implementation edit, the passing (zero) output plus full-suite result before any done claim, and a test is never edited, deleted, skipped, xfail-marked, or weakened to make it pass - load `references/tdd-red-green.md` for the full discipline.
   - [capability:coordinated_scope] Keep Hermes as coordinator and status narrator for lane framing and status while coding lanes become runtime handoffs with explicit ownership.
   - [capability:delivery_boundary] Complete exactly one plan-to-PR delivery cycle, then stop with status, evidence gaps, or a next recommended workflow.
   - [capability:delivery_boundary] Start a delivery cycle with codebase/source research and a ralplan-style decision record before implementation handoff.
@@ -2336,7 +2337,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 
 ### frontend
 
-[omh] Hermes frontend workflow: prepare design-system-driven web UI creation, redesign, polish, accessibility, performance, and visual QA handoffs.
+[omh] Hermes frontend workflow: prepare design-system-driven web and terminal (TUI) UI creation, redesign, polish, accessibility, performance, and visual QA handoffs.
 
 - Category: `materials`
 - Phase: `frontend-design`
@@ -2351,13 +2352,13 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Preferred usage: Use as an installed Hermes workflow skill when a web UI or frontend surface needs design-system, layout, responsive, accessibility, performance, and visual-QA handoff preparation.
 - Handoff policy: Keep product framing, reference selection, design-system contract, viewport/state matrix, and implementation brief in Hermes. Record code changes, browser screenshots, Lighthouse/Core Web Vitals, accessibility scans, and visual QA only from executor or wrapper observed evidence.
 - Why this exists: `frontend` gives OMH a first-class web UI creation and polishing workflow so Hermes can prepare high-quality layout, design-system, accessibility, performance, and visual-QA handoffs without becoming the hidden coding or browser runtime.
-- Use when: Use when Hermes should shape or improve a web/frontend surface before implementation: layout, design system, responsive states, accessibility, performance, motion, and anti-generic visual quality.
+- Use when: Use when Hermes should shape or improve a web/frontend or terminal (TUI) surface before implementation: layout, design system, responsive states, accessibility, performance, motion, and anti-generic visual quality.
 - Do not use when:
   - The user needs a broad premium-quality gate across web, deck, PDF, poster, or publishing outputs; use `design-quality-gate`.
   - The user only needs a file, deck, PDF, spreadsheet, HWP, or attachment package; use `materials-package` or `deliverable-package`.
   - The user only needs an image card or infographic prompt; use `img-summary`.
   - The user asks to mark a UI as visually passed without fresh rendered evidence; use `visual-qa` and keep PASS blocked until observed.
-- Strong routing signals: `frontend`, `front-end`, `front end`, `frontend skill`, `web ui`, `ui ux`, `ui/ux`, `landing page`, `web app layout`, `responsive layout`, `responsive design`, `design system`, `component polish`, `layout polish`, `visual polish`, `styling`, `animation`, `motion design`, `accessibility`, `wcag`, `lighthouse`, `core web vitals`, `make it beautiful`, `make it premium`, `make it less ai`, `ai-looking ui`, `ai slop ui`, `generic ui`, `broken layout`, `layout broken`, `frontend qa`, `frontend layout`, `프론트엔드`, `웹 ui`, `웹 화면`, `랜딩페이지`, `레이아웃`, `레이아웃 깨짐`, `깨짐`, `디자인 자연스럽게`, `자연스러운 디자인`, `화려하게`, `고급스럽게`, `ai 티`, `ai틱`, `ai 틱`, `반응형`, `접근성`
+- Strong routing signals: `frontend`, `front-end`, `front end`, `frontend skill`, `web ui`, `ui ux`, `ui/ux`, `landing page`, `web app layout`, `responsive layout`, `responsive design`, `design system`, `component polish`, `layout polish`, `visual polish`, `styling`, `animation`, `motion design`, `accessibility`, `wcag`, `lighthouse`, `core web vitals`, `make it beautiful`, `make it premium`, `make it less ai`, `ai-looking ui`, `ai slop ui`, `generic ui`, `broken layout`, `layout broken`, `frontend qa`, `frontend layout`, `tui design`, `terminal ui design`, `tui layout`, `프론트엔드`, `웹 ui`, `웹 화면`, `랜딩페이지`, `레이아웃`, `레이아웃 깨짐`, `깨짐`, `디자인 자연스럽게`, `자연스러운 디자인`, `화려하게`, `고급스럽게`, `ai 티`, `ai틱`, `ai 틱`, `반응형`, `접근성`
 - Good example:
   - Prompt: frontend 이 대시보드가 AI 티 안 나게 레이아웃과 디자인 시스템을 잡아줘.
   - Expected behavior: Prepare frontend_design_brief/v1, design_system_contract/v1, route/state matrix, implementation handoff, and visual_qa_required/v1.
@@ -2369,10 +2370,12 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Quality bar:
   - Name the product goal, audience, target surfaces, routes, states, and visual quality bar.
   - Hold the named bar: what a senior product designer at a top-tier product company (the Linear/Stripe/Supabase class) would sign off on — technically clean but flat output fails it. Load `references/taste-foundations.md`, name one primary taste direction, and reject the anti-slop patterns it lists.
+  - When the target surface is a terminal UI (TUI), load `references/tui-craft.md` and hold the same bar there: default widgets are scaffolding, not finished UI; borders spent sparingly with spacing and a muted-color ladder doing the hierarchy; one named terminal aesthetic; verification rendered at 80x24 and 120x40 minimum with the pasted output as the screenshot-equivalent.
   - Use references and domain fit to avoid generic AI-looking frontend output; when the user supplies a visual reference, load `references/reference-token-extraction.md` and extract tokens into the contract instead of eyeballing.
   - Prepare a concrete design-system contract before implementation handoff: load `references/design-system-contract.md` and write DESIGN.md before the first component — no component code before the contract exists.
   - For first-time UI creation, name the initial generation branch, reference direction, reusable primitives, state coverage, and required visual QA path.
   - Cover responsive layout, empty/loading/error states, hover/focus/active states, CJK text, accessibility, and performance expectations.
+  - After implementation lands on a web surface, load `references/screenshot-loop.md` and require the screenshot iteration loop live-environment-first: capture the running UI at 1440/768/375px, compare against the supplied target or DESIGN.md, list every difference triaged Blocker/High/Medium/Nit with its capture attached, fix, and recapture until the difference list is empty.
   - Prefer native UI controls, stable dimensions, and realistic content over decorative cards, blobs, and placeholder-heavy screens.
   - Keep implementation, browser verification, accessibility/performance checks, visual QA, and deployment as observed-only evidence.
 - Completion checklist:
@@ -2544,6 +2547,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Why: Visual QA requires observed rendered evidence bound to the target source lineage.
 - Quality bar:
   - List the exact pages, states, viewports, files, images, or TUI frames being checked.
+  - For TUI surfaces, bind every capture to an explicit terminal size — 80x24 and 120x40 at minimum — and treat pasted rendered output at a named size as the screenshot-equivalent; a capture without its recorded size is not visual QA evidence.
   - Enumerate every page/state/viewport before capture and mark omitted surfaces as blockers rather than assumptions.
   - Require exact repository and revision equality between target_lineage and every capture source_lineage.
   - Combine objective capture/diff evidence, hotspot review, alpha/transparent-background checks, and human-readable visual findings.
@@ -3183,7 +3187,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The user asks for live token/cost telemetry; use `ops-observability-card`.
   - The user asks to continue a loopable goal; use `loop` unless budget planning is the explicit blocker.
   - The task is a short one-step answer with no meaningful context risk.
-- Strong routing signals: `context-budget-review`, `context budget review`, `context budget`, `token budget review`, `token budget`, `prompt budget`, `context compaction`, `compact context`, `too much context`, `summarization checkpoint`, `budget this task`, `컨텍스트 예산`, `토큰 예산`, `컨텍스트 압축`, `요약 체크포인트`
+- Strong routing signals: `context-budget-review`, `context budget review`, `context budget`, `token budget review`, `token budget`, `prompt budget`, `prompt caching`, `prompt cache`, `cache hygiene`, `context compaction`, `compact context`, `too much context`, `summarization checkpoint`, `budget this task`, `컨텍스트 예산`, `토큰 예산`, `컨텍스트 압축`, `요약 체크포인트`
 - Good example:
   - Prompt: context-budget-review 이 장기 PR 작업에서 어떤 맥락을 꼭 유지하고 언제 요약해야 하는지 잡아줘.
   - Expected behavior: Prepare context_budget_plan/v1, must_keep_context_pack/v1, checkpoint plan, risk register, and overflow recovery route.
@@ -3197,6 +3201,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Separate durable requirements, volatile status, file refs, verification evidence, and open blockers.
   - Define checkpoint cadence, overflow recovery, and continuity verification.
   - Use bounded copy while preserving the full objective and evidence gaps.
+  - Keep prompt-prefix placement cache-stable: fixed section order, volatile bytes never above the fold, mid-run changes as appended messages never system-prompt mutations — load `references/cache-placement.md` for the placement rules.
 - Completion checklist:
   - The run or workflow scope, metric window, failure modes, and cost/latency boundary are named.
   - Local telemetry, provider truth, billing truth, and completion evidence are separate states.
@@ -6486,6 +6491,11 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Name the user-facing workflow objective, required context, next action, and stop condition.
   - Separate prepared guidance from observed platform, runtime, connector, file, memory, or delivery evidence.
   - Expose missing tools, credentials, targets, or observations as user-visible gaps.
+  - Hold at least two competing failure hypotheses at once, each with observed evidence for and against; a diagnosis that never named a rival hypothesis is a guess.
+  - Order probes cheapest-discriminating-first: run the cheapest check that splits the surviving hypotheses before any expensive capture, rerun, or restart.
+  - When a run that used to work now fails, bisect from last-known-good to first-bad change (prompt, config, tool, model, or environment) instead of debugging the newest symptom.
+  - Name a cause only after revert-verify: remove the suspect change and observe the failure disappear, or state that causation is unproven.
+  - Reproduce the failure before preparing any recovery action; a fix without a reproduced failure first is a guess.
 - Completion checklist:
   - Failure state, intended goal, recent tool sequence, and context pressure are captured.
   - Diagnosis distinguishes repeated command/tool loops, context drift, environment mismatch, service errors, and wrong-hypothesis tests.
@@ -6547,6 +6557,11 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Name the user-facing workflow objective, required context, next action, and stop condition.
   - Separate prepared guidance from observed platform, runtime, connector, file, memory, or delivery evidence.
   - Expose missing tools, credentials, targets, or observations as user-visible gaps.
+  - Hold masked-failure and intended-fallback as competing hypotheses for each suspect site, each with observed evidence for and against, until one reading is discriminated.
+  - Order evidence probes cheapest-discriminating-first: read the handler and its callers, then logs and traces, before demanding expensive reruns or instrumentation.
+  - When a check went green without an observed fix, bisect from the last run that surfaced the failure to the first that swallowed it before naming the masking change.
+  - Attribute a masked failure to a specific handler or fallback only with revert-verify evidence (the signal observed reappearing without it), or mark causation unproven.
+  - Route remediation only against a reproduced failing signal; a remediation handoff without a reproduced failure first is a guess.
 - Completion checklist:
   - Audit scope, source surfaces, and evidence types are named.
   - Swallowed errors, dangerous fallbacks, propagation gaps, and false-green claims are reported as separate finding types.

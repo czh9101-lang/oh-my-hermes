@@ -1,6 +1,6 @@
 """Verification discipline for prepared fanout unit prompts.
 
-Four deterministic text blocks ride every dispatched unit prompt:
+Five deterministic text blocks ride every dispatched unit prompt:
 
 1. **Goal echo-back** — before any tool use the subagent restates the goal,
    its own deliverable, and the completion criteria, and stops to report (not
@@ -16,6 +16,23 @@ Four deterministic text blocks ride every dispatched unit prompt:
    a boundary, not a bug (never retried through another route), and
    "blocked" requires a named concrete condition that survives the bounded
    fix cycles — difficulty, uncertainty, or remaining work is not blocked.
+5. **Structured return** — the unit's final report ends with one fenced
+   JSON object in the `fanout_unit_result/v1` expected-evidence shape. The
+   sidecar file is the primary machine-read return; when a contracted
+   sidecar is missing the collector parses this block from captured stdout
+   and validates it the same way, so collection is parse-then-validate on
+   either path and never prose-scraping.
+
+The blocks split across two placement zones for prompt-cache hygiene: the
+goal echo-back, verification-stop, failure-kind, and structured-return
+blocks are unit-invariant,
+so `shared_unit_preamble_lines()` places them (with the overall goal) at the
+byte-identical head every sibling prompt of one fanout shares, and
+`unit_protocol_lines()` carries only the unit-varying remainder — numbered
+criteria, role protocol, calibration, and the domain bundle. Every major
+serving stack caches prompt prefixes by exact bytes, so sibling prompts that
+share their head let the first dispatch write the cache the rest read; the
+rule itself ships as `PROMPT_CACHE_COMPOSITION_PROTOCOL`.
 
 High-effort routes additionally get a per-family calibration block that
 counters the known over-verification inertia of strong reasoning models.
@@ -62,6 +79,34 @@ FAILURE_KIND_PROTOCOL: Final[str] = (
     "allows, or report it. Report blocked only when the same concrete condition still holds after the "
     "bounded fix-and-verify cycles, and name that condition; difficulty, uncertainty, or useful "
     "remaining work is not blocked."
+)
+
+# The sidecar file is the primary machine-read return
+# (`fanout_dispatch._intake_unit_result`). The block restates the sidecar
+# object when a sidecar path was given, so the two returns cannot disagree,
+# and when the contracted sidecar file is missing the collector falls back
+# to parsing this block out of captured stdout and validating it against the
+# same `fanout_unit_result/v1` schema (`fanout_unit_results.
+# validate_unit_result`) plus the dispatch identity check; nothing scrapes
+# the surrounding prose for results. Executor-neutral: every owner emits the
+# same shape.
+UNIT_RESULT_RETURN_PROTOCOL: Final[str] = (
+    "Structured return: end your final report with exactly one fenced ```json code block containing "
+    "a single JSON object in the fanout_unit_result/v1 shape — schema_version, unit_id, run_id, "
+    "fanout_id, base_sha, head_sha, process_status, changed_paths, checks, findings — reusing any "
+    "dispatch-bound identity values given in this prompt verbatim, and restating the sidecar object "
+    "when a sidecar path was given. The sidecar file is the machine-read return; when it is missing "
+    "the collector parses this block instead and validates it against the same schema. Prose "
+    "outside the block is context for people and is never scraped for results."
+)
+
+PROMPT_CACHE_COMPOSITION_PROTOCOL: Final[str] = (
+    "Prompt-cache discipline: every major serving stack caches prompt prefixes by exact bytes "
+    "(Anthropic prefix caching, OpenAI automatic prefix caching, Gemini implicit caching, DeepSeek "
+    "context caching), and one changed byte invalidates everything after it. Keep the shared preamble "
+    "byte-identical across sibling unit prompts — stable ordering, no timestamps, counts, or other "
+    "volatile status — append unit-specific content after the shared preamble, and stagger a fan-out "
+    "so the first dispatch writes the cache its siblings read."
 )
 
 REVIEW_ROLE_PROTOCOL: Final[str] = (
@@ -209,9 +254,9 @@ MAIN_AGENT_COMPOSITION_CALIBRATIONS: Final[dict[str, str]] = {
         "Composition calibration: keep the DeepSeek model version and thinking mode explicit in the "
         "prepared route. Preserve runtime reasoning context only when the selected model and executor "
         "support it; otherwise compose exact owners, scopes, dependencies, and verification commands "
-        "without synthetic thinking instructions. DeepSeek serving prices cached prefixes, so keep the "
-        "shared preamble byte-identical across unit prompts — stable ordering, no timestamps or "
-        "volatile status — with unit-specific content appended after it. Validate once and stop."
+        "without synthetic thinking instructions. DeepSeek serving prices cached prefixes, so the "
+        "shared prompt-cache discipline is billing-visible on this family, not merely latency. "
+        "Validate once and stop."
     ),
     "mistral": (
         "Composition calibration: write unit prompts literally and completely — a Mistral-family "
@@ -341,13 +386,33 @@ def calibration_for_route(model_route: Mapping[str, Any] | None) -> str:
     return HIGH_EFFORT_CALIBRATIONS.get(family, HIGH_EFFORT_CALIBRATIONS["generic"])
 
 
+def shared_unit_preamble_lines(goal_text: str) -> list[str]:
+    """Byte-identical head shared by every sibling unit prompt of one fanout.
+
+    Cached prompt prefixes are exact byte matches on every provider, so the
+    lines here depend only on the goal text — never on the unit — and callers
+    must place them before any unit-specific byte.
+    """
+    return [
+        f"Overall goal: {goal_text.strip()}",
+        GOAL_ECHO_PROTOCOL,
+        VERIFICATION_STOP_PROTOCOL,
+        FAILURE_KIND_PROTOCOL,
+        UNIT_RESULT_RETURN_PROTOCOL,
+    ]
+
+
 def unit_protocol_lines(unit: Mapping[str, Any]) -> list[str]:
-    """Return the ordered protocol lines appended to a unit prompt."""
+    """Return the ordered unit-varying protocol lines appended to a unit prompt.
+
+    The unit-invariant blocks (goal echo, verification stop, failure kind)
+    live in `shared_unit_preamble_lines()` so sibling prompts keep a
+    byte-identical head; only content that genuinely varies per unit belongs
+    here.
+    """
     criteria = completion_criteria_for_unit(unit)
-    lines = [GOAL_ECHO_PROTOCOL, "Done means, and only means:"]
+    lines = ["Done means, and only means:"]
     lines.extend(f"{index}. {criterion}" for index, criterion in enumerate(criteria, start=1))
-    lines.append(VERIFICATION_STOP_PROTOCOL)
-    lines.append(FAILURE_KIND_PROTOCOL)
     handoff = unit.get("handoff", {}) if isinstance(unit.get("handoff"), Mapping) else {}
     model_route = handoff.get("model_route") if isinstance(handoff.get("model_route"), Mapping) else None
     # Contract units carry the declared role inside the recorded route, not as

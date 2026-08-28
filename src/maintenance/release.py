@@ -233,7 +233,30 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # digests, per-dispatch time bounds, receipt-authenticated observed_at, and
 # the owning-OS-user limitation while replacing the older generic
 # provenance sentence (net +48 chars); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 721472
+# 721472 -> 723197: ultrawork gained the tests-first delivery contract
+# (+1725 chars: the red-before-green observed rule with pasted-output
+# evidence, forbidden test-weakening moves, the red-commit checkpoint, and
+# the pointer to the on-demand references/tdd-red-green.md discipline; the
+# reference body loads on demand and sits outside this always-loaded
+# budget); warranted growth.
+# 723197 -> 724180: context-budget-review gained the cache-placement
+# discipline (+983 chars: three prompt-cache triggers, the cache-stable
+# prefix-placement quality-bar rule, and the pointer to the on-demand
+# references/cache-placement.md card; the reference body loads on demand
+# and sits outside this always-loaded budget); warranted growth.
+# 724180 -> 725734: agent-debug and failure-signal-audit gained real
+# debugging-methodology quality bars (+1554 chars: competing hypotheses
+# held with evidence for and against, cheapest-discriminating-probe-first
+# ordering, last-known-good-to-first-bad bisect discipline, revert-verify
+# before causation claims, and no fix or remediation without a reproduced
+# failure first); warranted growth.
+# 725734 -> 726112: the frontend quality bar wired the screenshot iteration
+# loop into the web build path (+378 chars: the live-environment-first
+# capture-at-1440/768/375 rule with Blocker/High/Medium/Nit triage and the
+# recapture-until-the-difference-list-is-empty contract, plus the pointer to
+# the on-demand references/screenshot-loop.md; the reference body loads on
+# demand and sits outside this always-loaded budget); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 726112
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

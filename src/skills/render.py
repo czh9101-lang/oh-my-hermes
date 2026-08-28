@@ -2151,6 +2151,139 @@ The measured-loop discipline above adapts the operating practices of the `karpat
 """
 
 
+def context_budget_reference_templates() -> list[SkillReferenceTemplate]:
+    return list(_context_budget_reference_templates_cached())
+
+
+@lru_cache(maxsize=1)
+def _context_budget_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
+    return (
+        SkillReferenceTemplate(
+            "context-budget-review", "references/cache-placement.md", _cache_placement_reference()
+        ),
+    )
+
+
+def _cache_placement_reference() -> str:
+    return """# Cache Placement Discipline
+
+Every major serving stack caches prompt prefixes by exact bytes: Anthropic prefix caching (explicit breakpoints, discounted reads), OpenAI automatic prefix caching, Gemini implicit caching, DeepSeek context caching. A single changed byte at position N re-bills everything at and after N. OMH never calls a provider; this card disciplines the text OMH generates and the guidance it prepares for the host.
+
+## Placement rules
+
+1. **Stable prefix ordering.** Assemble every instruction surface in a fixed section order, most-stable content first. Regeneration must be byte-stable: same inputs, same bytes.
+2. **Volatile bytes never above the fold.** Dates, token counts, git state, status lines, and per-session values never belong in files loaded at session start; they ride the first user turn or the message tail.
+3. **Changes travel as appended messages.** Mid-run skill, state, or instruction changes are appended conversation messages, never edits to the system prompt or to a session-start file — a mid-run system-prompt rewrite rebuilds the whole cache (the failure mode behind NousResearch/hermes-agent#13631 and #4319).
+4. **Tool surface stays stable mid-session.** Choose the tool set at session start; avoid mid-session connect/disconnect of tool servers; prefer deferred tool loading where the host supports it; serialize tool payloads deterministically (sorted keys).
+5. **Fan-outs share a byte-identical preamble.** Sibling prompts lead with the same shared bytes, unit-specific content appended after; stagger dispatch so the first request writes the cache the siblings read.
+
+## Evidence boundary
+
+Cache hit and creation counters are provider or host telemetry. Never claim a hit rate, a saving, or "cache-safe" as observed fact without the host's usage counters; prepared placement is prepared_not_observed.
+"""
+
+
+# Tests-first delivery contract spliced into the ultrawork skill body before
+# `## Runtime Evidence`. Only the contract summary lives here; the evidence
+# ledger, forbidden moves, rationalization table, and attribution live in the
+# on-demand reference. The trailing blank line separates it from the marker.
+_TDD_DELIVERY_SECTION = (
+    "## Tests-First Delivery\n"
+    "\n"
+    "When the user asks for TDD, tests first, or red-green delivery, every implementation lane runs "
+    "under the red/green contract. The iron law: no implementation line before a failing test - write "
+    "the test that describes the missing behavior, run it, and watch it fail for the right reason "
+    "before any implementation edit. A cycle is observed only when a failing (non-zero) run of the "
+    "lane's test command precedes a passing (zero) run, both with pasted output; a lane that shows "
+    "only green is `prepared_not_observed` on its red phase and does not count as tests-first "
+    "delivery. Never edit, delete, skip, xfail, or weaken a test to make it pass - a failing test "
+    "means fix the code - and a test that passes on its first run proves nothing: make it fail first. "
+    "Commit the failing test as a checkpoint before implementing, so any later test edit is "
+    "diff-visible.\n"
+    "\n"
+    "Hermes bundles the superpowers `test-driven-development` skill; when it is loaded, follow its "
+    "cycle - this contract reinforces it with OMH's evidence vocabulary and never overrides it. Load "
+    "`references/tdd-red-green.md` for the full discipline: the evidence ledger, forbidden moves, the "
+    "rationalization table, and the observed red-before-green rule.\n"
+    "\n"
+)
+
+
+def ultrawork_skill() -> SkillTemplate:
+    """Splice the tests-first delivery contract into the ultrawork catalog body."""
+    template = workflow_skill("ultrawork")
+    marker = "## Runtime Evidence\n"
+    if marker not in template.content:
+        raise ValueError("ultrawork skill tests-first marker is missing")
+    return SkillTemplate(template.name, template.content.replace(marker, _TDD_DELIVERY_SECTION + marker, 1))
+
+
+def ultrawork_reference_templates() -> list[SkillReferenceTemplate]:
+    return list(_ultrawork_reference_templates_cached())
+
+
+@lru_cache(maxsize=1)
+def _ultrawork_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
+    return (
+        SkillReferenceTemplate("ultrawork", "references/tdd-red-green.md", _tdd_red_green_reference()),
+    )
+
+
+def _tdd_red_green_reference() -> str:
+    return """# TDD Red/Green Discipline
+
+Load this reference when a delivery run is tests-first: the user asked for TDD, tests first, or red-green, or a lane's acceptance criteria name a failing-test-first contract. The discipline binds every implementation lane in the run, whichever owner executes it.
+
+## The Iron Law
+
+No implementation line before a failing test. Write the test that describes the missing behavior, run it, and watch it fail for the right reason - because the behavior is missing, not because of an import typo or a broken fixture. Only then write the minimal code that makes it pass.
+
+A test that passes on its first run proves nothing: it never witnessed the gap it claims to cover. Treat a first-run pass as a defect in the test - break the behavior deliberately or fix the test's target, watch it fail, then restore - before trusting it.
+
+## The Evidence Ledger
+
+Output that was not pasted did not happen.
+
+- Before writing any implementation line, paste the verbatim failing output of the new test: the command, the non-zero exit, and the failure lines naming the missing behavior.
+- Before claiming a lane done, paste the passing output of the same command plus the full-suite result.
+- Discover the repository's own test command first and use it; a framework default the repo does not use proves nothing about this repo.
+
+## Observed, Not Narrated
+
+A TDD cycle is observed only when a non-zero (red) run precedes a zero (green) run of the same test command, both with pasted output. A lane that reports only a green run - or narrates a red run without its output - is `prepared_not_observed` on its red phase and stays there: it does not count as tests-first delivery, and the completion claim must say so.
+
+Commit the failing test as a checkpoint before the first implementation edit. The red commit makes tampering diff-visible: any later change to the test files appears in `git diff <red-commit>.. -- <test paths>` and must be explained in the lane report. The `omh_gather_evidence` tool accepts `git diff` probes for exactly this check.
+
+## Forbidden Moves
+
+- Never edit, delete, skip, xfail, or weaken a test to make it pass. A test failure is information about the code; fix the code, not the test.
+- Never add skip, xfail, or `.only` markers, loosen assertions, or update snapshots and goldens to silence a red run. Any such marker in the diff between the red commit and the green run is a blocker, not a style note.
+- Never write implementation ahead of the test and backfill the test after; a backfilled test that passes immediately is the first-run-pass defect above.
+
+## Rationalizations, Pre-answered
+
+| Excuse | Answer |
+| --- | --- |
+| Too simple to test | Simple code breaks too; a trivial behavior gets a trivial test, written first. If it is genuinely untestable, say so in the lane report and let the reviewer judge. |
+| I will test after | An after-the-fact test never witnesses the failure, so it proves nothing about the gap. Testing after is not TDD arriving late; it is a different, weaker workflow - name it if you choose it. |
+| Manual testing suffices | A manual check leaves no output to paste and no command to rerun; it is unobserved by definition and cannot close a tests-first lane. |
+
+## Composition
+
+Hermes bundles the superpowers `test-driven-development` skill. When it is loaded, follow its cycle; this reference reinforces it and never overrides it. What OMH adds is the evidence vocabulary: the observed red-before-green rule, the red-commit checkpoint, and the `prepared_not_observed` labeling of unwitnessed cycles.
+
+## What This Does Not Change
+
+- The run's permission profile still gates every dispatch and repository mutation; a red commit needs the same grants as any other commit.
+- Red and green runs are lane execution evidence only; review, CI, merge-readiness, and merge evidence stay separate, per the run's evidence boundaries.
+- Verification still ends with the full suite and the repository's own gates; a green unit test alone closes nothing.
+
+## Attribution
+
+This discipline adapts the red/green/refactor practice popularized by Kent Beck and the obra/superpowers `test-driven-development` skill that Hermes bundles. No upstream text is reproduced. OMH maps the mechanisms onto its own lane, evidence, and `prepared_not_observed` vocabulary.
+"""
+
+
 def context_skill() -> SkillTemplate:
     """Render the canonical project-terminology workflow with progressive references."""
     template = workflow_skill("context")
@@ -2775,6 +2908,16 @@ def _design_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
             _reference_token_extraction_reference(),
         ),
         SkillReferenceTemplate(
+            "frontend",
+            "references/tui-craft.md",
+            _tui_craft_reference(),
+        ),
+        SkillReferenceTemplate(
+            "frontend",
+            "references/screenshot-loop.md",
+            _screenshot_loop_reference(),
+        ),
+        SkillReferenceTemplate(
             "design-quality-gate",
             "references/design-critique-rubric.md",
             _design_critique_rubric_reference(),
@@ -2945,6 +3088,226 @@ substitutes for observed rendered evidence: the visual-QA owner judges what
 actually shipped.
 
 {_DESIGN_CRAFT_ATTRIBUTION}
+"""
+
+
+def _tui_craft_reference() -> str:
+    return f"""# TUI Craft
+
+**Hold terminal UI work to {DESIGN_NAMED_BAR}. A default widget is
+scaffolding, not finished UI — an unstyled list, table, or panel shipped
+as it came out of the framework does not clear this bar any more than a
+default-template web page would.** The terminal is a design medium with
+its own materials — cells, box-drawing, a color budget, a keyboard — not
+a place where the taste bar stops applying.
+
+## Defaults are scaffolding
+
+Framework widgets render something so development can start; what they
+render is the placeholder, not the product. Every visible widget gets a
+deliberate pass — selection treatment, header styling, alignment,
+truncation, foreground hierarchy — or a stated decision in `DESIGN.md`
+that the default genuinely matches the contract. "It rendered" is the
+terminal's technically clean but flat: a defect to fix, not a baseline
+to accept.
+
+## Borders are weight — spend them sparingly
+
+A border is the heaviest structural device a terminal has, and the
+easiest to reach for. Boxes around everything read as noise, not
+structure. Build hierarchy with spacing — blank lines, indents, column
+gutters — and a muted-color ladder first: bright foreground for primary
+content, dimmed for secondary, faint for chrome. Reserve borders for the
+one or two containers that must read as containers. Typical failure:
+every panel boxed, so no panel leads.
+
+## Name one terminal aesthetic
+
+As with web taste directions, blending terminal aesthetics by accident
+produces mud. Name ONE in `DESIGN.md` section 1 and execute it
+consistently across every screen, prompt, help line, and empty state:
+
+- **Minimal utility** — quiet monochrome plus one accent; density and
+  alignment do the hierarchy work. Typical failure: reading as unstyled
+  because the accent and the alignment discipline never actually land.
+- **Modern product** — the polished-CLI class: light or rounded borders
+  used sparingly, a real palette, styled status and help surfaces.
+  Typical failure: web-app ornament transplanted into cells.
+- **Retro terminal** — amber or green phosphor, DOS-era mainframe mood,
+  committed fully: charset, palette, and copy all in period. Typical
+  failure: one nostalgic color over otherwise default widgets.
+- **Dense operational** — dashboard-grade information density on a
+  strict column grid with semantic color states. Typical failure:
+  density without the grid, which is clutter.
+
+## Box-drawing and color strategy
+
+- Pick one box-drawing family — light, heavy, double, or rounded — and
+  never mix families on one surface. Mixed corner styles are the
+  template gravity of the terminal.
+- Decide the color floor. Truecolor is not guaranteed: define the
+  palette as roles (background layers, text ladder, accent, semantic
+  states), give every role a 256-color fallback, and degrade
+  deliberately instead of letting the terminal quantize for you.
+- Never assume the user's background. The surface survives dark and
+  light terminal themes, or `DESIGN.md` states the supported-theme
+  decision explicitly.
+
+## Keyboard states are the interaction states
+
+There is no pointer. Focus, selection, and activation must each be
+visible at a glance — a focus treatment that is only the hardware cursor
+fails on sight. Cover focused, selected, active, disabled, loading,
+empty, and error treatments for every interactive widget, and keep the
+available keys discoverable on screen — a help line or footer — not
+memorized folklore.
+
+## Verify at named sizes — the pasted render is the screenshot
+
+Terminal work has a screenshot-equivalent: rendered output captured at
+an explicit size. Verification renders at 80x24 and 120x40 minimum —
+plus the sizes the product actually targets — and pastes the captured
+output as evidence. A claim without a pasted render at a named size is a
+prepared claim, not an observed one.
+
+## Short-terminal squeeze — a named defect class
+
+When height shrinks, something must yield, and unowned yielding is the
+defect: docked chrome crushing the content area, prompts pushed out of
+view, scroll regions collapsing to zero. Decide in `DESIGN.md` which
+region owns flexibility, what collapses first, and the minimum height
+below which the surface degrades gracefully instead of breaking. The
+80x24 render is the check that this decision was actually made.
+
+## Anti-slop checklist — TUI rejects
+
+These extend the anti-slop checklist in `taste-foundations.md`; reject
+on sight:
+
+- Unstyled default widget: a framework list, table, or panel shipped
+  with its out-of-the-box styling.
+- Border noise: boxes as the only structural device, panels boxed by
+  reflex, mixed box-drawing families on one surface.
+- Colorless hierarchy: everything at default foreground, or one accent
+  doing every job with no muted ladder beneath it.
+- Truecolor gamble: a palette that quantizes to mud on a 256-color
+  terminal because no fallback was ever chosen.
+- Cursor-only focus: interactive widgets whose focus state is invisible
+  without hunting for the hardware cursor.
+- Keybinding folklore: interactions that exist but appear nowhere on
+  screen.
+- One-size render: verified only in the author's terminal, with no
+  80x24 or 120x40 evidence.
+- Squeeze blindness: a short terminal crushing chrome into content
+  because no region was chosen to yield.
+
+## Boundary
+
+TUI craft guidance shapes the prepared direction and contract. It never
+substitutes for observed rendered evidence: the visual-QA owner judges
+the pasted renders at their named sizes.
+
+{_DESIGN_CRAFT_ATTRIBUTION}
+
+TUI-specific concepts — defaults-as-scaffolding, border restraint, and
+the named-terminal-aesthetic discipline — additionally adapt ideas from
+the community `tui-design` (kastheco) and `terminal-ui-design` (ingpoc)
+skills and the Charm/lipgloss ecosystem's published guidance. No text
+from those sources is reproduced either; the wording here is OMH's own.
+"""
+
+
+def _screenshot_loop_reference() -> str:
+    return f"""# Screenshot Iteration Loop
+
+**Code that was only read is UI that was never seen.** Structural
+reasoning predicts what the pixels should be; only a rendered capture
+shows what they are. After implementation lands on a web surface, the
+work is not done until the loop below has run to an empty difference
+list — a first pass that "looks done" from the code usually is not, and
+two or three rounds are the normal cost of clearing
+{DESIGN_NAMED_BAR}.
+
+## Live environment first
+
+Judge the running UI before re-reading the code. Load the real pages
+with real content, real fonts, and real breakpoints, and interact with
+them — hover, focus, scroll, open the modal — before forming any
+opinion from the source. Reviewing the implementation by reading what
+was supposed to produce it is working blind; the capture, not the
+diff, is the surface under review.
+
+## The loop
+
+1. Implement against `DESIGN.md` (the contract from
+   `design-system-contract.md` — it exists before any component code).
+2. Capture the affected pages and states at 1440px, 768px, and 375px
+   wide — desktop, tablet, and mobile. These are the web minimum, the
+   counterpart of the TUI's 80x24 and 120x40; add the widths the
+   product actually targets.
+3. Compare each capture against the comparison target, side by side.
+4. List every difference — spacing, weight, color, alignment,
+   truncation, state treatment — however small. A difference you did
+   not write down is a difference you never judged.
+5. Fix, recapture at the same widths, re-compare.
+6. Exit only when the difference list is empty. An exhausted iteration
+   budget is a reportable blocker, not a quiet exit.
+
+## Comparison target
+
+- A user-supplied mock, reference screenshot, or Figma export is the
+  target; differences are read against it directly.
+- Otherwise `DESIGN.md` is the target: each difference cites the token,
+  spacing rule, type step, or state treatment it violates.
+- Neither exists: stop. The contract gate was skipped — iterating
+  toward an unstated target converges on generic. Write the contract
+  first.
+
+## Triage every finding
+
+Label each difference the moment it is listed:
+
+- **[Blocker]** — broken layout, unusable control, unreadable text,
+  contract violation on a primary surface.
+- **[High]** — clearly visible deviation from the target on any
+  covered viewport or state.
+- **[Medium]** — noticeable in a side-by-side but not at a glance.
+- **Nit:** — polish; record it even when it will be accepted.
+
+State problems, not prescriptions — name what is wrong and where, and
+let the fix be decided at the code. Every finding attaches the capture
+that shows it, cropped or annotated when the defect is small. Triage
+orders the fixing and, when a loop is cut short, states exactly what
+remains at which severity.
+
+## Where visual-qa takes over
+
+This loop is the builder's inner iteration, not the QA verdict. The
+enumeration of what to capture — every route, viewport, scroll
+position, modal/tab state, and CJK-heavy region — is owned by
+`visual-qa`'s viewport_state_capture_matrix/v1; when the surface has
+more than the pages just touched, capture from that matrix instead of
+re-deriving a private list, and read 1440/768/375 as this loop's
+minimum widths inside the matrix's viewport axis. An empty difference
+list ends the loop; it is not PASS. PASS, REVISE, or BLOCK stays with
+`visual-qa`, judged on observed captures whose source lineage matches
+the target.
+
+## Boundary
+
+OMH never launches a browser or takes a screenshot. The loop runs
+where the implementation runs, and its captures are executor-observed
+evidence. A loop claim without attached captures at named widths is a
+prepared claim, not an observed one.
+
+{_DESIGN_CRAFT_ATTRIBUTION}
+
+The screenshot-iterate concept additionally adapts published guidance
+from Anthropic's Claude Code best practices (implement, screenshot,
+compare, iterate) and the OneRedOak design-review workflow
+(live-environment-first review, 1440/768/375px responsiveness passes,
+severity-triaged findings with attached screenshots). No text from
+those sources is reproduced either; the wording here is OMH's own.
 """
 
 
