@@ -1559,6 +1559,23 @@ def _hud_subagent_summary(status: dict[str, Any]) -> dict[str, Any]:
             value = _hud_percentage(row.get(key))
             if value is not None:
                 projected[key] = value
+        # `omh coding fanout dispatch` spawns an external CLI directly, which
+        # is the Maestro lane by definition (CONTEXT.md "Maestro" /
+        # "Fanout dispatch") -- the binding it opens carries
+        # `delivery.source: fanout_dispatch`, projected onto the active-
+        # executor row as `source` by `_project_binding_row`. The widget reads
+        # `dispatch_lane` to label the row `(<executor>/maestro)` instead of
+        # rendering it like a Hermes-native delegate_task child; absent for
+        # every other source, exactly like every other unreported field here.
+        if str(row.get("source", "")) == "fanout_dispatch":
+            projected["dispatch_lane"] = "maestro"
+            projected["executor_profile"] = str(row.get("executor_profile", ""))
+            # The row's own cost, when present, is a rounded pass-through of
+            # what the spawned CLI itself reported (`unit_telemetry`) -- never
+            # a token-derived guess -- so it always renders with the `~`
+            # approximate marker the widget already uses for that meaning.
+            if projected.get("cost_usd") is not None:
+                projected["cost_approximate"] = True
         if (
             str(row.get("executor_profile", "")).casefold() == "maestro"
             or str(row.get("target_id", "")) in maestro_run_ids

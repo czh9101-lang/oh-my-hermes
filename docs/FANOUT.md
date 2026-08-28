@@ -132,6 +132,22 @@ Rules:
   not name is refused whatever its process name. The reaper does not check
   that the dispatcher is dead — verify that first; a live dispatcher's
   running units are equally marker-named.
+- **Each spawned unit opens an executor-progress row.** Before the spawn,
+  dispatch opens an `omh_executor_progress_binding/v1` on the unit's run
+  (`target_type: run, target_id: <run_ref>`) tagged `delivery.source:
+  fanout_dispatch`, reports an `executor_dispatched` event carrying the
+  unit's title and its routed (or preference-filled) model, and updates the
+  binding's pid once the real spawn hands one back — the same seam the
+  inflight marker above uses. On exit it reports `executor_completed` or
+  `executor_failed`, carrying whatever tokens/cost the spawned CLI's own
+  stdout reported (`unit_telemetry`, never estimated) and closing the
+  binding, which is what stops the row — a closed binding drops out of the
+  HUD's active-executor projection on the next read. The HUD reader labels
+  these rows `(<executor>/maestro <model>)`, alongside Hermes-native
+  delegate_task rows, because a fanout unit IS the Maestro lane spawning an
+  external CLI directly. Every write here is best-effort: an
+  `ExecutorProgressError` or `OSError` never blocks or fails the dispatch,
+  the same rule the inflight marker already holds.
 - **Spawnability is data.** `DISPATCH_COMMAND_TEMPLATES` in
   `src/coding/fanout_dispatch.py` maps profiles with a local headless CLI to
   fixed argv templates — currently codex (`codex exec`), claude-code
@@ -275,14 +291,30 @@ Rules:
   `effort_change` record; for models the catalog has not met the request
   passes through untouched (the catalog is a default candidate list, not an
   allowlist, and it never adjudicates a model it does not know). No route
-  means the argv stays byte-identical to the base template and the executor
-  CLI default model applies. Model availability and entitlement are provider
-  truth; a routed model that the CLI rejects surfaces as a normal observed
-  exit failure. `omh coding model-route` previews a single route;
+  means the argv stays byte-identical to the base template *unless* the
+  operator's dispatch-model preference fills the gap (below); with neither, the
+  executor CLI default model applies. Model availability and entitlement are
+  provider truth; a routed model that the CLI rejects surfaces as a normal
+  observed exit failure. `omh coding model-route` previews a single route;
   `omh coding model-route --explain` renders the full profile × role
   resolution matrix with chains and provenance. Contracts frozen before the
   v2 bump may embed `coding_model_route/v1` routes — they are read verbatim
   (the brief annotates them `[schema v1]`), never rewritten.
+- **Dispatch-model preference (fallback only).** `<omh_home>/routing/dispatch-models.json`
+  (`omh_dispatch_model_preferences/v1`, `{"schema_version": ..., "profiles": {"codex": "...", "claude-code": "..."}}`)
+  names a per-owner `--model` value dispatch uses only when a unit's prepared
+  handoff routed no model at all — it never overrides a resolved
+  `coding_model_route/v2`/`v1`, and a frozen `choice_required` route still
+  fails closed before this is ever read. Editing the JSON file directly is
+  the supported surface; there is no dedicated CLI editor. Shipped default:
+  `claude-code` defaults to `"opus"` (`claude --help` documents `--model` as
+  accepting a short alias — `fable`, `opus`, `sonnet` — alongside a full model
+  id, and `opus` is the strongest published alias), so a claude-code unit with
+  no other route dispatches on the strongest tier rather than silently taking
+  whatever the CLI defaults to. `codex` ships no default (no local `codex` CLI
+  in this repo to confirm its `--model` value space against) — an unset entry
+  means the spawned CLI's own default. An operator profile entry, including an
+  explicit empty string, always overrides the shipped default.
 - **Model inventory (reporting-only).** `omh coding model-inventory` reports
   which coding models the user has locally activated before any split or
   delegation is proposed: agent CLIs on PATH (codex, claude, opencode,

@@ -602,6 +602,52 @@ class HudCliTests(unittest.TestCase):
         self.assertEqual(payload["maestro"]["rows"][0]["context_percentage"], 41.5)
         self.assertEqual(len(payload["subagents"]["rows"]), 1)
 
+    def test_hud_labels_a_fanout_dispatch_unit_as_a_maestro_row_in_the_agent_list(self) -> None:
+        """`omh coding fanout dispatch` opens its executor-progress binding
+        with `delivery.source: fanout_dispatch`, projected onto the active-
+        executor row as `source` (see _project_binding_row). Unlike the
+        single-slot `payload.maestro.rows` main row above -- which can only
+        ever hold one entry -- a fanout unit belongs in the agent list next
+        to Hermes-native rows, so several can run at once and each gets its
+        own row; the widget tells the two apart with `dispatch_lane`."""
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        status = {
+            "runtime_state_present": True,
+            "runs": [],
+            "active_executors": [
+                {
+                    "target_type": "run",
+                    "target_id": "fanout-0123456789ab-docs",
+                    "executor_profile": "claude_code",
+                    "source": "fanout_dispatch",
+                    "routed_model": "opus",
+                    "cost_usd": 0.4213,
+                    "latest_event": {
+                        "event_type": "executor_dispatched",
+                        "status": "running",
+                        "summary": "Docs work",
+                    },
+                },
+            ],
+            "stale_executors": [],
+            "latest_progress_events": [],
+        }
+
+        payload = read_omh_hud(status=status)
+
+        self.assertEqual(payload["maestro"]["rows"], [])
+        self.assertEqual(len(payload["subagents"]["rows"]), 1)
+        row = payload["subagents"]["rows"][0]
+        self.assertEqual(row["dispatch_lane"], "maestro")
+        self.assertEqual(row["executor_profile"], "claude_code")
+        self.assertEqual(row["model"], "opus")
+        self.assertEqual(row["cost_usd"], 0.4213)
+        # A cost this lane surfaces is always a rounded pass-through of what
+        # the spawned CLI itself reported, never a token-derived guess, so it
+        # always carries the widget's `~` approximate marker.
+        self.assertTrue(row["cost_approximate"])
+
     def test_hud_bounds_workflow_within_allowed_file_size(self) -> None:
         from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
 

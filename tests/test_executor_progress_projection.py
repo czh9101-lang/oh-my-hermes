@@ -148,6 +148,54 @@ class ExecutorProgressProjectionTests(unittest.TestCase):
             self.assertEqual(plugin_status["stale_executors"], [])
             self.assertEqual(plugin_status["latest_progress_events"], [])
 
+    def test_binding_delivery_source_is_projected_onto_the_active_executor_row(self) -> None:
+        """`omh coding fanout dispatch` opens its binding with
+        `source="fanout_dispatch"` (the delivery field this binding builder
+        already carries); the HUD reader keys off the projected `source` to
+        label a fanout unit's row `(<executor>/maestro)` instead of rendering
+        it like a Hermes-native delegate_task child."""
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            run = create_run(paths, {"skill": "oh-my-hermes", "harness": "coding-handling", "status": "started"})
+            binding = write_progress_binding(
+                paths,
+                build_progress_binding(
+                    target_type="run",
+                    target_id=run["run_id"],
+                    executor_profile="claude_code",
+                    source="fanout_dispatch",
+                    now="2026-06-24T00:00:00Z",
+                ),
+            )
+            signal = build_safe_progress_signal(executor_profile="claude_code", process_status="dispatched")
+            observe_executor_progress(paths, binding, signal, observed_at="2026-06-24T00:00:30Z")
+
+            projection = project_active_executor_status(paths, now="2026-06-24T00:01:00Z")
+
+            self.assertEqual(len(projection["active_executors"]), 1)
+            self.assertEqual(projection["active_executors"][0]["source"], "fanout_dispatch")
+
+    def test_binding_without_a_delivery_source_projects_no_source_key(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            run = create_run(paths, {"skill": "oh-my-hermes", "harness": "coding-handling", "status": "started"})
+            binding = write_progress_binding(
+                paths,
+                build_progress_binding(
+                    target_type="run",
+                    target_id=run["run_id"],
+                    executor_profile="codex",
+                    codex_session_ref="codex-session-1",
+                    now="2026-06-24T00:00:00Z",
+                ),
+            )
+            signal = build_safe_progress_signal(executor_profile="codex", process_status="dispatched")
+            observe_executor_progress(paths, binding, signal, observed_at="2026-06-24T00:00:30Z")
+
+            projection = project_active_executor_status(paths, now="2026-06-24T00:01:00Z")
+
+            self.assertNotIn("source", projection["active_executors"][0])
+
     def test_worktree_branch_only_bindings_project_as_separate_instances(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
