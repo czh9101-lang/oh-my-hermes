@@ -764,7 +764,11 @@ class HookManifestTests(unittest.TestCase):
                 omh_home=omh_home,
             )
 
-            self.assertTrue(tool_call_activity(omh_home)["live"])
+            activity = tool_call_activity(omh_home)
+            self.assertTrue(activity["live"])
+            # post_tool_call has not fired yet on this install -- liveness
+            # is unanswerable even while an entry happens to be open.
+            self.assertFalse(activity["post_tool_call_observed"])
 
             result = post_tool_call(
                 tool_name="terminal",
@@ -776,16 +780,40 @@ class HookManifestTests(unittest.TestCase):
             )
 
             self.assertIsNone(result)
-            self.assertFalse(tool_call_activity(omh_home)["live"])
+            closed = tool_call_activity(omh_home)
+            self.assertFalse(closed["live"])
+            # post_tool_call firing at all -- regardless of whether this
+            # particular call paired to an open entry -- is what tells the
+            # HUD this host's negative liveness claims can be trusted (P2-1).
+            self.assertTrue(closed["post_tool_call_observed"])
 
-    def test_post_tool_call_with_no_tool_call_id_is_a_silent_no_op(self) -> None:
+    def test_post_tool_call_with_no_tool_call_id_closes_nothing_but_is_still_observed(self) -> None:
         with TemporaryDirectory() as omh_home:
             pre_tool_call(tool_name="terminal", omh_home=omh_home)
 
             result = post_tool_call(tool_name="terminal", omh_home=omh_home)
 
             self.assertIsNone(result)
-            self.assertFalse(tool_call_activity(omh_home)["live"])
+            activity = tool_call_activity(omh_home)
+            self.assertFalse(activity["live"])
+            # No tool_call_id means nothing ever opened to close, but the
+            # hook still fired -- that alone is the observed signal.
+            self.assertTrue(activity["post_tool_call_observed"])
+
+    def test_a_host_that_never_calls_post_tool_call_reports_liveness_unanswerable(self) -> None:
+        with TemporaryDirectory() as omh_home:
+            pre_tool_call(
+                tool_name="terminal",
+                tool_call_id="call-1",
+                turn_id="turn-1",
+                omh_home=omh_home,
+            )
+
+            # post_tool_call is never invoked here -- the host
+            # `_host_supports_hook` skipped registering it for.
+            activity = tool_call_activity(omh_home)
+
+            self.assertFalse(activity["post_tool_call_observed"])
 
     def test_pre_tool_call_preserves_delegate_role_warning(self) -> None:
         result = pre_tool_call(

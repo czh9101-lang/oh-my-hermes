@@ -359,9 +359,13 @@ export default function register(sdk) {
         // by tool_call_id: the only honest answer to "is something actually
         // running right now", as opposed to a lingering active todo item or
         // a ring-saturated parallel-shot count. Renders only while at least
-        // one call is genuinely open; a host without post_tool_call degrades
-        // silently to no segment at all.
-        payload.activity && payload.activity.live
+        // one call is genuinely open AND this install has actually observed
+        // post_tool_call fire at least once (`post_tool_call_observed`) --
+        // on a host `_host_supports_hook` never registered post_tool_call
+        // for, open entries can only expire, never legitimately close, so a
+        // `live` reading there cannot be trusted either way and the segment
+        // stays hidden rather than asserting liveness it cannot back.
+        payload.activity && payload.activity.live && payload.activity.post_tool_call_observed
           ? h(
               Text,
               {},
@@ -369,7 +373,7 @@ export default function register(sdk) {
               h(
                 Text,
                 { color: t.color.warn },
-                `⚙ ${plural(Number(payload.activity.open_call_count) || 0, 'tool')} · ${
+                `${plural(Number(payload.activity.open_call_count) || 0, 'tool')} · ${
                   elapsedText(payload.activity.oldest_open_elapsed_seconds) || '0s'
                 }`,
               ),
@@ -502,12 +506,23 @@ export default function register(sdk) {
     // Stopped-with-incomplete-todo used to look identical to genuinely
     // working -- both showed the same green [•] -- which is the exact
     // complaint this fixes ('todo에 초록색 진행중 텍스트가 있는게 더 문제').
-    const live = !!(payload.activity && payload.activity.live)
+    // When this install has never observed post_tool_call fire, liveness is
+    // unanswerable rather than false -- an unsupported host's ledger can
+    // only expire entries, never legitimately close them, so treating that
+    // silence as "not live" would brand a genuinely working agent stalled
+    // forever. The fallback there is the pre-liveness shape: always live,
+    // no stall hint, same as before this signal existed.
+    const answerable = !!(payload.activity && payload.activity.post_tool_call_observed)
+    const live = answerable ? !!(payload.activity && payload.activity.live) : true
+    // The reader computes this age fresh on every read_omh_hud call (see
+    // `updated_age_seconds` in runtime_reader.py's `_todo_summary`) so it
+    // stays honest even when applySnapshot's byte-identical-payload check
+    // skips a repaint; a Date.now() computed here in render would freeze at
+    // whatever second it last actually rendered on an idle snapshot.
     const stallElapsed = (() => {
       if (live) return ''
-      const updatedAt = Date.parse(safeText(todo.updated_at) || '')
-      if (!Number.isFinite(updatedAt)) return ''
-      return elapsedText(Math.max(0, (Date.now() - updatedAt) / 1000))
+      const seconds = todo.updated_age_seconds
+      return Number.isFinite(seconds) ? elapsedText(Math.max(0, seconds)) : ''
     })()
     const markers = { active: '[•]', done: '[✓]', pending: '[ ]' }
     const budget = Math.max(16, columns - 10)
@@ -622,7 +637,13 @@ export default function register(sdk) {
   // used to read "×40" for as long as the ceiling stayed full regardless of
   // whether the batch was still running. Once every member has closed, the
   // badge either drops (idle) or -- while the shot is still fresh -- renders
-  // dimmed as history with its age, so it never reads as a second live cue.
+  // dimmed as history with its age. The history form reads `peak_open_count`
+  // (the most calls this shot's own members were ever observed open at
+  // once), not `size` (the burst's total member count): Hermes caps
+  // concurrent tool workers well under most burst sizes, so a long chain of
+  // strictly SEQUENTIAL fast calls -- which the 1.5s grouping window still
+  // chains into one burst -- has a `size` that overclaims parallelism the
+  // ledger never actually observed.
   const planShotBadge = (payload, t) => {
     const shot = payload.parallel_shot
     if (!shot || shot.status !== 'observed') return null
@@ -635,7 +656,7 @@ export default function register(sdk) {
     return h(
       Text,
       { color: t.color.muted },
-      ` · parallel shot ×${Number(shot.size) || 0}${age ? ` (${age} ago)` : ''}`,
+      ` · parallel shot ×${Number(shot.peak_open_count) || 0}${age ? ` (${age} ago)` : ''}`,
     )
   }
 
@@ -716,6 +737,10 @@ export default function register(sdk) {
     // purpose -- that boolean flip and count change are structural, and must
     // repaint promptly rather than wait out the metrics throttle.
     'oldest_open_elapsed_seconds',
+    // The reader-computed todo stall age ticks every poll while a plan sits
+    // idle; same reasoning as oldest_open_elapsed_seconds above -- it must
+    // not force a repaint every 2s, only advance on the metrics cadence.
+    'updated_age_seconds',
   ])
   const structuralKey = payload =>
     JSON.stringify(payload, (key, value) => (VOLATILE_KEYS.has(key) ? undefined : value))

@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from .approval_bypass import effective_approval_bypass
 from .hermes_delegation import read_hermes_native_subagents
-from .tool_bursts import latest_parallel_shot, tool_call_activity
+from .tool_bursts import tool_call_projection
 from .metadata import (
     OPTIONAL_HOOKS,
     PROVIDED_HOOKS,
@@ -659,6 +659,10 @@ def read_omh_hud(
     target_registry = _read_hud_json(home / "targets.json", root=home)
     runs = status_payload.get("runs", [])
     latest_run = runs[0] if runs else {}
+    # One ledger read backs both blocks below -- see `tool_call_projection`
+    # for why calling `latest_parallel_shot` and `tool_call_activity`
+    # separately could hand them different snapshots of the same poll.
+    tool_calls = tool_call_projection(str(home))
     payload: dict[str, Any] = {
         "schema_version": HUD_SCHEMA_VERSION,
         "preset": safe_preset,
@@ -675,14 +679,16 @@ def read_omh_hud(
         "todo": _todo_summary(home),
         # Concurrent tool-call batches observed by the pre_tool_call hook;
         # the [OMH] status line brands a fresh batch as a parallel shot.
-        "parallel_shot": latest_parallel_shot(str(home)),
+        "parallel_shot": tool_calls["parallel_shot"],
         # Exact in-flight tool-call state, paired from pre_tool_call and
         # post_tool_call by tool_call_id: open_call_count/live answer "is
         # something actually running right now" -- the question a lingering
         # active todo item and a ring-saturated parallel-shot badge could not.
-        # A host without post_tool_call degrades silently: entries never open,
-        # so live stays False and the widget falls back to today's behavior.
-        "activity": tool_call_activity(str(home)),
+        # A host `_host_supports_hook` never registered post_tool_call for
+        # carries `post_tool_call_observed: false` here; the widget treats
+        # that as liveness being unanswerable rather than trusting entries
+        # that can only expire, never legitimately close.
+        "activity": tool_calls["activity"],
         # Effective approval-bypass (yolo) state, read from the host's own
         # persisted surfaces (session row's /yolo flag, approvals.mode) so a
         # toggle between turns shows on the next widget poll; the hook
@@ -1317,6 +1323,13 @@ def _todo_summary(home: Path) -> dict[str, Any]:
     # hidden done items are already summarized by the header's done/total.
     shown_remaining = sum(1 for item in summary["display_items"] if item["state"] != "done")
     summary["more_count"] = counts["active"] + counts["pending"] - shown_remaining
+    # The reader computes the stall age, not the widget: applySnapshot skips
+    # updateWidget on a byte-identical payload, so a Date.now()-in-render
+    # computation on an idle (unchanging) snapshot never re-runs and sticks
+    # at whatever second it first rendered. `age` is already wall-clock-fresh
+    # on every read_omh_hud call, so shipping it as a field keeps the number
+    # honest; VOLATILE_KEYS carries it forward on the metrics repaint cadence.
+    summary["updated_age_seconds"] = age
     return summary
 
 

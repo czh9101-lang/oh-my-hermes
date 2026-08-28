@@ -283,25 +283,49 @@ class TuiWidgetPackTests(unittest.TestCase):
         # while calls were genuinely running.
         widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
 
-        # Status line: a live segment renders only while open calls exist.
-        self.assertIn("payload.activity && payload.activity.live", widget)
-        self.assertIn("`⚙ ${plural(Number(payload.activity.open_call_count) || 0, 'tool')}", widget)
+        # Status line: a live segment renders only while open calls exist AND
+        # this install has actually observed post_tool_call fire -- an
+        # unsupported host's ledger can only expire entries, never
+        # legitimately close them, so a bare `live` reading there is not
+        # trustworthy (P2-1). No ambiguous-width glyph prefixes it (P3-4).
+        self.assertIn(
+            "payload.activity && payload.activity.live && payload.activity.post_tool_call_observed",
+            widget,
+        )
+        self.assertIn("`${plural(Number(payload.activity.open_call_count) || 0, 'tool')}", widget)
+        self.assertNotIn("⚙", widget)
 
         # Todo panel: the active marker is warn-colored and carries a stall
-        # hint when the HUD says not-live, instead of always reading green.
+        # hint when the HUD says not-live, instead of always reading green --
+        # but only once liveness is answerable; an unsupported host falls
+        # back to always-live (P2-1), and the stall age itself comes from
+        # the reader, not a Date.now() computed in render (P1-1).
+        self.assertIn("const answerable = !!(payload.activity && payload.activity.post_tool_call_observed)", widget)
+        self.assertIn(
+            "const live = answerable ? !!(payload.activity && payload.activity.live) : true",
+            widget,
+        )
         self.assertIn("color: item.state === 'active' ? (live ? t.color.ok : t.color.warn)", widget)
         self.assertIn("stallElapsed ? h(Text, { color: t.color.muted }, ` (stalled ${stallElapsed})`)", widget)
+        self.assertIn("const seconds = todo.updated_age_seconds", widget)
+        self.assertNotIn("Date.parse(safeText(todo.updated_at)", widget)
 
         # Shot badge: tied to open calls while live, dimmed history with age
-        # once every member has closed -- never the saturated ring size.
+        # once every member has closed -- never the saturated ring size, and
+        # never the burst's raw dispatch size either (P1-2): the dimmed form
+        # reads the group's measured peak concurrency.
         self.assertIn("const openCount = Number(shot.open_count) || 0", widget)
         self.assertIn("if (openCount > 0) {", widget)
         self.assertIn("(${age} ago)", widget)
+        self.assertIn("parallel shot ×${Number(shot.peak_open_count) || 0}", widget)
+        self.assertNotIn("parallel shot ×${Number(shot.size)", widget)
 
-        # The exact in-flight age is the one field allowed to drift every
-        # poll without forcing a repaint; the liveness transition itself
-        # (open_call_count, live) stays out of VOLATILE_KEYS on purpose.
+        # The exact in-flight age and the reader-computed todo stall age are
+        # the only fields allowed to drift every poll without forcing a
+        # repaint; the liveness transition itself (open_call_count, live)
+        # stays out of VOLATILE_KEYS on purpose.
         self.assertIn("'oldest_open_elapsed_seconds',", widget)
+        self.assertIn("'updated_age_seconds',", widget)
         self.assertNotIn("'open_call_count',", widget)
         self.assertNotIn("'live',", widget)
 
@@ -458,7 +482,10 @@ class TuiWidgetPackTests(unittest.TestCase):
         # existence -- a stopped turn with an incomplete todo must not
         # animate as if work were still happening.
         self.assertIn("hasActive && live ? h(PlanPulse, { t }) : null", widget)
-        self.assertIn("const live = !!(payload.activity && payload.activity.live)", widget)
+        self.assertIn(
+            "const live = answerable ? !!(payload.activity && payload.activity.live) : true",
+            widget,
+        )
         self.assertIn("stalled ${stallElapsed}", widget)
         self.assertNotIn("Number.MAX_SAFE_INTEGER", widget)
         # Changed on purpose: the parallel-shot badge moved off the bottom

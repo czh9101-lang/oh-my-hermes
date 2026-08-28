@@ -1011,6 +1011,36 @@ class TodoHudTests(unittest.TestCase):
                 ],
             )
             self.assertIn("Todo items are plan declarations", payload["evidence_boundary"])
+            # Fresh write -- the reader-computed stall age is a small,
+            # non-negative number of seconds, not a widget-side clock.
+            self.assertIsNotNone(todo["updated_age_seconds"])
+            self.assertGreaterEqual(todo["updated_age_seconds"], 0)
+            self.assertLess(todo["updated_age_seconds"], 5)
+
+    def test_hud_todo_stall_age_is_computed_fresh_on_every_read(self) -> None:
+        # P1-1 regression: the widget can only ever paint a value handed to
+        # it by the reader (applySnapshot skips an unchanged snapshot, so a
+        # Date.now() computed in render freezes on an idle payload). The
+        # reader must not have that problem -- read_omh_hud recomputes the
+        # age from wall time on every call, even against the exact same
+        # on-disk todo record.
+        from datetime import datetime, timedelta, timezone
+
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stamp = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+            self._write_todo(root / ".omh", self._record(updated_at=stamp))
+
+            first = read_omh_hud(root / ".omh", root / ".hermes")["todo"]["updated_age_seconds"]
+            import time
+
+            time.sleep(1.1)
+            second = read_omh_hud(root / ".omh", root / ".hermes")["todo"]["updated_age_seconds"]
+
+            self.assertGreaterEqual(first, 119)
+            self.assertGreater(second, first)
 
     def test_hud_indents_multiple_tasks_beneath_their_phase_header(self) -> None:
         from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
