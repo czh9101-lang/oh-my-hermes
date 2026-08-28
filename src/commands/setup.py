@@ -308,24 +308,28 @@ def _install_result(args: argparse.Namespace) -> dict[str, object]:
     )
     if not args.dry_run:
         operation_log = _install_operation_log(result, source=source)
-        update_state(
-            paths,
-            {
-                "package": "oh-my-hermes",
-                "version": __version__,
-                "manifest_path": str(paths.manifest_path),
-                "manifest_sha256": sha256_file(paths.manifest_path),
-                "source": source,
-                "release_channel": release.channel,
-                "release_version": release.version,
-                "release_package_url": release.package_url,
-                "release_source_ref": source_ref,
-                "release_update": result["release_update"],
-                "installed_skills": len(result.get("skills", [])),
-                "skills_dir": str(paths.skills_dir),
-                f"last_{operation}": operation_log,
-            },
-        )
+        state_patch: dict[str, object] = {
+            "package": "oh-my-hermes",
+            "version": __version__,
+            "manifest_path": str(paths.manifest_path),
+            "manifest_sha256": sha256_file(paths.manifest_path),
+            "source": source,
+            "release_channel": release.channel,
+            "release_version": release.version,
+            "release_package_url": release.package_url,
+            "release_source_ref": source_ref,
+            "release_update": result["release_update"],
+            "installed_skills": len(result.get("skills", [])),
+            "skills_dir": str(paths.skills_dir),
+            f"last_{operation}": operation_log,
+        }
+        # Only overwrite a previously recorded identity with a freshly
+        # confirmed one; never regress it to "" just because update-check
+        # was off (or the probe failed) on this particular run.
+        release_source_commit = _release_source_commit_for_state(paths, release)
+        if release_source_commit:
+            state_patch["release_source_commit"] = release_source_commit
+        update_state(paths, state_patch)
     return result
 
 
@@ -1129,6 +1133,29 @@ def _release_source_ref(args: argparse.Namespace, release) -> str:
     if explicit:
         return explicit
     return str(getattr(release, "source_label", "") or "").strip()
+
+
+def _release_source_commit_for_state(paths, release) -> str:
+    """Best-effort remote `main` sha, recorded only when update-check is opted in.
+
+    This is the comparable local identity `omh update-check`'s startup probe
+    (`maintenance/update_check.py`) compares against a fresh remote read.
+    Piggybacks on this already-explicit `omh install`/`omh update` invocation
+    rather than adding a second, unscoped network surface (AGENTS.md
+    Implementation Boundaries): a network call rides along only when the user
+    has already opted update-check away from its shipped `off` default.
+    Scoped to the preview channel, the one that actually tracks `main` -- a
+    pinned stable tag or a local source is not meaningfully "behind main".
+    Silent no-op (returns "") on any failure; this metadata must never fail
+    the install/update command it rides along with.
+    """
+    if release.source_label != "main":
+        return ""
+    from ..maintenance.update_check import read_update_check_policy, record_remote_commit_for_install
+
+    if read_update_check_policy(paths)["mode"] == "off":
+        return ""
+    return record_remote_commit_for_install(paths)
 
 
 def _explicit_release_metadata_supplied(args: argparse.Namespace) -> bool:

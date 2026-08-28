@@ -180,6 +180,14 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
         "`omh doctor` isolated real-Hermes registration probe; reads registered tool/hook names, "
         "dispatches no agent work, and writes only inside a temporary HERMES_HOME."
     ),
+    "src/maintenance/update_check.py": (
+        "opt-in `omh update-check` probe (mode defaults to off): a single bounded `curl` GET of the "
+        "public GitHub commits API for `main`, reached only from the already-allowlisted `omh` "
+        "launch door (commands/main.py) or an explicit `omh install`/`omh update` "
+        "(commands/setup.py) when update-check is not off. The external `curl` process makes the "
+        "connection, never this module -- the same shape as the pip/npm/brew self-update already "
+        "allowlisted for commands/setup.py above."
+    ),
     "src/plugin_bundle/omh/tools/evidence_tool.py": (
         "allowlisted local verification-command runner; its allowlist is itself gated below."
     ),
