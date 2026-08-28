@@ -287,6 +287,14 @@ carries its own `claim_boundary` (prepared routes only, never dispatch
 evidence), and is safe to delete — an absent or invalid file only means HUD
 rows fall back to plain category projection.
 
+A fourth sibling, `~/.omh/routing/dispatch-models.json`
+(`omh_dispatch_model_preferences/v1`), is operator-edited only — nothing
+seeds or writes it automatically — and applies to a different surface:
+`omh coding fanout dispatch`'s `--model` fallback for a spawned agent CLI,
+used only when a unit's prepared handoff routed no model at all. See
+`docs/FANOUT.md` (Dispatch-model preference) for the schema and the
+`claude-code`/`codex` behavior it fills the gap for.
+
 ### Reaching models through a provider
 
 Chains name models the way a person says them (`glm-5.2`, `kimi-k3`). A host

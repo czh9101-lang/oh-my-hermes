@@ -2,9 +2,10 @@
 
 `omh coding fanout dispatch` spawns a local agent CLI per unit and keeps only a
 bounded stdout tail in memory. When that CLI was asked for a structured stream,
-the tail carries the two numbers a fanout status board otherwise has to print as
-"unknown": how many tokens the run consumed, and which provider-side session it
-belongs to. This module lifts exactly those out and nothing else.
+the tail carries the numbers a fanout status board otherwise has to print as
+"unknown": how many tokens the run consumed, which provider-side session it
+belongs to, and -- for the one owner that reports it -- what the call cost.
+This module lifts exactly those out and nothing else.
 
 Relationship to `codex_progress` (read this before "fixing" either module):
 
@@ -48,6 +49,7 @@ Boundaries, in order of importance:
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Final, Mapping
 
 UNIT_TELEMETRY_SCHEMA_VERSION: Final[str] = "omh_unit_telemetry/v1"
@@ -75,8 +77,20 @@ UNIT_TELEMETRY_VALUE_KEYS: Final[tuple[str, ...]] = (
     "cache_read_tokens",
     "cache_write_tokens",
     "reasoning_tokens",
+    "cost_usd",
     "session_ref",
 )
+
+# Owners whose structured stdout reports a per-call cost, and the top-level key
+# it reports it under. `claude -p --output-format json` returns one `result`
+# object carrying `total_cost_usd` alongside `usage` -- confirmed from this
+# CLI's own `--help` documentation of `--output-format json`, not from a
+# stream captured in this repo (same provenance caveat as the claude-code
+# token shape above). Codex reports none: `codex exec`'s `turn.completed`
+# usage event has no cost field, and this module never estimates one from
+# tokens -- an omitted owner here means "no reported cost", read as an absent
+# key, exactly like every other unreported count.
+_COST_KEY_BY_SOURCE: Final[dict[str, str]] = {"claude_json": "total_cost_usd"}
 
 # Owners with a structured stdout surface. Every other owner -- omo-runtime and
 # its pi/senpi/opencode hosts, hermes, the omx/omc runtimes, generic --
@@ -211,6 +225,7 @@ def _observed_values(objects: list[dict[str, Any]], source: str) -> dict[str, ob
     """
     observed: dict[str, object] = {}
     session_keys = _SESSION_KEYS_BY_SOURCE.get(source, ())
+    cost_key = _COST_KEY_BY_SOURCE.get(source, "")
     for item in objects:
         usage = _token_usage(item)
         if usage:
@@ -221,6 +236,10 @@ def _observed_values(objects: list[dict[str, Any]], source: str) -> dict[str, ob
             observed.update(usage)
             if "tokens_billable" in usage:
                 observed["tokens_billable_source"] = "summed_reported_components"
+        if cost_key:
+            cost = _reported_cost(item.get(cost_key))
+            if cost is not None:
+                observed["cost_usd"] = cost
         if "session_ref" not in observed:
             session_ref = _session_ref(item, session_keys)
             if session_ref:
@@ -320,6 +339,22 @@ def _token_count(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value if value >= 0 else None
+
+
+def _reported_cost(value: Any) -> float | None:
+    """Accept a reported non-negative finite cost only -- never an estimate.
+
+    `bool` is excluded for the same reason as `_token_count`: it is an `int`
+    subclass and would otherwise read `"total_cost_usd": true` as a real
+    number. This module sums or rounds only what a CLI already reported; it
+    never derives a cost from token counts.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number
 
 
 def _session_ref(item: Mapping[str, Any], session_keys: tuple[str, ...]) -> str:

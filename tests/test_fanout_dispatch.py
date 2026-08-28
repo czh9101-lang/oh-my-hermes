@@ -39,8 +39,10 @@ from omh.coding.fanout_dispatch import (  # noqa: E402
     _stdout_fenced_json_blocks,
     _unit_verification_is_observed,
     dispatch_fanout,
+    dispatch_model_preferences_path,
     verify_goal_matches_contract,
 )
+from omh.coding.executor_progress import read_progress_binding  # noqa: E402
 from omh.runtime.artifacts import append_journal_observation, create_run, show_run  # noqa: E402
 from omh.system.local_store import atomic_write_json  # noqa: E402
 from omh.system.paths import OmhPaths  # noqa: E402
@@ -1031,9 +1033,20 @@ class FanoutDispatchEngineTests(unittest.TestCase):
             self.assertIn(("codex", "exec"), heads)
             claude_argv = next(argv for argv in runner.spawned if argv[0] == "claude")
             self.assertEqual(claude_argv[1], "-p")
+            # No unit here routes a model, and neither profile ships a
+            # dispatch-model default (see _SHIPPED_DISPATCH_MODEL_DEFAULTS
+            # and test_codex_dispatch_model_ships_with_no_default /
+            # test_claude_code_unit_ships_with_no_default_dispatch_model), so
+            # the base template shows through byte-identical with no
+            # appended `--model`.
             self.assertEqual(
                 claude_argv[3:],
-                ["--permission-mode", "acceptEdits", "--allowedTools", "Bash(git add:*),Bash(git commit:*)"],
+                [
+                    "--permission-mode",
+                    "acceptEdits",
+                    "--allowedTools",
+                    "Bash(git add:*),Bash(git commit:*)",
+                ],
             )
             self.assertIn("Work unit:", claude_argv[2])
 
@@ -2272,6 +2285,235 @@ class FanoutDispatchTelemetryTests(unittest.TestCase):
             self.assertIn("opus", spawned["claude"])
             by_unit = {entry["unit_id"]: entry for entry in summary["units"]}
             self.assertEqual(by_unit["ui"]["model"], "opus")
+
+
+def _progress_events(paths: OmhPaths, run_ref: str) -> list[dict[str, object]]:
+    events_path = paths.runtime_runs_dir / run_ref / "executor_progress" / "events.jsonl"
+    if not events_path.is_file():
+        return []
+    return [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+class FanoutDispatchMaestroProgressRowTests(unittest.TestCase):
+    """`omh coding fanout dispatch` spawns local CLIs directly, which is the
+    Maestro lane by definition; this class covers the executor-progress
+    binding lifecycle those units open so the HUD's active-executor
+    projection can label and drop the row, and the operator's dispatch-model
+    preference that fills a gap a unit's prepared handoff left unrouted."""
+
+    def _setup(self, tmp: str, units=None):
+        root = Path(tmp)
+        paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+        repo, sha = _make_repo(root)
+        contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units or _UNITS))
+        return paths, repo, sha, contract
+
+    def test_completed_unit_opens_a_maestro_binding_and_closes_it(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            core = {entry["unit_id"]: entry for entry in contract["units"]}["core"]
+            run_ref = core["run_ref"]
+
+            dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["core"], runner=_agent_runner(), readiness=_ready,
+            )
+
+            binding = read_progress_binding(paths, "run", run_ref)
+            self.assertIsNotNone(binding)
+            self.assertEqual(binding["executor_profile"], "codex")
+            self.assertEqual(binding["delivery"]["source"], "fanout_dispatch")
+            # Closed the moment the process ended: a closed binding drops out
+            # of the HUD's active-executor projection on the next read, which
+            # is what stops the row -- never a lingering live row for a
+            # finished process.
+            self.assertEqual(binding["state"], "closed")
+            events = [event["event_type"] for event in _progress_events(paths, run_ref)]
+            self.assertIn("executor_dispatched", events)
+            self.assertIn("executor_completed", events)
+
+    def test_failed_unit_also_closes_its_maestro_binding(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            core = {entry["unit_id"]: entry for entry in contract["units"]}["core"]
+            run_ref = core["run_ref"]
+
+            dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["core"], runner=_agent_runner(fail_units={"core"}), readiness=_ready,
+            )
+
+            binding = read_progress_binding(paths, "run", run_ref)
+            self.assertEqual(binding["state"], "closed")
+            events = [event["event_type"] for event in _progress_events(paths, run_ref)]
+            self.assertIn("executor_failed", events)
+
+    def test_dispatched_event_carries_the_unit_title_and_routed_model(self) -> None:
+        with TemporaryDirectory() as tmp:
+            units = [
+                {"unit_id": "core", "title": "Core work", "owner": "codex", "file_scope": ["src/core/"]},
+                {"unit_id": "docs", "title": "Docs work", "owner": "claude-code", "file_scope": ["docs/"]},
+            ]
+            paths, repo, sha, contract = self._setup(tmp, units=units)
+            core = {entry["unit_id"]: entry for entry in contract["units"]}["core"]
+            run_ref = core["run_ref"]
+
+            dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["core"], runner=_agent_runner(), readiness=_ready,
+            )
+
+            dispatched = next(
+                event for event in _progress_events(paths, run_ref) if event["event_type"] == "executor_dispatched"
+            )
+            self.assertEqual(dispatched["summary"], "Core work")
+
+    def test_claude_code_unit_ships_with_no_default_dispatch_model(self) -> None:
+        """A rejected model is an observed exit failure with no fallback
+        walk, and no user opted into a specific model choice by dispatching a
+        unit -- so, like every other profile, claude-code ships with no
+        dispatch-model default (see _SHIPPED_DISPATCH_MODEL_DEFAULTS).
+        `docs/FANOUT.md` documents `opus` as the recommended value an
+        operator can opt into via `dispatch-models.json`
+        (test_dispatch_model_preference_config_overrides_the_shipped_default
+        covers that opt-in path)."""
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            docs = {entry["unit_id"]: entry for entry in contract["units"]}["docs"]
+            run_ref = docs["run_ref"]
+            runner = _agent_runner()
+
+            summary = dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["docs"], runner=runner, readiness=_ready,
+            )
+
+            by_unit = {entry["unit_id"]: entry for entry in summary["units"]}
+            self.assertEqual(by_unit["docs"]["model"], "")
+            spawned = next(argv for argv in runner.spawned if argv[0] == "claude")
+            self.assertNotIn("--model", spawned)
+            binding = read_progress_binding(paths, "run", run_ref)
+            self.assertEqual(binding["executor_profile"], "claude_code")
+
+    def test_dispatch_model_preference_config_overrides_the_shipped_default(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            config_path = dispatch_model_preferences_path(paths.omh_home)
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(
+                config_path,
+                {
+                    "schema_version": "omh_dispatch_model_preferences/v1",
+                    "profiles": {"claude-code": "claude-fable-5"},
+                },
+            )
+            runner = _agent_runner()
+
+            summary = dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["docs"], runner=runner, readiness=_ready,
+            )
+
+            by_unit = {entry["unit_id"]: entry for entry in summary["units"]}
+            self.assertEqual(by_unit["docs"]["model"], "claude-fable-5")
+            spawned = next(argv for argv in runner.spawned if argv[0] == "claude")
+            self.assertIn("claude-fable-5", spawned)
+
+    def test_dispatch_model_preference_can_be_cleared_to_the_cli_default(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            config_path = dispatch_model_preferences_path(paths.omh_home)
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(
+                config_path,
+                {"schema_version": "omh_dispatch_model_preferences/v1", "profiles": {"claude-code": ""}},
+            )
+            runner = _agent_runner()
+
+            summary = dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["docs"], runner=runner, readiness=_ready,
+            )
+
+            by_unit = {entry["unit_id"]: entry for entry in summary["units"]}
+            self.assertEqual(by_unit["docs"]["model"], "")
+            spawned = next(argv for argv in runner.spawned if argv[0] == "claude")
+            self.assertNotIn("--model", spawned)
+
+    def test_dispatch_model_preference_never_overrides_a_routed_model(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            docs = {entry["unit_id"]: entry for entry in contract["units"]}["docs"]
+            docs["handoff"]["model_route"] = {
+                "schema_version": "coding_model_route/v2",
+                "status": "resolved",
+                "provenance": "explicit",
+                "selected_model": "claude-sonnet-5",
+                "selected_reasoning_effort": "medium",
+            }
+            runner = _agent_runner()
+
+            summary = dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["docs"], runner=runner, readiness=_ready,
+            )
+
+            by_unit = {entry["unit_id"]: entry for entry in summary["units"]}
+            self.assertEqual(by_unit["docs"]["model"], "claude-sonnet-5")
+            spawned = next(argv for argv in runner.spawned if argv[0] == "claude")
+            self.assertIn("claude-sonnet-5", spawned)
+            self.assertNotIn("opus", spawned)
+
+    def test_codex_dispatch_model_ships_with_no_default(self) -> None:
+        """No local codex CLI to confirm its `--model` value space against in
+        this repo, so the conservative choice (unset = CLI default) stands
+        until that is verified."""
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            runner = _agent_runner()
+
+            summary = dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["core"], runner=runner, readiness=_ready,
+            )
+
+            by_unit = {entry["unit_id"]: entry for entry in summary["units"]}
+            self.assertEqual(by_unit["core"]["model"], "")
+            spawned = next(argv for argv in runner.spawned if argv[0] == "codex")
+            self.assertNotIn("--model", spawned)
+
+    def test_reported_cost_and_tokens_reach_the_terminal_progress_event(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            docs = {entry["unit_id"]: entry for entry in contract["units"]}["docs"]
+            run_ref = docs["run_ref"]
+            claude_result = json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "session_id": "sess-cost-1",
+                    "total_cost_usd": 0.4213,
+                    "usage": {"input_tokens": 100, "output_tokens": 40},
+                }
+            )
+
+            def runner(argv, **kwargs):
+                if argv[0] == "git":
+                    return subprocess.run(argv, **kwargs)
+                return _FakeCompleted(0, claude_result)
+
+            dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["docs"], runner=runner, readiness=_ready,
+            )
+
+            completed = next(
+                event for event in _progress_events(paths, run_ref) if event["event_type"] == "executor_completed"
+            )
+            self.assertEqual(completed["signal"]["cost_usd"], 0.4213)
+            # Never estimated from tokens: the reported total is a rounded
+            # pass-through, not a derivation from input/output token counts.
+            self.assertNotEqual(completed["signal"]["cost_usd"], 100 + 40)
 
 
 def _write_skill(root: Path, name: str, description: str) -> None:

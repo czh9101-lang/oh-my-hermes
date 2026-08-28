@@ -1418,6 +1418,15 @@ def _project_binding_row(
         "linked_bindings": linked,
         "claim_boundary": CLAIM_BOUNDARY,
     }
+    # Who opened the binding, projected from `delivery.source` -- absent for
+    # every binding source that predates this field. `fanout_dispatch` is the
+    # one value the HUD reader currently keys off of, to tell a fanout-unit
+    # binding apart from a Hermes-native or wrapper-session one that happens
+    # to share the same executor profile.
+    delivery = primary.get("delivery")
+    source = str(delivery.get("source", "")) if isinstance(delivery, dict) else ""
+    if source:
+        row["source"] = source
     # Promoted to the row itself, not left nested in `latest_event`: the status
     # board renders one line per executor and had no way to say which model was
     # running, because the profile alone does not identify it.

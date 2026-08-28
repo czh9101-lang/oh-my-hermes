@@ -300,6 +300,27 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertNotIn("useInput", widget)
         self.assertNotIn("useKeypress", widget)
 
+    def test_fanout_dispatch_rows_render_a_warn_colored_maestro_identity(self) -> None:
+        # `omh coding fanout dispatch` spawns a local CLI directly (the
+        # Maestro lane by definition), and the reader tags that row
+        # `dispatch_lane` so it renders in the same agent list as Hermes-
+        # native delegate_task rows -- same truncation, dots, and state
+        # colors -- but with `(<executor>/maestro <model>)` in place of the
+        # category:model route, warn-colored to stand apart from the default
+        # Hermes-native lane.
+        widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "const MAESTRO_EXECUTOR_SHORT_NAMES = { codex: 'codex', claude_code: 'claude', omo_runtime: 'omo', hermes_local: 'hermes' }",
+            widget,
+        )
+        self.assertIn("const dispatchLane = safeText(row.dispatch_lane)", widget)
+        self.assertIn(
+            "dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route),",
+            widget,
+        )
+        self.assertIn("|| segment.kind === 'maestro'", widget)
+
     def test_hud_liveness_signal_drives_the_status_line_todo_and_shot_badge(self) -> None:
         # 2026-08 HUD liveness fix: exact in-flight tool-call state (paired
         # from pre_tool_call/post_tool_call by tool_call_id) replaces three

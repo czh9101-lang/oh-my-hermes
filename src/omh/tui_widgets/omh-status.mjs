@@ -32,6 +32,11 @@ export default function register(sdk) {
   // (` ─ ready │ gpt 5.6 sol │ … `) and like oh-my-claudecode's HUD -- dense
   // text in the TUI's idiom, not a boxed widget that announces itself.
   // Colours still resolve only through the active theme, never literals.
+  // `omh coding fanout dispatch` spawns these local CLIs directly (executor
+  // profile names from executor_progress.ALLOWED_EXECUTOR_PROFILES); the
+  // short forms match how the rest of the row grammar already abbreviates —
+  // one bare word, lower case, no provider suffix.
+  const MAESTRO_EXECUTOR_SHORT_NAMES = { codex: 'codex', claude_code: 'claude', omo_runtime: 'omo', hermes_local: 'hermes' }
   const SEPARATOR = ' │ '
   // The classic REPL frames the composer with horizontal rules; the modern
   // TUI draws none. An interim single-dock design put both rules AND the
@@ -165,6 +170,18 @@ export default function register(sdk) {
     const stateText = columns < 100 ? ({ running: 'run', blocked: 'block', failed: 'fail' })[state] || state : state
     const taskId = truncateCells(safeText(row.task_id) || safeText(row.role) || 'agent', 8).padEnd(8)
     const model = [safeText(row.model), safeText(row.effort)].filter(Boolean).join(':')
+    // A row `omh coding fanout dispatch` opened (the Maestro lane spawning an
+    // external CLI directly, not a Hermes-native delegate_task child) carries
+    // `dispatch_lane` from the reader. It renders like every other row in
+    // this list — same truncation, dots, and state colors — except its
+    // identity segment reads `(<executor>/maestro <model>)` instead of the
+    // category:model route, so the dispatched executor and lane are visible
+    // at a glance and warn-colored to stand apart from Hermes-native rows.
+    const dispatchLane = safeText(row.dispatch_lane)
+    const dispatchExecutor = safeText(row.executor_profile)
+    const dispatchIdentity = dispatchLane
+      ? `(${MAESTRO_EXECUTOR_SHORT_NAMES[dispatchExecutor] || dispatchExecutor}/${dispatchLane}${safeText(row.model) ? ` ${truncateCells(row.model, 20)}` : ''})`
+      : ''
     const category = safeText(row.category)
     // Prepared-route provenance from the reader, rendered as one shape:
     // `category(model tag)`. The category names the LANE and never changes;
@@ -187,7 +204,7 @@ export default function register(sdk) {
     const tools = Number.isFinite(row.tool_count) ? `${row.tool_count} tools` : ''
     const turnTools = turn && tools ? `${turn} (${tools})` : turn || tools
     const optional = [
-      metricSegment(routeKind, route),
+      dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route),
       metricSegment('fallback', Number.isFinite(row.fallback_count) && row.fallback_count > 0 ? `fallback:${row.fallback_count}` : ''),
       metricSegment('turn', turnTools),
       // A subscription-billed host records no per-call cost, so the reader
@@ -264,6 +281,11 @@ export default function register(sdk) {
                 // A fallback or exhausted route is a warning-grade fact: the
                 // lane is NOT running the chain head the category names.
                 : segment.kind === 'route-fallback'
+                  // A dispatched-executor identity is warn-colored for the
+                  // same reason as a fallback route: it marks the row as
+                  // something other than the plain Hermes-native default,
+                  // here the Maestro lane's own spawned CLI.
+                  || segment.kind === 'maestro'
                   ? t.color.warn
                   : t.color.muted,
             key: `${segment.kind}-${index}`,

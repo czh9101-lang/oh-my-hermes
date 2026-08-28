@@ -172,6 +172,31 @@ class ClaudeCodeOwnerTests(unittest.TestCase):
         self.assertEqual(payload["input_tokens"], 7)
         self.assertEqual(payload["output_tokens"], 3)
 
+    def test_claude_result_total_cost_usd_is_read_as_the_reported_cost(self) -> None:
+        event = {**CLAUDE_RESULT_EVENT, "total_cost_usd": 0.4213}
+        payload = parse_unit_telemetry("claude-code", jsonl(event))
+
+        self.assertEqual(payload["cost_usd"], 0.4213)
+
+    def test_claude_result_without_total_cost_usd_reports_no_cost(self) -> None:
+        payload = parse_unit_telemetry("claude-code", jsonl(CLAUDE_RESULT_EVENT))
+
+        self.assertNotIn("cost_usd", payload)
+
+    def test_negative_or_non_numeric_reported_cost_is_rejected(self) -> None:
+        for bad_cost in (-0.5, "0.42", True):
+            with self.subTest(bad_cost=bad_cost):
+                event = {**CLAUDE_RESULT_EVENT, "total_cost_usd": bad_cost}
+                payload = parse_unit_telemetry("claude-code", jsonl(event))
+                self.assertNotIn("cost_usd", payload)
+
+
+class CodexCostTests(unittest.TestCase):
+    def test_codex_never_reports_a_cost_because_none_is_estimated_from_tokens(self) -> None:
+        payload = parse_unit_telemetry("codex", jsonl(CODEX_SESSION_CONFIGURED_EVENT, CODEX_TOKEN_COUNT_EVENT))
+
+        self.assertNotIn("cost_usd", payload)
+
 
 class UnstructuredOwnerTests(unittest.TestCase):
     def test_owners_without_a_structured_surface_report_honest_absence(self) -> None:

@@ -19,7 +19,7 @@ import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from ..runtime.artifacts import append_journal_observation, create_run, show_run
-from ..system.local_store import atomic_write_json, ensure_dir, locked_json_update, utc_now
+from ..system.local_store import atomic_write_json, ensure_dir, locked_json_update, read_json_object_result, utc_now
 from ..system.metadata_safety import redact_metadata_text
 from ..system.paths import OmhPaths
 from ._hermes_child_process import terminate_process_group
@@ -30,6 +30,14 @@ from .executor_capability_snapshots import (
     validate_executor_capability_snapshot,
 )
 from .executor_capabilities import legacy_executor_capability_projection
+from .executor_progress import (
+    ExecutorProgressError,
+    build_progress_binding,
+    build_safe_progress_signal,
+    normalize_executor_profile,
+    observe_executor_progress,
+    write_progress_binding,
+)
 from .executor_readiness import probe_executor_readiness
 from .fanout_contracts import (
     FANOUT_CLAIM_BOUNDARY,
@@ -1333,6 +1341,7 @@ _TELEMETRY_RESULT_KEYS: tuple[str, ...] = (
     "cache_read_tokens",
     "cache_write_tokens",
     "reasoning_tokens",
+    "cost_usd",
     "session_ref",
 )
 
@@ -1354,6 +1363,166 @@ def _clear_inflight(paths: OmhPaths, fanout_id: str, unit_id: str) -> None:
     try:
         clear_inflight_marker(paths, fanout_id, unit_id)
     except (InflightMarkerError, OSError):
+        return
+
+
+DISPATCH_MODEL_PREFERENCE_SCHEMA_VERSION = "omh_dispatch_model_preferences/v1"
+
+# Owners that spawn a headless coding CLI directly accept a `--model` string
+# (see DISPATCH_MODEL_OPTION_TEMPLATES); this is the operator preference read
+# when a unit's prepared handoff carries no routed model at all -- it never
+# overrides a frozen route, only fills the gap when there is none. No profile
+# ships a default here: a model the account is not entitled to is an observed
+# exit failure with no fallback walk, and a user who never opted into a
+# specific model choice should not be defaulted into that failure. The unset
+# entry -- meaning the spawned CLI's own default -- is therefore the honest
+# out-of-the-box behavior for every profile, including claude-code.
+# `docs/FANOUT.md` documents "opus" as the recommended claude-code value for
+# an operator who wants the strongest tier and knows their account carries
+# it (this codebase's own model-family alias set, `_CLAUDE_TIER_ALIASES` in
+# `src/coding/model_routing.py`, recognizes "opus" as a claude-family model
+# id; whether `claude --help` itself documents "opus" as a `--model` alias on
+# a given install is unverified here). One operator's own preference for it
+# (2026-08 directive: "use fable-5 opus wherever reasonably possible") is set
+# the same way, in that operator's own `dispatch-models.json`, not as a
+# package-wide default. Codex ships no default either: this repo has no
+# local `codex` CLI to confirm its `--model` value space against. An
+# operator sets either profile in `dispatch-models.json`; an explicit empty
+# string clears an entry back to unset.
+_SHIPPED_DISPATCH_MODEL_DEFAULTS: dict[str, str] = {}
+
+
+def dispatch_model_preferences_path(omh_home: Path) -> Path:
+    return Path(omh_home) / "routing" / "dispatch-models.json"
+
+
+def _dispatch_model_preference(paths: OmhPaths, owner: str) -> str:
+    """The operator's preferred `--model` value for `owner`, or "" for the CLI default.
+
+    Never raises: a missing, unreadable, or malformed document reads the same
+    as an absent one, and the shipped default still applies -- a broken
+    preference file must not block a dispatch or silently downgrade the
+    model choice below the shipped default.
+    """
+    document, _error = read_json_object_result(dispatch_model_preferences_path(paths.omh_home))
+    if isinstance(document, dict) and document.get("schema_version") == DISPATCH_MODEL_PREFERENCE_SCHEMA_VERSION:
+        profiles = document.get("profiles")
+        if isinstance(profiles, dict) and owner in profiles:
+            value = profiles.get(owner)
+            return value.strip() if isinstance(value, str) else ""
+    return _SHIPPED_DISPATCH_MODEL_DEFAULTS.get(owner, "")
+
+
+# `source` on the progress binding this lane opens. The HUD reader keys off
+# this exact string (`_hud_subagent_summary` in runtime_reader.py) to label a
+# row `(<executor>/maestro)` instead of rendering it like a Hermes-native
+# delegate_task child -- `omh coding fanout dispatch` spawning an external CLI
+# directly IS the Maestro lane (CONTEXT.md "Maestro" / "Fanout dispatch").
+_FANOUT_PROGRESS_SOURCE = "fanout_dispatch"
+
+
+def _open_fanout_progress_binding(
+    paths: OmhPaths,
+    *,
+    run_ref: str,
+    owner: str,
+    worktree: Path,
+    started_at: str,
+    routed_model: str,
+    routed_effort: str,
+    title: str,
+) -> dict[str, Any] | None:
+    """Best-effort: open and report the initial live row for one dispatched unit.
+
+    Returns None when the owner has no progress lane (never raises) so the
+    caller's later pid/close calls become no-ops rather than every dispatch
+    growing a try/except of its own -- observability must never fail a
+    dispatch, the same rule `_write_inflight` already holds for markers.
+    """
+    try:
+        profile = normalize_executor_profile(owner)
+    except ExecutorProgressError:
+        return None
+    try:
+        binding = build_progress_binding(
+            target_type="run",
+            target_id=run_ref,
+            executor_profile=profile,
+            now=started_at,
+            worktree=str(worktree),
+            source=_FANOUT_PROGRESS_SOURCE,
+        )
+        binding = write_progress_binding(paths, binding)
+        signal = build_safe_progress_signal(
+            executor_profile=profile,
+            process_status="dispatched",
+            routed_model=routed_model,
+            routed_reasoning_effort=routed_effort,
+            explicit_summary=title,
+        )
+        observation = observe_executor_progress(paths, binding, signal, observed_at=started_at)
+        return observation["binding"]
+    except (ExecutorProgressError, OSError):
+        return None
+
+
+def _record_fanout_progress_pid(
+    paths: OmhPaths,
+    binding: dict[str, Any] | None,
+    pid: int,
+) -> dict[str, Any] | None:
+    if binding is None:
+        return None
+    try:
+        updated = dict(binding)
+        updated["process"] = {**binding.get("process", {}), "pid": pid}
+        return write_progress_binding(paths, updated)
+    except (ExecutorProgressError, OSError):
+        return binding
+
+
+def _close_fanout_progress_binding(
+    paths: OmhPaths,
+    binding: dict[str, Any] | None,
+    *,
+    exit_code: int,
+    routed_model: str,
+    routed_effort: str,
+    title: str,
+    owner: str,
+    stdout_text: str,
+) -> None:
+    """Best-effort: report the unit's terminal state and close its row.
+
+    A closed binding drops out of the HUD's active-executor projection on the
+    very next read, which is what stops the row the moment the process ends —
+    the same lifecycle every other executor-progress binding already has, not
+    a bespoke lingering rule invented for this lane.
+
+    Telemetry parsing lives INSIDE this guard rather than being handed in
+    already-parsed: a caller evaluating `parse_unit_telemetry(...)` as an
+    argument to this function runs it outside any try/except of its own --
+    from inside a `finally`, that would propagate straight out and mask
+    whatever the dispatch itself was doing, which is exactly the failure mode
+    this whole binding lifecycle is "best-effort" to avoid.
+    """
+    if binding is None:
+        return
+    try:
+        telemetry = parse_unit_telemetry(owner, stdout_text)
+        tokens_total = telemetry.get("tokens_total")
+        cost_usd = telemetry.get("cost_usd")
+        signal = build_safe_progress_signal(
+            executor_profile=str(binding.get("executor_profile", "")),
+            process_status="completed" if exit_code == 0 else "failed",
+            routed_model=routed_model,
+            routed_reasoning_effort=routed_effort,
+            explicit_summary=title,
+            tokens_total=tokens_total if isinstance(tokens_total, int) else None,
+            cost_usd=cost_usd if isinstance(cost_usd, (int, float)) and not isinstance(cost_usd, bool) else None,
+        )
+        observe_executor_progress(paths, binding, signal)
+    except (ExecutorProgressError, OSError):
         return
 
 
@@ -1462,7 +1631,19 @@ def _dispatch_unit(
             else None
         ),
     )
-    argv = build_dispatch_argv(owner, prompt, model_route)
+    # The unit's prepared handoff routes a model whenever the contract
+    # resolved one; when it did not (no route at all, or a route that
+    # resolved with no model), the operator's dispatch-model preference fills
+    # the gap so the spawn — and the row it opens — never silently falls back
+    # to "whatever the CLI defaults to" without a recorded reason. A frozen
+    # `choice_required` route already returned above and never reaches here.
+    effective_model_route = model_route
+    if not routed_model:
+        preference = _dispatch_model_preference(paths, owner)
+        if preference:
+            routed_model = preference
+            effective_model_route = {**(model_route or {}), "selected_model": preference}
+    argv = build_dispatch_argv(owner, prompt, effective_model_route)
     worktree = _worktree_path(repo_root, unit_id)
     if dry_run:
         from .executor_skill_discovery import skill_selection_card, suggested_skill_sequence
@@ -1567,7 +1748,9 @@ def _dispatch_unit(
     started_clock = time.monotonic()
     stderr_tail = ""
     stdout_text = ""
+    exit_code = 1
     owner_host = omo_runtime_host() or "" if owner == "omo-runtime" else ""
+    unit_title = str(unit.get("title") or unit.get("unit_id", unit_id))
     # Written BEFORE the spawn and cleared in `finally`. This call blocks for
     # the whole unit, so the dispatching process cannot report on itself; the
     # marker is what lets ANOTHER session see that this unit is running and
@@ -1586,35 +1769,54 @@ def _dispatch_unit(
             "started_at": started_at,
         },
     )
+    # Best-effort HUD row for this unit: opened inside the same try whose
+    # finally below closes it, so the row can never outlive the process it
+    # describes -- opening it BEFORE the try left a window (a Ctrl-C during
+    # the stagger sleep just below, in particular) where the binding was on
+    # disk but the finally that closes it never ran, orphaning a live row for
+    # up to its freshness window. See _open_fanout_progress_binding.
+    progress_binding: dict[str, Any] | None = None
     spawn_kwargs: dict[str, Any] = {}
-    if getattr(runner, "accepts_on_spawn", False):
-        # The signal-safe runner hands back the live process so the marker
-        # carries the real group-leader pid the fanout reaper verifies
-        # against; injected test runners keep the plain protocol.
-        def _record_pid(process: subprocess.Popen) -> None:
-            _write_inflight(
-                paths,
-                fanout_id,
-                unit_id,
-                {
-                    "owner": owner,
-                    "owner_host": owner_host,
-                    "model": routed_model,
-                    "reasoning_effort": routed_effort,
-                    "run_ref": run_ref,
-                    "worktree": str(worktree),
-                    "started_at": started_at,
-                    "pid": str(process.pid),
-                },
-            )
-
-        spawn_kwargs["on_spawn"] = _record_pid
-        # Real spawns only (the same seam as the pid hook): stagger this
-        # unit's start so the first dispatch of the fanout writes the
-        # provider prompt cache the byte-identical sibling preambles read.
-        if spawn_stagger is not None:
-            spawn_stagger.reserve()
     try:
+        progress_binding = _open_fanout_progress_binding(
+            paths,
+            run_ref=run_ref,
+            owner=owner,
+            worktree=worktree,
+            started_at=started_at,
+            routed_model=routed_model,
+            routed_effort=routed_effort,
+            title=unit_title,
+        )
+        if getattr(runner, "accepts_on_spawn", False):
+            # The signal-safe runner hands back the live process so the marker
+            # carries the real group-leader pid the fanout reaper verifies
+            # against; injected test runners keep the plain protocol.
+            def _record_pid(process: subprocess.Popen) -> None:
+                nonlocal progress_binding
+                _write_inflight(
+                    paths,
+                    fanout_id,
+                    unit_id,
+                    {
+                        "owner": owner,
+                        "owner_host": owner_host,
+                        "model": routed_model,
+                        "reasoning_effort": routed_effort,
+                        "run_ref": run_ref,
+                        "worktree": str(worktree),
+                        "started_at": started_at,
+                        "pid": str(process.pid),
+                    },
+                )
+                progress_binding = _record_fanout_progress_pid(paths, progress_binding, process.pid)
+
+            spawn_kwargs["on_spawn"] = _record_pid
+            # Real spawns only (the same seam as the pid hook): stagger this
+            # unit's start so the first dispatch of the fanout writes the
+            # provider prompt cache the byte-identical sibling preambles read.
+            if spawn_stagger is not None:
+                spawn_stagger.reserve()
         completed = runner(
             argv, cwd=str(worktree), text=True, capture_output=True, timeout=timeout, **spawn_kwargs
         )
@@ -1630,6 +1832,16 @@ def _dispatch_unit(
         exit_code, output_tail = 1, f"spawn failed: {exc}"
     finally:
         _clear_inflight(paths, fanout_id, unit_id)
+        _close_fanout_progress_binding(
+            paths,
+            progress_binding,
+            exit_code=exit_code,
+            routed_model=routed_model,
+            routed_effort=routed_effort,
+            title=unit_title,
+            owner=owner,
+            stdout_text=stdout_text,
+        )
     finished_at = utc_now()
     duration_seconds = round(time.monotonic() - started_clock, 3)
     limit_label = _limit_shaped_label(output_tail, stderr_tail) if exit_code != 0 else ""
