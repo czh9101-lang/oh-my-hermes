@@ -156,6 +156,16 @@ HOOK_REVIEWS: dict[str, dict[str, Any]] = {
             "unknown-role warning before a Hermes tool call"
         ),
     },
+    "post_tool_call": {
+        "source_path": "hooks/tool_hooks.py",
+        "event_scope": ("post_tool_call",),
+        "reviewed_timeout_ms": 1000,
+        "capability": (
+            "closing the in-flight tool-call ledger entry that backs the OMH "
+            "HUD's liveness signal (open-call count, stalled-todo warning, "
+            "parallel-shot lifetime)"
+        ),
+    },
     "pre_verify": {
         "source_path": "hooks/verify_hooks.py",
         "event_scope": ("pre_verify",),

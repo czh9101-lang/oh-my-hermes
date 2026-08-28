@@ -640,6 +640,7 @@ print(json.dumps(observed, ensure_ascii=False))
                 plugin["registered_hooks"],
                 [
                     "on_session_end",
+                    "post_tool_call",
                     "pre_llm_call",
                     "pre_tool_call",
                     "pre_verify",
