@@ -267,7 +267,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # from idea-to-deploy after review showed it dispatched read-only questions
 # about existing repos into the delivery loop (-23 chars; the imperative
 # bootstrap/scaffold phrases remain); warranted shrink.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 726824
+# 726824 -> 729125: ultrawork gained dependency-topology selection, standalone
+# node and verification-fan-in contracts, PIN/RED/GREEN/SURFACE/CLEAN evidence
+# discipline, real-surface QA and cleanup receipts, and guarded natural
+# nomination for parallel-then-integrate work (+2301 chars); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 729125
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

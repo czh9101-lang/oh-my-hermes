@@ -50,14 +50,14 @@ def file_digest(path: Path) -> str:
 
 def tree_digest(root: Path) -> str:
     entries = []
-    canonical_root = root.resolve(strict=True)
+    excluded_parts = {".git", "__pycache__", ".venv", ".pytest_cache"}
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
-        if path.is_symlink():
-            # Tool-created byproducts (for example `.venv`) may contain
-            # symlinks; skip them rather than failing the digest.
+        if excluded_parts.intersection(relative.parts):
             continue
-        if not path.is_file() or ".git" in path.parts or "__pycache__" in path.parts or ".venv" in path.parts or ".pytest_cache" in path.parts:
+        if path.is_symlink():
+            raise ValueError(f"workspace symlink is not allowed: {relative}")
+        if not path.is_file():
             continue
         entries.append((path.relative_to(root).as_posix(), file_digest(path)))
     return digest(entries)

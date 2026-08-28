@@ -15,21 +15,21 @@ class RoutingPrecisionTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "routing_precision/v1")
         self.assertEqual(payload["source"], "discord")
         self.assertTrue(payload["summary"]["all_passing"])
-        self.assertEqual(payload["summary"]["case_count"], 98)
-        self.assertEqual(payload["summary"]["passing_count"], 98)
-        self.assertEqual(payload["summary"]["negative_case_count"], 98)
-        self.assertEqual(payload["summary"]["negative_passing_count"], 98)
-        self.assertEqual(payload["summary"]["direct_answer_count"], 71)
+        self.assertEqual(payload["summary"]["case_count"], 99)
+        self.assertEqual(payload["summary"]["passing_count"], 99)
+        self.assertEqual(payload["summary"]["negative_case_count"], 99)
+        self.assertEqual(payload["summary"]["negative_passing_count"], 99)
+        self.assertEqual(payload["summary"]["direct_answer_count"], 72)
         self.assertEqual(payload["summary"]["file_lookup_count"], 5)
         self.assertEqual(payload["summary"]["overroute_count"], 0)
         self.assertEqual(payload["summary"]["catalog_picker_count"], 0)
         self.assertEqual(payload["summary"]["generic_ack_count"], 0)
-        self.assertEqual(payload["summary"]["intervention_case_count"], 212)
-        self.assertEqual(payload["summary"]["intervention_passing_count"], 212)
+        self.assertEqual(payload["summary"]["intervention_case_count"], 213)
+        self.assertEqual(payload["summary"]["intervention_passing_count"], 213)
         self.assertEqual(payload["summary"]["missed_intervention_count"], 0)
         self.assertEqual(payload["summary"]["intervention_generic_ack_count"], 0)
-        self.assertEqual(payload["summary"]["total_case_count"], 310)
-        self.assertEqual(payload["summary"]["total_passing_count"], 310)
+        self.assertEqual(payload["summary"]["total_case_count"], 312)
+        self.assertEqual(payload["summary"]["total_passing_count"], 312)
         self.assertEqual(routing_precision_errors(payload), [])
         self.assertIn("over-intervention and missed-intervention guards", payload["claim_boundary"])
 
@@ -81,6 +81,7 @@ class RoutingPrecisionTests(unittest.TestCase):
         self.assertEqual(cases["regex-write-generic-noise"]["observed"]["next_action"], "answer_directly")
         self.assertEqual(cases["exclamatory-thanks-direct"]["observed"]["next_action"], "answer_directly")
         self.assertEqual(cases["owner-default-concept"]["observed"]["next_action"], "answer_directly")
+        self.assertEqual(cases["dependency-graph-concept"]["observed"]["next_action"], "answer_directly")
         self.assertEqual(cases["markov-chain-models-work-concept"]["observed"]["next_action"], "answer_directly")
         for case in cases.values():
             self.assertFalse(case["observed"]["overrouted"])
@@ -238,6 +239,10 @@ class RoutingPrecisionTests(unittest.TestCase):
                 )
         self.assertEqual(interventions["loopable-project"]["observed"]["route_workflow"], "loop")
         self.assertEqual(interventions["one-cycle-delivery"]["observed"]["route_workflow"], "ultrawork")
+        self.assertEqual(
+            interventions["dependency-topology-parallel-then-integrate"]["observed"]["route_workflow"],
+            "ultrawork",
+        )
         self.assertEqual(
             interventions["owner-learning-ulw-delivery"]["observed"]["next_action"],
             "choose_executor",
@@ -421,8 +426,8 @@ class RoutingPrecisionTests(unittest.TestCase):
         self.assertEqual(status, 0, stderr)
         self.assertEqual(stderr, "")
         self.assertIn("OMH routing precision", stdout)
-        self.assertIn("98/98 negative-control cases passing", stdout)
-        self.assertIn("Interventions: 212/212 expected workflow cases passing", stdout)
+        self.assertIn("99/99 negative-control cases passing", stdout)
+        self.assertIn("Interventions: 213/213 expected workflow cases passing", stdout)
         self.assertIn("overroutes: 0", stdout)
         self.assertIn("catalog pickers: 0", stdout)
         self.assertIn("generic ack: 0", stdout)
