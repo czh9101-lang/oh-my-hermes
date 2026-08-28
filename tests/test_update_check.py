@@ -25,15 +25,19 @@ from omh.local_store import FileLockTimeout, atomic_write_json, read_json_object
 from omh.maintenance.update_check import (
     DEFAULT_UPDATE_CHECK_INTERVAL_HOURS,
     DEFAULT_UPDATE_CHECK_MODE,
+    MAX_UPDATE_CHECK_INTERVAL_HOURS,
+    MIN_UPDATE_CHECK_INTERVAL_HOURS,
     UPDATE_CHECK_MODES,
     acquire_auto_update_lock,
     evaluate_update_check,
     fetch_remote_main_identity,
     format_notice_line,
+    local_installed_channel,
     local_installed_commit,
     read_update_check_cache,
     read_update_check_policy,
     record_remote_commit_for_install,
+    refresh_cache_after_auto_update,
     update_check_cache_path,
     write_update_check_policy,
 )
@@ -236,6 +240,28 @@ class EvaluateUpdateCheckTests(unittest.TestCase):
             up_to_date = evaluate_update_check(paths, force=True, runner=_ok_runner("b" * 40))
             self.assertFalse(up_to_date["should_auto_update"])
 
+    def test_cached_behind_within_the_interval_never_flags_a_repeat_auto_update(self) -> None:
+        # Regression for the "auto mode re-updates every launch" defect: a
+        # cached "behind" outcome served without a fresh probe (interval not
+        # elapsed) must never set should_auto_update on its own -- only a
+        # fresh probe in this same call may.
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="auto", interval_hours=24)
+            _write_local_commit(paths, "a" * 40)
+            first = evaluate_update_check(paths, runner=_ok_runner("b" * 40))
+            self.assertTrue(first["checked"])
+            self.assertTrue(first["should_auto_update"])
+
+            second = evaluate_update_check(paths, runner=_refusing_runner())
+            self.assertFalse(second["checked"])
+            self.assertEqual(second["outcome"], "behind")
+            self.assertFalse(second["should_auto_update"])
+
+            third = evaluate_update_check(paths, runner=_refusing_runner())
+            self.assertFalse(third["checked"])
+            self.assertFalse(third["should_auto_update"])
+
     def test_network_failure_is_a_silent_skip_that_keeps_the_previous_outcome(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = _paths(Path(tmp))
@@ -324,6 +350,130 @@ class AutoUpdateLockTests(unittest.TestCase):
             with acquire_auto_update_lock(paths):
                 sidecar = cache_path.with_name(f".{cache_path.name}.lock")
                 self.assertTrue(sidecar.exists())
+
+
+class LocalInstalledChannelTests(unittest.TestCase):
+    def test_absent_state_reads_as_empty(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            self.assertEqual(local_installed_channel(paths), "")
+
+    def test_reads_the_recorded_channel(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(paths.runtime_state_path, {"release_channel": "stable"})
+            self.assertEqual(local_installed_channel(paths), "stable")
+
+
+class FormatNoticeLineChannelAwarenessTests(unittest.TestCase):
+    def test_inconclusive_on_a_non_preview_channel_names_the_channel_instead_of_suggesting_update(self) -> None:
+        notice = format_notice_line({"outcome": "inconclusive", "channel": "stable"})
+        self.assertIn("stable", notice)
+        self.assertNotIn("omh update", notice)
+
+    def test_inconclusive_with_no_recorded_channel_keeps_the_actionable_wording(self) -> None:
+        notice = format_notice_line({"outcome": "inconclusive", "channel": ""})
+        self.assertEqual(notice, "OMH update check inconclusive -- run `omh update`.")
+
+    def test_inconclusive_on_the_preview_channel_keeps_the_actionable_wording(self) -> None:
+        notice = format_notice_line({"outcome": "inconclusive", "channel": "preview"})
+        self.assertEqual(notice, "OMH update check inconclusive -- run `omh update`.")
+
+
+class RefreshCacheAfterAutoUpdateTests(unittest.TestCase):
+    def test_marks_up_to_date_when_local_commit_now_matches_the_cached_remote(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="auto")
+            _write_local_commit(paths, "a" * 40)
+            evaluate_update_check(paths, runner=_ok_runner("b" * 40))
+
+            _write_local_commit(paths, "b" * 40)  # simulate the auto-update converging
+            refreshed = refresh_cache_after_auto_update(paths)
+            self.assertEqual(refreshed["outcome"], "up_to_date")
+            self.assertEqual(read_update_check_cache(paths)["outcome"], "up_to_date")
+
+    def test_marks_inconclusive_when_the_local_identity_still_does_not_match(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="auto")
+            _write_local_commit(paths, "a" * 40)
+            evaluate_update_check(paths, runner=_ok_runner("b" * 40))
+
+            refreshed = refresh_cache_after_auto_update(paths)  # local commit unchanged
+            self.assertEqual(refreshed["outcome"], "inconclusive")
+
+
+class IntervalHoursBoundsTests(unittest.TestCase):
+    def test_write_rejects_an_interval_below_the_minimum(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            with self.assertRaises(ValueError):
+                write_update_check_policy(paths, interval_hours=MIN_UPDATE_CHECK_INTERVAL_HOURS / 2)
+
+    def test_write_rejects_an_interval_above_the_maximum(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            with self.assertRaises(ValueError):
+                write_update_check_policy(paths, interval_hours=MAX_UPDATE_CHECK_INTERVAL_HOURS * 2)
+
+    def test_write_rejects_an_infinite_interval(self) -> None:
+        # Regression: `timedelta(hours=...)` raises OverflowError on `inf`,
+        # which would otherwise crash `_interval_elapsed` on every launch.
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            with self.assertRaises(ValueError):
+                write_update_check_policy(paths, interval_hours=float("inf"))
+
+    def test_read_ignores_a_stored_out_of_range_interval_and_falls_back_to_default(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            paths.omh_home.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(
+                paths.setup_profile_path,
+                {"update_check": {"mode": "notify", "interval_hours": 1e18}},
+            )
+            policy = read_update_check_policy(paths)
+            self.assertEqual(policy["interval_hours"], DEFAULT_UPDATE_CHECK_INTERVAL_HOURS)
+
+
+class CorruptDiskStateNeverRaisesTests(unittest.TestCase):
+    """Regression for the P0 launch traceback: a corrupt on-disk document must
+    read the same as an absent one everywhere on the update-check path."""
+
+    def test_corrupt_setup_profile_reads_as_the_default_policy(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            paths.omh_home.mkdir(parents=True, exist_ok=True)
+            paths.setup_profile_path.write_text("{not json", encoding="utf-8")
+            policy = read_update_check_policy(paths)
+            self.assertEqual(policy["mode"], DEFAULT_UPDATE_CHECK_MODE)
+            self.assertEqual(policy["interval_hours"], DEFAULT_UPDATE_CHECK_INTERVAL_HOURS)
+
+    def test_corrupt_cache_reads_as_empty(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+            update_check_cache_path(paths).write_text("{not json", encoding="utf-8")
+            self.assertEqual(read_update_check_cache(paths), {})
+
+    def test_state_json_as_a_json_array_reads_as_no_local_identity(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+            paths.runtime_state_path.write_text("[]", encoding="utf-8")
+            self.assertEqual(local_installed_commit(paths), "")
+            self.assertEqual(local_installed_channel(paths), "")
+
+    def test_evaluate_update_check_never_raises_on_a_corrupt_cache(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="notify")
+            paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+            update_check_cache_path(paths).write_text("not json at all", encoding="utf-8")
+            result = evaluate_update_check(paths, runner=_ok_runner("b" * 40))
+            self.assertIn(result["outcome"], ("behind", "up_to_date", "inconclusive"))
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
-from ..local_store import atomic_write_json, ensure_dir, file_lock, read_json_object
+from ..local_store import atomic_write_json, ensure_dir, file_lock, read_json_object_result
 from ..paths import OmhPaths
 
 UPDATE_CHECK_POLICY_SCHEMA_VERSION = "omh_update_check_policy/v1"
@@ -55,6 +55,14 @@ UPDATE_CHECK_RESULT_SCHEMA_VERSION = "omh_update_check_result/v1"
 UPDATE_CHECK_MODES = ("off", "notify", "auto")
 DEFAULT_UPDATE_CHECK_MODE = "off"
 DEFAULT_UPDATE_CHECK_INTERVAL_HOURS = 24.0
+
+# `_interval_elapsed` feeds this straight into `timedelta(hours=...)`, which
+# raises `OverflowError` on `inf`/a very large float -- on the launch path,
+# that turns a bad `--interval-hours` value into a crash on every launch
+# instead of a rejected `set`. Bounded to something a human could plausibly
+# mean: at least hourly, at most roughly a year.
+MIN_UPDATE_CHECK_INTERVAL_HOURS = 1.0
+MAX_UPDATE_CHECK_INTERVAL_HOURS = 8760.0
 
 # Bounded probe budget (owner design requirement): the launcher execs `hermes`
 # right after this returns and hands it the terminal, so there is no
@@ -66,20 +74,6 @@ UPDATE_CHECK_NETWORK_TIMEOUT_SECONDS = 1.5
 
 GITHUB_COMMITS_API_URL = "https://api.github.com/repos/rlaope/oh-my-hermes/commits/main"
 
-UPDATE_CHECK_CLAIM_BOUNDARY = (
-    "This check compares a locally recorded install identity against the GitHub API's reported "
-    "HEAD of main; it is not execution, review, CI, or merge evidence, and a missing local "
-    "identity or a network failure is reported as inconclusive or skipped, never as a false "
-    "up-to-date or behind claim."
-)
-
-UPDATE_CHECK_OUTCOMES = (
-    "skipped_off",
-    "up_to_date",
-    "behind",
-    "inconclusive",
-)
-
 
 def update_check_cache_path(paths: OmhPaths) -> Path:
     return paths.runtime_dir / "update-check.json"
@@ -89,8 +83,13 @@ def read_update_check_policy(paths: OmhPaths) -> dict[str, Any]:
     """Read `update_check.{mode,interval_hours}` from setup-profile.json.
 
     Absent or malformed data means the shipped default: off, 24h interval.
+    A corrupt setup-profile.json (bad JSON, or JSON that is not an object)
+    reads the same way as an absent one -- never raises -- because this
+    function sits on the `omh`/`hermes` launch path and a decode error here
+    must never crash a launch that has not even opted into this check.
     """
-    profile = read_json_object(paths.setup_profile_path) or {}
+    profile, _error = read_json_object_result(paths.setup_profile_path)
+    profile = profile or {}
     raw = profile.get("update_check")
     mode = DEFAULT_UPDATE_CHECK_MODE
     interval_hours = DEFAULT_UPDATE_CHECK_INTERVAL_HOURS
@@ -99,7 +98,11 @@ def read_update_check_policy(paths: OmhPaths) -> dict[str, Any]:
         if candidate_mode in UPDATE_CHECK_MODES:
             mode = candidate_mode
         candidate_interval = raw.get("interval_hours")
-        if isinstance(candidate_interval, (int, float)) and not isinstance(candidate_interval, bool) and candidate_interval > 0:
+        if (
+            isinstance(candidate_interval, (int, float))
+            and not isinstance(candidate_interval, bool)
+            and MIN_UPDATE_CHECK_INTERVAL_HOURS <= candidate_interval <= MAX_UPDATE_CHECK_INTERVAL_HOURS
+        ):
             interval_hours = float(candidate_interval)
     return {
         "schema_version": UPDATE_CHECK_POLICY_SCHEMA_VERSION,
@@ -123,22 +126,31 @@ def write_update_check_policy(
         resolved_mode = mode
     resolved_interval = current["interval_hours"]
     if interval_hours is not None:
-        if isinstance(interval_hours, bool) or not (isinstance(interval_hours, (int, float)) and interval_hours > 0):
-            raise ValueError("update-check interval-hours must be a positive number")
+        if isinstance(interval_hours, bool) or not (
+            isinstance(interval_hours, (int, float))
+            and MIN_UPDATE_CHECK_INTERVAL_HOURS <= interval_hours <= MAX_UPDATE_CHECK_INTERVAL_HOURS
+        ):
+            raise ValueError(
+                "update-check interval-hours must be a number between "
+                f"{MIN_UPDATE_CHECK_INTERVAL_HOURS} and {MAX_UPDATE_CHECK_INTERVAL_HOURS}"
+            )
         resolved_interval = float(interval_hours)
     policy = {
         "schema_version": UPDATE_CHECK_POLICY_SCHEMA_VERSION,
         "mode": resolved_mode,
         "interval_hours": resolved_interval,
     }
-    profile = read_json_object(paths.setup_profile_path) or {}
+    profile, _error = read_json_object_result(paths.setup_profile_path)
+    profile = profile or {}
     profile["update_check"] = policy
     atomic_write_json(paths.setup_profile_path, profile, private=True)
     return policy
 
 
 def read_update_check_cache(paths: OmhPaths) -> dict[str, Any]:
-    return read_json_object(update_check_cache_path(paths)) or {}
+    """Read the probe result cache. A corrupt cache file reads as empty, never raises."""
+    cache, _error = read_json_object_result(update_check_cache_path(paths))
+    return cache or {}
 
 
 def _write_cache(paths: OmhPaths, patch: dict[str, Any]) -> dict[str, Any]:
@@ -242,6 +254,12 @@ def fetch_remote_main_identity(
     return RemoteProbeResult(ok=True, sha=sha, etag=response_etag or None, not_modified=False, error=None)
 
 
+def _read_runtime_state(paths: OmhPaths) -> dict[str, Any]:
+    """Read `runtime/state.json`. A corrupt file reads as empty, never raises."""
+    state, _error = read_json_object_result(paths.runtime_state_path)
+    return state or {}
+
+
 def local_installed_commit(paths: OmhPaths) -> str:
     """The comparable remote identity recorded at the last `omh install`/`update`.
 
@@ -249,8 +267,24 @@ def local_installed_commit(paths: OmhPaths) -> str:
     failed / was skipped because update-check was off at that time) -- both
     read as "no comparable identity" by `evaluate_update_check`.
     """
-    state = read_json_object(paths.runtime_state_path) or {}
+    state = _read_runtime_state(paths)
     return str(state.get("release_source_commit", "") or "")
+
+
+def local_installed_channel(paths: OmhPaths) -> str:
+    """The release channel ("stable", "preview", "local", ...) recorded at the
+    last `omh install`/`update`, or "" when nothing has recorded one yet.
+
+    `release_source_commit` is only ever recorded for the `preview` channel's
+    `main` source ref (`commands/setup.py:_release_source_commit_for_state`),
+    so a `stable` or `local` install reports `inconclusive` forever -- there
+    is no future `omh update` that resolves it, unlike a `preview` install
+    that simply has not recorded an identity yet. `format_notice_line` uses
+    this to stop telling a stable/local install to "run `omh update`" for a
+    comparison that channel will never resolve.
+    """
+    state = _read_runtime_state(paths)
+    return str(state.get("release_channel", "") or "")
 
 
 def record_remote_commit_for_install(
@@ -299,6 +333,16 @@ def evaluate_update_check(
     at `update_check_cache_path()`, and any probe failure is a silent skip
     that keeps whatever the cache already knew rather than raising or
     claiming a fresh (possibly wrong) outcome.
+
+    `should_auto_update` is only ever true off a fresh probe in this call --
+    never off a cache reused because the interval has not elapsed yet. A
+    cached "behind" outcome is stale by definition (it is exactly what the
+    previous auto-update either already acted on, or failed to act on);
+    re-triggering `omh update` from it on every launch inside the same
+    interval is what previously made auto mode re-update on every launch.
+    `main.py`'s `_run_auto_update` calls `refresh_cache_after_auto_update()`
+    after a successful auto-update so the cached outcome itself stops
+    claiming "behind" too, rather than relying on this alone.
     """
     policy = read_update_check_policy(paths)
     mode = policy["mode"]
@@ -311,11 +355,13 @@ def evaluate_update_check(
             "should_auto_update": False,
             "local_commit": "",
             "remote_commit": "",
+            "channel": "",
         }
 
     now = now or datetime.now(timezone.utc)
     cache = read_update_check_cache(paths)
     local_commit = local_installed_commit(paths)
+    channel = local_installed_channel(paths)
 
     if not force and not _interval_elapsed(cache, float(policy["interval_hours"]), now):
         outcome = str(cache.get("outcome") or "inconclusive")
@@ -324,9 +370,10 @@ def evaluate_update_check(
             "mode": mode,
             "outcome": outcome,
             "checked": False,
-            "should_auto_update": mode == "auto" and outcome == "behind",
+            "should_auto_update": False,
             "local_commit": local_commit,
             "remote_commit": str(cache.get("remote_commit", "")),
+            "channel": channel,
         }
 
     probe = fetch_remote_main_identity(etag=str(cache.get("remote_etag", "")), timeout=timeout, runner=runner)
@@ -344,6 +391,7 @@ def evaluate_update_check(
             "should_auto_update": False,
             "local_commit": local_commit,
             "remote_commit": str(cache.get("remote_commit", "")),
+            "channel": channel,
         }
 
     remote_commit = probe.sha if not probe.not_modified else str(cache.get("remote_commit", ""))
@@ -373,7 +421,29 @@ def evaluate_update_check(
         "should_auto_update": mode == "auto" and outcome == "behind",
         "local_commit": local_commit,
         "remote_commit": remote_commit,
+        "channel": channel,
     }
+
+
+def refresh_cache_after_auto_update(paths: OmhPaths) -> dict[str, Any]:
+    """Re-anchor the cache to the just-updated local identity.
+
+    Called only from `main.py`'s `_run_auto_update` after `omh update` exits
+    0. Without this, the cache keeps whatever "behind" outcome triggered the
+    auto-update, so the next launch inside the same interval reads a stale
+    claim (fixed separately in `evaluate_update_check` to never re-trigger
+    an auto-update from it, but still wrong for `omh update-check status` and
+    `notify` mode to display). Never probes the network: `omh update` already
+    recorded a fresh `release_source_commit` when it ran, so comparing that
+    against the cache's own `remote_commit` (the identity the auto-update was
+    acting on) is enough to tell "converged" from "still short of it,"
+    without spending another interval-bounded network attempt on it.
+    """
+    cache = read_update_check_cache(paths)
+    local_commit = local_installed_commit(paths)
+    remote_commit = str(cache.get("remote_commit", ""))
+    outcome = "up_to_date" if local_commit and local_commit == remote_commit else "inconclusive"
+    return _write_cache(paths, {"outcome": outcome})
 
 
 def _short_commit(sha: str) -> str:
@@ -390,5 +460,16 @@ def format_notice_line(result: dict[str, Any]) -> str:
         remote = _short_commit(str(result.get("remote_commit", "")))
         return f"OMH update available: {local} -> {remote}; run `omh update`."
     if outcome == "inconclusive":
+        # `release_source_commit` -- the identity this check compares against
+        # `origin/main` -- is only ever recorded for a `preview`-channel
+        # install (`commands/setup.py:_release_source_commit_for_state`). A
+        # `stable` or `local` install is not a temporary gap that the
+        # suggested `omh update` would close; it stays inconclusive forever
+        # because it deliberately is not tracking `main`. An empty/unknown
+        # channel (e.g. an install that predates this field) keeps the
+        # original, actionable wording since that gap really can close.
+        channel = str(result.get("channel", ""))
+        if channel and channel != "preview":
+            return f"OMH update check: not applicable on the {channel} channel (only preview tracks main)."
         return "OMH update check inconclusive -- run `omh update`."
     return ""

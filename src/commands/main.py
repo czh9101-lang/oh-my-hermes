@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 import sys
 
 from ..version import __version__
@@ -383,35 +385,77 @@ def _run_startup_update_check(args: argparse.Namespace) -> None:
     so the whole probe has to fit inside its own bounded timeout ahead of the
     handoff rather than racing it. Any failure here is a silent skip; it must
     never block, delay beyond that bound, or crash the launch.
+
+    The except clause is deliberately wider than `OSError` alone: it is the
+    same "corrupt on-disk JSON" shape `local_store.read_json_object_result`
+    already classifies, kept here only as a backstop in case a future reader
+    on this path stops going through it -- `evaluate_update_check`'s own
+    readers no longer raise on a corrupt `setup-profile.json`/state/cache
+    file, so a user who never opted into this check must never see a launch
+    traceback from one.
     """
     from ..maintenance.update_check import evaluate_update_check, format_notice_line
 
     paths = _paths(args)
     try:
         result = evaluate_update_check(paths)
-    except OSError:
+    except (OSError, ValueError, json.JSONDecodeError):
         return
     if result.get("should_auto_update"):
         _run_auto_update(args, paths)
         return
-    notice = format_notice_line(result)
-    if notice:
-        print(notice)
+    # Only a fresh probe prints a notice. Reusing the cache inside the same
+    # interval would otherwise reprint the same "behind"/"inconclusive" line
+    # on every launch until the interval elapses -- once per interval is the
+    # documented cadence (docs/INSTALLATION.md, "Startup update check").
+    if result.get("checked"):
+        notice = format_notice_line(result)
+        if notice:
+            print(notice)
+
+
+# `omh update` streams pip/npm/brew output and can take minutes on the
+# preview channel (`commands/setup.py:_run_command_package_self_update`); this
+# bounds that wait instead of letting a hung download block the launch
+# forever.
+_AUTO_UPDATE_SUBPROCESS_TIMEOUT_SECONDS = 600.0
 
 
 def _run_auto_update(args: argparse.Namespace, paths) -> None:
     """Auto mode: reuse `omh update`'s own code path, never a reimplementation.
+
+    Spawns `omh update --no-interactive` as a real subprocess rather than
+    calling `cmd_update()` in-process. `cmd_update()` can re-enter itself via
+    `commands/setup.py:_reentry_argv_with_command_package_updated()`, which
+    reads the real process's `sys.argv[1:]` -- not the synthesized
+    `update_argv` below. Calling it in-process left `sys.argv` at whatever
+    bare `omh` was launched with (empty), so that re-entry became `python -m
+    omh.cli --command-package-updated` with no `update` subcommand, exited 2,
+    and the post-update half (managed skills, plugin bundle, widgets,
+    registration, `release_source_commit`) never ran. A real subprocess gives
+    that re-entry its own correct `sys.argv`.
+
+    Deliberately `--no-interactive` without `--yes`: `--yes` presets the
+    branded-TUI identity choice (`commands/setup.py:_preset_tui_identity_choice`)
+    and would rewrite a user's own `display.interface`/skin choice on every
+    auto-update. `--no-interactive` alone leaves that choice unset --
+    `_update_should_interact()` still skips the prompt (this is a
+    non-interactive background launch), and `_apply_result()` then takes the
+    non-forcing `ensure_tui_interface`/`ensure_omh_skin` path instead of the
+    forcing `activate_*` one, so an existing explicit choice is preserved.
 
     A non-blocking lock keeps two simultaneous launches from auto-updating at
     once; losing the race is a silent skip, not a retry. A failed update is
     reported once (so the user is not left guessing) and never retried before
     the next `evaluate_update_check` interval -- `_run_startup_update_check`
     only reaches here on a fresh "behind" outcome, so a cached one from
-    within the same interval never re-triggers this.
+    within the same interval never re-triggers this. On success, the cache is
+    re-anchored so a launch later in the same interval reads it as resolved
+    instead of still "behind".
     """
     from ..installer import OmhError
     from ..local_store import FileLockTimeout
-    from ..maintenance.update_check import acquire_auto_update_lock
+    from ..maintenance.update_check import acquire_auto_update_lock, refresh_cache_after_auto_update
 
     try:
         with acquire_auto_update_lock(paths):
@@ -425,12 +469,24 @@ def _run_auto_update(args: argparse.Namespace, paths) -> None:
                 update_argv += ["--hermes-home", str(args.hermes_home)]
             if getattr(args, "scope", None):
                 update_argv += ["--scope", str(args.scope)]
-            update_argv += ["update", "--yes", "--no-interactive"]
-            update_args = build_parser().parse_args(update_argv)
-            update_args.func(update_args)
+            update_argv += ["update", "--no-interactive"]
+            # Fail fast on a malformed argv rather than handing it to a
+            # subprocess that can only report it as an opaque exit code.
+            build_parser().parse_args(update_argv)
+            completed = subprocess.run(
+                [sys.executable, "-m", "omh.cli", *update_argv],
+                timeout=_AUTO_UPDATE_SUBPROCESS_TIMEOUT_SECONDS,
+            )
+            if completed.returncode == 0:
+                refresh_cache_after_auto_update(paths)
+            else:
+                print(
+                    f"omh: update-check auto-update failed (exit {completed.returncode})",
+                    file=sys.stderr,
+                )
     except FileLockTimeout:
         return
-    except OmhError as exc:
+    except (OmhError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"omh: update-check auto-update failed: {exc}", file=sys.stderr)
 
 
@@ -449,7 +505,6 @@ def _launch_hermes_tui(args: argparse.Namespace) -> int | None:
     back to the welcome text.
     """
     import shutil
-    import subprocess
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         return None

@@ -1514,7 +1514,10 @@ delegation flags, and wrapper completion status.
 
 `omh` records runtime metadata only by default:
 
-- setup/install/apply/doctor summaries in `~/.omh/runtime/state.json`
+- setup/install/apply/doctor summaries in `~/.omh/runtime/state.json`,
+  including `release_source_commit` -- the comparable remote `main` identity
+  `omh update-check` compares against, recorded only on the preview channel
+  and only when update-check is not `off`
 - workflow run envelopes in `~/.omh/runtime/runs/<run-id>/run.json`
 - append-only run events in `events.jsonl`
 - append-only lifecycle observations in `~/.omh/runtime/journal/events.jsonl`
@@ -1711,31 +1714,40 @@ storing raw chat prompts.
 By default, `omh`/`hermes` never checks for updates on launch -- OMH's core
 promise is no network calls without an explicit opt-in. `omh update-check`
 turns on a bounded, best-effort comparison against `origin/main` that runs
-right before bare `omh` (or `hermes`, through the same launch door) opens the
-TUI:
+right before bare `omh` opens the TUI. This is `omh`'s own launch door
+(`commands/main.py`); bare `hermes` execs your Hermes install directly and
+never passes through this process, so it never runs this check.
 
 ```sh
 omh update-check status
 omh update-check set --mode notify              # one-line notice when behind
 omh update-check set --mode auto                 # runs `omh update` automatically
 omh update-check set --mode off                  # shipped default
-omh update-check set --interval-hours 12          # default is 24
+omh update-check set --interval-hours 12          # default is 24, 1-8760 accepted
 ```
 
 `notify` prints a single line such as `OMH update available: 3f2a1c9 ->
 9b7e21d; run \`omh update\`` when the preview channel is behind `origin/main`,
-and nothing when it is current. `auto` reuses `omh update` itself (never a
-reimplementation) and reports what it did, including the restart-to-apply
-guidance `omh update` already prints; a non-blocking lock keeps two
-simultaneous launches from auto-updating at once, and a failed attempt is
-never retried before the next interval. Either mode makes at most one
+and nothing when it is current; the line prints only for a launch that
+actually ran a fresh probe, not for every launch that reuses the cache inside
+the same interval. `notify` never blocks or delays the launch either way.
+`auto` is different: it reuses `omh update` itself (never a reimplementation,
+run as a real subprocess so its own re-entry sees a normal `omh update`
+argv), and by design that means the launch waits for that subprocess -- a
+command-package refresh can take minutes on the preview channel, the same
+wait `omh update` always has. A non-blocking lock keeps two simultaneous
+launches from auto-updating at once, and a failed or already-applied attempt
+is never retried before the next interval. Either mode makes at most one
 short-timeout network request per `interval_hours` (a conditional GET against
 the GitHub commits API, ETag-cached in
 `~/.omh/runtime/update-check.json`); a network failure or timeout is a silent
 skip that never blocks or delays the launch. An install that predates a
-recorded comparable identity (or is pinned to a stable/local channel rather
-than the `main`-tracking preview channel) reports the check as inconclusive
-rather than guessing.
+recorded comparable identity reports the check as inconclusive rather than
+guessing, and resolves the next time update-check records one. A `stable` or
+`local` channel install reports inconclusive too, but permanently -- only the
+`preview` channel's `main` source ref ever records a comparable identity, so
+the notice for that case says the comparison does not apply to that channel
+instead of suggesting an `omh update` that cannot resolve it.
 
 ## Reapply
 
