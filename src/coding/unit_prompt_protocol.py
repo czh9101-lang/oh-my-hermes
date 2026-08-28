@@ -17,8 +17,11 @@ Five deterministic text blocks ride every dispatched unit prompt:
    "blocked" requires a named concrete condition that survives the bounded
    fix cycles — difficulty, uncertainty, or remaining work is not blocked.
 5. **Structured return** — the unit's final report ends with one fenced
-   JSON object in the `fanout_unit_result/v1` expected-evidence shape, so
-   the collector parses then validates instead of scraping prose.
+   JSON object in the `fanout_unit_result/v1` expected-evidence shape. The
+   sidecar file is the primary machine-read return; when a contracted
+   sidecar is missing the collector parses this block from captured stdout
+   and validates it the same way, so collection is parse-then-validate on
+   either path and never prose-scraping.
 
 The blocks split across two placement zones for prompt-cache hygiene: the
 goal echo-back, verification-stop, failure-kind, and structured-return
@@ -78,19 +81,23 @@ FAILURE_KIND_PROTOCOL: Final[str] = (
     "remaining work is not blocked."
 )
 
-# The collector parses the fenced block and validates it against the
-# `fanout_unit_result/v1` schema (`fanout_unit_results.validate_unit_result`);
-# nothing scrapes the surrounding prose for results. The block restates the
-# sidecar object when a sidecar path was given, so the two returns cannot
-# disagree, and it is the only machine-read part of the report on lanes that
-# have no sidecar. Executor-neutral: every owner emits the same shape.
+# The sidecar file is the primary machine-read return
+# (`fanout_dispatch._intake_unit_result`). The block restates the sidecar
+# object when a sidecar path was given, so the two returns cannot disagree,
+# and when the contracted sidecar file is missing the collector falls back
+# to parsing this block out of captured stdout and validating it against the
+# same `fanout_unit_result/v1` schema (`fanout_unit_results.
+# validate_unit_result`) plus the dispatch identity check; nothing scrapes
+# the surrounding prose for results. Executor-neutral: every owner emits the
+# same shape.
 UNIT_RESULT_RETURN_PROTOCOL: Final[str] = (
     "Structured return: end your final report with exactly one fenced ```json code block containing "
     "a single JSON object in the fanout_unit_result/v1 shape — schema_version, unit_id, run_id, "
     "fanout_id, base_sha, head_sha, process_status, changed_paths, checks, findings — reusing any "
     "dispatch-bound identity values given in this prompt verbatim, and restating the sidecar object "
-    "when a sidecar path was given. The collector parses that block and validates it against the "
-    "schema; prose outside the block is context for people and is never scraped for results."
+    "when a sidecar path was given. The sidecar file is the machine-read return; when it is missing "
+    "the collector parses this block instead and validates it against the same schema. Prose "
+    "outside the block is context for people and is never scraped for results."
 )
 
 PROMPT_CACHE_COMPOSITION_PROTOCOL: Final[str] = (

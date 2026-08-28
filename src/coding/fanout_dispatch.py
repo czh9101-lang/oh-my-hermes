@@ -1664,6 +1664,7 @@ def _dispatch_unit(
         base_sha=base_sha,
         worktree=worktree,
         owner=owner,
+        stdout_text=stdout_text,
     )
     # Both rungs below it must already hold: a unit whose process failed has
     # nothing to verify, and one whose sidecar did not validate has not yet
@@ -1767,13 +1768,39 @@ def _intake_unit_result(
     base_sha: str,
     worktree: Path,
     owner: str,
+    stdout_text: str = "",
 ) -> dict[str, Any]:
-    """Read one sidecar after process exit and classify shape, never truth."""
+    """Read one unit return after process exit and classify shape, never truth.
+
+    The sidecar file is the primary machine-read return. When a sidecar was
+    contracted but the executor never wrote the file, the return protocol's
+    redundant fenced ```json block is the fallback: the last fenced block in
+    captured stdout goes through the same provenance, schema, and dispatch
+    identity validation the sidecar gets. Only a missing sidecar with no
+    fenced block at all stays `unit_result_missing`.
+    """
     if sidecar_path is None or not sidecar_path.is_file():
+        if sidecar_path is not None:
+            fallback = _intake_stdout_unit_result(
+                paths,
+                stdout_text=stdout_text,
+                run_ref=run_ref,
+                unit_id=unit_id,
+                fanout_id=fanout_id,
+                base_sha=base_sha,
+                worktree=worktree,
+                owner=owner,
+            )
+            if fallback is not None:
+                return fallback
         return _unit_result_failure(
             paths,
             event="unit_result_missing",
-            reason="sidecar is missing",
+            reason=(
+                "sidecar is missing"
+                if sidecar_path is None
+                else "sidecar is missing and stdout has no fenced json block"
+            ),
             sidecar_path=None,
             run_ref=run_ref,
             unit_id=unit_id,
@@ -1782,14 +1809,8 @@ def _intake_unit_result(
         )
     try:
         payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
-        if isinstance(payload, Mapping):
-            # Enforce executor provenance before the general shape validator,
-            # so even an internally inconsistent laundering attempt receives
-            # the intake contract's stable checks[i].reported_by error.
-            _validate_executor_sidecar_checks(payload)
-        validated = validate_unit_result(payload)
-        _validate_unit_result_identity(
-            validated,
+        validated = _validated_unit_result_payload(
+            payload,
             unit_id=unit_id,
             run_ref=run_ref,
             fanout_id=fanout_id,
@@ -1825,8 +1846,124 @@ def _intake_unit_result(
     return {
         "unit_result_status": "unit_result_validated",
         "result_schema_valid": True,
+        "unit_result_source": "sidecar",
         "unit_result": _bounded_unit_result(validated),
     }
+
+
+def _stdout_fenced_json_blocks(stdout_text: str) -> list[str]:
+    """Bodies of fenced ```json blocks in stdout, in order of appearance.
+
+    A deliberately plain line scan: a block opens on a line that is exactly
+    ```json (after strip) and closes on the next line that is exactly ```.
+    An unclosed trailing block is dropped rather than guessed at.
+    """
+    blocks: list[str] = []
+    body: list[str] | None = None
+    for line in stdout_text.splitlines():
+        stripped = line.strip()
+        if body is None:
+            if stripped == "```json":
+                body = []
+        elif stripped == "```":
+            blocks.append("\n".join(body))
+            body = None
+        else:
+            body.append(line)
+    return blocks
+
+
+def _intake_stdout_unit_result(
+    paths: OmhPaths,
+    *,
+    stdout_text: str,
+    run_ref: str,
+    unit_id: str,
+    fanout_id: str,
+    base_sha: str,
+    worktree: Path,
+    owner: str,
+) -> dict[str, Any] | None:
+    """Fallback intake from the fenced stdout block when the sidecar is absent.
+
+    Returns None when stdout carries no fenced ```json block (the caller then
+    reports `unit_result_missing`). The report protocol says the final report
+    ENDS with the block, so the last one is the return; it faces exactly the
+    validation the sidecar faces, and a block that fails it is reported as
+    `unit_result_invalid` rather than silently ignored.
+    """
+    blocks = _stdout_fenced_json_blocks(stdout_text)
+    if not blocks:
+        return None
+    try:
+        payload = json.loads(blocks[-1])
+        validated = _validated_unit_result_payload(
+            payload,
+            unit_id=unit_id,
+            run_ref=run_ref,
+            fanout_id=fanout_id,
+            base_sha=base_sha,
+        )
+    except (ValueError, TypeError) as exc:
+        return _unit_result_failure(
+            paths,
+            event="unit_result_invalid",
+            reason=f"stdout fenced json block (sidecar missing): {exc}",
+            sidecar_path=None,
+            run_ref=run_ref,
+            unit_id=unit_id,
+            worktree=worktree,
+            owner=owner,
+        )
+    append_journal_observation(
+        paths,
+        {
+            "target_type": "run",
+            "target_id": run_ref,
+            "run_id": run_ref,
+            "event": "unit_result_validated",
+            "status": "observed",
+            "summary": (
+                f"fanout unit result shape validated for {unit_id} "
+                "from stdout fenced json block (sidecar missing)"
+            ),
+            "worker_ref": unit_id,
+            "worktree_ref": str(worktree),
+            "runtime_profile": owner,
+            "evidence_refs": [],
+        },
+    )
+    return {
+        "unit_result_status": "unit_result_validated",
+        "result_schema_valid": True,
+        "unit_result_source": "stdout_fenced_block",
+        "unit_result": _bounded_unit_result(validated),
+    }
+
+
+def _validated_unit_result_payload(
+    payload: Any,
+    *,
+    unit_id: str,
+    run_ref: str,
+    fanout_id: str,
+    base_sha: str,
+) -> dict[str, Any]:
+    """One validation ladder for both return lanes (sidecar and stdout block)."""
+    if isinstance(payload, Mapping):
+        # Enforce executor provenance before the general shape validator,
+        # so even an internally inconsistent laundering attempt receives
+        # the intake contract's stable checks[i].reported_by error.
+        _validate_executor_sidecar_checks(payload)
+    validated = validate_unit_result(payload)
+    _validate_unit_result_identity(
+        validated,
+        unit_id=unit_id,
+        run_ref=run_ref,
+        fanout_id=fanout_id,
+        base_sha=base_sha,
+    )
+    return validated
 
 
 def _validate_unit_result_identity(
