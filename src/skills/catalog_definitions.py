@@ -3065,7 +3065,7 @@ _DEFINITIONS = [
     ),
     SkillDefinition(
         "frontend",
-        "Hermes frontend workflow: prepare design-system-driven web UI creation, redesign, polish, accessibility, performance, and visual QA handoffs.",
+        "Hermes frontend workflow: prepare design-system-driven web and terminal (TUI) UI creation, redesign, polish, accessibility, performance, and visual QA handoffs.",
         (
             "frontend",
             "front-end",
@@ -3099,6 +3099,9 @@ _DEFINITIONS = [
             "layout broken",
             "frontend qa",
             "frontend layout",
+            "tui design",
+            "terminal ui design",
+            "tui layout",
             "프론트엔드",
             "웹 ui",
             "웹 화면",
@@ -3116,7 +3119,7 @@ _DEFINITIONS = [
             "반응형",
             "접근성",
         ),
-        "Use when Hermes should shape or improve a web/frontend surface before implementation: layout, design system, responsive states, accessibility, performance, motion, and anti-generic visual quality.",
+        "Use when Hermes should shape or improve a web/frontend or terminal (TUI) surface before implementation: layout, design system, responsive states, accessibility, performance, motion, and anti-generic visual quality.",
         category="materials",
         phase="frontend-design",
         hermes_role="retained-cognition",
@@ -3173,6 +3176,7 @@ _DEFINITIONS = [
         quality_bar=(
             "Name the product goal, audience, target surfaces, routes, states, and visual quality bar.",
             "Hold the named bar: what a senior product designer at a top-tier product company (the Linear/Stripe/Supabase class) would sign off on — technically clean but flat output fails it. Load `references/taste-foundations.md`, name one primary taste direction, and reject the anti-slop patterns it lists.",
+            "When the target surface is a terminal UI (TUI), load `references/tui-craft.md` and hold the same bar there: default widgets are scaffolding, not finished UI; borders spent sparingly with spacing and a muted-color ladder doing the hierarchy; one named terminal aesthetic; verification rendered at 80x24 and 120x40 minimum with the pasted output as the screenshot-equivalent.",
             "Use references and domain fit to avoid generic AI-looking frontend output; when the user supplies a visual reference, load `references/reference-token-extraction.md` and extract tokens into the contract instead of eyeballing.",
             "Prepare a concrete design-system contract before implementation handoff: load `references/design-system-contract.md` and write DESIGN.md before the first component — no component code before the contract exists.",
             "For first-time UI creation, name the initial generation branch, reference direction, reusable primitives, state coverage, and required visual QA path.",
@@ -3477,6 +3481,7 @@ _DEFINITIONS = [
         quality_tier="visual-qa-gated",
         quality_bar=(
             "List the exact pages, states, viewports, files, images, or TUI frames being checked.",
+            "For TUI surfaces, bind every capture to an explicit terminal size — 80x24 and 120x40 at minimum — and treat pasted rendered output at a named size as the screenshot-equivalent; a capture without its recorded size is not visual QA evidence.",
             "Enumerate every page/state/viewport before capture and mark omitted surfaces as blockers rather than assumptions.",
             "Require exact repository and revision equality between target_lineage and every capture source_lineage.",
             "Combine objective capture/diff evidence, hotspot review, alpha/transparent-background checks, and human-readable visual findings.",

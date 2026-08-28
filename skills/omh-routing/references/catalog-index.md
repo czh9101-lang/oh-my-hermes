@@ -45,7 +45,7 @@ Trigger phrases and the role registry live in `references/workflow-registry.md`;
 - `omh-failure-signal-audit`: [omh] Failure Signal Audit workflow: find swallowed errors, unsafe fallbacks, hidden UI/runtime failures, and missing propagation before they become false green status.
 - `omh-feedback-triage`: [omh] Hermes Feedback Triage workflow: cluster customer signals and choose the next workflow.
 - `omh-finance-analysis`: [omh] Turn finance and accounting inputs into a decision-ready variance, cash, and close-risk brief.
-- `omh-frontend`: [omh] Hermes frontend workflow: prepare design-system-driven web UI creation, redesign, polish, accessibility, performance, and visual QA handoffs.
+- `omh-frontend`: [omh] Hermes frontend workflow: prepare design-system-driven web and terminal (TUI) UI creation, redesign, polish, accessibility, performance, and visual QA handoffs.
 - `omh-gateway-intent-card`: [omh] Hermes gateway intent workflow: normalize Discord, Slack, Telegram, and other gateway sessions into origin, thread, delivery, silent, attachment, and status-update policy.
 - `omh-github-event-ops`: [omh] Hermes GitHub event operations workflow: route PR, issue, CI, and review webhook events into triage, review, or fix handoff cards.
 - `omh-harness-session-inventory`: [omh] Hermes harness session inventory workflow: normalize Codex, Claude Code, Hermes, OpenCode, Cursor, MCP host, worktree, and wrapper session metadata into one drift-aware inventory.

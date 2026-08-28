@@ -46,11 +46,12 @@ def _body(skill: str) -> str:
 
 
 class DesignReferenceRegistryTests(unittest.TestCase):
-    def test_all_four_references_are_registered_and_on_disk(self) -> None:
+    def test_all_craft_references_are_registered_and_on_disk(self) -> None:
         expected = {
             ("frontend", "references/design-system-contract.md"),
             ("frontend", "references/taste-foundations.md"),
             ("frontend", "references/reference-token-extraction.md"),
+            ("frontend", "references/tui-craft.md"),
             ("design-quality-gate", "references/design-critique-rubric.md"),
         }
         registered = {
@@ -150,6 +151,56 @@ class TasteFoundationsTests(unittest.TestCase):
     def test_content_ordering_beats_visual_symmetry(self) -> None:
         content = _reference("frontend", "references/taste-foundations.md")
         self.assertIn("visual symmetry never outranks that sequence", _unwrapped(content))
+
+
+class TuiCraftTests(unittest.TestCase):
+    def test_the_bar_is_named_and_defaults_are_scaffolding(self) -> None:
+        content = _reference("frontend", "references/tui-craft.md")
+        self.assertIn(DESIGN_NAMED_BAR, content)
+        self.assertIn("scaffolding, not finished UI", _unwrapped(content))
+        self.assertIn("a defect to fix, not a baseline to accept", _unwrapped(content))
+
+    def test_borders_spacing_and_one_named_aesthetic(self) -> None:
+        content = _reference("frontend", "references/tui-craft.md")
+        self.assertIn("spend them sparingly", content)
+        self.assertIn("muted-color ladder", content)
+        self.assertIn("Name one terminal aesthetic", content)
+        for aesthetic in ("Minimal utility", "Modern product", "Retro terminal", "Dense operational"):
+            self.assertIn(aesthetic, content, aesthetic)
+
+    def test_box_drawing_color_floor_and_keyboard_states(self) -> None:
+        content = _reference("frontend", "references/tui-craft.md")
+        self.assertIn("box-drawing family", content)
+        self.assertIn("256-color fallback", content)
+        self.assertIn("There is no pointer", _unwrapped(content))
+        self.assertIn("Cursor-only focus", content)
+
+    def test_verification_names_sizes_and_the_squeeze_defect_class(self) -> None:
+        content = _reference("frontend", "references/tui-craft.md")
+        self.assertIn("80x24 and 120x40 minimum", _unwrapped(content))
+        self.assertIn("screenshot-equivalent", content)
+        self.assertIn("Short-terminal squeeze", content)
+        self.assertIn("prepared claim, not an observed one", _unwrapped(content))
+
+    def test_tui_rejects_extend_the_anti_slop_checklist(self) -> None:
+        content = _reference("frontend", "references/tui-craft.md")
+        self.assertIn("extend the anti-slop checklist in `taste-foundations.md`", _unwrapped(content))
+        for marker in (
+            "Unstyled default widget",
+            "Border noise",
+            "Colorless hierarchy",
+            "Truecolor gamble",
+            "Keybinding folklore",
+            "One-size render",
+            "Squeeze blindness",
+        ):
+            self.assertIn(marker, content, marker)
+
+    def test_skill_bodies_carry_the_tui_hooks(self) -> None:
+        self.assertIn("references/tui-craft.md", _body("frontend"))
+        self.assertIn("80x24 and 120x40", _body("frontend"))
+        self.assertIn("80x24 and 120x40", _body("visual-qa"))
+        self.assertIn("screenshot-equivalent", _body("visual-qa"))
 
 
 class ReferenceTokenExtractionTests(unittest.TestCase):

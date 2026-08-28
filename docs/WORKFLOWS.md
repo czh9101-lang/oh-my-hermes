@@ -2337,7 +2337,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 
 ### frontend
 
-[omh] Hermes frontend workflow: prepare design-system-driven web UI creation, redesign, polish, accessibility, performance, and visual QA handoffs.
+[omh] Hermes frontend workflow: prepare design-system-driven web and terminal (TUI) UI creation, redesign, polish, accessibility, performance, and visual QA handoffs.
 
 - Category: `materials`
 - Phase: `frontend-design`
@@ -2352,13 +2352,13 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Preferred usage: Use as an installed Hermes workflow skill when a web UI or frontend surface needs design-system, layout, responsive, accessibility, performance, and visual-QA handoff preparation.
 - Handoff policy: Keep product framing, reference selection, design-system contract, viewport/state matrix, and implementation brief in Hermes. Record code changes, browser screenshots, Lighthouse/Core Web Vitals, accessibility scans, and visual QA only from executor or wrapper observed evidence.
 - Why this exists: `frontend` gives OMH a first-class web UI creation and polishing workflow so Hermes can prepare high-quality layout, design-system, accessibility, performance, and visual-QA handoffs without becoming the hidden coding or browser runtime.
-- Use when: Use when Hermes should shape or improve a web/frontend surface before implementation: layout, design system, responsive states, accessibility, performance, motion, and anti-generic visual quality.
+- Use when: Use when Hermes should shape or improve a web/frontend or terminal (TUI) surface before implementation: layout, design system, responsive states, accessibility, performance, motion, and anti-generic visual quality.
 - Do not use when:
   - The user needs a broad premium-quality gate across web, deck, PDF, poster, or publishing outputs; use `design-quality-gate`.
   - The user only needs a file, deck, PDF, spreadsheet, HWP, or attachment package; use `materials-package` or `deliverable-package`.
   - The user only needs an image card or infographic prompt; use `img-summary`.
   - The user asks to mark a UI as visually passed without fresh rendered evidence; use `visual-qa` and keep PASS blocked until observed.
-- Strong routing signals: `frontend`, `front-end`, `front end`, `frontend skill`, `web ui`, `ui ux`, `ui/ux`, `landing page`, `web app layout`, `responsive layout`, `responsive design`, `design system`, `component polish`, `layout polish`, `visual polish`, `styling`, `animation`, `motion design`, `accessibility`, `wcag`, `lighthouse`, `core web vitals`, `make it beautiful`, `make it premium`, `make it less ai`, `ai-looking ui`, `ai slop ui`, `generic ui`, `broken layout`, `layout broken`, `frontend qa`, `frontend layout`, `프론트엔드`, `웹 ui`, `웹 화면`, `랜딩페이지`, `레이아웃`, `레이아웃 깨짐`, `깨짐`, `디자인 자연스럽게`, `자연스러운 디자인`, `화려하게`, `고급스럽게`, `ai 티`, `ai틱`, `ai 틱`, `반응형`, `접근성`
+- Strong routing signals: `frontend`, `front-end`, `front end`, `frontend skill`, `web ui`, `ui ux`, `ui/ux`, `landing page`, `web app layout`, `responsive layout`, `responsive design`, `design system`, `component polish`, `layout polish`, `visual polish`, `styling`, `animation`, `motion design`, `accessibility`, `wcag`, `lighthouse`, `core web vitals`, `make it beautiful`, `make it premium`, `make it less ai`, `ai-looking ui`, `ai slop ui`, `generic ui`, `broken layout`, `layout broken`, `frontend qa`, `frontend layout`, `tui design`, `terminal ui design`, `tui layout`, `프론트엔드`, `웹 ui`, `웹 화면`, `랜딩페이지`, `레이아웃`, `레이아웃 깨짐`, `깨짐`, `디자인 자연스럽게`, `자연스러운 디자인`, `화려하게`, `고급스럽게`, `ai 티`, `ai틱`, `ai 틱`, `반응형`, `접근성`
 - Good example:
   - Prompt: frontend 이 대시보드가 AI 티 안 나게 레이아웃과 디자인 시스템을 잡아줘.
   - Expected behavior: Prepare frontend_design_brief/v1, design_system_contract/v1, route/state matrix, implementation handoff, and visual_qa_required/v1.
@@ -2370,6 +2370,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Quality bar:
   - Name the product goal, audience, target surfaces, routes, states, and visual quality bar.
   - Hold the named bar: what a senior product designer at a top-tier product company (the Linear/Stripe/Supabase class) would sign off on — technically clean but flat output fails it. Load `references/taste-foundations.md`, name one primary taste direction, and reject the anti-slop patterns it lists.
+  - When the target surface is a terminal UI (TUI), load `references/tui-craft.md` and hold the same bar there: default widgets are scaffolding, not finished UI; borders spent sparingly with spacing and a muted-color ladder doing the hierarchy; one named terminal aesthetic; verification rendered at 80x24 and 120x40 minimum with the pasted output as the screenshot-equivalent.
   - Use references and domain fit to avoid generic AI-looking frontend output; when the user supplies a visual reference, load `references/reference-token-extraction.md` and extract tokens into the contract instead of eyeballing.
   - Prepare a concrete design-system contract before implementation handoff: load `references/design-system-contract.md` and write DESIGN.md before the first component — no component code before the contract exists.
   - For first-time UI creation, name the initial generation branch, reference direction, reusable primitives, state coverage, and required visual QA path.
@@ -2545,6 +2546,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Why: Visual QA requires observed rendered evidence bound to the target source lineage.
 - Quality bar:
   - List the exact pages, states, viewports, files, images, or TUI frames being checked.
+  - For TUI surfaces, bind every capture to an explicit terminal size — 80x24 and 120x40 at minimum — and treat pasted rendered output at a named size as the screenshot-equivalent; a capture without its recorded size is not visual QA evidence.
   - Enumerate every page/state/viewport before capture and mark omitted surfaces as blockers rather than assumptions.
   - Require exact repository and revision equality between target_lineage and every capture source_lineage.
   - Combine objective capture/diff evidence, hotspot review, alpha/transparent-background checks, and human-readable visual findings.

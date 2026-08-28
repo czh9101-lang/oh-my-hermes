@@ -619,6 +619,18 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_directly",
         "direct_answer",
     ),
+    # The TUI concept case follows the chain-models-concept shape (no
+    # forbidden_candidate: the direct-answer fallback may name low-score
+    # candidates while the case still fails on any dispatch, workflow card,
+    # or handoff action) — it guards the new "tui design"/"tui layout"
+    # frontend triggers from claiming a concept question.
+    RoutingPrecisionCase(
+        "tui-concept-question",
+        "A TUI concept question stays a direct answer",
+        "what is a tui and how is it different from a gui?",
+        "answer_directly",
+        "direct_answer",
+    ),
 )
 
 
@@ -751,6 +763,33 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "frontend",
         "prepare_frontend_handoff",
         "frontend_handoff",
+    ),
+    RoutingInterventionCase(
+        "tui-design-status-dashboard",
+        "A TUI design request reaches the frontend craft lane",
+        "tui design pass on this status dashboard so it stops looking like default widgets",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+    ),
+    RoutingInterventionCase(
+        "tui-layout-short-terminal",
+        "A TUI layout restructure request reaches frontend, not visual QA",
+        "terminal ui design for the log pane: restructure the layout so short terminals stop crushing it",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+    ),
+    RoutingInterventionCase(
+        "tui-check-stays-visual-qa",
+        "A TUI render check stays on the visual-qa lane",
+        "tui check this screen for clipped korean text",
+        "dispatch",
+        "visual-qa",
+        "prepare_visual_qa",
+        "visual_qa",
     ),
     RoutingInterventionCase(
         "accessibility-audit-checkout",
