@@ -41,6 +41,20 @@ DOCS_CONSULTED_ARTIFACT_POLICY = (
     "for SDK-touching work a report without this block is incomplete. When no SDK or framework is "
     "touched, the block must state `Docs consulted: none (no SDK/framework surface touched)`."
 )
+# The compaction-proven structured summary shape: six named sections plus two
+# cumulative file lists. One recommended shape for every summary surface —
+# prepared-handoff briefs, session summaries, continuation re-briefs — so a
+# fresh or resumed session rebuilds working state without re-discovering the
+# repository, and so a summary's completeness is checkable by section name
+# instead of read as freeform prose.
+SESSION_SUMMARY_SHAPE_POLICY = (
+    "Session summary shape: when producing a session summary, prepared-handoff brief, or "
+    "continuation re-brief, structure it as Goal / Constraints and Preferences / Progress "
+    "(Done, In Progress, Blocked) / Key Decisions / Next Steps / Critical Context, plus "
+    "explicit read-files and modified-files lists. Carry both file lists forward cumulatively "
+    "across successive summaries. A summary in this shape remains a report; it is never "
+    "execution, verification, review, CI, or merge evidence."
+)
 
 
 def build_executor_prompting_contract(
@@ -82,11 +96,17 @@ def build_executor_prompting_contract(
         "reporting_policy": (
             "Report progress, changed files, tests, blockers, evidence refs, local_capabilities_used, local_capability_evidence_refs, and local_capability_fallback_reason; distinguish prepared guidance from observed executor results."
         ),
+        "session_summary_policy": SESSION_SUMMARY_SHAPE_POLICY,
         "steering_delta_contract": {
             "schema_version": EXECUTOR_STEERING_DELTA_CONTRACT_SCHEMA_VERSION,
             "status": "prepared_not_observed",
             "required_fields": list(_STEERING_DELTA_FIELDS),
-            "action_rule": "Send only changed constraints, new evidence, required action, and changed verification target to an active executor turn.",
+            "action_rule": (
+                "Send only changed constraints, new evidence, required action, and changed verification "
+                "target to an active executor turn. When a full re-brief is needed instead of a delta — a "
+                "fresh session, a replaced executor, or a compacted context — send a session summary in "
+                "the recommended structured summary shape rather than an oversized delta."
+            ),
             "claim_boundary": "A prepared steering delta is not dispatch, execution, verification, review, CI, or merge evidence.",
         },
         "steering_delta_template": steering_delta_template(),
@@ -188,7 +208,13 @@ def render_executor_prompt_sections(
             _section("Unknowns and decision rule", (str(contract.get("uncertainty_policy", "")),)),
             _section("Expected result", expected_result),
             _section("Test", test_steps),
-            _section("Progress and blockers", (str(contract.get("reporting_policy", "")),)),
+            _section(
+                "Progress and blockers",
+                (
+                    str(contract.get("reporting_policy", "")),
+                    str(contract.get("session_summary_policy", SESSION_SUMMARY_SHAPE_POLICY)),
+                ),
+            ),
             _section("Evidence boundary", (str(contract.get("claim_boundary", "")),)),
             f"Task:\n{task_placeholder}",
         )
@@ -249,6 +275,7 @@ def _section(title: str, items: Iterable[str]) -> str:
 
 __all__ = [
     "DOCS_CONSULTED_ARTIFACT_POLICY",
+    "SESSION_SUMMARY_SHAPE_POLICY",
     "build_executor_prompting_contract",
     "render_executor_prompt_sections",
     "select_executor_prompting_strategy",

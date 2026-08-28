@@ -20,6 +20,7 @@ from omh.coding.unit_prompt_protocol import (  # noqa: E402
     PROMPT_CACHE_COMPOSITION_PROTOCOL,
     REVIEW_ROLE_PROTOCOL,
     UNIT_PROMPT_MAX_BYTES,
+    UNIT_RESULT_RETURN_PROTOCOL,
     VERIFICATION_STOP_PROTOCOL,
     calibration_for_route,
     completion_criteria_for_unit,
@@ -56,7 +57,31 @@ class ProtocolContentTests(unittest.TestCase):
         # condition — neither may be relitigated by a rewrite.
         self.assertIn("policy denial is a boundary, not a bug", prompt)
         self.assertIn("remaining work is not blocked", prompt)
+        # Every unit prompt instructs the parse-then-validate structured return.
+        self.assertIn(UNIT_RESULT_RETURN_PROTOCOL, prompt)
         self.assertIn("Commit your work; do not merge or push other branches.", prompt)
+
+    def test_structured_return_names_the_shape_and_the_parse_rule(self) -> None:
+        """The report must end in a fenced fanout_unit_result/v1 JSON object so
+        collection is parse-then-validate, never prose-scraping."""
+        self.assertIn("```json", UNIT_RESULT_RETURN_PROTOCOL)
+        self.assertIn("fanout_unit_result/v1", UNIT_RESULT_RETURN_PROTOCOL)
+        for field in (
+            "schema_version",
+            "unit_id",
+            "run_id",
+            "fanout_id",
+            "base_sha",
+            "head_sha",
+            "process_status",
+            "changed_paths",
+            "checks",
+            "findings",
+        ):
+            self.assertIn(field, UNIT_RESULT_RETURN_PROTOCOL, field)
+        self.assertIn("parses", UNIT_RESULT_RETURN_PROTOCOL)
+        self.assertIn("validates", UNIT_RESULT_RETURN_PROTOCOL)
+        self.assertIn("never scraped", UNIT_RESULT_RETURN_PROTOCOL)
 
     def test_integration_checks_become_numbered_criteria(self) -> None:
         unit = _contract_unit(
@@ -119,7 +144,10 @@ class SharedPreambleCacheTests(unittest.TestCase):
         or the clock — or one changed byte forfeits every sibling's cache."""
         lines = shared_unit_preamble_lines(_GOAL)
         preamble = "\n".join(lines)
-        for unit_field in ("impl", "Impl", "aux", "agent/impl", "branch_suggestion", "unit_id"):
+        # `unit_id` is deliberately absent from this list: the structured-return
+        # protocol legitimately names the schema's field names, which are
+        # byte-identical across siblings; only unit-specific VALUES are volatile.
+        for unit_field in ("impl", "Impl", "aux", "agent/impl", "branch_suggestion"):
             self.assertNotIn(unit_field, preamble)
         self.assertEqual(lines, shared_unit_preamble_lines(_GOAL))
         import omh.coding.unit_prompt_protocol as module

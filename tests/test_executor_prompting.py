@@ -387,6 +387,66 @@ class ExecutorPromptingTests(unittest.TestCase):
                     handoff["prompt_template"],
                 )
 
+    def test_session_summary_shape_is_recommended_across_handoff_paths(self) -> None:
+        # Given: every prepared-handoff lane that carries the prompting contract.
+        cases = (
+            ("codex", "executor_handoff"),
+            ("claude-code", "prompt_handoff"),
+            ("hermes", "runtime_handoff"),
+        )
+
+        for executor, key in cases:
+            with self.subTest(executor=executor):
+                # When: the handoff is prepared.
+                handoff = build_coding_delegation_payload(
+                    "Implement the exporter flag in src/example.py.",
+                    executor_target=executor,
+                )[key]
+                contract = handoff["executor_prompting_contract"]
+
+                # Then: the contract recommends the structured summary shape —
+                # six named sections plus cumulative file lists.
+                policy = contract["session_summary_policy"]
+                self.assertIn(
+                    "Goal / Constraints and Preferences / Progress (Done, In Progress, Blocked) / "
+                    "Key Decisions / Next Steps / Critical Context",
+                    policy,
+                )
+                self.assertIn("read-files", policy)
+                self.assertIn("modified-files", policy)
+                self.assertIn("cumulatively", policy)
+                # A summary stays a report, never observed evidence.
+                self.assertIn("remains a report", policy)
+                # And the rendered prompt carries the shape on every lane.
+                self.assertIn(policy, handoff["prompt_template"])
+                # Steering escalates to the same shape when a delta is not enough.
+                self.assertIn(
+                    "structured summary shape",
+                    contract["steering_delta_contract"]["action_rule"],
+                )
+
+    def test_contract_rejects_missing_or_weakened_session_summary_policy(self) -> None:
+        payload = build_coding_delegation_payload(
+            "Implement the exporter flag in src/example.py.",
+            executor_target="codex",
+        )
+        contract = dict(payload["executor_handoff"]["executor_prompting_contract"])
+
+        missing = dict(contract)
+        del missing["session_summary_policy"]
+        errors = validate_executor_prompting_contract(missing, "prompting", expected_profile="codex")
+        self.assertTrue(any("missing keys" in error and "session_summary_policy" in error for error in errors))
+
+        weakened = dict(contract)
+        weakened["session_summary_policy"] = "Summarize the session before handing off."
+        errors = validate_executor_prompting_contract(weakened, "prompting", expected_profile="codex")
+        self.assertTrue(
+            any(
+                "session_summary_policy must name the structured summary sections" in error
+                for error in errors
+            )
+        )
+
     def test_contract_rejects_missing_or_advisory_docs_consulted_policy(self) -> None:
         payload = build_coding_delegation_payload(
             "Implement the payments SDK integration in src/example.py.",
