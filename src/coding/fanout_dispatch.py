@@ -40,7 +40,7 @@ from .fanout_contracts import (
     verification_command_argv,
 )
 from .inflight import InflightMarkerError, clear_inflight_marker, write_inflight_marker
-from .unit_prompt_protocol import unit_protocol_lines
+from .unit_prompt_protocol import shared_unit_preamble_lines, unit_protocol_lines
 from .fanout_unit_results import validate_check_rows, validate_unit_result
 from .unit_telemetry import parse_unit_telemetry
 
@@ -161,6 +161,33 @@ def signal_safe_unit_runner(
 # retry decorator) can propagate it so the dispatch path keeps recording the
 # reapable pid instead of silently dropping it.
 signal_safe_unit_runner.accepts_on_spawn = True  # type: ignore[attr-defined]
+
+
+# Spacing between real agent-CLI spawn starts of one fanout. Providers cache
+# prompt prefixes by exact bytes, and a cache entry is readable only once the
+# first response starts streaming — parallel identical-prefix requests each
+# pay a full cache write. Two seconds gives the first dispatch a head start
+# at writing the cache its siblings read without materially delaying a batch.
+CACHE_WARM_SPAWN_STAGGER_SECONDS: float = 2.0
+
+
+class _SpawnStagger:
+    """Spaces real agent-CLI spawn starts so the first request writes the
+    provider prompt cache the siblings read; parallel identical requests
+    would each pay a full cache write."""
+
+    def __init__(self, interval: float) -> None:
+        self._interval = max(0.0, interval)
+        self._lock = threading.Lock()
+        self._next = 0.0
+
+    def reserve(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            slot = max(now, self._next)
+            self._next = slot + self._interval
+        if slot > now:
+            time.sleep(slot - now)
 
 
 DISPATCH_CLAIM_BOUNDARY = (
@@ -368,17 +395,19 @@ def build_unit_prompt(
     boundary = unit.get("boundary", {}) if isinstance(unit.get("boundary"), Mapping) else {}
     file_scope = ", ".join(str(path) for path in boundary.get("file_scope", []))
     do_not_touch = ", ".join(str(path) for path in boundary.get("do_not_touch", []))
-    lines = [
-        f"Work unit: {unit.get('title', unit.get('unit_id'))}",
-        f"Overall goal: {goal_text.strip()}",
-        f"Stay strictly inside these paths: {file_scope}.",
-    ]
+    # Shared preamble first: sibling prompts must share a byte-identical head
+    # so provider prefix caches serve every unit after the first (see
+    # PROMPT_CACHE_COMPOSITION_PROTOCOL).
+    lines = shared_unit_preamble_lines(goal_text)
+    lines.append(f"Work unit: {unit.get('title', unit.get('unit_id'))}")
+    lines.append(f"Stay strictly inside these paths: {file_scope}.")
     if do_not_touch:
         lines.append(f"Do not touch: {do_not_touch} (owned by sibling units).")
     lines.append(f"Work on branch {unit.get('branch_suggestion', '')} in the current worktree.")
-    # Goal echo-back, pre-declared completion criteria (absorbing the unit's
-    # integration checks), bounded verification discipline, and — on
-    # high-effort routes — the per-family over-verification calibration.
+    # Pre-declared completion criteria (absorbing the unit's integration
+    # checks) and — on high-effort routes — the per-family over-verification
+    # calibration; the unit-invariant discipline blocks already rode the
+    # shared preamble above.
     lines.extend(unit_protocol_lines(unit))
     # Skills the operator actually has, named with the invocation form their
     # source directory implies. Absent discovery (the default, and every
@@ -972,6 +1001,11 @@ def dispatch_fanout(
         for owner, width in (per_owner_lanes or {}).items()
         if isinstance(width, int) and not isinstance(width, bool) and int(width) >= 1
     }
+    # One stagger per run: real spawns of this fanout space out so the first
+    # request writes the provider prompt cache the siblings read. It engages
+    # only for runners carrying the real-runner `accepts_on_spawn` seam, so
+    # injected test runners and dry runs never wait.
+    spawn_stagger = _SpawnStagger(CACHE_WARM_SPAWN_STAGGER_SECONDS)
 
     def _dispatch_with_owner_gate(unit: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
         # A worker that reaches its turn after the interrupt — queued in the
@@ -1032,6 +1066,7 @@ def dispatch_fanout(
                 fanout_id=fanout_id,
                 discoveries=discoveries,
                 capability_precheck=capability_prechecks[unit_id],
+                spawn_stagger=spawn_stagger,
             )
 
         def _admit_frontier() -> None:
@@ -1333,6 +1368,7 @@ def _dispatch_unit(
     fanout_id: str = "",
     discoveries: Mapping[str, Mapping[str, Any]] | None = None,
     capability_precheck: tuple[str, dict[str, Any] | None, list[str]],
+    spawn_stagger: _SpawnStagger | None = None,
 ) -> dict[str, Any]:
     from .model_inventory import catalog_fingerprint_note
 
@@ -1567,6 +1603,11 @@ def _dispatch_unit(
             )
 
         spawn_kwargs["on_spawn"] = _record_pid
+        # Real spawns only (the same seam as the pid hook): stagger this
+        # unit's start so the first dispatch of the fanout writes the
+        # provider prompt cache the byte-identical sibling preambles read.
+        if spawn_stagger is not None:
+            spawn_stagger.reserve()
     try:
         completed = runner(
             argv, cwd=str(worktree), text=True, capture_output=True, timeout=timeout, **spawn_kwargs

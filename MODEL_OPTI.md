@@ -71,7 +71,8 @@ they do not create vendor-wide calibration families.
 ## Universal protocols (every model, every family)
 
 `src/coding/unit_prompt_protocol.py` attaches four deterministic blocks to
-every dispatched unit prompt, regardless of model:
+every dispatched unit prompt, regardless of model, and adds one composer-side
+discipline for how those prompts are assembled:
 
 - **Goal echo-back** — before the first tool use, the subagent restates the
   goal, its deliverable, and the numbered criteria, and reports (never
@@ -98,11 +99,22 @@ every dispatched unit prompt, regardless of model:
   remaining work is not blocked"), generalized to every family because both
   failure modes are cross-family (deepseek-ai/deepseek-harness, master
   2026-08-13; adopted in #1071).
+- **Prompt-cache discipline (composer)** — the shared preamble of a fan-out
+  stays byte-identical across sibling unit prompts: stable ordering, no
+  timestamps or volatile status, unit-specific content appended after it,
+  and staggered dispatch so the first request writes the provider cache the
+  siblings read. *Why:* Anthropic, OpenAI, Gemini, and DeepSeek all cache
+  prompt prefixes by exact bytes; DeepSeek additionally prices cached
+  prefixes, which is where OMH first learned the rule
+  (`PROMPT_CACHE_COMPOSITION_PROTOCOL`).
 
 The first three originate from the stop-condition techniques the
 oh-my-openagent research surfaced for high-effort models (terminal-condition
 rules, criterion-bound blocking, capped re-review), generalized to every
-family. The fourth comes from the DeepSeek Harness review named above.
+family. The fourth comes from the DeepSeek Harness review named above. The
+fifth generalizes that harness's priced-prefix composition constraint to
+every family, because every major serving stack is a byte-exact prefix
+cacher.
 
 ### Techniques compared and already structural (DeepSeek Harness review)
 
@@ -114,8 +126,8 @@ forbid (the house calibration style throughout this file), and numeric stop
 bounds for ambiguous judgments (one-pass verification, two fix-and-verify
 cycles, two review rounds). Machine-readable result markers and
 KV-cache-aware request assembly belong to the executor/runtime that actually
-calls a model — outside the `deepseek` composer note below, they are out of
-OMH's boundary by design.
+calls a model — outside the universal prompt-cache composition discipline
+above, they are out of OMH's boundary by design.
 
 ## Per-family calibrations: what, why, and where each came from
 
@@ -278,14 +290,15 @@ pairing so a benchmark claim can never mix in other prompt changes.
   the smallest correct change, verify once, stop.
 - **What OMH injects (composer):** keep the DeepSeek version and thinking
   mode explicit in the prepared route; no synthetic thinking instructions on
-  non-reasoning routes; keep the shared preamble byte-identical across unit
-  prompts — stable ordering, no timestamps or volatile status — with
-  unit-specific content appended after it, because cached prefixes are
-  priced.
+  non-reasoning routes; and the family residue of the now-universal
+  prompt-cache discipline — DeepSeek serving prices cached prefixes, so the
+  shared-preamble rule is billing-visible on this family, not merely
+  latency.
 - **Source:** provider-published model characteristics (DeepSeek's
   reasoning/non-reasoning variant split; shipped with the benchmark
   harness), plus the DeepSeek Harness review adopted in #1071 (exact-string
-  RL edit contract, priced prefix caching).
+  RL edit contract, priced prefix caching — the priced-prefix fact later
+  generalized into the universal prompt-cache protocol above).
 
 ### `mistral` (Mistral Large / Medium)
 

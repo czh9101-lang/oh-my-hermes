@@ -631,6 +631,25 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_directly",
         "direct_answer",
     ),
+    # Infra-cache maintenance guards for the "prompt caching"/"prompt cache"/
+    # "cache hygiene" triggers: build- and HTTP-cache work shares the word
+    # "cache" but has nothing to do with prompt-prefix placement.
+    RoutingPrecisionCase(
+        "npm-cache-clear-direct",
+        "Build-cache maintenance never dispatches context budget review",
+        "clear the npm cache and rerun the build",
+        "answer_clarification",
+        "",
+        "context-budget-review",
+    ),
+    RoutingPrecisionCase(
+        "stale-browser-cache-direct",
+        "HTTP cache debugging never dispatches context budget review",
+        "the browser cache is serving a stale bundle, fix the cache headers",
+        "answer_clarification",
+        "",
+        "context-budget-review",
+    ),
 )
 
 
@@ -2550,6 +2569,16 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "finance-analysis",
         "prepare_finance_analysis",
         "finance_analysis",
+    ),
+    RoutingInterventionCase(
+        "prompt-cache-hygiene-budget-review",
+        "Prompt-cache hygiene reaches context budget review",
+        "set up prompt caching hygiene before this long agent run",
+        "dispatch",
+        "context-budget-review",
+        "prepare_context_budget_review",
+        "context_budget_review",
+        "context-budget-review",
     ),
 )
 

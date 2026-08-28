@@ -17,6 +17,16 @@ Four deterministic text blocks ride every dispatched unit prompt:
    "blocked" requires a named concrete condition that survives the bounded
    fix cycles — difficulty, uncertainty, or remaining work is not blocked.
 
+The blocks split across two placement zones for prompt-cache hygiene: the
+goal echo-back, verification-stop, and failure-kind blocks are unit-invariant,
+so `shared_unit_preamble_lines()` places them (with the overall goal) at the
+byte-identical head every sibling prompt of one fanout shares, and
+`unit_protocol_lines()` carries only the unit-varying remainder — numbered
+criteria, role protocol, calibration, and the domain bundle. Every major
+serving stack caches prompt prefixes by exact bytes, so sibling prompts that
+share their head let the first dispatch write the cache the rest read; the
+rule itself ships as `PROMPT_CACHE_COMPOSITION_PROTOCOL`.
+
 High-effort routes additionally get a per-family calibration block that
 counters the known over-verification inertia of strong reasoning models.
 Calibration is keyed by model family and selected only when the routed
@@ -62,6 +72,15 @@ FAILURE_KIND_PROTOCOL: Final[str] = (
     "allows, or report it. Report blocked only when the same concrete condition still holds after the "
     "bounded fix-and-verify cycles, and name that condition; difficulty, uncertainty, or useful "
     "remaining work is not blocked."
+)
+
+PROMPT_CACHE_COMPOSITION_PROTOCOL: Final[str] = (
+    "Prompt-cache discipline: every major serving stack caches prompt prefixes by exact bytes "
+    "(Anthropic prefix caching, OpenAI automatic prefix caching, Gemini implicit caching, DeepSeek "
+    "context caching), and one changed byte invalidates everything after it. Keep the shared preamble "
+    "byte-identical across sibling unit prompts — stable ordering, no timestamps, counts, or other "
+    "volatile status — append unit-specific content after the shared preamble, and stagger a fan-out "
+    "so the first dispatch writes the cache its siblings read."
 )
 
 REVIEW_ROLE_PROTOCOL: Final[str] = (
@@ -209,9 +228,9 @@ MAIN_AGENT_COMPOSITION_CALIBRATIONS: Final[dict[str, str]] = {
         "Composition calibration: keep the DeepSeek model version and thinking mode explicit in the "
         "prepared route. Preserve runtime reasoning context only when the selected model and executor "
         "support it; otherwise compose exact owners, scopes, dependencies, and verification commands "
-        "without synthetic thinking instructions. DeepSeek serving prices cached prefixes, so keep the "
-        "shared preamble byte-identical across unit prompts — stable ordering, no timestamps or "
-        "volatile status — with unit-specific content appended after it. Validate once and stop."
+        "without synthetic thinking instructions. DeepSeek serving prices cached prefixes, so the "
+        "shared prompt-cache discipline is billing-visible on this family, not merely latency. "
+        "Validate once and stop."
     ),
     "mistral": (
         "Composition calibration: write unit prompts literally and completely — a Mistral-family "
@@ -341,13 +360,32 @@ def calibration_for_route(model_route: Mapping[str, Any] | None) -> str:
     return HIGH_EFFORT_CALIBRATIONS.get(family, HIGH_EFFORT_CALIBRATIONS["generic"])
 
 
+def shared_unit_preamble_lines(goal_text: str) -> list[str]:
+    """Byte-identical head shared by every sibling unit prompt of one fanout.
+
+    Cached prompt prefixes are exact byte matches on every provider, so the
+    lines here depend only on the goal text — never on the unit — and callers
+    must place them before any unit-specific byte.
+    """
+    return [
+        f"Overall goal: {goal_text.strip()}",
+        GOAL_ECHO_PROTOCOL,
+        VERIFICATION_STOP_PROTOCOL,
+        FAILURE_KIND_PROTOCOL,
+    ]
+
+
 def unit_protocol_lines(unit: Mapping[str, Any]) -> list[str]:
-    """Return the ordered protocol lines appended to a unit prompt."""
+    """Return the ordered unit-varying protocol lines appended to a unit prompt.
+
+    The unit-invariant blocks (goal echo, verification stop, failure kind)
+    live in `shared_unit_preamble_lines()` so sibling prompts keep a
+    byte-identical head; only content that genuinely varies per unit belongs
+    here.
+    """
     criteria = completion_criteria_for_unit(unit)
-    lines = [GOAL_ECHO_PROTOCOL, "Done means, and only means:"]
+    lines = ["Done means, and only means:"]
     lines.extend(f"{index}. {criterion}" for index, criterion in enumerate(criteria, start=1))
-    lines.append(VERIFICATION_STOP_PROTOCOL)
-    lines.append(FAILURE_KIND_PROTOCOL)
     handoff = unit.get("handoff", {}) if isinstance(unit.get("handoff"), Mapping) else {}
     model_route = handoff.get("model_route") if isinstance(handoff.get("model_route"), Mapping) else None
     # Contract units carry the declared role inside the recorded route, not as

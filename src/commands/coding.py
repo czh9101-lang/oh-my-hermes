@@ -998,6 +998,7 @@ def cmd_coding_composition_guide(args: argparse.Namespace) -> int:
     from ..coding.unit_prompt_protocol import (
         GOAL_ECHO_PROTOCOL,
         MAIN_AGENT_COMPOSITION_CALIBRATIONS,
+        PROMPT_CACHE_COMPOSITION_PROTOCOL,
         REVIEW_ROLE_PROTOCOL,
         VERIFICATION_STOP_PROTOCOL,
         composition_calibration_for_model,
@@ -1007,6 +1008,7 @@ def cmd_coding_composition_guide(args: argparse.Namespace) -> int:
         "goal_echo": GOAL_ECHO_PROTOCOL,
         "verification_stop": VERIFICATION_STOP_PROTOCOL,
         "review_cap": REVIEW_ROLE_PROTOCOL,
+        "prompt_cache": PROMPT_CACHE_COMPOSITION_PROTOCOL,
         "applies_to": (
             "EVERY delegated or reviewer prompt the main agent composes — runtime-native "
             "spawns included, not only bridge-dispatched fanout units."
@@ -1031,6 +1033,7 @@ def cmd_coding_composition_guide(args: argparse.Namespace) -> int:
         print(f"- {GOAL_ECHO_PROTOCOL}")
         print(f"- {VERIFICATION_STOP_PROTOCOL}")
         print(f"- {REVIEW_ROLE_PROTOCOL}")
+        print(f"- {PROMPT_CACHE_COMPOSITION_PROTOCOL}")
         return 0
     payload = {
         "schema_version": "composition_guide/v1",
@@ -1043,6 +1046,8 @@ def cmd_coding_composition_guide(args: argparse.Namespace) -> int:
     lines = ["Main-agent composition calibrations by model family:"]
     for family, block in MAIN_AGENT_COMPOSITION_CALIBRATIONS.items():
         lines.append(f"- {family}: {block}")
+    lines.append("Prompt-cache discipline (every family):")
+    lines.append(f"- {PROMPT_CACHE_COMPOSITION_PROTOCOL}")
     print("\n".join(lines))
     return 0
 

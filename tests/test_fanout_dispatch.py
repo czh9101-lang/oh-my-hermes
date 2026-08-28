@@ -2755,5 +2755,95 @@ class FanoutDispatchVerificationCliTests(unittest.TestCase):
             self.assertTrue(captured["run_verification"])
 
 
+class SpawnStaggerTests(unittest.TestCase):
+    """Cache-warm dispatch spacing: the first real spawn writes the provider
+    prompt cache the byte-identical sibling preambles read, so real spawns are
+    staggered while injected test runners stay untouched."""
+
+    def test_reserve_spaces_consecutive_slots(self) -> None:
+        import time as _time
+
+        from omh.coding.fanout_dispatch import _SpawnStagger
+
+        stagger = _SpawnStagger(0.05)
+        starts: list[float] = []
+        for _ in range(3):
+            stagger.reserve()
+            starts.append(_time.monotonic())
+        # Scheduler slack tolerance downward: sleeps may wake a hair early.
+        self.assertGreaterEqual(starts[1] - starts[0], 0.045)
+        self.assertGreaterEqual(starts[2] - starts[1], 0.045)
+
+    def test_injected_runner_without_marker_never_staggers(self) -> None:
+        import time as _time
+
+        import omh.coding.fanout_dispatch as engine
+
+        units = [
+            {"unit_id": "core", "title": "Core", "owner": "codex", "file_scope": ["src/core/"]},
+            {"unit_id": "docs", "title": "Docs", "owner": "claude-code", "file_scope": ["docs/"]},
+        ]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
+            started = _time.monotonic()
+            with mock.patch.object(engine, "CACHE_WARM_SPAWN_STAGGER_SECONDS", 60.0):
+                summary = dispatch_fanout(
+                    paths,
+                    contract,
+                    goal_text=_GOAL,
+                    repo_root=repo,
+                    base_sha=sha,
+                    runner=_agent_runner(),
+                    readiness=_ready,
+                )
+            elapsed = _time.monotonic() - started
+            statuses = {entry["unit_id"]: entry["status"] for entry in summary["units"]}
+            self.assertEqual(statuses, {"core": "completed", "docs": "completed"})
+            # A 60s interval that engaged would hold the second spawn for a
+            # minute; injected runners without accepts_on_spawn never wait.
+            self.assertLess(elapsed, 30.0)
+
+    def test_marked_runner_spawns_are_spaced(self) -> None:
+        import time as _time
+
+        import omh.coding.fanout_dispatch as engine
+
+        units = [
+            {"unit_id": "core", "title": "Core", "owner": "codex", "file_scope": ["src/core/"]},
+            {"unit_id": "docs", "title": "Docs", "owner": "claude-code", "file_scope": ["docs/"]},
+        ]
+        spawn_times: list[float] = []
+
+        def runner(argv, **kwargs):
+            if argv[0] == "git":
+                return subprocess.run(argv, **kwargs)
+            spawn_times.append(_time.monotonic())
+            return _FakeCompleted(0, "done")
+
+        runner.accepts_on_spawn = True
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
+            with mock.patch.object(engine, "CACHE_WARM_SPAWN_STAGGER_SECONDS", 0.3):
+                summary = dispatch_fanout(
+                    paths,
+                    contract,
+                    goal_text=_GOAL,
+                    repo_root=repo,
+                    base_sha=sha,
+                    runner=runner,
+                    readiness=_ready,
+                )
+            statuses = {entry["unit_id"]: entry["status"] for entry in summary["units"]}
+            self.assertEqual(statuses, {"core": "completed", "docs": "completed"})
+            self.assertEqual(len(spawn_times), 2)
+            self.assertGreaterEqual(spawn_times[1] - spawn_times[0], 0.25)
+
+
 if __name__ == "__main__":
     unittest.main()

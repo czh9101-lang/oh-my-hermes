@@ -3186,7 +3186,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The user asks for live token/cost telemetry; use `ops-observability-card`.
   - The user asks to continue a loopable goal; use `loop` unless budget planning is the explicit blocker.
   - The task is a short one-step answer with no meaningful context risk.
-- Strong routing signals: `context-budget-review`, `context budget review`, `context budget`, `token budget review`, `token budget`, `prompt budget`, `context compaction`, `compact context`, `too much context`, `summarization checkpoint`, `budget this task`, `컨텍스트 예산`, `토큰 예산`, `컨텍스트 압축`, `요약 체크포인트`
+- Strong routing signals: `context-budget-review`, `context budget review`, `context budget`, `token budget review`, `token budget`, `prompt budget`, `prompt caching`, `prompt cache`, `cache hygiene`, `context compaction`, `compact context`, `too much context`, `summarization checkpoint`, `budget this task`, `컨텍스트 예산`, `토큰 예산`, `컨텍스트 압축`, `요약 체크포인트`
 - Good example:
   - Prompt: context-budget-review 이 장기 PR 작업에서 어떤 맥락을 꼭 유지하고 언제 요약해야 하는지 잡아줘.
   - Expected behavior: Prepare context_budget_plan/v1, must_keep_context_pack/v1, checkpoint plan, risk register, and overflow recovery route.
@@ -3200,6 +3200,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Separate durable requirements, volatile status, file refs, verification evidence, and open blockers.
   - Define checkpoint cadence, overflow recovery, and continuity verification.
   - Use bounded copy while preserving the full objective and evidence gaps.
+  - Keep prompt-prefix placement cache-stable: fixed section order, volatile bytes never above the fold, mid-run changes as appended messages never system-prompt mutations — load `references/cache-placement.md` for the placement rules.
 - Completion checklist:
   - The run or workflow scope, metric window, failure modes, and cost/latency boundary are named.
   - Local telemetry, provider truth, billing truth, and completion evidence are separate states.

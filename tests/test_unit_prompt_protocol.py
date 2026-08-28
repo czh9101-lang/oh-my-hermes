@@ -17,12 +17,14 @@ from omh.coding.unit_prompt_protocol import (  # noqa: E402
     HIGH_EFFORT_CALIBRATIONS,
     HIGH_EFFORT_TIER,
     MAIN_AGENT_COMPOSITION_CALIBRATIONS,
+    PROMPT_CACHE_COMPOSITION_PROTOCOL,
     REVIEW_ROLE_PROTOCOL,
     UNIT_PROMPT_MAX_BYTES,
     VERIFICATION_STOP_PROTOCOL,
     calibration_for_route,
     completion_criteria_for_unit,
     composition_calibration_for_model,
+    shared_unit_preamble_lines,
     unit_protocol_lines,
 )
 
@@ -93,6 +95,60 @@ class ProtocolContentTests(unittest.TestCase):
         self.assertNotIn(REVIEW_ROLE_PROTOCOL, build_unit_prompt(aux, _GOAL))
 
 
+class SharedPreambleCacheTests(unittest.TestCase):
+    def test_sibling_prompts_share_byte_identical_preamble(self) -> None:
+        """Provider prompt caches match prefixes by exact bytes, so every
+        sibling prompt of one fanout must lead with the same shared bytes."""
+        import os.path
+
+        units = [
+            {"unit_id": "impl", "title": "Impl", "owner": "codex", "file_scope": ["src/core/"]},
+            {"unit_id": "aux", "title": "Aux docs", "owner": "claude-code", "file_scope": ["docs/"]},
+        ]
+        impl = _contract_unit(units, "impl")
+        aux = _contract_unit(units, "aux")
+        preamble = "\n".join(shared_unit_preamble_lines(_GOAL))
+        prompt_a = build_unit_prompt(impl, _GOAL)
+        prompt_b = build_unit_prompt(aux, _GOAL)
+        self.assertTrue(prompt_a.startswith(preamble))
+        self.assertTrue(prompt_b.startswith(preamble))
+        self.assertGreaterEqual(len(os.path.commonprefix([prompt_a, prompt_b])), len(preamble))
+
+    def test_shared_preamble_has_no_volatile_bytes(self) -> None:
+        """The shared head depends only on the goal text — never on the unit
+        or the clock — or one changed byte forfeits every sibling's cache."""
+        lines = shared_unit_preamble_lines(_GOAL)
+        preamble = "\n".join(lines)
+        for unit_field in ("impl", "Impl", "aux", "agent/impl", "branch_suggestion", "unit_id"):
+            self.assertNotIn(unit_field, preamble)
+        self.assertEqual(lines, shared_unit_preamble_lines(_GOAL))
+        import omh.coding.unit_prompt_protocol as module
+
+        self.assertNotIn("datetime", dir(module))
+
+    def test_prompt_cache_protocol_names_the_rule_and_the_families(self) -> None:
+        self.assertIn("byte-identical", PROMPT_CACHE_COMPOSITION_PROTOCOL)
+        self.assertIn("stagger", PROMPT_CACHE_COMPOSITION_PROTOCOL)
+        for family_mechanism in ("Anthropic", "OpenAI", "Gemini", "DeepSeek"):
+            self.assertIn(family_mechanism, PROMPT_CACHE_COMPOSITION_PROTOCOL)
+
+    def test_composition_guide_carries_prompt_cache_protocol(self) -> None:
+        status, stdout, _stderr = run_cli(["coding", "composition-guide", "--json"])
+        self.assertEqual(status, 0)
+        payload = json.loads(stdout)
+        self.assertEqual(
+            payload["delegation_protocol"]["prompt_cache"], PROMPT_CACHE_COMPOSITION_PROTOCOL
+        )
+        status, stdout, _stderr = run_cli(
+            ["coding", "composition-guide", "--model", "claude-fable-5"], output_json=False
+        )
+        self.assertEqual(status, 0)
+        self.assertIn("Prompt-cache discipline", stdout)
+        status, stdout, _stderr = run_cli(["coding", "composition-guide"], output_json=False)
+        self.assertEqual(status, 0)
+        self.assertIn("Prompt-cache discipline (every family):", stdout)
+
+
 class CalibrationSelectionTests(unittest.TestCase):
     def test_high_effort_codex_brain_gets_gpt_calibration(self) -> None:
         unit = _contract_unit(
@@ -157,10 +213,12 @@ class CalibrationSelectionTests(unittest.TestCase):
         self.assertNotIn("<think>", HIGH_EFFORT_CALIBRATIONS["qwen"])
         self.assertIn("model version", HIGH_EFFORT_CALIBRATIONS["deepseek"])
         # DeepSeek's own harness ships the exact-string editor contract the
-        # family is post-trained on, and treats cached prefixes as priced —
-        # both facts ride the calibration pair (deepseek-harness, 2026-08-13).
+        # family is post-trained on (deepseek-harness, 2026-08-13). Its
+        # priced-prefix fact generalized into the universal prompt-cache
+        # protocol; the deepseek composer entry keeps the billing residue.
         self.assertIn("exact literal strings", HIGH_EFFORT_CALIBRATIONS["deepseek"])
-        self.assertIn("byte-identical", MAIN_AGENT_COMPOSITION_CALIBRATIONS["deepseek"])
+        self.assertIn("byte-identical", PROMPT_CACHE_COMPOSITION_PROTOCOL)
+        self.assertIn("prices cached prefixes", MAIN_AGENT_COMPOSITION_CALIBRATIONS["deepseek"])
         self.assertIn("interleaved", HIGH_EFFORT_CALIBRATIONS["glm"])
 
     def test_no_route_means_no_calibration(self) -> None:

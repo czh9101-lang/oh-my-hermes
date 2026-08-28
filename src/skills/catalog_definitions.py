@@ -4257,6 +4257,9 @@ _DEFINITIONS = [
             "token budget review",
             "token budget",
             "prompt budget",
+            "prompt caching",
+            "prompt cache",
+            "cache hygiene",
             "context compaction",
             "compact context",
             "too much context",
@@ -4308,6 +4311,7 @@ _DEFINITIONS = [
             "Separate durable requirements, volatile status, file refs, verification evidence, and open blockers.",
             "Define checkpoint cadence, overflow recovery, and continuity verification.",
             "Use bounded copy while preserving the full objective and evidence gaps.",
+            "Keep prompt-prefix placement cache-stable: fixed section order, volatile bytes never above the fold, mid-run changes as appended messages never system-prompt mutations — load `references/cache-placement.md` for the placement rules.",
         ),
         why_this_exists=(
             "`context-budget-review` ports ECC's context-budget and token-budget instincts into OMH as a compactness gate "
