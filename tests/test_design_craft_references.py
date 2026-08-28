@@ -52,6 +52,7 @@ class DesignReferenceRegistryTests(unittest.TestCase):
             ("frontend", "references/taste-foundations.md"),
             ("frontend", "references/reference-token-extraction.md"),
             ("frontend", "references/tui-craft.md"),
+            ("frontend", "references/screenshot-loop.md"),
             ("design-quality-gate", "references/design-critique-rubric.md"),
         }
         registered = {
@@ -201,6 +202,50 @@ class TuiCraftTests(unittest.TestCase):
         self.assertIn("80x24 and 120x40", _body("frontend"))
         self.assertIn("80x24 and 120x40", _body("visual-qa"))
         self.assertIn("screenshot-equivalent", _body("visual-qa"))
+
+
+class ScreenshotLoopTests(unittest.TestCase):
+    def test_the_loop_captures_named_widths_until_the_list_is_empty(self) -> None:
+        content = _reference("frontend", "references/screenshot-loop.md")
+        self.assertIn(DESIGN_NAMED_BAR, _unwrapped(content))
+        self.assertIn("1440px, 768px, and 375px", _unwrapped(content))
+        self.assertIn("Exit only when the difference list is empty", _unwrapped(content))
+        # The web widths are the counterpart of the TUI's named sizes.
+        self.assertIn("80x24 and 120x40", _unwrapped(content))
+
+    def test_live_environment_comes_before_the_code(self) -> None:
+        content = _reference("frontend", "references/screenshot-loop.md")
+        self.assertIn("Live environment first", content)
+        self.assertIn("working blind", content)
+
+    def test_comparison_target_precedence_ends_at_the_contract_gate(self) -> None:
+        # Supplied target first, DESIGN.md second, and no target at all is a
+        # stop — iterating toward an unstated target converges on generic.
+        content = _reference("frontend", "references/screenshot-loop.md")
+        self.assertIn("A user-supplied mock", content)
+        self.assertIn("Otherwise `DESIGN.md` is the target", content)
+        self.assertIn("Neither exists: stop", content)
+
+    def test_findings_are_triaged_with_captures_attached(self) -> None:
+        content = _reference("frontend", "references/screenshot-loop.md")
+        for marker in ("[Blocker]", "[High]", "[Medium]", "Nit:"):
+            self.assertIn(marker, content, marker)
+        self.assertIn("problems, not prescriptions", _unwrapped(content))
+        self.assertIn("Every finding attaches the capture", _unwrapped(content))
+
+    def test_the_loop_defers_to_visual_qa_instead_of_duplicating_it(self) -> None:
+        # The capture inventory and the verdict both stay with visual-qa;
+        # the loop only ends its own difference list.
+        content = _reference("frontend", "references/screenshot-loop.md")
+        self.assertIn("viewport_state_capture_matrix/v1", content)
+        self.assertIn("it is not PASS", _unwrapped(content))
+        self.assertIn("prepared claim, not an observed one", _unwrapped(content))
+
+    def test_frontend_body_carries_the_loop_hook(self) -> None:
+        body = _body("frontend")
+        self.assertIn("references/screenshot-loop.md", body)
+        self.assertIn("1440/768/375px", body)
+        self.assertIn("until the difference list is empty", body)
 
 
 class ReferenceTokenExtractionTests(unittest.TestCase):

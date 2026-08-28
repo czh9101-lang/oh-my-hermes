@@ -2375,6 +2375,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Prepare a concrete design-system contract before implementation handoff: load `references/design-system-contract.md` and write DESIGN.md before the first component — no component code before the contract exists.
   - For first-time UI creation, name the initial generation branch, reference direction, reusable primitives, state coverage, and required visual QA path.
   - Cover responsive layout, empty/loading/error states, hover/focus/active states, CJK text, accessibility, and performance expectations.
+  - After implementation lands on a web surface, load `references/screenshot-loop.md` and require the screenshot iteration loop live-environment-first: capture the running UI at 1440/768/375px, compare against the supplied target or DESIGN.md, list every difference triaged Blocker/High/Medium/Nit with its capture attached, fix, and recapture until the difference list is empty.
   - Prefer native UI controls, stable dimensions, and realistic content over decorative cards, blobs, and placeholder-heavy screens.
   - Keep implementation, browser verification, accessibility/performance checks, visual QA, and deployment as observed-only evidence.
 - Completion checklist:
