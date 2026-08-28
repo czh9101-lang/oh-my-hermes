@@ -627,7 +627,10 @@ class ExecutorSkillsCommandTests(unittest.TestCase):
     `home=` override."""
 
     def _run_with_home(self, home: Path, args: list[str]) -> tuple[int, str, str]:
-        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+        # Path.home() reads HOME on POSIX but USERPROFILE on Windows; patch
+        # both so the fixture home wins on every CI runner.
+        env = {"HOME": str(home), "USERPROFILE": str(home)}
+        with mock.patch.dict(os.environ, env):
             return run_cli(["coding", "executor-skills", *args])
 
     def test_claude_code_profile_returns_the_shaped_payload_with_the_claim_boundary(self) -> None:
