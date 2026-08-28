@@ -13,14 +13,19 @@ export default function register(sdk) {
   for (const key of ['LANG', 'LC_ALL', 'LC_CTYPE', 'SYSTEMROOT', 'WINDIR']) {
     if (process.env[key]) READER_ENV[key] = process.env[key]
   }
+  if (['on', 'off'].includes(process.env.OMH_SUBAGENT_GRAPH)) {
+    READER_ENV.OMH_SUBAGENT_GRAPH = process.env.OMH_SUBAGENT_GRAPH
+  }
   const READER = [
     'import json,os,sys',
     "sys.path.insert(0, os.path.join(os.environ['HERMES_HOME'], 'plugins'))",
     'from omh.runtime_reader import read_omh_hud',
-    "print(json.dumps(read_omh_hud(os.environ.get('OMH_HOME'), os.environ.get('HERMES_HOME'))))",
+    "print(json.dumps(read_omh_hud(os.environ.get('OMH_HOME'), os.environ.get('HERMES_HOME'), graph_preference=os.environ.get('OMH_SUBAGENT_GRAPH', 'auto'))))",
   ].join(';')
 
-  const safeText = value => String(value ?? '').replace(/[^\p{L}\p{N} .:/_·|+\-]/gu, '').slice(0, 96)
+  const sanitizeText = value => String(value ?? '')
+    .replace(/[^\p{L}\p{N} .:/_·|+\[\]!\-]/gu, '')
+  const safeText = value => sanitizeText(value).slice(0, 96)
 
   // Text, not chrome. The owner's direction after living with the bordered
   // cards: the OMH surface should read like the host's own status line
@@ -127,8 +132,7 @@ export default function register(sdk) {
     return width + (wide ? 2 : 1)
   }, 0)
 
-  const truncateCells = (value, limit) => {
-    const text = safeText(value)
+  const truncateTextCells = (text, limit) => {
     if (cellWidth(text) <= limit) return text
     let output = ''
     for (const char of Array.from(text)) {
@@ -137,6 +141,7 @@ export default function register(sdk) {
     }
     return `${output}…`
   }
+  const truncateCells = (value, limit) => truncateTextCells(safeText(value), limit)
 
   const elapsedText = value => {
     if (!Number.isFinite(value)) return ''
@@ -309,6 +314,66 @@ export default function register(sdk) {
     return h(ActivityRows, { columns, extraSeconds, frame, mainRows, rows, t })
   }
 
+  function GraphRows({ columns, graph, nodes, t }) {
+    const frontier = Array.isArray(graph.frontier) ? graph.frontier : []
+    const edges = Array.isArray(graph.edges) ? graph.edges : []
+    const edgeCount = Math.max(edges.length, Number(graph.edge_count) || 0)
+    const hidden = Math.max(0, Number(graph.hidden_nodes) || 0)
+    const successStates = new Set(['completed', 'already_completed', 'dry_run_planned'])
+    const failedStates = new Set([
+      'capability_snapshot_invalid',
+      'failed',
+      'blocked',
+      'blocked_by_dependency',
+      'executor_not_ready',
+      'unsupported_for_local_dispatch',
+      'worktree_failed',
+      'not_selected',
+      'interrupted',
+      'model_choice_required',
+    ])
+    const graphLine = value => {
+      const text = truncateTextCells(sanitizeText(value).slice(0, 4096), columns - 2)
+      return `${text}${' '.repeat(Math.max(0, columns - 2 - cellWidth(text)))}`
+    }
+    return h(
+      Box,
+      { flexDirection: 'column', width: '100%' },
+      h(
+        Text,
+        { color: t.color.label, key: 'graph-header', wrap: 'truncate-end' },
+        graphLine(`  DAG · ${frontier.length} ready · ${edgeCount} edges${hidden ? ` · +${hidden} more` : ''}`),
+      ),
+      ...nodes.map((node, index) => {
+        const blockedBy = Array.isArray(node.blocked_by) ? node.blocked_by : []
+        const state = safeText(node.state) || 'unknown'
+        const marker = node.in_frontier
+          ? '[R]'
+          : failedStates.has(state)
+            ? '[!]'
+            : successStates.has(state)
+              ? '[+]'
+              : '[.]'
+        const suffix = blockedBy.length ? ` · blocked_by ${blockedBy.map(safeText).join(' + ')}` : ''
+        return h(
+          Text,
+          {
+            color: node.in_frontier
+              ? t.color.ok
+              : marker === '[!]'
+                ? t.color.error
+                : marker === '[+]'
+                  ? t.color.muted
+                  : t.color.text,
+            key: `${safeText(node.node_id)}-${index}`,
+            wrap: 'truncate-end',
+          },
+          graphLine(`  ${marker} ${safeText(node.node_id)} · ${state}${suffix}`),
+        )
+      }),
+    )
+  }
+
   function Hud({ columns, state, t, viewportRows }) {
     const payload = state.payload
     if (!payload || payload.error || payload.privacy !== 'metadata_only') return null
@@ -321,6 +386,15 @@ export default function register(sdk) {
     const version = safeText(payload.version)
     const metrics = sessionMetrics(payload)
     const maestro = payload.maestro || {}
+    const graph = payload.graph || {}
+    const graphActive = graph.status === 'active'
+    const graphNodes = graphActive && Array.isArray(graph.nodes) ? graph.nodes : []
+    const graphNodeBudget = Math.min(graphNodes.length, Math.max(0, viewportRows - 8))
+    const visibleGraphNodes = graphNodes.slice(0, graphNodeBudget)
+    const graphHiddenRows =
+      Math.max(0, graphNodes.length - visibleGraphNodes.length) + (Number(graph.hidden_nodes) || 0)
+    const boundedGraph = graphActive ? { ...graph, hidden_nodes: graphHiddenRows } : graph
+    const graphHeight = graphActive ? 1 + visibleGraphNodes.length : 0
     const mainRows = active && Array.isArray(maestro.rows) ? maestro.rows.slice(0, 1) : []
     // Row budget learned from OMO's DAG status widget: five rows by default,
     // but a RUNNING agent lane is never hidden by the cap — with many lanes
@@ -332,7 +406,7 @@ export default function register(sdk) {
     const allAgentRows = active && Array.isArray(agents.rows) ? agents.rows : []
     const runningAgents = allAgentRows
       .filter(row => !row.state || row.state === 'running').length
-    const viewportBudget = Math.max(1, viewportRows - 5)
+    const viewportBudget = Math.max(1, viewportRows - 5 - graphHeight)
     const agentBudget = Math.min(
       Math.max(Math.max(5 - mainRows.length, 1), runningAgents),
       Math.max(0, viewportBudget - mainRows.length),
@@ -376,6 +450,9 @@ export default function register(sdk) {
             )
           : null,
       ),
+      graphActive
+        ? h(GraphRows, { columns, graph: boundedGraph, nodes: visibleGraphNodes, t })
+        : null,
       mainRows.length || rows.length
         ? ([...mainRows, ...rows].some(row => !row.state || row.state === 'running')
             ? h(LiveActivityRows, { columns, mainRows, receivedAt: state.receivedAt, rows, t })

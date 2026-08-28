@@ -13,6 +13,7 @@ def build_hud_payload(
     preset: str = "focused",
     limit: int = 3,
     token_metadata: dict[str, Any] | None = None,
+    graph_preference: str = "auto",
 ) -> dict[str, Any]:
     return read_omh_hud(
         omh_home=paths.omh_home,
@@ -21,4 +22,5 @@ def build_hud_payload(
         limit=limit,
         token_metadata=token_metadata or {},
         package_version=__version__,
+        graph_preference=graph_preference,
     )

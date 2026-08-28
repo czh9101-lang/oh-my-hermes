@@ -275,6 +275,31 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertEqual(widget.count("updateWidget(todoApp, apply)"), 1)
         self.assertEqual(widget.count("openWidget(todoApp, todoApp.init(''))"), 1)
 
+    def test_widget_renders_machine_graph_fields_without_input_capture(self) -> None:
+        widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
+
+        self.assertIn("const graph = payload.graph", widget)
+        self.assertIn("graph.status === 'active'", widget)
+        self.assertIn("graph.nodes", widget)
+        self.assertIn("graph.edges", widget)
+        self.assertIn("graph.edge_count", widget)
+        self.assertIn("graph.frontier", widget)
+        self.assertIn("graph.hidden_nodes", widget)
+        self.assertIn("node.blocked_by", widget)
+        self.assertIn("node.in_frontier", widget)
+        self.assertIn("Math.max(0, viewportRows - 8)", widget)
+        self.assertIn("OMH_SUBAGENT_GRAPH", widget)
+        self.assertIn("graph_preference=os.environ.get('OMH_SUBAGENT_GRAPH', 'auto')", widget)
+        self.assertIn("const graphLine =", widget)
+        self.assertIn("const truncateTextCells =", widget)
+        self.assertIn("const sanitizeText =", widget)
+        self.assertIn("sanitizeText(value).slice(0, 4096)", widget)
+        self.assertNotIn("safeText(value, 4096)", widget)
+        self.assertIn("'blocked_by_dependency'", widget)
+        self.assertIn("'dry_run_planned'", widget)
+        self.assertNotIn("useInput", widget)
+        self.assertNotIn("useKeypress", widget)
+
     def test_widget_is_bottom_docked_and_omits_host_status_fields(self) -> None:
         widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
 
