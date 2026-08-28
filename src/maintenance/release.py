@@ -272,7 +272,19 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # of omitting or estimating) and a matching final-checklist item pinning the
 # closing brief to the observed `omh_run_summary` line or that fallback
 # (+364 chars); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 727188
+# 727188 -> 741811: the new `maestro` (`ulw-maestro`) skill was added
+# (+14623 chars total): its own catalog body -- explicit-owner precondition,
+# handoff-mode statement, skill-set-informed prompt composition, and
+# readiness/session-capture rules -- plus the one-clause `ulw-maestro`
+# composition pointer added to `ultrawork`'s quality bar; warranted growth
+# for a wholly new engine. (The coding_handoff lane's `+N more` bump is
+# byte-neutral and contributes nothing here.)
+# 741811 -> 741942: review fixes on the maestro engine (+131 chars): the two
+# handoff schema identifiers corrected to the real
+# `coding_executor_handoff/v1` / `coding_runtime_handoff/v1` constants, the
+# prepared-record-vs-fanout-dispatch qualifier on the mode-statement rule, and
+# the de-defaulted handoff_policy closing clause; warranted correction.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 741942
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

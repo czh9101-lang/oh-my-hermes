@@ -459,9 +459,9 @@ _SURFACE_EXPOSURES = (
         "primary_workflow_skill",
         "Use as an installed Hermes workflow skill when the user wants to learn from a workflow run, review an improvement candidate, create a regression case, or export a redacted review bundle.",
     ),
-    # The twelve ULW workflow engines, materialized as explicit rows so each
+    # The ULW workflow engines, materialized as explicit rows so each
     # engine's lifecycle stage is answerable from the exposure table instead of
-    # falling through `_default_surface_exposure()`. For the eight canonical
+    # falling through `_default_surface_exposure()`. For the canonical
     # engines every field other than `lifecycle_stage` must stay byte-identical
     # to that default -- `tests/test_ulw_inventory.py` pins the equality -- so
     # a lifecycle move is a one-row edit here, never a behavior change smuggled
@@ -505,6 +505,15 @@ _SURFACE_EXPOSURES = (
     ),
     SurfaceExposure(
         "ultrawork",
+        "direct_skill",
+        _DEFAULT_SURFACE_PROJECTIONS,
+        True,
+        "primary_workflow_skill",
+        _DEFAULT_SURFACE_PREFERRED_USAGE,
+        lifecycle_stage="canonical",
+    ),
+    SurfaceExposure(
+        "maestro",
         "direct_skill",
         _DEFAULT_SURFACE_PROJECTIONS,
         True,
@@ -725,7 +734,7 @@ def skill_exposure_payload(name: str) -> dict[str, object]:
 
 ULW_INVENTORY_SCHEMA_VERSION = "omh_ulw_inventory/v1"
 
-# Reader-facing enumeration order for the twelve workflow engines: the request
+# Reader-facing enumeration order for the workflow engines: the request
 # pipeline (clarify -> research -> plan -> execute -> verify -> optimize), the
 # same order the English README table has always used. Membership is pinned to
 # `ULW_ENGINE_SKILL_NAMES` by `ulw_inventory_payload()` itself, so adding or
@@ -736,6 +745,7 @@ _ULW_ENGINE_ORDER = (
     "research",
     "ralplan",
     "ultrawork",
+    "maestro",
     "ralph",
     "team",
     "loop",
@@ -788,6 +798,13 @@ _ULW_ENGINE_PRESENTATIONS: dict[str, dict[str, object]] = {
         "site_title": "Ultrawork",
         "site_body": "Splits an accepted plan into disjoint lanes.",
         "site_cues": ("ultrawork", "parallel work"),
+    },
+    "maestro": {
+        "summary": "Hands a chosen coding CLI the work with a prompt built from its own installed skills.",
+        "site_tag": "External handoff",
+        "site_title": "Maestro",
+        "site_body": "Prepares the handoff for the coding agent you chose.",
+        "site_cues": ("ulw-maestro", "coding handoff"),
     },
     "ralph": {
         "summary": "One owner grinds a task to done — build, verify, review, repeat.",

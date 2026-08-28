@@ -4,7 +4,7 @@
 per-engine lifecycle state (plan #954 Stage 0, §9). These tests pin:
 
 1. the parity gate between the producer and `ULW_ENGINE_SKILL_NAMES`;
-2. the twelve materialized `SurfaceExposure` rows changing nothing except
+2. the materialized `SurfaceExposure` rows changing nothing except
    carrying an explicit `lifecycle_stage`;
 3. the drift metrics reading `len()` off the producer;
 4. the generated site region and English README table being current, and every
@@ -76,10 +76,10 @@ class UlwInventoryProducerTests(unittest.TestCase):
         self.assertEqual(payload["counts"]["alias"], len(payload["alias_engines"]))
         self.assertEqual(payload["counts"]["retired"], len(payload["retired_engines"]))
         self.assertEqual(payload["counts"]["total"], len(_all_engines(payload)))
-        # Stage 5 contract (#954, window=0): eight canonical engines, four
+        # Stage 5 contract (#954, window=0): the canonical engines, four
         # retired engines enumerated separately (never silently dropped), no
         # alias/warning stage in between.
-        self.assertEqual(payload["counts"], {"canonical": 8, "alias": 0, "retired": 4, "total": 12})
+        self.assertEqual(payload["counts"], {"canonical": 9, "alias": 0, "retired": 4, "total": 13})
         self.assertEqual(
             {engine["canonical"] for engine in payload["retired_engines"]},
             set(RETIRED_ENGINES),
@@ -144,8 +144,8 @@ class UlwInventoryProducerTests(unittest.TestCase):
         canonical = metrics["ulw_canonical_engine_count"]
         alias = metrics["ulw_alias_engine_count"]
         retired = metrics["ulw_retired_engine_count"]
-        self.assertEqual(canonical.expected, 8)
-        self.assertEqual(canonical.live(), 8)
+        self.assertEqual(canonical.expected, 9)
+        self.assertEqual(canonical.live(), 9)
         self.assertEqual(alias.expected, 0)
         self.assertEqual(alias.live(), 0)
         self.assertEqual(retired.expected, 4)
@@ -217,7 +217,7 @@ class UlwGeneratedSurfaceTests(unittest.TestCase):
         for name, numeral in (
             ("README.ko.md", f"{expected}개"),
             ("README.ja.md", f"{expected} 個"),
-            ("README.zh.md", "八个"),
+            ("README.zh.md", "九个"),
         ):
             with self.subTest(readme=name):
                 text = (REPO_ROOT / name).read_text(encoding="utf-8")

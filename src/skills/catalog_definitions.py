@@ -9,6 +9,7 @@ Artifacts Map in CLAUDE.md.
 
 from __future__ import annotations
 
+from ..coding.orchestration_vocabulary import HERMES_HARNESS_DEFAULT_WORDING
 from ..paper_learning import (
     PAPER_LEARNING_CARD_SCHEMA_VERSION,
     PAPER_LEARNING_COVERAGE_POLICY,
@@ -916,6 +917,7 @@ _DEFINITIONS = [
             "[capability:delivery_boundary] Run code-review as a gate after implementation evidence exists; review preparation alone is not review evidence.",
             "[capability:delivery_boundary] End a delivery cycle with a PR-ready or PR-observed report that separates prepared, executed, reviewed, verified, CI, and PR evidence.",
             "[capability:delivery_boundary] For implementation, default to Hermes-native delegation with a per-lane `omh_delegate_route` mixture route and acceptance criteria and verification commands attached; hand off to the `durable_checkpoint` capability for work that must survive sessions, and prepare a selected external executor/runtime path only on the user's explicit owner acceptance.",
+            "When a lane's coding owner is an external CLI rather than the Hermes harness, that lane's handoff runs under `ulw-maestro`'s contract — load it and follow its explicit-owner precondition, skill-set-informed prompt composition, readiness and permission probes, and session-id capture; a lane with an external owner is never a Hermes-native `delegate_task` lane. Lane framing, disjointness, integration verification, and the closing brief stay here.",
             "Route each Hermes-native lane before dispatch: an inherit-labeled delegation wave is an unrouted wave, not mixture routing — re-route it or state why parent inheritance is intended.",
             "Initialize the phase todo before engine work: declare numbered phases in delivery order with `omh_todo` (todo init) — bootstrap, one implement/verify/deliver task per lane or work unit, independent review lanes, and an evidence-and-cleanup close, with one task per observable outcome — keep exactly one item active while working, and update states as lanes complete; the run walks a bounded, HUD-visible checklist instead of an open-ended reasoning loop. Phase names and task titles are written in English — short, operator-legible labels — even when the conversation runs in another language, since the HUD todo checklist is an operator surface under the repo's English-by-default output contract.",
             ENGINE_INTERJECTION_RESUME_RULE,
@@ -979,6 +981,140 @@ _DEFINITIONS = [
             "[capability:coordinated_scope] If a coordinated worker has no ACK or result, mark that lane not_observed or blocked rather than infer progress.",
             "[capability:durable_checkpoint] If the goal ledger is stale or missing, inspect .omh/goals and ask which checkpoint to resume before continuing.",
             "[capability:durable_checkpoint] If a blocker checkpoint exists, keep the goal open and record the blocker plus the smallest unblock action.",
+        ),
+    ),
+    SkillDefinition(
+        "maestro",
+        "Maestro - prepares the handoff for the coding agent you already chose, composing its prompt from that "
+        "agent's own installed skills; never selects the owner and never executes the work itself.",
+        (
+            # No bare "maestro" token: it is an ordinary English word ("who is
+            # the maestro of this orchestra?") and a bare-token trigger would
+            # overroute it -- the same reasoning `research` documents for
+            # dropping its own bare token. The sigil (`$maestro`) and labeled
+            # (`ulw-maestro`) forms stay unambiguous.
+            "$maestro",
+            "ulw-maestro",
+            "coding handoff",
+            "prepare the handoff",
+            "prepare a coding handoff",
+            "hand off the coding work",
+            "external executor handoff",
+            "handoff prompt",
+            "delegation prompt",
+            "코딩 위임",
+            "위임 프롬프트",
+            "핸드오프 준비",
+            "외부 실행기 위임",
+            "코딩 에이전트에 넘기",
+        ),
+        "Use once a lane's coding owner is an explicit external CLI and the work needs a prompt composed from "
+        "that CLI's own installed skills, its readiness and permission checked, and its session captured for "
+        "steering.",
+        category="execution",
+        phase="external-handoff",
+        hermes_role="runtime-handoff-guidance",
+        handoff_policy=(
+            "Convert an explicitly chosen external coding owner into a prepared handoff: claude-code as a "
+            "prompt-only `coding_prompt_handoff/v1` (never dispatchable, never described as a run), codex as a "
+            "dispatchable `coding_executor_handoff/v1`, and omx-runtime/omo-runtime/omc-runtime as "
+            "`coding_runtime_handoff/v1`. "
+            f"This engine loads only after that choice is made -- {HERMES_HARNESS_DEFAULT_WORDING} -- and it "
+            "never substitutes for the Hermes harness path or picks the owner itself."
+        ),
+        required_inputs=(
+            "explicit coding-owner choice for this run",
+            "task or unit description",
+            "the chosen profile's discovered executor skill set",
+        ),
+        expected_outputs=(
+            "a composed executor prompt arranged by the unit's role recipe",
+            "the handoff mode and dispatchability state named up front",
+            "a captured session or thread id, or an explicit unsteerable note",
+        ),
+        artifact_expectations=(
+            "prepared external handoff record when a wrapper can record it",
+        ),
+        safety_rules=(
+            "Never prepare a handoff without an explicit owner choice for this run -- a routing recommendation, "
+            "a plan mention, or a previous run's owner is not a choice for this run.",
+            "Prepared, composed, or shown is never dispatch, execution, review, CI, or merge evidence.",
+            "Never route a Hermes-owned lane through this engine; the Hermes harness stays the default coding "
+            "path.",
+            "Never carry a discovered skill's description text into a composed prompt -- only its name and "
+            "invocation string ever leave discovery; the description stays inside the classifier.",
+            "Never dispatch without an explicit user dispatch command; `omh coding fanout dispatch` is the only "
+            "executing surface.",
+        ),
+        quality_tier="handoff-gated",
+        quality_bar=(
+            ENGINE_ENTRY_CONFIRMATION_RULE,
+            "Require the coding owner to already be chosen for this run -- named in the request, accepted when "
+            "asked, or recorded as an `accepted_explicit_choice` -- before composing anything; a routing "
+            "recommendation, a plan mention, or a previous run's owner is not a choice for this run. With no "
+            "owner, two owners, or an unready owner, ask `choose_executor` once and stop; never pick the owner "
+            "on the user's behalf.",
+            "State the handoff mode before composing: claude-code is prompt-only (`coding_prompt_handoff/v1` -- "
+            "the prepared handoff record is never dispatchable and never described as a run; only `omh coding "
+            "fanout dispatch` ever spawns a CLI), codex is a dispatchable `coding_executor_handoff/v1`, and "
+            "omx-runtime/omo-runtime/omc-runtime are `coding_runtime_handoff/v1`.",
+            "Compose the prompt from the selected profile's DISCOVERED skills via `omh coding executor-skills "
+            "--profile <profile>`: arrange the returned skills by the unit's role recipe, one named skill per "
+            "step, using each skill's own invocation string verbatim (`/name`, `/pack:name` from its manifest, "
+            "`$name` for a codex pack) -- never a guessed prefix. Empty discovery gets one explicit line -- "
+            '"no installed skills discovered for <profile>; prompt composed generically" -- then compose '
+            "generically. Load `references/executor-prompt-composition.md` for the full procedure.",
+            "A discovered skill is declared, never observed: a `SKILL.md` on disk is evidence the file exists, "
+            "not that the receiving agent loads, enables, or honours it -- its own registry is the authority.",
+            "Hold every composed prompt to the executor prompting contract: the ten required sections in order "
+            "(Goal, Do, Don't, Known context, Unknowns and decision rule, Expected result, Test, Progress and "
+            "blockers, Evidence boundary, Task), a greppable `Docs consulted:` block (URL plus version, or the "
+            "explicit none-line), and the six-section session summary shape on report-back.",
+            "Keep the composed prompt cache-stable: an invariant head that stays byte-identical across units and "
+            "re-dispatches, with only the tail varying.",
+            "Before real dispatch, observe execution (a `--version` or no-op call) and read the configured model "
+            "from the executor's own config or output; a binary on PATH plus an auth file is `prepared`, never "
+            "`observed`. Run a bounded permission probe before the real dispatch.",
+            "`omh coding fanout dispatch` is the only executing surface, explicit per invocation, and it never "
+            "merges; preparing, composing, or showing a prompt is never dispatch, and a dispatch receipt is never "
+            "review, CI, or merge evidence.",
+            "Capture the executor's session id at dispatch (`--output-format json` -> `session_id` for Claude "
+            "Code, `--json` -> `thread_id` for Codex) and carry it into every status line; a missing id is "
+            "reported as unsteerable, never silently attached.",
+            "Write every steering delta as more than a restated brief: name the changed constraint, the new "
+            "evidence, the required action, and whether the verification target moved.",
+            ENGINE_INTERJECTION_RESUME_RULE,
+            "Entered from an `ulw-work` lane, own that lane's handoff only -- lane framing, disjointness, "
+            "integration verification, and the closing brief stay with `ulw-work`; report back in that lane's "
+            "evidence vocabulary.",
+            "Close with the localized `omh_run_summary` summary_text verbatim as the final lines, or an explicit "
+            "run-summary not_available line -- never an estimated number.",
+        ),
+        why_this_exists=(
+            "`maestro` exists so a handoff to an already-chosen external coding CLI carries that CLI's own "
+            "installed skills, a stated dispatchability boundary, and a captured session id instead of a guessed "
+            f"prompt; {HERMES_HARNESS_DEFAULT_WORDING}, and this engine only loads once that explicit choice is "
+            "already made."
+        ),
+        do_not_use_when=(
+            "No coding owner is chosen yet for this run; the Hermes harness stays the default and this engine "
+            "never picks one.",
+            "The request is a concept question about maestro, prepared handoffs, or a coding-agent name, or a "
+            "filename that happens to contain one -- answer directly instead.",
+            "The user wants advice on which coding owner to pick -- ask, don't compose.",
+            "The user is asking whether an owner CAN run right now -- use `executor-runtime-readiness` instead.",
+            "The request is lane-splitting or a full delivery cycle rather than one lane's handoff -- use "
+            "`ultrawork`, which enters this engine for lanes with an external owner.",
+        ),
+        good_example=SkillExample(
+            prompt="$maestro codex already agreed to take this -- compose the handoff prompt for the retry-queue fix.",
+            expected="Confirm codex as the accepted owner, discover its installed skills, compose a role-arranged prompt with the required sections, and state the dispatchable handoff mode.",
+            why="The coding owner is already explicit and the work needs a skill-aware prompt, not owner selection.",
+        ),
+        bad_example=SkillExample(
+            prompt="맡길 사람 아직 안 정했는데 그냥 maestro로 프롬프트 만들어줘.",
+            expected="Ask `choose_executor` for the coding owner before composing anything; never pick one on the user's behalf.",
+            why="No coding owner has been explicitly chosen yet, so composing a handoff would select the owner silently.",
         ),
     ),
     SkillDefinition(

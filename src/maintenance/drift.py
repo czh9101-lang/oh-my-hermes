@@ -186,7 +186,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="routing_precision_case_count",
             describe="Routing precision cases",
             live=_routing_precision_case_count,
-            expected=99,
+            expected=103,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -198,7 +198,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="routing_precision_intervention_case_count",
             describe="Routing precision intervention cases",
             live=_routing_precision_intervention_case_count,
-            expected=213,
+            expected=217,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -210,7 +210,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="installable_skill_count",
             describe="Installable workflow skills quoted in reference surfaces",
             live=_installable_skill_count,
-            expected=102,
+            expected=103,
             sites=(
                 "docs/README.md",
             ),
@@ -231,7 +231,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="ulw_canonical_engine_count",
             describe="ULW engines in the canonical lifecycle stage",
             live=_ulw_canonical_engine_count,
-            expected=8,
+            expected=9,
             sites=(
                 "README.ko.md",
                 "README.ja.md",

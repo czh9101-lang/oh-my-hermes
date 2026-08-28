@@ -245,7 +245,7 @@ Do not replace the resolved SHA with main. Execute the pinned protocol's OS-appr
   <img src="assets/omh-character-badge.png" alt="Oh My Hermes character mark" width="170">
 </p>
 
-八个 `ulw-` workflow。说出触发词，其余交给 Hermes —— 完整目录见
+九个 `ulw-` workflow。说出触发词，其余交给 Hermes —— 完整目录见
 [Workflow Reference](docs/WORKFLOWS.md)。
 
 | Skill | 做什么 |
@@ -255,6 +255,7 @@ Do not replace the resolved SHA with main. Execute the pinned protocol's OS-appr
 | ⚡ `ulw-research` | 翻真实代码和网页做调研，留下出处，可疑就核实。 |
 | ⚡ `ulw-plan` | 做一份评审过的计划：比过方案、点明风险、定好完成标准。 |
 | ⚡ `ulw-work` | 把已确认的计划放进互不碰同一文件的并行车道执行。 |
+| ⚡ `ulw-maestro` | 把工作交给你选择的编码 CLI，并用它自己安装的技能组装提示词。 |
 | ⚡ `ulw-loop` | 计划 → 实现 → 评审，循环到目标真正通过。 |
 | ⚡ `ulw-qa` | 故意用狠场景攻击，坏哪修哪。 |
 | ⚡ `ulw-perf` | 先测出真正慢和贵的地方，再逐条修热路径。 |
@@ -281,7 +282,7 @@ OMH 把模型选择和编码所有权作为两个独立决策，并且绝不把�
 | 🔎 **结构化代码搜索** | 基于实测的 `ast-grep` 手册 — 覆盖 28 种语言的结构查询、禁止 body-capture、grep 回退 — 注入到 executor 搜索代码的场景。OMH 只检测二进制是否存在,从不亲自执行。 |
 | 🗄️ **项目记忆系统** | Hermes 可加载的确定性文件型 memory provider、可审查的项目记忆命令(inspect、pack、domain capture)、consolidation 调度 brief 以及记忆审查技能 — 从不读取或修改 Hermes 不透明的内部记忆。 |
 | 🛠️ **编码 harness 与护栏** | executor readiness 探测、附在已准备 handoff 上的 capability snapshot 与 owner-fit 报告、作用于 `execute_code` 结果的 code-mode discipline,以及用规则文本拦截越界 tool call 的用户自定义 toolcall rules。 |
-| ♾️ **Ultra 工作流引擎** | 所有权彼此隔离的并行交付 lane、带 ledger 和真实完成 gate 的计量循环,以及在任何引擎运行前先澄清意图的 decision-frontier 访谈 — 八个引擎在下方 Ultra 技能一节列出。 |
+| ♾️ **Ultra 工作流引擎** | 所有权彼此隔离的并行交付 lane、带 ledger 和真实完成 gate 的计量循环,以及在任何引擎运行前先澄清意图的 decision-frontier 访谈 — 引擎列表见下方 Ultra 技能一节。 |
 | 📦 **确定性技能目录** | 120+ 可安装的 workflow 技能、逐字节校验的生成目录、包含负向用例的 routing precision 语料,以及一字符漂移即令 CI 失败的 drift gate。 |
 
 ## 证据先于声明

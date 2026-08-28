@@ -339,7 +339,7 @@ Do not replace the resolved SHA with main. Execute the pinned protocol's OS-appr
 </p>
 
 <!-- omh:ulw-inventory:begin (generated: uv run python -m omh.cli docs ulw-inventory; source: src/skills/catalog.py) -->
-Eight `ulw-` workflows. Say the trigger in chat — Hermes routes the
+Nine `ulw-` workflows. Say the trigger in chat — Hermes routes the
 rest. Full catalog: [Workflow Reference](docs/WORKFLOWS.md).
 
 | Workflow&nbsp;command | What it does |
@@ -349,6 +349,7 @@ rest. Full catalog: [Workflow Reference](docs/WORKFLOWS.md).
 | ⚡ `ulw-research` | Digs through real code and the live web, keeps sources, and verifies anything doubtful. |
 | ⚡ `ulw-plan` | Builds a reviewed plan: options compared, risks named, done-criteria agreed. |
 | ⚡ `ulw-work` | Runs an accepted plan in parallel lanes that never touch the same file. |
+| ⚡ `ulw-maestro` | Hands a chosen coding CLI the work with a prompt built from its own installed skills. |
 | ⚡ `ulw-loop` | Cycles plan → build → review until the goal actually passes. |
 | ⚡ `ulw-qa` | Attacks the build with hostile scenarios and fixes what breaks. |
 | ⚡ `ulw-perf` | Measures where it is actually slow or expensive, then fixes one hot path at a time. |
@@ -380,7 +381,7 @@ generated catalog, triggers, harnesses, and evidence rules live in
 | 🔎 **Structural code search** | A measured `ast-grep` playbook — structural queries across 28 languages, body-capture bans, grep fallback — injected where executors search code; OMH detects the binary and never runs it. |
 | 🗄️ **Project memory system** | A deterministic file-backed memory provider Hermes can load, reviewed project-memory commands (inspect, pack, domain capture), consolidation-scheduling briefs, and memory review skills — never reading or patching Hermes' opaque internal memory. |
 | 🛠️ **Coding harnesses & guardrails** | Executor readiness probes, capability snapshots and owner-fit reports on prepared handoffs, code-mode discipline on `execute_code` results, and user-authored toolcall rules that block an off-script tool call with your rule text. |
-| ♾️ **Ultra workflow engines** | Parallel delivery lanes with disjoint ownership, measured goal loops with ledgers and real completion gates, and decision-frontier interviews that clarify intent before any engine runs — the eight engines are listed in Ultra-Skills below. |
+| ♾️ **Ultra workflow engines** | Parallel delivery lanes with disjoint ownership, measured goal loops with ledgers and real completion gates, and decision-frontier interviews that clarify intent before any engine runs — the ULW engines are listed in Ultra-Skills below. |
 | 📦 **A deterministic skill catalog** | 120+ installable workflow skills with a byte-exact generated catalog, routing precision corpora (negative controls included), and drift gates that fail CI on one-character divergence. |
 
 <br>
