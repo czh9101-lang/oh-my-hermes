@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import stat
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -16,6 +17,10 @@ from omh.coding.unit_prompt_protocol import HIGH_EFFORT_CALIBRATIONS  # noqa: E4
 
 
 BASE = Path(__file__).resolve().parents[1] / "benchmarks" / "live-model-tools" / "v1"
+sys.path.insert(0, str(BASE / "lib"))
+
+from runner import _snapshot  # noqa: E402
+from validation import changed_paths  # noqa: E402
 
 
 def _load_omh_live():
@@ -178,6 +183,20 @@ class OmhLiveAdapterTests(unittest.TestCase):
         self.assertIn("Verify the file exists and parses as JSON", baseline)
         self.assertIn(HIGH_EFFORT_CALIBRATIONS["deepseek"], optimized)
         self.assertEqual(module.task_digest(baseline), module.task_digest(optimized))
+
+    def test_snapshot_and_changed_paths_use_canonical_posix_keys(self) -> None:
+        with TemporaryDirectory() as root_text:
+            root = Path(root_text)
+            target = root / "nested" / "file.txt"
+            target.parent.mkdir()
+            target.write_text("before", encoding="utf-8")
+
+            initial = _snapshot(root)
+            self.assertEqual(initial, {"nested/file.txt": b"before"})
+            self.assertEqual(changed_paths(root, initial), [])
+
+            target.write_text("after", encoding="utf-8")
+            self.assertEqual(changed_paths(root, initial), ["nested/file.txt"])
 
     def test_observation_metrics_never_estimate_missing_usage(self) -> None:
         module = _load_omh_live()
