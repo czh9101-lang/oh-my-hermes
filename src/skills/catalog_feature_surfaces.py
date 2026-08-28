@@ -1653,6 +1653,13 @@ _FEATURE_SURFACE_SKILLS = (
             "If the request is a manager status or throughput review, route to agent-ops-review.",
             "If the request is a durable self-improvement record after diagnosis, route to workflow-learning.",
         ),
+        extra_quality_bar=(
+            "Hold at least two competing failure hypotheses at once, each with observed evidence for and against; a diagnosis that never named a rival hypothesis is a guess.",
+            "Order probes cheapest-discriminating-first: run the cheapest check that splits the surviving hypotheses before any expensive capture, rerun, or restart.",
+            "When a run that used to work now fails, bisect from last-known-good to first-bad change (prompt, config, tool, model, or environment) instead of debugging the newest symptom.",
+            "Name a cause only after revert-verify: remove the suspect change and observe the failure disappear, or state that causation is unproven.",
+            "Reproduce the failure before preparing any recovery action; a fix without a reproduced failure first is a guess.",
+        ),
     ),
     _feature_surface_skill(
         "failure-signal-audit",
@@ -1722,6 +1729,13 @@ _FEATURE_SURFACE_SKILLS = (
             "If no code/trace/runtime evidence is supplied, prepare the audit plan and request the smallest source surface to inspect.",
             "If the user wants live service SLO or incident review, route to reliability-review.",
             "If the user wants rendered browser proof, route frontend visual evidence to visual-qa before PASS.",
+        ),
+        extra_quality_bar=(
+            "Hold masked-failure and intended-fallback as competing hypotheses for each suspect site, each with observed evidence for and against, until one reading is discriminated.",
+            "Order evidence probes cheapest-discriminating-first: read the handler and its callers, then logs and traces, before demanding expensive reruns or instrumentation.",
+            "When a check went green without an observed fix, bisect from the last run that surfaced the failure to the first that swallowed it before naming the masking change.",
+            "Attribute a masked failure to a specific handler or fallback only with revert-verify evidence (the signal observed reappearing without it), or mark causation unproven.",
+            "Route remediation only against a reproduced failing signal; a remediation handoff without a reproduced failure first is a guess.",
         ),
     ),
     _feature_surface_skill(

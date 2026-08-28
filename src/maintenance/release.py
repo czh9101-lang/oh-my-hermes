@@ -244,7 +244,13 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # prefix-placement quality-bar rule, and the pointer to the on-demand
 # references/cache-placement.md card; the reference body loads on demand
 # and sits outside this always-loaded budget); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 724180
+# 724180 -> 725734: agent-debug and failure-signal-audit gained real
+# debugging-methodology quality bars (+1554 chars: competing hypotheses
+# held with evidence for and against, cheapest-discriminating-probe-first
+# ordering, last-known-good-to-first-bad bisect discipline, revert-verify
+# before causation claims, and no fix or remediation without a reproduced
+# failure first); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 725734
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

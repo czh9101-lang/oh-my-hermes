@@ -6490,6 +6490,11 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Name the user-facing workflow objective, required context, next action, and stop condition.
   - Separate prepared guidance from observed platform, runtime, connector, file, memory, or delivery evidence.
   - Expose missing tools, credentials, targets, or observations as user-visible gaps.
+  - Hold at least two competing failure hypotheses at once, each with observed evidence for and against; a diagnosis that never named a rival hypothesis is a guess.
+  - Order probes cheapest-discriminating-first: run the cheapest check that splits the surviving hypotheses before any expensive capture, rerun, or restart.
+  - When a run that used to work now fails, bisect from last-known-good to first-bad change (prompt, config, tool, model, or environment) instead of debugging the newest symptom.
+  - Name a cause only after revert-verify: remove the suspect change and observe the failure disappear, or state that causation is unproven.
+  - Reproduce the failure before preparing any recovery action; a fix without a reproduced failure first is a guess.
 - Completion checklist:
   - Failure state, intended goal, recent tool sequence, and context pressure are captured.
   - Diagnosis distinguishes repeated command/tool loops, context drift, environment mismatch, service errors, and wrong-hypothesis tests.
@@ -6551,6 +6556,11 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Name the user-facing workflow objective, required context, next action, and stop condition.
   - Separate prepared guidance from observed platform, runtime, connector, file, memory, or delivery evidence.
   - Expose missing tools, credentials, targets, or observations as user-visible gaps.
+  - Hold masked-failure and intended-fallback as competing hypotheses for each suspect site, each with observed evidence for and against, until one reading is discriminated.
+  - Order evidence probes cheapest-discriminating-first: read the handler and its callers, then logs and traces, before demanding expensive reruns or instrumentation.
+  - When a check went green without an observed fix, bisect from the last run that surfaced the failure to the first that swallowed it before naming the masking change.
+  - Attribute a masked failure to a specific handler or fallback only with revert-verify evidence (the signal observed reappearing without it), or mark causation unproven.
+  - Route remediation only against a reproduced failing signal; a remediation handoff without a reproduced failure first is a guess.
 - Completion checklist:
   - Audit scope, source surfaces, and evidence types are named.
   - Swallowed errors, dangerous fallbacks, propagation gaps, and false-green claims are reported as separate finding types.
