@@ -2245,7 +2245,7 @@ Run the steps in this order; each carries its own verify line, and a step whose 
 
 5. **CI skeleton.** One workflow, running the commands the README and context file already named.
    - Wire the CI job to call the exact same commands documented in the README and the agent context file - never a hand-typed variant that quietly drifts.
-   - Add a build matrix only when the project genuinely targets more than one runtime or platform; a matrix for a single-target project is unrequested configurability.
+   - Add a build matrix only when the project genuinely targets more than one runtime or platform; a matrix for a single-target project is a speculative option - drop it until a second target exists.
    - Keep the first workflow small enough to read in one pass: lint, test, and the project's own build step, nothing speculative.
    - Self-test: run `diff` in your head between the CI step commands and the README/context-file commands - do they match exactly?
    - Verify: the first CI run is green, and the CI commands are string-identical to the documented ones - not merely equivalent.
@@ -2255,6 +2255,7 @@ Run the steps in this order; each carries its own verify line, and a step whose 
    - An empty `docs/` directory scaffolded "for later" is speculative structure with nothing in it; skip it explicitly instead.
    - When `docs/` is created, each file replaces one README section that pointed to it, keeping the single-source rule below intact.
    - Self-test: can you name the three-plus README sections that just overflowed into this directory?
+   - Verify: every file under `docs/` is the target of a README pointer, and no file sits unreferenced.
 
 ## Cross-cutting bars
 

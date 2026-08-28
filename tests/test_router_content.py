@@ -3152,8 +3152,12 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("fresh, empty, or newly", idea_to_deploy.content)
         self.assertIn("explicitly skip it for throwaway or scratch work", idea_to_deploy.content)
         self.assertIn("bootstrap the project", idea_to_deploy.content)
-        self.assertIn("project scaffolding", idea_to_deploy.content)
+        self.assertIn("scaffold a new project", idea_to_deploy.content)
         self.assertIn("set up a new repo", idea_to_deploy.content)
+        # The bare noun "project scaffolding" was removed after review: it
+        # occurs naturally inside questions about existing repos and must not
+        # dispatch the delivery loop (see the two negative controls).
+        self.assertNotIn("`project scaffolding`", idea_to_deploy.content)
 
         reference = {
             (template.skill_name, template.relative_path): template.content
@@ -3171,7 +3175,7 @@ class RouterContentTests(unittest.TestCase):
         ):
             with self.subTest(step=step_heading):
                 self.assertIn(step_heading, reference)
-        self.assertEqual(reference.count("Verify:"), 5)
+        self.assertEqual(reference.count("Verify:"), 6)
 
         # Named drift classes and cross-cutting bars from the design brief.
         self.assertIn("license-declared-but-no-file is a named drift class", reference)

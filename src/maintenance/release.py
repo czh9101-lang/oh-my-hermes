@@ -263,7 +263,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # skip, plus the pointer to the on-demand references/project-bootstrap.md;
 # the reference body loads on demand and sits outside this always-loaded
 # budget); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 726847
+# 726847 -> 726824: the bare-noun "project scaffolding" trigger was dropped
+# from idea-to-deploy after review showed it dispatched read-only questions
+# about existing repos into the delivery loop (-23 chars; the imperative
+# bootstrap/scaffold phrases remain); warranted shrink.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 726824
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

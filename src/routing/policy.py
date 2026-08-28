@@ -6074,7 +6074,6 @@ def _greenfield_project_bootstrap_requested(normalized_query: str) -> bool:
             "bootstrap a new project",
             "bootstrap this repo",
             "bootstrap a new repo",
-            "project scaffolding",
             "scaffold a new project",
             "scaffold this project",
             "set up a new repo",

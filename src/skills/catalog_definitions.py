@@ -4614,7 +4614,6 @@ _DEFINITIONS = [
             "bootstrap the project",
             "bootstrap this project",
             "bootstrap a new project",
-            "project scaffolding",
             "scaffold a new project",
             "set up a new repo",
         ),
