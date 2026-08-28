@@ -267,7 +267,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # from idea-to-deploy after review showed it dispatched read-only questions
 # about existing repos into the delivery loop (-23 chars; the imperative
 # bootstrap/scaffold phrases remain); warranted shrink.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 726824
+# 726824 -> 727188: ultrawork's run-summary closing rule gained the
+# non-observed-status fallback (print an explicit not_available line instead
+# of omitting or estimating) and a matching final-checklist item pinning the
+# closing brief to the observed `omh_run_summary` line or that fallback
+# (+364 chars); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 727188
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
