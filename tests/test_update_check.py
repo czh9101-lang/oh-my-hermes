@@ -1,0 +1,330 @@
+"""Contracts for the opt-in startup update-availability check.
+
+`evaluate_update_check` is the core of `omh update-check`: zero network
+attempts while `update_check.mode` is `off` (the shipped default), an
+interval-respecting cache once opted in, a bounded timeout on every probe,
+and a silent skip -- never a raised exception, a false claim, or a delayed
+result -- on any network failure.
+
+The probe spawns `curl` as a subprocess (never a Python-level network
+client -- see `tests/test_handoff_safety_contract_enforcement.py` INVARIANT
+2), so every test here fakes the `subprocess.run`-shaped `runner` callable;
+none of them may spawn a real process or reach a real socket.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from omh.local_store import FileLockTimeout, atomic_write_json, read_json_object
+from omh.maintenance.update_check import (
+    DEFAULT_UPDATE_CHECK_INTERVAL_HOURS,
+    DEFAULT_UPDATE_CHECK_MODE,
+    UPDATE_CHECK_MODES,
+    acquire_auto_update_lock,
+    evaluate_update_check,
+    fetch_remote_main_identity,
+    format_notice_line,
+    local_installed_commit,
+    read_update_check_cache,
+    read_update_check_policy,
+    record_remote_commit_for_install,
+    update_check_cache_path,
+    write_update_check_policy,
+)
+from omh.paths import OmhPaths
+
+
+def _paths(root: Path) -> OmhPaths:
+    resolved = root.resolve()
+    return OmhPaths(resolved / ".omh", resolved / ".hermes")
+
+
+def _http_stdout(status: int, *, etag: str = "", sha: str | None = None) -> str:
+    header_lines = [f"HTTP/2 {status}"]
+    if etag:
+        header_lines.append(f"etag: {etag}")
+    body = json.dumps({"sha": sha}) if sha is not None else ""
+    return "\n".join(header_lines) + "\n\n" + body
+
+
+def _ok_runner(sha: str, *, etag: str = '"abc"', calls: list[object] | None = None):
+    def runner(argv, timeout=None):
+        if calls is not None:
+            calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout=_http_stdout(200, etag=etag, sha=sha), stderr="")
+
+    return runner
+
+
+def _not_modified_runner(etag: str = '"abc"'):
+    def runner(argv, timeout=None):
+        return subprocess.CompletedProcess(argv, 0, stdout=_http_stdout(304, etag=etag), stderr="")
+
+    return runner
+
+
+def _raising_runner(exc: BaseException):
+    def runner(argv, timeout=None):
+        raise exc
+
+    return runner
+
+
+def _refusing_runner():
+    def runner(argv, timeout=None):  # pragma: no cover - fails the test if reached
+        raise AssertionError("no subprocess spawn is allowed here")
+
+    return runner
+
+
+def _write_local_commit(paths: OmhPaths, sha: str) -> None:
+    paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(paths.runtime_state_path, {"release_source_commit": sha})
+
+
+class UpdateCheckPolicyTests(unittest.TestCase):
+    def test_default_policy_is_off_with_the_24h_interval(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            policy = read_update_check_policy(paths)
+            self.assertEqual(policy["mode"], DEFAULT_UPDATE_CHECK_MODE)
+            self.assertEqual(policy["mode"], "off")
+            self.assertEqual(policy["interval_hours"], DEFAULT_UPDATE_CHECK_INTERVAL_HOURS)
+
+    def test_write_then_read_round_trips_and_preserves_other_profile_fields(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            paths.omh_home.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(paths.setup_profile_path, {"unrelated": "kept"})
+            policy = write_update_check_policy(paths, mode="notify", interval_hours=6)
+            self.assertEqual(policy["mode"], "notify")
+            self.assertEqual(policy["interval_hours"], 6.0)
+            self.assertEqual(read_update_check_policy(paths), policy)
+            profile = read_json_object(paths.setup_profile_path)
+            self.assertEqual(profile["unrelated"], "kept")
+
+    def test_write_rejects_unknown_mode_and_non_positive_interval(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            with self.assertRaises(ValueError):
+                write_update_check_policy(paths, mode="sometimes")
+            with self.assertRaises(ValueError):
+                write_update_check_policy(paths, interval_hours=0)
+            with self.assertRaises(ValueError):
+                write_update_check_policy(paths, interval_hours=-4)
+
+    def test_every_mode_is_a_recognized_choice(self) -> None:
+        self.assertEqual(UPDATE_CHECK_MODES, ("off", "notify", "auto"))
+
+
+class FetchRemoteMainIdentityTests(unittest.TestCase):
+    def test_success_returns_sha_and_etag(self) -> None:
+        result = fetch_remote_main_identity(runner=_ok_runner("deadbeef" * 5))
+        self.assertTrue(result.ok)
+        self.assertEqual(result.sha, "deadbeef" * 5)
+        self.assertEqual(result.etag, '"abc"')
+        self.assertFalse(result.not_modified)
+
+    def test_not_modified_304_is_ok_without_a_new_sha(self) -> None:
+        result = fetch_remote_main_identity(etag='"abc"', runner=_not_modified_runner('"abc"'))
+        self.assertTrue(result.ok)
+        self.assertTrue(result.not_modified)
+        self.assertIsNone(result.sha)
+
+    def test_timeout_is_a_clean_failure_not_an_exception(self) -> None:
+        result = fetch_remote_main_identity(
+            runner=_raising_runner(subprocess.TimeoutExpired(cmd=["curl"], timeout=1.5))
+        )
+        self.assertFalse(result.ok)
+        self.assertIsNotNone(result.error)
+
+    def test_curl_missing_is_a_clean_failure(self) -> None:
+        result = fetch_remote_main_identity(runner=_raising_runner(FileNotFoundError("curl not found")))
+        self.assertFalse(result.ok)
+
+    def test_nonzero_exit_is_a_clean_failure(self) -> None:
+        def runner(argv, timeout=None):
+            return subprocess.CompletedProcess(argv, 6, stdout="", stderr="curl: (6) Could not resolve host")
+
+        result = fetch_remote_main_identity(runner=runner)
+        self.assertFalse(result.ok)
+        self.assertIn("resolve host", result.error or "")
+
+    def test_http_error_other_than_304_is_a_clean_failure(self) -> None:
+        def runner(argv, timeout=None):
+            return subprocess.CompletedProcess(argv, 0, stdout=_http_stdout(500), stderr="")
+
+        result = fetch_remote_main_identity(runner=runner)
+        self.assertFalse(result.ok)
+
+    def test_malformed_json_body_is_a_clean_failure(self) -> None:
+        def runner(argv, timeout=None):
+            return subprocess.CompletedProcess(argv, 0, stdout="HTTP/2 200\n\nnot json", stderr="")
+
+        result = fetch_remote_main_identity(runner=runner)
+        self.assertFalse(result.ok)
+
+    def test_missing_sha_field_is_a_clean_failure(self) -> None:
+        def runner(argv, timeout=None):
+            return subprocess.CompletedProcess(argv, 0, stdout="HTTP/2 200\n\n{}", stderr="")
+
+        result = fetch_remote_main_identity(runner=runner)
+        self.assertFalse(result.ok)
+
+    def test_the_argv_invokes_curl_with_the_commits_endpoint(self) -> None:
+        calls: list[object] = []
+        fetch_remote_main_identity(runner=_ok_runner("a" * 40, calls=calls))
+        self.assertEqual(len(calls), 1)
+        argv = calls[0]
+        self.assertEqual(argv[0], "curl")
+        self.assertIn("https://api.github.com/repos/rlaope/oh-my-hermes/commits/main", argv)
+
+
+class EvaluateUpdateCheckTests(unittest.TestCase):
+    def test_off_mode_makes_zero_network_attempts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            result = evaluate_update_check(paths, runner=_refusing_runner())
+            self.assertEqual(result["mode"], "off")
+            self.assertEqual(result["outcome"], "skipped_off")
+            self.assertFalse(result["checked"])
+            self.assertFalse(result["should_auto_update"])
+
+    def test_no_local_identity_is_inconclusive_not_a_false_claim(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="notify")
+            result = evaluate_update_check(paths, runner=_ok_runner("a" * 40))
+            self.assertEqual(result["outcome"], "inconclusive")
+            self.assertEqual(format_notice_line(result), "OMH update check inconclusive -- run `omh update`.")
+
+    def test_matching_identity_is_up_to_date(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="notify")
+            _write_local_commit(paths, "a" * 40)
+            result = evaluate_update_check(paths, runner=_ok_runner("a" * 40))
+            self.assertEqual(result["outcome"], "up_to_date")
+            self.assertEqual(format_notice_line(result), "")
+
+    def test_differing_identity_is_behind_and_formats_a_short_notice(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="notify")
+            _write_local_commit(paths, "a" * 40)
+            result = evaluate_update_check(paths, runner=_ok_runner("b" * 40))
+            self.assertEqual(result["outcome"], "behind")
+            notice = format_notice_line(result)
+            self.assertIn("OMH update available: aaaaaaa -> bbbbbbb", notice)
+            self.assertIn("omh update", notice)
+
+    def test_auto_mode_flags_should_auto_update_only_when_behind(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="auto")
+            _write_local_commit(paths, "a" * 40)
+            behind = evaluate_update_check(paths, runner=_ok_runner("b" * 40))
+            self.assertTrue(behind["should_auto_update"])
+
+            _write_local_commit(paths, "b" * 40)
+            up_to_date = evaluate_update_check(paths, force=True, runner=_ok_runner("b" * 40))
+            self.assertFalse(up_to_date["should_auto_update"])
+
+    def test_network_failure_is_a_silent_skip_that_keeps_the_previous_outcome(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="notify")
+            _write_local_commit(paths, "a" * 40)
+            first = evaluate_update_check(paths, runner=_ok_runner("b" * 40))
+            self.assertEqual(first["outcome"], "behind")
+
+            second = evaluate_update_check(
+                paths, force=True, runner=_raising_runner(subprocess.TimeoutExpired(cmd=["curl"], timeout=1.5))
+            )
+            self.assertEqual(second["outcome"], "behind")
+            self.assertTrue(second["checked"])
+            cache = read_update_check_cache(paths)
+            self.assertEqual(cache["outcome"], "behind")
+
+    def test_interval_not_elapsed_serves_the_cache_without_a_network_attempt(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="notify", interval_hours=24)
+            _write_local_commit(paths, "a" * 40)
+            first = evaluate_update_check(paths, runner=_ok_runner("b" * 40))
+            self.assertTrue(first["checked"])
+
+            second = evaluate_update_check(paths, runner=_refusing_runner())
+            self.assertFalse(second["checked"])
+            self.assertEqual(second["outcome"], "behind")
+
+    def test_elapsed_interval_triggers_a_fresh_probe(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="notify", interval_hours=1)
+            _write_local_commit(paths, "a" * 40)
+            now = datetime.now(timezone.utc)
+            evaluate_update_check(paths, now=now, runner=_ok_runner("b" * 40))
+            later = now + timedelta(hours=2)
+            result = evaluate_update_check(paths, now=later, runner=_ok_runner("c" * 40))
+            self.assertTrue(result["checked"])
+            self.assertEqual(result["remote_commit"], "c" * 40)
+
+    def test_not_modified_reuses_the_cached_remote_identity(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="notify", interval_hours=1)
+            _write_local_commit(paths, "a" * 40)
+            now = datetime.now(timezone.utc)
+            evaluate_update_check(paths, now=now, runner=_ok_runner("b" * 40))
+
+            later = now + timedelta(hours=2)
+            result = evaluate_update_check(paths, now=later, runner=_not_modified_runner())
+            self.assertEqual(result["remote_commit"], "b" * 40)
+            self.assertEqual(result["outcome"], "behind")
+
+
+class LocalInstalledCommitTests(unittest.TestCase):
+    def test_absent_state_reads_as_empty(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            self.assertEqual(local_installed_commit(paths), "")
+
+    def test_record_remote_commit_for_install_is_best_effort(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            self.assertEqual(
+                record_remote_commit_for_install(
+                    paths, runner=_raising_runner(subprocess.TimeoutExpired(cmd=["curl"], timeout=1.5))
+                ),
+                "",
+            )
+            self.assertEqual(record_remote_commit_for_install(paths, runner=_ok_runner("c" * 40)), "c" * 40)
+
+
+class AutoUpdateLockTests(unittest.TestCase):
+    def test_lock_is_exclusive_and_non_blocking(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            with acquire_auto_update_lock(paths):
+                with self.assertRaises(FileLockTimeout):
+                    with acquire_auto_update_lock(paths):
+                        pass
+
+    def test_lock_path_is_the_cache_sidecar(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            cache_path = update_check_cache_path(paths)
+            with acquire_auto_update_lock(paths):
+                sidecar = cache_path.with_name(f".{cache_path.name}.lock")
+                self.assertTrue(sidecar.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

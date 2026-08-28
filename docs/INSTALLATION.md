@@ -1706,6 +1706,37 @@ under `~/.omh/runtime/state.json` as `last_setup`, `last_install`,
 count, source metadata, command-package status, and health summaries without
 storing raw chat prompts.
 
+### Startup update check (opt-in)
+
+By default, `omh`/`hermes` never checks for updates on launch -- OMH's core
+promise is no network calls without an explicit opt-in. `omh update-check`
+turns on a bounded, best-effort comparison against `origin/main` that runs
+right before bare `omh` (or `hermes`, through the same launch door) opens the
+TUI:
+
+```sh
+omh update-check status
+omh update-check set --mode notify              # one-line notice when behind
+omh update-check set --mode auto                 # runs `omh update` automatically
+omh update-check set --mode off                  # shipped default
+omh update-check set --interval-hours 12          # default is 24
+```
+
+`notify` prints a single line such as `OMH update available: 3f2a1c9 ->
+9b7e21d; run \`omh update\`` when the preview channel is behind `origin/main`,
+and nothing when it is current. `auto` reuses `omh update` itself (never a
+reimplementation) and reports what it did, including the restart-to-apply
+guidance `omh update` already prints; a non-blocking lock keeps two
+simultaneous launches from auto-updating at once, and a failed attempt is
+never retried before the next interval. Either mode makes at most one
+short-timeout network request per `interval_hours` (a conditional GET against
+the GitHub commits API, ETag-cached in
+`~/.omh/runtime/update-check.json`); a network failure or timeout is a silent
+skip that never blocks or delays the launch. An install that predates a
+recorded comparable identity (or is pinned to a stable/local channel rather
+than the `main`-tracking preview channel) reports the check as inconclusive
+rather than guessing.
+
 ## Reapply
 
 If Hermes does not show the installed skills, reapply the config registration:

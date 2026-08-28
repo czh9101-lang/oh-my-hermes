@@ -44,7 +44,7 @@ from .coding import (
     cmd_coding_lifecycle_verify,
 )
 from .codegraph import _add_codegraph_commands, cmd_codegraph_build, cmd_codegraph_handoff, cmd_codegraph_summary
-from .common import set_json_output_pretty
+from .common import _paths, set_json_output_pretty
 from .context import _add_context_commands, cmd_context_brief
 from .model_chains import _add_model_chains_commands
 from .conformance import _add_conformance_commands, cmd_conformance_check
@@ -176,6 +176,7 @@ from .setup import (
     cmd_update,
 )
 from .state import _add_state_commands, cmd_state_clear, cmd_state_finish, cmd_state_start, cmd_state_status
+from .update_check import _add_update_check_commands
 from .use_cases import _add_cases_commands, cmd_cases_inspect, cmd_cases_list, cmd_cases_recommend
 from .visual import _add_visual_commands, cmd_visual_observe, cmd_visual_prompt_card
 from .adapter_quality import _add_adapter_quality_commands
@@ -304,6 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runtime_commands(sub)
     _add_goal_commands(sub)
     _add_state_commands(sub)
+    _add_update_check_commands(sub)
     return parser
 
 
@@ -371,7 +373,68 @@ Run `omh --help` for the full command list."""
     )
 
 
-def _launch_hermes_tui() -> int | None:
+def _run_startup_update_check(args: argparse.Namespace) -> None:
+    """Compare the local install against `origin/main` and act per `omh update-check`.
+
+    Opt-in only: `update_check.mode` defaults to `off`, which returns before
+    any network attempt. Runs synchronously, right before exec'ing `hermes`,
+    because that exec hands the terminal to a separate process -- there is no
+    "after the TUI paints" moment left in this process to report a result in,
+    so the whole probe has to fit inside its own bounded timeout ahead of the
+    handoff rather than racing it. Any failure here is a silent skip; it must
+    never block, delay beyond that bound, or crash the launch.
+    """
+    from ..maintenance.update_check import evaluate_update_check, format_notice_line
+
+    paths = _paths(args)
+    try:
+        result = evaluate_update_check(paths)
+    except OSError:
+        return
+    if result.get("should_auto_update"):
+        _run_auto_update(args, paths)
+        return
+    notice = format_notice_line(result)
+    if notice:
+        print(notice)
+
+
+def _run_auto_update(args: argparse.Namespace, paths) -> None:
+    """Auto mode: reuse `omh update`'s own code path, never a reimplementation.
+
+    A non-blocking lock keeps two simultaneous launches from auto-updating at
+    once; losing the race is a silent skip, not a retry. A failed update is
+    reported once (so the user is not left guessing) and never retried before
+    the next `evaluate_update_check` interval -- `_run_startup_update_check`
+    only reaches here on a fresh "behind" outcome, so a cached one from
+    within the same interval never re-triggers this.
+    """
+    from ..installer import OmhError
+    from ..local_store import FileLockTimeout
+    from ..maintenance.update_check import acquire_auto_update_lock
+
+    try:
+        with acquire_auto_update_lock(paths):
+            # --omh-home/--hermes-home/--scope are TOP-LEVEL parser options
+            # (defined before `add_subparsers`), so they must precede the
+            # "update" subcommand token, not follow it.
+            update_argv: list[str] = []
+            if getattr(args, "omh_home", None):
+                update_argv += ["--omh-home", str(args.omh_home)]
+            if getattr(args, "hermes_home", None):
+                update_argv += ["--hermes-home", str(args.hermes_home)]
+            if getattr(args, "scope", None):
+                update_argv += ["--scope", str(args.scope)]
+            update_argv += ["update", "--yes", "--no-interactive"]
+            update_args = build_parser().parse_args(update_argv)
+            update_args.func(update_args)
+    except FileLockTimeout:
+        return
+    except OmhError as exc:
+        print(f"omh: update-check auto-update failed: {exc}", file=sys.stderr)
+
+
+def _launch_hermes_tui(args: argparse.Namespace) -> int | None:
     """Open the OH-MY-HERMES terminal: bare `omh` is the same door as `hermes`.
 
     The oh-my-zsh contract, applied here: the wrapper's bare name IS the
@@ -393,6 +456,7 @@ def _launch_hermes_tui() -> int | None:
     hermes = shutil.which("hermes")
     if not hermes:
         return None
+    _run_startup_update_check(args)
     try:
         return int(subprocess.run([hermes]).returncode)
     except (OSError, KeyboardInterrupt):
@@ -408,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(raw_argv)
     set_json_output_pretty(bool(getattr(args, "pretty", False)))
     if not getattr(args, "command", None):
-        launched = _launch_hermes_tui()
+        launched = _launch_hermes_tui(args)
         if launched is not None:
             return launched
         _print_welcome()
