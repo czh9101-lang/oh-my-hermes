@@ -1097,6 +1097,36 @@ class RouterContentTests(unittest.TestCase):
                 f"{planning_name} is a planning lane, not an executing engine",
             )
 
+    def test_ultrawork_closes_with_observed_run_summary_or_not_available(self) -> None:
+        """The owner reported ultrawork's closing brief showing deploy/verification
+        status but not total tokens or elapsed time. `omh_run_summary` reads those
+        numbers from Hermes' own state.db accounting (never model-estimated); the
+        closing quality-bar rule must require printing its summary_text as the final
+        lines, fall back to an explicit not_available line when the tool reports a
+        non-observed status, and the final checklist must gate on that closing line
+        so the run cannot claim completion without it.
+        """
+        definitions = {definition.name: definition for definition in installable_skill_definitions()}
+        ultrawork = definitions["ultrawork"]
+        quality_bar = " ".join(ultrawork.quality_bar)
+        self.assertIn("call `omh_run_summary`", quality_bar)
+        self.assertIn("print its summary_text verbatim as the final lines", quality_bar)
+        self.assertIn("never numbers the model estimated", quality_bar)
+        self.assertIn(
+            "when the tool reports a non-observed status (no session id, no accounting row), "
+            "print an explicit run-summary not_available line instead of omitting it or estimating the numbers",
+            quality_bar,
+        )
+        checklist = " ".join(ultrawork.final_checklist)
+        self.assertIn(
+            "The closing brief ends with the observed `omh_run_summary` line "
+            "(elapsed seconds and token usage) or an explicit run-summary not_available "
+            "statement — never a model-estimated number.",
+            checklist,
+        )
+        templates = {template.name: template for template in builtin_skill_templates()}
+        self.assertIn("run-summary not_available", templates["ultrawork"].content)
+
     def test_planning_skills_recommend_engine_fit_and_require_go_ahead(self) -> None:
         """Plan acceptance approves plan content, not execution: ralplan and plan must
         recommend the follow-on engine that fits the work's shape and wait for the user's
