@@ -1293,6 +1293,7 @@ _WORKFLOW_CONTEXT_CARD_BY_WORKFLOW = {
     "team": "coding_handoff",
     "ultraqa": "coding_handoff",
     "ultrawork": "coding_handoff",
+    "maestro": "coding_handoff",
     # ULW fold (issue #954, PR D): the four contracts folding into
     # `ulw-work` share its coding-handoff lane so their capability family is
     # lane-derived (`delegate_coding_and_ship`) like their fold target.
@@ -5723,6 +5724,7 @@ def awareness_primer_payload() -> dict[str, object]:
                 "security-safety-review",
                 "ultrawork",
                 "ultraqa",
+                "maestro",
                 "ai-slop-cleaner",
                 "executor-runtime-readiness",
                 "request-to-handoff",
@@ -6172,6 +6174,7 @@ _ULW_ENGINE_WORKFLOWS = frozenset(
         "context",
         "deep-interview",
         "loop",
+        "maestro",
         "ralph",
         "ralplan",
         "research",
@@ -6194,6 +6197,7 @@ _ULW_ENGINE_LIFECYCLE_STAGES = {
     "context": "canonical",
     "deep-interview": "canonical",
     "loop": "canonical",
+    "maestro": "canonical",
     "ralph": "retired",
     "ralplan": "canonical",
     "research": "canonical",

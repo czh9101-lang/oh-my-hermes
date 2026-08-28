@@ -19,6 +19,7 @@ from .render import (
     jit_learn_skill,
     loop_reference_templates,
     loop_skill,
+    maestro_reference_templates,
     memory_new_skill,
     memory_sync_skill,
     router_reference_templates,
@@ -45,6 +46,7 @@ def builtin_skill_reference_templates() -> list[SkillReferenceTemplate]:
         *context_budget_reference_templates(),
         *buzz_reference_templates(),
         *loop_reference_templates(),
+        *maestro_reference_templates(),
         *ultrawork_reference_templates(),
         *idea_to_deploy_reference_templates(),
         *[

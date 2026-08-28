@@ -247,7 +247,7 @@ Do not replace the resolved SHA with main. Execute the pinned protocol's OS-appr
   <img src="assets/omh-character-badge.png" alt="Oh My Hermes character mark" width="170">
 </p>
 
-8 個の `ulw-` workflow。チャットでトリガーを言えば Hermes がルーティング —
+9 個の `ulw-` workflow。チャットでトリガーを言えば Hermes がルーティング —
 全カタログは [Workflow Reference](docs/WORKFLOWS.md)。
 
 | Skill | 何をするか |
@@ -257,6 +257,7 @@ Do not replace the resolved SHA with main. Execute the pinned protocol's OS-appr
 | ⚡ `ulw-research` | 実際のコードとウェブを調べ、出典を残し、怪しければ裏取りします。 |
 | ⚡ `ulw-plan` | 選択肢の比較、リスク、完了基準まで合意したレビュー済み計画を作ります。 |
 | ⚡ `ulw-work` | 承認済み計画を、同じファイルに触れない並列レーンで実行します。 |
+| ⚡ `ulw-maestro` | 選んだコーディング CLI に、そのCLI自身にインストールされたスキルから組み立てたプロンプトで作業を渡します。 |
 | ⚡ `ulw-loop` | 計画 → 実装 → レビューを、ゴールが本当に通るまで回します。 |
 | ⚡ `ulw-qa` | わざと過酷なシナリオで攻撃し、壊れた所を直します。 |
 | ⚡ `ulw-perf` | 本当に遅く高コストな場所を測り、ホットパスを一つずつ修正します。 |
@@ -284,7 +285,7 @@ OMH は、モデル選択とコーディングの所有者を別の判断とし�
 | 🔎 **構造的コード検索** | 実測に基づく `ast-grep` プレイブック — 28 言語の構造クエリ、body-capture の禁止、grep フォールバック — を executor がコードを検索する場面に注入します。OMH はバイナリの存在だけを検知し、自分では実行しません。 |
 | 🗄️ **プロジェクトメモリシステム** | Hermes がロードできる決定的なファイルベース memory provider、レビュー型プロジェクトメモリコマンド(inspect・pack・domain capture)、consolidation スケジューリング brief、メモリレビュー用スキル — Hermes の不透明な内部メモリは読みも書きもしません。 |
 | 🛠️ **コーディングハーネス & ガードレール** | executor readiness probe、準備済み handoff に付く capability snapshot と owner-fit レポート、`execute_code` 結果への code-mode discipline、ルール違反の tool call をルール本文で遮断するユーザー作成 toolcall rules。 |
-| ♾️ **ウルトラワークフローエンジン** | 所有権を分離した並列デリバリーレーン、ledger と実際の完了 gate で回る計測ループ、エンジン実行前に意図を明確化する decision-frontier インタビュー — 8 つのエンジンは下のウルトラスキル節に一覧があります。 |
+| ♾️ **ウルトラワークフローエンジン** | 所有権を分離した並列デリバリーレーン、ledger と実際の完了 gate で回る計測ループ、エンジン実行前に意図を明確化する decision-frontier インタビュー — エンジンの一覧は下のウルトラスキル節にあります。 |
 | 📦 **決定的なスキルカタログ** | 120 個超のインストール可能な workflow スキル、バイト単位で検証される生成カタログ、否定ケースを含む routing precision コーパス、一文字のドリフトでも CI を失敗させる drift gate。 |
 
 ## 主張より証拠

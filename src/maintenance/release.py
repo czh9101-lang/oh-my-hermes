@@ -272,7 +272,14 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # of omitting or estimating) and a matching final-checklist item pinning the
 # closing brief to the observed `omh_run_summary` line or that fallback
 # (+364 chars); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 727188
+# 727188 -> 741811: the new `maestro` (`ulw-maestro`) skill was added
+# (+14623 chars total): its own catalog body -- explicit-owner precondition,
+# handoff-mode statement, skill-set-informed prompt composition, and
+# readiness/session-capture rules -- plus the one-clause `ulw-maestro`
+# composition pointer added to `ultrawork`'s quality bar and the coding_handoff
+# lane's `+N more` bump rippling across the ~11 sibling SKILL.md files that
+# share that lane; warranted growth for a wholly new engine.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 741811
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

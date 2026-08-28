@@ -153,10 +153,10 @@ window.OMH_I18N = {
     "ulw.kicker": { en: "Flagship workflows", ko: "대표 워크플로", ja: "フラッグシップ", zh: "旗舰工作流" },
     "ulw.title": { en: "The ulw-* family.", ko: "ulw-* 패밀리.", ja: "ulw-* ファミリー。", zh: "ulw-* 家族。" },
     "ulw.lead": {
-      en: "Eight long-horizon lanes. Say the trigger in normal language — Hermes routes the rest.",
-      ko: "8개의 장기 레인. 평범한 말로 트리거만 말하면 나머지는 Hermes가 라우팅합니다.",
-      ja: "8 の長期レーン。普通の言葉でトリガーを言えば、あとは Hermes がルーティング。",
-      zh: "八条长周期车道。用日常语言说出触发词，其余交给 Hermes 路由。"
+      en: "Nine long-horizon lanes. Say the trigger in normal language — Hermes routes the rest.",
+      ko: "9개의 장기 레인. 평범한 말로 트리거만 말하면 나머지는 Hermes가 라우팅합니다.",
+      ja: "9 の長期レーン。普通の言葉でトリガーを言えば、あとは Hermes がルーティング。",
+      zh: "九条长周期车道。用日常语言说出触发词，其余交给 Hermes 路由。"
     },
     "ulw.trigger": { en: "Say", ko: "이렇게 말하세요", ja: "こう言う", zh: "这样说" },
 
@@ -175,6 +175,14 @@ window.OMH_I18N = {
       ko: "승인된 계획을 겹치지 않는 레인으로 분할 — 레인마다 소유자, 기준, 검증. 두 레인이 같은 파일을 건드리지 않습니다.",
       ja: "承認済み計画を重ならないレーンへ分割 — レーンごとにオーナー、基準、検証。二つのレーンが同じファイルを編集しません。",
       zh: "把已确认的计划切成互不重叠的车道 —— 每条有归属、标准与验证。两条车道绝不改同一个文件。"
+    },
+    "ulw.maestro.title": { en: "Maestro", ko: "Maestro", ja: "Maestro", zh: "Maestro" },
+    "ulw.maestro.tag": { en: "External handoff", ko: "외부 핸드오프", ja: "外部ハンドオフ", zh: "外部交接" },
+    "ulw.maestro.body": {
+      en: "Prepares the handoff for the coding agent you chose.",
+      ko: "선택한 코딩 에이전트를 위한 핸드오프를 준비합니다.",
+      ja: "選んだコーディングエージェントのためのハンドオフを準備します。",
+      zh: "为你选择的编码代理准备交接。"
     },
     "ulw.plan.title": { en: "Ralplan", ko: "Ralplan", ja: "Ralplan", zh: "Ralplan" },
     "ulw.plan.tag": { en: "Reviewed plan", ko: "검토된 계획", ja: "レビュー済み計画", zh: "评审过的计划" },

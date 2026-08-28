@@ -84,6 +84,10 @@ COLLISION_RATIONALES: dict[str, str] = {
     "R-LONG-HORIZON-GOAL": (
         "A long-horizon goal is owned by the goal engine and driven by the loop engine."
     ),
+    "R-CODING-HANDOFF-INTAKE": (
+        "A coding handoff request is both plan's general request-shaping vocabulary and maestro's own "
+        "handoff-preparation mechanic."
+    ),
 }
 
 INTENTIONAL_COLLISIONS: tuple[CollisionDeclaration, ...] = (
@@ -93,6 +97,7 @@ INTENTIONAL_COLLISIONS: tuple[CollisionDeclaration, ...] = (
     CollisionDeclaration(identity="broken layout", owners=("frontend", "visual-qa",), rationale_id="R-LAYOUT-DEFECT-INTAKE"),
     CollisionDeclaration(identity="ci failed", owners=("build-failure-triage", "github-event-ops",), rationale_id="R-CI-FAILURE-INTAKE"),
     CollisionDeclaration(identity="ci 실패", owners=("build-failure-triage", "github-event-ops",), rationale_id="R-CI-FAILURE-INTAKE"),
+    CollisionDeclaration(identity="coding handoff", owners=("maestro", "plan",), rationale_id="R-CODING-HANDOFF-INTAKE"),
     CollisionDeclaration(identity="coordinated workers", owners=("team", "ultrawork",), rationale_id="R-PARALLEL-EXECUTION"),
     CollisionDeclaration(identity="delivery process", owners=("ultraprocess", "ultrawork",), rationale_id="R-DELIVERY-CYCLE"),
     CollisionDeclaration(identity="end-to-end process", owners=("ultraprocess", "ultrawork",), rationale_id="R-DELIVERY-CYCLE"),

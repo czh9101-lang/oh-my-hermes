@@ -435,7 +435,7 @@ class RoutingInertnessTests(unittest.TestCase):
         self.assertTrue(added <= all_ids)
 
     def test_ulw_engine_surface_reflects_the_retired_stage(self):
-        """#954 stage 5 (window=0): the name set keeps all twelve members --
+        """#954 stage 5 (window=0): the name set keeps all thirteen members --
         it drives `ulw-` display prefixing, which retired reference contracts
         keep -- while the canonical/retired split lives in `lifecycle_stage`
         and the inventory producer."""
@@ -447,6 +447,7 @@ class RoutingInertnessTests(unittest.TestCase):
                 "research",
                 "ralplan",
                 "ultrawork",
+                "maestro",
                 "loop",
                 "ultraqa",
                 "ultraperf",
@@ -457,7 +458,7 @@ class RoutingInertnessTests(unittest.TestCase):
             },
         )
         payload = ulw_inventory_payload()
-        self.assertEqual(len(payload["canonical_engines"]), 8)
+        self.assertEqual(len(payload["canonical_engines"]), 9)
         self.assertEqual(payload["alias_engines"], [])
         self.assertEqual(
             {engine["canonical"] for engine in payload["retired_engines"]},

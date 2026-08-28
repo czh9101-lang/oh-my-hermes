@@ -688,6 +688,36 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_clarification",
         "",
     ),
+    # Maestro shield: concept questions about maestro, prepared handoffs, or a
+    # coding-agent name must stay direct answers, never a maestro dispatch.
+    RoutingPrecisionCase(
+        "maestro-concept-question",
+        "A maestro concept question stays a direct answer",
+        "maestro가 뭐야?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "orchestra-conductor-not-maestro",
+        "An orchestra-conductor question never dispatches the maestro skill",
+        "what does maestro mean in an orchestra?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "handoff-concept-question",
+        "A prepared-handoff concept question stays a direct answer",
+        "what does a prepared handoff mean?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "codex-concept-keeps-shield",
+        "A Codex concept question never dispatches maestro off the named CLI",
+        "codex가 뭐야",
+        "answer_directly",
+        "direct_answer",
+    ),
 )
 
 
@@ -2666,6 +2696,42 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "idea-to-deploy",
         "present_app_delivery_loop",
         "app_delivery_loop",
+    ),
+    RoutingInterventionCase(
+        "maestro-direct-invocation",
+        "Direct maestro invocation opens the coding-owner handoff",
+        "$maestro",
+        "dispatch",
+        "maestro",
+        "forward_plan_to_selected_workflow",
+        "plan",
+    ),
+    RoutingInterventionCase(
+        "coding-handoff-preparation-english",
+        "An English coding-handoff preparation request opens maestro",
+        "prepare the coding handoff for this work",
+        "dispatch",
+        "maestro",
+        "present_plan",
+        "plan",
+    ),
+    RoutingInterventionCase(
+        "korean-handoff-prompt-request",
+        "A Korean handoff-prompt request opens maestro",
+        "이 작업 위임 프롬프트 만들어줘",
+        "dispatch",
+        "maestro",
+        "present_plan",
+        "plan",
+    ),
+    RoutingInterventionCase(
+        "korean-coding-delegation-mechanic",
+        "A Korean coding-delegation handoff request opens maestro",
+        "코딩 위임 핸드오프 준비해줘",
+        "dispatch",
+        "maestro",
+        "forward_plan_to_selected_workflow",
+        "plan",
     ),
 )
 

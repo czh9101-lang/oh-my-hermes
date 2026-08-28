@@ -68,8 +68,8 @@ class RetiredSurfaceTests(unittest.TestCase):
             with self.subTest(contract=name):
                 self.assertIn(name, reference_names)
 
-    def test_engine_name_set_keeps_all_twelve_for_display_prefixing(self) -> None:
-        self.assertEqual(len(ULW_ENGINE_SKILL_NAMES), 12)
+    def test_engine_name_set_keeps_all_thirteen_for_display_prefixing(self) -> None:
+        self.assertEqual(len(ULW_ENGINE_SKILL_NAMES), 13)
         self.assertTrue(set(RETIRED) <= set(ULW_ENGINE_SKILL_NAMES))
 
     def test_capability_table_matches_the_equivalence_cases(self) -> None:
@@ -422,10 +422,10 @@ class PerContractRollbackTests(unittest.TestCase):
 class InventoryEnumerationTests(unittest.TestCase):
     def test_retired_engines_are_enumerated_separately_never_dropped(self) -> None:
         payload = ulw_inventory_payload()
-        self.assertEqual(payload["counts"]["canonical"], 8)
+        self.assertEqual(payload["counts"]["canonical"], 9)
         self.assertEqual(payload["counts"]["alias"], 0)
         self.assertEqual(payload["counts"]["retired"], 4)
-        self.assertEqual(payload["counts"]["total"], 12)
+        self.assertEqual(payload["counts"]["total"], 13)
         self.assertEqual(
             {engine["canonical"] for engine in payload["retired_engines"]}, set(RETIRED)
         )
