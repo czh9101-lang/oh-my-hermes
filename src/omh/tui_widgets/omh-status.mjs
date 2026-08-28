@@ -355,6 +355,26 @@ export default function register(sdk) {
         h(Text, { color: t.color.border }, SEPARATOR),
         h(Text, { color: active ? t.color.warn : t.color.ok }, hudStateLabel(active, agents)),
         h(Text, { color: t.color.muted }, `${metrics.cost ? ` • ${metrics.cost}` : ''} • ${metrics.ctx}`),
+        // Exact in-flight liveness, paired from pre_tool_call/post_tool_call
+        // by tool_call_id: the only honest answer to "is something actually
+        // running right now", as opposed to a lingering active todo item or
+        // a ring-saturated parallel-shot count. Renders only while at least
+        // one call is genuinely open; a host without post_tool_call degrades
+        // silently to no segment at all.
+        payload.activity && payload.activity.live
+          ? h(
+              Text,
+              {},
+              h(Text, { color: t.color.muted }, ' • '),
+              h(
+                Text,
+                { color: t.color.warn },
+                `⚙ ${plural(Number(payload.activity.open_call_count) || 0, 'tool')} · ${
+                  elapsedText(payload.activity.oldest_open_elapsed_seconds) || '0s'
+                }`,
+              ),
+            )
+          : null,
         // Shift+Tab yolo state: the reader projects the host's persisted
         // surfaces first (the live TUI session row's /yolo flag where the
         // host persists it, config.yaml approvals.mode) so a toggle shows
@@ -477,6 +497,18 @@ export default function register(sdk) {
     // neighbours fold into muted `... (N earlier/later tasks)` lines.
     const shown = Array.isArray(todo.items) ? todo.items : []
     const hasActive = shown.some(item => item.state === 'active')
+    // Truth, not chrome: the active item reads green and animates ONLY while
+    // the HUD's exact in-flight signal says something is actually running.
+    // Stopped-with-incomplete-todo used to look identical to genuinely
+    // working -- both showed the same green [•] -- which is the exact
+    // complaint this fixes ('todo에 초록색 진행중 텍스트가 있는게 더 문제').
+    const live = !!(payload.activity && payload.activity.live)
+    const stallElapsed = (() => {
+      if (live) return ''
+      const updatedAt = Date.parse(safeText(todo.updated_at) || '')
+      if (!Number.isFinite(updatedAt)) return ''
+      return elapsedText(Math.max(0, (Date.now() - updatedAt) / 1000))
+    })()
     const markers = { active: '[•]', done: '[✓]', pending: '[ ]' }
     const budget = Math.max(16, columns - 10)
     const currentPhase = safeText(todo.display_phase)
@@ -503,7 +535,10 @@ export default function register(sdk) {
       `${Object.hasOwn(markers, item.state) ? markers[item.state] : '[ ]'} ${truncateCells(item.text, budget)}`
     const itemProps = item => ({
       bold: item.state === 'active',
-      color: item.state === 'active' ? t.color.ok : item.state === 'done' ? t.color.muted : t.color.text,
+      // A stalled active item (HUD says not-live) is a warning-grade fact,
+      // not progress: the same warn color the route-fallback segment uses
+      // for "this is not what it looks like at a glance" (#1145).
+      color: item.state === 'active' ? (live ? t.color.ok : t.color.warn) : item.state === 'done' ? t.color.muted : t.color.text,
       strikethrough: item.state === 'done',
     })
     const phaseProps = phase => ({
@@ -516,16 +551,25 @@ export default function register(sdk) {
         { key, wrap: 'truncate-end' },
         h(Text, { color: t.color.muted }, `... (${count} ${side} task${count === 1 ? '' : 's'})`),
       )
-    // The active item's text carries the colour wave; its marker, indent and
-    // every other item stay static.
+    // The active item's text carries the colour wave ONLY while live; motion
+    // implies "actually running", so a stalled item renders as static warn
+    // text plus an elapsed hint instead -- the marker and indent stay the
+    // same shape either way, only the state they claim changes.
     const itemNode = (item, indent) =>
       item.state === 'active'
-        ? h(
-            Text,
-            {},
-            h(Text, itemProps(item), `${indent}${markers.active} `),
-            h(ShimmerText, { color: t.color.ok, t, text: truncateCells(item.text, budget) }),
-          )
+        ? live
+          ? h(
+              Text,
+              {},
+              h(Text, itemProps(item), `${indent}${markers.active} `),
+              h(ShimmerText, { color: t.color.ok, t, text: truncateCells(item.text, budget) }),
+            )
+          : h(
+              Text,
+              { wrap: 'truncate-end' },
+              h(Text, itemProps(item), `${indent}${markers.active} ${truncateCells(item.text, budget)}`),
+              stallElapsed ? h(Text, { color: t.color.muted }, ` (stalled ${stallElapsed})`) : null,
+            )
         : h(Text, itemProps(item), `${indent}${itemLabel(item)}`)
     const rows = []
     if (start > 0) rows.push(foldLine('todo-earlier', start, 'earlier'))
@@ -562,7 +606,7 @@ export default function register(sdk) {
         h(Text, { color: t.color.warn }, `${counts.done ?? 0}/${counts.total ?? 0}`),
         phaseCount > 1 ? h(Text, { color: t.color.muted }, ` · ${phaseCount} phases`) : null,
         planShotBadge(payload, t),
-        hasActive ? h(PlanPulse, { t }) : null,
+        hasActive && live ? h(PlanPulse, { t }) : null,
       ),
       ...rows,
       h(Rule, { columns, t }),
@@ -572,18 +616,28 @@ export default function register(sdk) {
   // The parallel-shot badge rides the [Plan] header — the owner moved it
   // here from the frame rule ('parallel shot을 지금 위치에 두지말고 여기
   // 위치 옆에 뜨게'), the line sitting directly under the host status rule.
-  // A fresh concurrent tool-call batch (observed by the pre_tool_call hook)
-  // is the only thing it brands, and the reader's seconds-scale freshness
-  // window makes it vanish right after the batch lands instead of lingering
-  // as standing chrome.
-  const planShotBadge = (payload, t) =>
-    payload.parallel_shot && payload.parallel_shot.status === 'observed'
-      ? h(
-          Text,
-          { color: t.color.label },
-          ` · parallel shot ×${Number(payload.parallel_shot.size) || 0}`,
-        )
-      : null
+  // Its lifetime now ties to open calls, not the ring buffer: while any
+  // member of the batch is still open, the badge shows the TRUE live count
+  // (open_count on the latest shot) instead of the ring-saturated size that
+  // used to read "×40" for as long as the ceiling stayed full regardless of
+  // whether the batch was still running. Once every member has closed, the
+  // badge either drops (idle) or -- while the shot is still fresh -- renders
+  // dimmed as history with its age, so it never reads as a second live cue.
+  const planShotBadge = (payload, t) => {
+    const shot = payload.parallel_shot
+    if (!shot || shot.status !== 'observed') return null
+    const openCount = Number(shot.open_count) || 0
+    if (openCount > 0) {
+      return h(Text, { color: t.color.label }, ` · parallel shot ×${openCount}`)
+    }
+    const observedAt = shot.observed_at ? Date.parse(shot.observed_at) : NaN
+    const age = Number.isFinite(observedAt) ? elapsedText(Math.max(0, (Date.now() - observedAt) / 1000)) : ''
+    return h(
+      Text,
+      { color: t.color.muted },
+      ` · parallel shot ×${Number(shot.size) || 0}${age ? ` (${age} ago)` : ''}`,
+    )
+  }
 
   const sharedInit = () => ({ payload: null, receivedAt: 0, tick: 0 })
   const sharedReduce = (state, input) =>
@@ -657,6 +711,11 @@ export default function register(sdk) {
     'tokens_per_second',
     'tool_count',
     'turn_count',
+    // The exact in-flight age ticks on every poll while live; the liveness
+    // transition itself (open_call_count, live) stays OUT of this set on
+    // purpose -- that boolean flip and count change are structural, and must
+    // repaint promptly rather than wait out the metrics throttle.
+    'oldest_open_elapsed_seconds',
   ])
   const structuralKey = payload =>
     JSON.stringify(payload, (key, value) => (VOLATILE_KEYS.has(key) ? undefined : value))

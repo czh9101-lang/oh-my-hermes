@@ -275,6 +275,36 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertEqual(widget.count("updateWidget(todoApp, apply)"), 1)
         self.assertEqual(widget.count("openWidget(todoApp, todoApp.init(''))"), 1)
 
+    def test_hud_liveness_signal_drives_the_status_line_todo_and_shot_badge(self) -> None:
+        # 2026-08 HUD liveness fix: exact in-flight tool-call state (paired
+        # from pre_tool_call/post_tool_call by tool_call_id) replaces three
+        # things that used to lie -- a lingering green active todo item, a
+        # parallel-shot badge stuck at the ring ceiling, and no signal at all
+        # while calls were genuinely running.
+        widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
+
+        # Status line: a live segment renders only while open calls exist.
+        self.assertIn("payload.activity && payload.activity.live", widget)
+        self.assertIn("`⚙ ${plural(Number(payload.activity.open_call_count) || 0, 'tool')}", widget)
+
+        # Todo panel: the active marker is warn-colored and carries a stall
+        # hint when the HUD says not-live, instead of always reading green.
+        self.assertIn("color: item.state === 'active' ? (live ? t.color.ok : t.color.warn)", widget)
+        self.assertIn("stallElapsed ? h(Text, { color: t.color.muted }, ` (stalled ${stallElapsed})`)", widget)
+
+        # Shot badge: tied to open calls while live, dimmed history with age
+        # once every member has closed -- never the saturated ring size.
+        self.assertIn("const openCount = Number(shot.open_count) || 0", widget)
+        self.assertIn("if (openCount > 0) {", widget)
+        self.assertIn("(${age} ago)", widget)
+
+        # The exact in-flight age is the one field allowed to drift every
+        # poll without forcing a repaint; the liveness transition itself
+        # (open_call_count, live) stays out of VOLATILE_KEYS on purpose.
+        self.assertIn("'oldest_open_elapsed_seconds',", widget)
+        self.assertNotIn("'open_call_count',", widget)
+        self.assertNotIn("'live',", widget)
+
     def test_widget_is_bottom_docked_and_omits_host_status_fields(self) -> None:
         widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
 
@@ -422,7 +452,14 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertNotIn(", useShimmerPhase }", widget)
         self.assertIn("ShimmerText", widget)
         self.assertIn("PlanPulse", widget)
-        self.assertIn("hasActive ? h(PlanPulse, { t }) : null", widget)
+        # Changed on purpose (2026-08 HUD liveness fix): the wave and the
+        # walking ellipsis both imply "actually running", so both now gate on
+        # the HUD's exact in-flight signal too, not just an active item's
+        # existence -- a stopped turn with an incomplete todo must not
+        # animate as if work were still happening.
+        self.assertIn("hasActive && live ? h(PlanPulse, { t }) : null", widget)
+        self.assertIn("const live = !!(payload.activity && payload.activity.live)", widget)
+        self.assertIn("stalled ${stallElapsed}", widget)
         self.assertNotIn("Number.MAX_SAFE_INTEGER", widget)
         # Changed on purpose: the parallel-shot badge moved off the bottom
         # status line onto the dock-top frame rule — the transcript's
