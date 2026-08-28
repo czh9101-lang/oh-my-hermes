@@ -250,7 +250,13 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ordering, last-known-good-to-first-bad bisect discipline, revert-verify
 # before causation claims, and no fix or remediation without a reproduced
 # failure first); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 725734
+# 725734 -> 726112: the frontend quality bar wired the screenshot iteration
+# loop into the web build path (+378 chars: the live-environment-first
+# capture-at-1440/768/375 rule with Blocker/High/Medium/Nit triage and the
+# recapture-until-the-difference-list-is-empty contract, plus the pointer to
+# the on-demand references/screenshot-loop.md; the reference body loads on
+# demand and sits outside this always-loaded budget); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 726112
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
