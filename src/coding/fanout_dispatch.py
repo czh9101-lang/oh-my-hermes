@@ -1371,18 +1371,25 @@ DISPATCH_MODEL_PREFERENCE_SCHEMA_VERSION = "omh_dispatch_model_preferences/v1"
 # Owners that spawn a headless coding CLI directly accept a `--model` string
 # (see DISPATCH_MODEL_OPTION_TEMPLATES); this is the operator preference read
 # when a unit's prepared handoff carries no routed model at all -- it never
-# overrides a frozen route, only fills the gap when there is none. Shipped
-# default covers claude-code only: `claude --help` documents `--model` as
-# accepting a short alias ("fable", "opus", "sonnet") in addition to a full
-# model id, and "opus" is the strongest published alias, so it degrades to a
-# real, CLI-recognized model rather than a guessed full id (owner directive,
-# 2026-08: "웬만해서는 fable-5 opus 쓰게"). Codex ships no default here: this
-# repo has no local `codex` CLI to confirm its `--model` value space against,
-# so an unset entry -- meaning the spawned CLI's own default -- is the
-# conservative choice until that is verified. An operator can override or
-# clear either entry in `dispatch-models.json`; an explicit empty string
-# clears the shipped default back to unset.
-_SHIPPED_DISPATCH_MODEL_DEFAULTS: dict[str, str] = {"claude-code": "opus"}
+# overrides a frozen route, only fills the gap when there is none. No profile
+# ships a default here: a model the account is not entitled to is an observed
+# exit failure with no fallback walk, and a user who never opted into a
+# specific model choice should not be defaulted into that failure. The unset
+# entry -- meaning the spawned CLI's own default -- is therefore the honest
+# out-of-the-box behavior for every profile, including claude-code.
+# `docs/FANOUT.md` documents "opus" as the recommended claude-code value for
+# an operator who wants the strongest tier and knows their account carries
+# it (this codebase's own model-family alias set, `_CLAUDE_TIER_ALIASES` in
+# `src/coding/model_routing.py`, recognizes "opus" as a claude-family model
+# id; whether `claude --help` itself documents "opus" as a `--model` alias on
+# a given install is unverified here). One operator's own preference for it
+# (2026-08 directive: "use fable-5 opus wherever reasonably possible") is set
+# the same way, in that operator's own `dispatch-models.json`, not as a
+# package-wide default. Codex ships no default either: this repo has no
+# local `codex` CLI to confirm its `--model` value space against. An
+# operator sets either profile in `dispatch-models.json`; an explicit empty
+# string clears an entry back to unset.
+_SHIPPED_DISPATCH_MODEL_DEFAULTS: dict[str, str] = {}
 
 
 def dispatch_model_preferences_path(omh_home: Path) -> Path:
@@ -1482,7 +1489,8 @@ def _close_fanout_progress_binding(
     routed_model: str,
     routed_effort: str,
     title: str,
-    telemetry: Mapping[str, object],
+    owner: str,
+    stdout_text: str,
 ) -> None:
     """Best-effort: report the unit's terminal state and close its row.
 
@@ -1490,12 +1498,20 @@ def _close_fanout_progress_binding(
     very next read, which is what stops the row the moment the process ends —
     the same lifecycle every other executor-progress binding already has, not
     a bespoke lingering rule invented for this lane.
+
+    Telemetry parsing lives INSIDE this guard rather than being handed in
+    already-parsed: a caller evaluating `parse_unit_telemetry(...)` as an
+    argument to this function runs it outside any try/except of its own --
+    from inside a `finally`, that would propagate straight out and mask
+    whatever the dispatch itself was doing, which is exactly the failure mode
+    this whole binding lifecycle is "best-effort" to avoid.
     """
     if binding is None:
         return
-    tokens_total = telemetry.get("tokens_total")
-    cost_usd = telemetry.get("cost_usd")
     try:
+        telemetry = parse_unit_telemetry(owner, stdout_text)
+        tokens_total = telemetry.get("tokens_total")
+        cost_usd = telemetry.get("cost_usd")
         signal = build_safe_progress_signal(
             executor_profile=str(binding.get("executor_profile", "")),
             process_status="completed" if exit_code == 0 else "failed",
@@ -1753,50 +1769,54 @@ def _dispatch_unit(
             "started_at": started_at,
         },
     )
-    # Best-effort HUD row for this unit: opened before the spawn, next to the
-    # inflight marker above, and closed in `finally` below so the row can
-    # never outlive the process it describes. See _open_fanout_progress_binding.
-    progress_binding = _open_fanout_progress_binding(
-        paths,
-        run_ref=run_ref,
-        owner=owner,
-        worktree=worktree,
-        started_at=started_at,
-        routed_model=routed_model,
-        routed_effort=routed_effort,
-        title=unit_title,
-    )
+    # Best-effort HUD row for this unit: opened inside the same try whose
+    # finally below closes it, so the row can never outlive the process it
+    # describes -- opening it BEFORE the try left a window (a Ctrl-C during
+    # the stagger sleep just below, in particular) where the binding was on
+    # disk but the finally that closes it never ran, orphaning a live row for
+    # up to its freshness window. See _open_fanout_progress_binding.
+    progress_binding: dict[str, Any] | None = None
     spawn_kwargs: dict[str, Any] = {}
-    if getattr(runner, "accepts_on_spawn", False):
-        # The signal-safe runner hands back the live process so the marker
-        # carries the real group-leader pid the fanout reaper verifies
-        # against; injected test runners keep the plain protocol.
-        def _record_pid(process: subprocess.Popen) -> None:
-            nonlocal progress_binding
-            _write_inflight(
-                paths,
-                fanout_id,
-                unit_id,
-                {
-                    "owner": owner,
-                    "owner_host": owner_host,
-                    "model": routed_model,
-                    "reasoning_effort": routed_effort,
-                    "run_ref": run_ref,
-                    "worktree": str(worktree),
-                    "started_at": started_at,
-                    "pid": str(process.pid),
-                },
-            )
-            progress_binding = _record_fanout_progress_pid(paths, progress_binding, process.pid)
-
-        spawn_kwargs["on_spawn"] = _record_pid
-        # Real spawns only (the same seam as the pid hook): stagger this
-        # unit's start so the first dispatch of the fanout writes the
-        # provider prompt cache the byte-identical sibling preambles read.
-        if spawn_stagger is not None:
-            spawn_stagger.reserve()
     try:
+        progress_binding = _open_fanout_progress_binding(
+            paths,
+            run_ref=run_ref,
+            owner=owner,
+            worktree=worktree,
+            started_at=started_at,
+            routed_model=routed_model,
+            routed_effort=routed_effort,
+            title=unit_title,
+        )
+        if getattr(runner, "accepts_on_spawn", False):
+            # The signal-safe runner hands back the live process so the marker
+            # carries the real group-leader pid the fanout reaper verifies
+            # against; injected test runners keep the plain protocol.
+            def _record_pid(process: subprocess.Popen) -> None:
+                nonlocal progress_binding
+                _write_inflight(
+                    paths,
+                    fanout_id,
+                    unit_id,
+                    {
+                        "owner": owner,
+                        "owner_host": owner_host,
+                        "model": routed_model,
+                        "reasoning_effort": routed_effort,
+                        "run_ref": run_ref,
+                        "worktree": str(worktree),
+                        "started_at": started_at,
+                        "pid": str(process.pid),
+                    },
+                )
+                progress_binding = _record_fanout_progress_pid(paths, progress_binding, process.pid)
+
+            spawn_kwargs["on_spawn"] = _record_pid
+            # Real spawns only (the same seam as the pid hook): stagger this
+            # unit's start so the first dispatch of the fanout writes the
+            # provider prompt cache the byte-identical sibling preambles read.
+            if spawn_stagger is not None:
+                spawn_stagger.reserve()
         completed = runner(
             argv, cwd=str(worktree), text=True, capture_output=True, timeout=timeout, **spawn_kwargs
         )
@@ -1819,7 +1839,8 @@ def _dispatch_unit(
             routed_model=routed_model,
             routed_effort=routed_effort,
             title=unit_title,
-            telemetry=parse_unit_telemetry(owner, stdout_text),
+            owner=owner,
+            stdout_text=stdout_text,
         )
     finished_at = utc_now()
     duration_seconds = round(time.monotonic() - started_clock, 3)

@@ -1033,11 +1033,12 @@ class FanoutDispatchEngineTests(unittest.TestCase):
             self.assertIn(("codex", "exec"), heads)
             claude_argv = next(argv for argv in runner.spawned if argv[0] == "claude")
             self.assertEqual(claude_argv[1], "-p")
-            # No unit here routes a model, so the base template shows through
-            # except for one appended pair: claude-code's shipped dispatch-
-            # model default (`opus`, see _SHIPPED_DISPATCH_MODEL_DEFAULTS)
-            # fills the gap. codex ships no such default (see
-            # test_codex_dispatch_model_ships_with_no_default).
+            # No unit here routes a model, and neither profile ships a
+            # dispatch-model default (see _SHIPPED_DISPATCH_MODEL_DEFAULTS
+            # and test_codex_dispatch_model_ships_with_no_default /
+            # test_claude_code_unit_ships_with_no_default_dispatch_model), so
+            # the base template shows through byte-identical with no
+            # appended `--model`.
             self.assertEqual(
                 claude_argv[3:],
                 [
@@ -1045,8 +1046,6 @@ class FanoutDispatchEngineTests(unittest.TestCase):
                     "acceptEdits",
                     "--allowedTools",
                     "Bash(git add:*),Bash(git commit:*)",
-                    "--model",
-                    "opus",
                 ],
             )
             self.assertIn("Work unit:", claude_argv[2])
@@ -2369,10 +2368,15 @@ class FanoutDispatchMaestroProgressRowTests(unittest.TestCase):
             )
             self.assertEqual(dispatched["summary"], "Core work")
 
-    def test_claude_code_unit_defaults_to_the_opus_dispatch_model(self) -> None:
-        """Owner directive (2026-08): dispatch mostly uses the strongest
-        claude-code tier by default when nothing routed a model, because
-        `claude --model` documents `opus` as a recognized alias."""
+    def test_claude_code_unit_ships_with_no_default_dispatch_model(self) -> None:
+        """A rejected model is an observed exit failure with no fallback
+        walk, and no user opted into a specific model choice by dispatching a
+        unit -- so, like every other profile, claude-code ships with no
+        dispatch-model default (see _SHIPPED_DISPATCH_MODEL_DEFAULTS).
+        `docs/FANOUT.md` documents `opus` as the recommended value an
+        operator can opt into via `dispatch-models.json`
+        (test_dispatch_model_preference_config_overrides_the_shipped_default
+        covers that opt-in path)."""
         with TemporaryDirectory() as tmp:
             paths, repo, sha, contract = self._setup(tmp)
             docs = {entry["unit_id"]: entry for entry in contract["units"]}["docs"]
@@ -2385,10 +2389,9 @@ class FanoutDispatchMaestroProgressRowTests(unittest.TestCase):
             )
 
             by_unit = {entry["unit_id"]: entry for entry in summary["units"]}
-            self.assertEqual(by_unit["docs"]["model"], "opus")
+            self.assertEqual(by_unit["docs"]["model"], "")
             spawned = next(argv for argv in runner.spawned if argv[0] == "claude")
-            self.assertIn("--model", spawned)
-            self.assertIn("opus", spawned)
+            self.assertNotIn("--model", spawned)
             binding = read_progress_binding(paths, "run", run_ref)
             self.assertEqual(binding["executor_profile"], "claude_code")
 

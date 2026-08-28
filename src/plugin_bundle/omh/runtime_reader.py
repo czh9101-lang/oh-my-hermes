@@ -1570,12 +1570,15 @@ def _hud_subagent_summary(status: dict[str, Any]) -> dict[str, Any]:
         if str(row.get("source", "")) == "fanout_dispatch":
             projected["dispatch_lane"] = "maestro"
             projected["executor_profile"] = str(row.get("executor_profile", ""))
-            # The row's own cost, when present, is a rounded pass-through of
-            # what the spawned CLI itself reported (`unit_telemetry`) -- never
-            # a token-derived guess -- so it always renders with the `~`
-            # approximate marker the widget already uses for that meaning.
-            if projected.get("cost_usd") is not None:
-                projected["cost_approximate"] = True
+            # No live-cost claim here: the spawned CLI reports cost only in
+            # its terminal result object, so `cost_usd` never has a real
+            # value until the unit's binding closes -- and a closed binding
+            # drops out of `active_executors` on the very next read, before
+            # this loop ever sees it. A structurally-impossible-to-populate
+            # `cost_approximate` marker would be dead code implying a live
+            # estimate this lane cannot honestly produce. A finished unit's
+            # cost still surfaces wherever closed rows are reported, e.g. the
+            # fanout dispatch summary.
         if (
             str(row.get("executor_profile", "")).casefold() == "maestro"
             or str(row.get("target_id", "")) in maestro_run_ids
@@ -2347,6 +2350,16 @@ def _progress_row(primary: dict[str, Any], group: list[dict[str, Any]], event: d
         "linked_bindings": linked,
         "claim_boundary": binding.get("claim_boundary", ""),
     }
+    # Who opened the binding, projected from `delivery.source` -- mirrors
+    # `_project_binding_row` in `src/coding/executor_progress.py`. Without
+    # this, `_hud_subagent_summary` below (which keys off `row["source"]` to
+    # label a fanout-dispatch unit `dispatch_lane: maestro`) never sees the
+    # field: `read_omh_hud` reads through THIS mirror, not the core
+    # projection, so the core-side fix alone left every real HUD row plain.
+    delivery = binding.get("delivery")
+    source = str(delivery.get("source", "")) if isinstance(delivery, dict) else ""
+    if source:
+        row["source"] = source
     signal = event.get("signal", {}) if event else {}
     if isinstance(signal, dict):
         for key in (
@@ -2366,6 +2379,19 @@ def _progress_row(primary: dict[str, Any], group: list[dict[str, Any]], event: d
             value = signal.get(key)
             if value not in (None, ""):
                 row[key] = value
+    # A fanout-dispatch unit reports process metrics (tokens/cost) only on
+    # its terminal event, never its own elapsed time -- so without this, a
+    # live row's `elapsed_seconds` stayed unset and the widget fell back to
+    # rendering snapshot age instead of the unit's actual running time.
+    # Derived here from the binding's own opened timestamp against wall-clock
+    # now (`_seconds_since`, already used for staleness above), the same
+    # "since observed" shape as `_elapsed_since` in status_board.py, applied
+    # only when the signal did not already report a real elapsed value.
+    if "elapsed_seconds" not in row:
+        opened_at = str(binding.get("created_at") or row.get("latest_observed_at") or "")
+        elapsed = _seconds_since(opened_at)
+        if elapsed is not None and elapsed >= 0:
+            row["elapsed_seconds"] = int(elapsed)
     return row
 
 

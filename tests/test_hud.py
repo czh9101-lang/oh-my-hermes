@@ -603,13 +603,15 @@ class HudCliTests(unittest.TestCase):
         self.assertEqual(len(payload["subagents"]["rows"]), 1)
 
     def test_hud_labels_a_fanout_dispatch_unit_as_a_maestro_row_in_the_agent_list(self) -> None:
-        """`omh coding fanout dispatch` opens its executor-progress binding
-        with `delivery.source: fanout_dispatch`, projected onto the active-
-        executor row as `source` (see _project_binding_row). Unlike the
-        single-slot `payload.maestro.rows` main row above -- which can only
-        ever hold one entry -- a fanout unit belongs in the agent list next
-        to Hermes-native rows, so several can run at once and each gets its
-        own row; the widget tells the two apart with `dispatch_lane`."""
+        """Exercises `_hud_subagent_summary`'s own labeling logic in
+        isolation: given a row that already carries `source: fanout_dispatch`
+        (however it got there), the summary must label it `dispatch_lane:
+        maestro` and route it to the agent list rather than the single-slot
+        `payload.maestro.rows` main row, which can only ever hold one entry.
+        This synthetic `status=` dict bypasses the reader's OWN binding-to-row
+        projection (`_progress_row`), so it cannot catch a gap there -- see
+        `test_hud_projects_a_real_fanout_dispatch_binding_with_live_elapsed`
+        below for the disk-backed regression that covers that seam."""
         from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
 
         status = {
@@ -622,7 +624,6 @@ class HudCliTests(unittest.TestCase):
                     "executor_profile": "claude_code",
                     "source": "fanout_dispatch",
                     "routed_model": "opus",
-                    "cost_usd": 0.4213,
                     "latest_event": {
                         "event_type": "executor_dispatched",
                         "status": "running",
@@ -642,11 +643,81 @@ class HudCliTests(unittest.TestCase):
         self.assertEqual(row["dispatch_lane"], "maestro")
         self.assertEqual(row["executor_profile"], "claude_code")
         self.assertEqual(row["model"], "opus")
-        self.assertEqual(row["cost_usd"], 0.4213)
-        # A cost this lane surfaces is always a rounded pass-through of what
-        # the spawned CLI itself reported, never a token-derived guess, so it
-        # always carries the widget's `~` approximate marker.
-        self.assertTrue(row["cost_approximate"])
+        # No live-cost claim for this lane: the spawned CLI reports cost only
+        # in its terminal result object, so a still-running row never carries
+        # a real `cost_usd` (the projection always pre-declares the key, but
+        # unset stays `None`), and `cost_approximate` is never fabricated.
+        self.assertIsNone(row["cost_usd"])
+        self.assertNotIn("cost_approximate", row)
+
+    def test_hud_projects_a_real_fanout_dispatch_binding_with_live_elapsed(self) -> None:
+        """Regression: the reader's active-executor projection (`_progress_row`
+        in the plugin-bundle mirror `read_omh_hud` actually reads through) did
+        not project `delivery.source` at all -- only the separate core
+        projection (`_project_binding_row` in `src/coding/executor_progress.py`)
+        did -- so a real fanout-dispatch binding on disk never reached the HUD
+        as a maestro row; the synthetic `status=` dict test above injects the
+        row directly and cannot see that gap. This writes a REAL
+        `omh_executor_progress_binding/v1` to a temp `omh_home` and drives
+        `read_omh_hud` from it end to end, the same path the TUI dock reads.
+        It also covers `elapsed_seconds`, which this lane never self-reports
+        in its signal (only tokens/cost, and only at closing) -- the reader
+        must derive it from the binding's own opened timestamp against
+        wall-clock now rather than leaving the widget to fall back to
+        snapshot age."""
+        from datetime import datetime, timedelta, timezone
+
+        from omh.executor_progress import (
+            build_progress_binding,
+            build_safe_progress_signal,
+            observe_executor_progress,
+            write_progress_binding,
+        )
+        from omh.paths import resolve_paths
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+        from omh.runtime_artifacts import create_run
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = resolve_paths(root / ".omh", root / ".hermes")
+            run = create_run(paths, {"skill": "oh-my-hermes", "harness": "coding-handling", "status": "started"})
+            opened_at = (datetime.now(timezone.utc) - timedelta(seconds=45)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            binding = write_progress_binding(
+                paths,
+                build_progress_binding(
+                    target_type="run",
+                    target_id=run["run_id"],
+                    executor_profile="claude_code",
+                    source="fanout_dispatch",
+                    now=opened_at,
+                ),
+            )
+            signal = build_safe_progress_signal(
+                executor_profile="claude_code",
+                process_status="dispatched",
+                routed_model="opus",
+                explicit_summary="Docs work",
+            )
+            observe_executor_progress(paths, binding, signal, observed_at=opened_at)
+
+            payload = read_omh_hud(paths.omh_home, paths.hermes_home)
+
+            self.assertEqual(payload["maestro"]["rows"], [])
+            self.assertEqual(len(payload["subagents"]["rows"]), 1)
+            row = payload["subagents"]["rows"][0]
+            self.assertEqual(row["dispatch_lane"], "maestro")
+            self.assertEqual(row["executor_profile"], "claude_code")
+            self.assertEqual(row["model"], "opus")
+            # Derived from the ~45s-old opened timestamp against wall-clock
+            # now, not the widget's snapshot-age fallback (which would read 0
+            # here since the binding was never re-observed after opening).
+            self.assertGreaterEqual(row["elapsed_seconds"], 40)
+            self.assertLessEqual(row["elapsed_seconds"], 120)
+            # Still dispatched, not closed: no live cost claim (the
+            # projection always pre-declares the `cost_usd` key; unset stays
+            # `None` rather than a fabricated `cost_approximate` estimate).
+            self.assertIsNone(row["cost_usd"])
+            self.assertNotIn("cost_approximate", row)
 
     def test_hud_bounds_workflow_within_allowed_file_size(self) -> None:
         from omh.plugin_bundle.omh.runtime_reader import read_omh_hud

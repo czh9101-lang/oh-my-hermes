@@ -145,9 +145,19 @@ Rules:
   HUD's active-executor projection on the next read. The HUD reader labels
   these rows `(<executor>/maestro <model>)`, alongside Hermes-native
   delegate_task rows, because a fanout unit IS the Maestro lane spawning an
-  external CLI directly. Every write here is best-effort: an
-  `ExecutorProgressError` or `OSError` never blocks or fails the dispatch,
-  the same rule the inflight marker already holds.
+  external CLI directly, and derives the row's `elapsed_seconds` from the
+  binding's own opened timestamp against wall-clock now so a live row shows
+  real running time instead of the widget's snapshot-age fallback. Cost is
+  NOT a live figure for this lane: the spawned CLI reports it only in its
+  terminal result object, so `cost_usd` never has a value until the unit's
+  binding closes on exit, and a closed binding drops out of the active-row
+  projection before the next read — a finished unit's cost still surfaces
+  wherever closed rows are reported (the dispatch summary, `omh coding
+  fanout brief`), just never on a still-running row. Every write here is
+  best-effort: an `ExecutorProgressError` or `OSError` never blocks or fails
+  the dispatch, the same rule the inflight marker already holds; the binding
+  now opens and closes inside the same `try`/`finally` so a Ctrl-C or other
+  interruption during the spawn cannot orphan a live row with no closer.
 - **Spawnability is data.** `DISPATCH_COMMAND_TEMPLATES` in
   `src/coding/fanout_dispatch.py` maps profiles with a local headless CLI to
   fixed argv templates — currently codex (`codex exec`), claude-code
@@ -306,15 +316,19 @@ Rules:
   handoff routed no model at all — it never overrides a resolved
   `coding_model_route/v2`/`v1`, and a frozen `choice_required` route still
   fails closed before this is ever read. Editing the JSON file directly is
-  the supported surface; there is no dedicated CLI editor. Shipped default:
-  `claude-code` defaults to `"opus"` (`claude --help` documents `--model` as
-  accepting a short alias — `fable`, `opus`, `sonnet` — alongside a full model
-  id, and `opus` is the strongest published alias), so a claude-code unit with
-  no other route dispatches on the strongest tier rather than silently taking
-  whatever the CLI defaults to. `codex` ships no default (no local `codex` CLI
-  in this repo to confirm its `--model` value space against) — an unset entry
-  means the spawned CLI's own default. An operator profile entry, including an
-  explicit empty string, always overrides the shipped default.
+  the supported surface; there is no dedicated CLI editor. No profile ships a
+  default: a model an account is not entitled to is an observed exit failure
+  with no fallback walk, so an unset entry — meaning the spawned CLI's own
+  default — is the out-of-the-box behavior for every profile, including
+  `claude-code`. **Recommended**, not shipped: an operator who wants the
+  strongest claude-code tier and knows their account carries it can set
+  `"claude-code": "opus"` themselves (this codebase's own model-family alias
+  set, `_CLAUDE_TIER_ALIASES` in `src/coding/model_routing.py`, recognizes
+  `opus` as a claude-family model id; whether `claude --help` documents it as
+  a `--model` alias on a given install is unverified here). `codex` has no
+  recommended value either (no local `codex` CLI in this repo to confirm its
+  `--model` value space against). An operator profile entry, including an
+  explicit empty string, always overrides an unset default.
 - **Model inventory (reporting-only).** `omh coding model-inventory` reports
   which coding models the user has locally activated before any split or
   delegation is proposed: agent CLIs on PATH (codex, claude, opencode,
