@@ -3142,6 +3142,59 @@ class RouterContentTests(unittest.TestCase):
         self.assertNotIn("## Structural Code Search", ultragoal.content)
         self.assertNotIn("omh-routing/references/structural-code-search.md", ultragoal.content)
 
+    def test_project_bootstrap_reference_and_pointer(self) -> None:
+        skills = {skill.name: skill for skill in builtin_skill_templates()}
+        idea_to_deploy = skills["idea-to-deploy"]
+
+        # The always-loaded quality bar names the trigger condition and the
+        # explicit throwaway-work skip, and points at the on-demand reference.
+        self.assertIn("references/project-bootstrap.md", idea_to_deploy.content)
+        self.assertIn("fresh, empty, or newly", idea_to_deploy.content)
+        self.assertIn("explicitly skip it for throwaway or scratch work", idea_to_deploy.content)
+        self.assertIn("bootstrap the project", idea_to_deploy.content)
+        self.assertIn("scaffold a new project", idea_to_deploy.content)
+        self.assertIn("set up a new repo", idea_to_deploy.content)
+        # The bare noun "project scaffolding" was removed after review: it
+        # occurs naturally inside questions about existing repos and must not
+        # dispatch the delivery loop (see the two negative controls).
+        self.assertNotIn("`project scaffolding`", idea_to_deploy.content)
+
+        reference = {
+            (template.skill_name, template.relative_path): template.content
+            for template in builtin_skill_reference_templates()
+        }[("idea-to-deploy", "references/project-bootstrap.md")]
+
+        # The six-step order, each with a named verify line.
+        for step_heading in (
+            "Git and .gitignore",
+            "LICENSE",
+            "README.md",
+            "Agent context file",
+            "CI skeleton",
+            "docs/ seed",
+        ):
+            with self.subTest(step=step_heading):
+                self.assertIn(step_heading, reference)
+        self.assertEqual(reference.count("Verify:"), 6)
+
+        # Named drift classes and cross-cutting bars from the design brief.
+        self.assertIn("license-declared-but-no-file is a named drift class", reference)
+        self.assertIn("README/CI/context-file divergence is a named failure class", reference)
+        self.assertIn("roughly 150 lines", reference)
+        self.assertIn("Cache-stable: zero volatile bytes", reference)
+        self.assertIn("prepared_not_observed", reference)
+        self.assertIn("## When to skip", reference)
+
+        # Origin discipline: generic public standards only, no upstream repo
+        # or individual named as a source.
+        self.assertIn("## Attribution", reference)
+        self.assertIn("agents.md", reference)
+        self.assertIn("SPDX", reference)
+        self.assertIn("No text is reproduced from either source", reference)
+        self.assertNotIn("github.com", reference.lower())
+        self.assertNotIn("mattpocock", reference.lower())
+        self.assertNotIn("karpathy", reference.lower())
+
     def test_installable_skills_expose_completion_and_recovery_guidance(self) -> None:
         for definition in installable_skill_definitions():
             with self.subTest(skill=definition.name):

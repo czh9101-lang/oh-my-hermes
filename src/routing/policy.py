@@ -6060,7 +6060,26 @@ def _app_delivery_loop_guard_applies(normalized_query: str, query_tokens: set[st
         ),
     )
     delivery_terms = len({"plan", "handoff", "qa", "release", "deploy"} & query_tokens) >= 3
-    return idea and (path or delivery_terms)
+    if idea and (path or delivery_terms):
+        return True
+    return _greenfield_project_bootstrap_requested(normalized_query)
+
+
+def _greenfield_project_bootstrap_requested(normalized_query: str) -> bool:
+    return _contains_phrase(
+        normalized_query,
+        (
+            "bootstrap the project",
+            "bootstrap this project",
+            "bootstrap a new project",
+            "bootstrap this repo",
+            "bootstrap a new repo",
+            "scaffold a new project",
+            "scaffold this project",
+            "set up a new repo",
+            "set up a new repository",
+        ),
+    )
 
 
 def _cto_loop_guard_applies(normalized_query: str, query_tokens: set[str]) -> bool:

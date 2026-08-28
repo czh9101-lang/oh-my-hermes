@@ -650,6 +650,33 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "",
         "context-budget-review",
     ),
+    RoutingPrecisionCase(
+        "new-project-file-concept-direct",
+        "New-project file concept question stays a lookup, not an app delivery loop",
+        "what files should a new project have",
+        "answer_file_lookup",
+        "file_or_text",
+    ),
+    # These two exercise the greenfield-bootstrap guard boundary directly: the
+    # bare noun "project scaffolding" occurs naturally inside questions about
+    # repos that already exist, so it must never dispatch the delivery loop.
+    # Both follow the chain-models-concept shape (no forbidden_candidate: the
+    # direct-answer fallback may name low-score candidates while the case
+    # still fails on any dispatch, workflow card, or handoff action).
+    RoutingPrecisionCase(
+        "project-scaffolding-question-direct",
+        "A project-scaffolding how-does-it-work question stays a direct answer",
+        "how does project scaffolding work here",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "project-scaffolding-existing-direct",
+        "Describing existing project scaffolding never dispatches the delivery loop",
+        "explain the project scaffolding we already have",
+        "answer_directly",
+        "direct_answer",
+    ),
 )
 
 
@@ -2579,6 +2606,42 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "prepare_context_budget_review",
         "context_budget_review",
         "context-budget-review",
+    ),
+    RoutingInterventionCase(
+        "greenfield-bootstrap-the-project",
+        "'Bootstrap the project' reaches the app delivery loop for the greenfield bootstrap pass",
+        "bootstrap the project",
+        "dispatch",
+        "idea-to-deploy",
+        "present_app_delivery_loop",
+        "app_delivery_loop",
+    ),
+    RoutingInterventionCase(
+        "greenfield-bootstrap-a-new-repo",
+        "'Bootstrap a new repo' reaches the app delivery loop instead of read-only onboarding",
+        "bootstrap a new repo",
+        "dispatch",
+        "idea-to-deploy",
+        "present_app_delivery_loop",
+        "app_delivery_loop",
+    ),
+    RoutingInterventionCase(
+        "greenfield-scaffold-a-new-project",
+        "'Scaffold a new project' reaches the app delivery loop for the greenfield bootstrap pass",
+        "scaffold a new project",
+        "dispatch",
+        "idea-to-deploy",
+        "present_app_delivery_loop",
+        "app_delivery_loop",
+    ),
+    RoutingInterventionCase(
+        "greenfield-set-up-a-new-repo",
+        "'Set up a new repo' reaches the app delivery loop for the greenfield bootstrap pass",
+        "set up a new repo",
+        "dispatch",
+        "idea-to-deploy",
+        "present_app_delivery_loop",
+        "app_delivery_loop",
     ),
 )
 
