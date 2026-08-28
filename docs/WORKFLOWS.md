@@ -552,7 +552,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - [capability:durable_checkpoint] One concrete, already-scoped task only needs one owner to finish and verify; use the `single_owner_persistence` capability.
   - [capability:durable_checkpoint] The next work must be discovered or reframed repeatedly through research and feedback cycles; use `loop`.
   - [capability:durable_checkpoint] Acceptance criteria, current checkpoint, and final gate expectations are too vague to make a goal inspectable.
-- Strong routing signals: `ultrawork`, `$ultrawork`, `ulw`, `$ulw`, `parallel work`, `parallel implementation`, `high throughput`, `coding team`, `coordinated workers`, `finish until done`, `persistent execution`, `implement`, `one-cycle delivery`, `single-cycle delivery`, `end-to-end process`, `delivery process`, `research plan implement review docs pr`, `plan implement review docs pr`, `prepare a pr`, `make a pr`, `open a pr`, `pr-ready`
+- Strong routing signals: `ultrawork`, `$ultrawork`, `ulw`, `$ulw`, `parallel work`, `parallel implementation`, `high throughput`, `coding team`, `coordinated workers`, `finish until done`, `persistent execution`, `implement`, `one-cycle delivery`, `single-cycle delivery`, `end-to-end process`, `delivery process`, `research plan implement review docs pr`, `plan implement review docs pr`, `prepare a pr`, `make a pr`, `open a pr`, `pr-ready`, `red green refactor`, `red-green refactor`, `red-green`, `failing test first`
 - Good example:
   - Prompt: $ultrawork split the accepted docs refresh, CLI output polish, and test updates into parallel implementation lanes.
   - Expected behavior: Create disjoint lane prompts with acceptance criteria, verification commands, and review evidence requirements.
@@ -566,6 +566,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Require disjoint lane ownership before preparing multiple coding runtime handoffs.
   - Attach acceptance criteria, verification commands, and review expectations to each lane.
   - Keep dispatch, execution, review, CI, and merge status evidence separate.
+  - For a tests-first (TDD or red-green) run, hold every implementation lane to the observed red/green contract: the new test's failing (non-zero) output is pasted before any implementation edit, the passing (zero) output plus full-suite result before any done claim, and a test is never edited, deleted, skipped, xfail-marked, or weakened to make it pass - load `references/tdd-red-green.md` for the full discipline.
   - [capability:coordinated_scope] Keep Hermes as coordinator and status narrator for lane framing and status while coding lanes become runtime handoffs with explicit ownership.
   - [capability:delivery_boundary] Complete exactly one plan-to-PR delivery cycle, then stop with status, evidence gaps, or a next recommended workflow.
   - [capability:delivery_boundary] Start a delivery cycle with codebase/source research and a ralplan-style decision record before implementation handoff.

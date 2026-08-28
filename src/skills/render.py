@@ -2151,6 +2151,107 @@ The measured-loop discipline above adapts the operating practices of the `karpat
 """
 
 
+# Tests-first delivery contract spliced into the ultrawork skill body before
+# `## Runtime Evidence`. Only the contract summary lives here; the evidence
+# ledger, forbidden moves, rationalization table, and attribution live in the
+# on-demand reference. The trailing blank line separates it from the marker.
+_TDD_DELIVERY_SECTION = (
+    "## Tests-First Delivery\n"
+    "\n"
+    "When the user asks for TDD, tests first, or red-green delivery, every implementation lane runs "
+    "under the red/green contract. The iron law: no implementation line before a failing test - write "
+    "the test that describes the missing behavior, run it, and watch it fail for the right reason "
+    "before any implementation edit. A cycle is observed only when a failing (non-zero) run of the "
+    "lane's test command precedes a passing (zero) run, both with pasted output; a lane that shows "
+    "only green is `prepared_not_observed` on its red phase and does not count as tests-first "
+    "delivery. Never edit, delete, skip, xfail, or weaken a test to make it pass - a failing test "
+    "means fix the code - and a test that passes on its first run proves nothing: make it fail first. "
+    "Commit the failing test as a checkpoint before implementing, so any later test edit is "
+    "diff-visible.\n"
+    "\n"
+    "Hermes bundles the superpowers `test-driven-development` skill; when it is loaded, follow its "
+    "cycle - this contract reinforces it with OMH's evidence vocabulary and never overrides it. Load "
+    "`references/tdd-red-green.md` for the full discipline: the evidence ledger, forbidden moves, the "
+    "rationalization table, and the observed red-before-green rule.\n"
+    "\n"
+)
+
+
+def ultrawork_skill() -> SkillTemplate:
+    """Splice the tests-first delivery contract into the ultrawork catalog body."""
+    template = workflow_skill("ultrawork")
+    marker = "## Runtime Evidence\n"
+    if marker not in template.content:
+        raise ValueError("ultrawork skill tests-first marker is missing")
+    return SkillTemplate(template.name, template.content.replace(marker, _TDD_DELIVERY_SECTION + marker, 1))
+
+
+def ultrawork_reference_templates() -> list[SkillReferenceTemplate]:
+    return list(_ultrawork_reference_templates_cached())
+
+
+@lru_cache(maxsize=1)
+def _ultrawork_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
+    return (
+        SkillReferenceTemplate("ultrawork", "references/tdd-red-green.md", _tdd_red_green_reference()),
+    )
+
+
+def _tdd_red_green_reference() -> str:
+    return """# TDD Red/Green Discipline
+
+Load this reference when a delivery run is tests-first: the user asked for TDD, tests first, or red-green, or a lane's acceptance criteria name a failing-test-first contract. The discipline binds every implementation lane in the run, whichever owner executes it.
+
+## The Iron Law
+
+No implementation line before a failing test. Write the test that describes the missing behavior, run it, and watch it fail for the right reason - because the behavior is missing, not because of an import typo or a broken fixture. Only then write the minimal code that makes it pass.
+
+A test that passes on its first run proves nothing: it never witnessed the gap it claims to cover. Treat a first-run pass as a defect in the test - break the behavior deliberately or fix the test's target, watch it fail, then restore - before trusting it.
+
+## The Evidence Ledger
+
+Output that was not pasted did not happen.
+
+- Before writing any implementation line, paste the verbatim failing output of the new test: the command, the non-zero exit, and the failure lines naming the missing behavior.
+- Before claiming a lane done, paste the passing output of the same command plus the full-suite result.
+- Discover the repository's own test command first and use it; a framework default the repo does not use proves nothing about this repo.
+
+## Observed, Not Narrated
+
+A TDD cycle is observed only when a non-zero (red) run precedes a zero (green) run of the same test command, both with pasted output. A lane that reports only a green run - or narrates a red run without its output - is `prepared_not_observed` on its red phase and stays there: it does not count as tests-first delivery, and the completion claim must say so.
+
+Commit the failing test as a checkpoint before the first implementation edit. The red commit makes tampering diff-visible: any later change to the test files appears in `git diff <red-commit>.. -- <test paths>` and must be explained in the lane report. The `omh_gather_evidence` tool accepts `git diff` probes for exactly this check.
+
+## Forbidden Moves
+
+- Never edit, delete, skip, xfail, or weaken a test to make it pass. A test failure is information about the code; fix the code, not the test.
+- Never add skip, xfail, or `.only` markers, loosen assertions, or update snapshots and goldens to silence a red run. Any such marker in the diff between the red commit and the green run is a blocker, not a style note.
+- Never write implementation ahead of the test and backfill the test after; a backfilled test that passes immediately is the first-run-pass defect above.
+
+## Rationalizations, Pre-answered
+
+| Excuse | Answer |
+| --- | --- |
+| Too simple to test | Simple code breaks too; a trivial behavior gets a trivial test, written first. If it is genuinely untestable, say so in the lane report and let the reviewer judge. |
+| I will test after | An after-the-fact test never witnesses the failure, so it proves nothing about the gap. Testing after is not TDD arriving late; it is a different, weaker workflow - name it if you choose it. |
+| Manual testing suffices | A manual check leaves no output to paste and no command to rerun; it is unobserved by definition and cannot close a tests-first lane. |
+
+## Composition
+
+Hermes bundles the superpowers `test-driven-development` skill. When it is loaded, follow its cycle; this reference reinforces it and never overrides it. What OMH adds is the evidence vocabulary: the observed red-before-green rule, the red-commit checkpoint, and the `prepared_not_observed` labeling of unwitnessed cycles.
+
+## What This Does Not Change
+
+- The run's permission profile still gates every dispatch and repository mutation; a red commit needs the same grants as any other commit.
+- Red and green runs are lane execution evidence only; review, CI, merge-readiness, and merge evidence stay separate, per the run's evidence boundaries.
+- Verification still ends with the full suite and the repository's own gates; a green unit test alone closes nothing.
+
+## Attribution
+
+This discipline adapts the red/green/refactor practice popularized by Kent Beck and the obra/superpowers `test-driven-development` skill that Hermes bundles. No upstream text is reproduced. OMH maps the mechanisms onto its own lane, evidence, and `prepared_not_observed` vocabulary.
+"""
+
+
 def context_skill() -> SkillTemplate:
     """Render the canonical project-terminology workflow with progressive references."""
     template = workflow_skill("context")

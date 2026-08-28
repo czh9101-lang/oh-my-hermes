@@ -22,6 +22,8 @@ from .render import (
     router_reference_templates,
     router_skill,
     structural_search_skill,
+    ultrawork_reference_templates,
+    ultrawork_skill,
     wiki_reference_templates,
     wiki_skill,
     workflow_skill,
@@ -40,6 +42,7 @@ def builtin_skill_reference_templates() -> list[SkillReferenceTemplate]:
         *context_reference_templates(),
         *buzz_reference_templates(),
         *loop_reference_templates(),
+        *ultrawork_reference_templates(),
         *[
             SkillReferenceTemplate(
                 definition.name,
@@ -72,6 +75,8 @@ def _skill_template_for(name: str) -> SkillTemplate:
         return buzz_skill()
     if name in ("codebase-onboarding", "codegraph-refresh"):
         return structural_search_skill(name)
+    if name == "ultrawork":
+        return ultrawork_skill()
     return workflow_skill(name)
 
 

@@ -851,6 +851,13 @@ _DEFINITIONS = [
             "make a pr",
             "open a pr",
             "pr-ready",
+            # Tests-first delivery vocabulary: the retiring `ultraprocess`
+            # definition already carries the plain TDD phrases and dissolves
+            # to this engine, so only the red/green phrasing lands here.
+            "red green refactor",
+            "red-green refactor",
+            "red-green",
+            "failing test first",
         ),
         "Use when an accepted implementation plan can be split into independent, reviewable work lanes.",
         aliases=("ulw",),
@@ -902,6 +909,7 @@ _DEFINITIONS = [
             "Require disjoint lane ownership before preparing multiple coding runtime handoffs.",
             "Attach acceptance criteria, verification commands, and review expectations to each lane.",
             "Keep dispatch, execution, review, CI, and merge status evidence separate.",
+            "For a tests-first (TDD or red-green) run, hold every implementation lane to the observed red/green contract: the new test's failing (non-zero) output is pasted before any implementation edit, the passing (zero) output plus full-suite result before any done claim, and a test is never edited, deleted, skipped, xfail-marked, or weakened to make it pass - load `references/tdd-red-green.md` for the full discipline.",
             "[capability:coordinated_scope] Keep Hermes as coordinator and status narrator for lane framing and status while coding lanes become runtime handoffs with explicit ownership.",
             "[capability:delivery_boundary] Complete exactly one plan-to-PR delivery cycle, then stop with status, evidence gaps, or a next recommended workflow.",
             "[capability:delivery_boundary] Start a delivery cycle with codebase/source research and a ralplan-style decision record before implementation handoff.",

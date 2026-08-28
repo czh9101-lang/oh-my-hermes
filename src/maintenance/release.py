@@ -233,7 +233,13 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # digests, per-dispatch time bounds, receipt-authenticated observed_at, and
 # the owning-OS-user limitation while replacing the older generic
 # provenance sentence (net +48 chars); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 721472
+# 721472 -> 723197: ultrawork gained the tests-first delivery contract
+# (+1725 chars: the red-before-green observed rule with pasted-output
+# evidence, forbidden test-weakening moves, the red-commit checkpoint, and
+# the pointer to the on-demand references/tdd-red-green.md discipline; the
+# reference body loads on demand and sits outside this always-loaded
+# budget); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 723197
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

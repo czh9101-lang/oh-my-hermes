@@ -3080,6 +3080,18 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("non-disjoint", skills["ultrawork"].content)
         self.assertIn("Worker ACK", skills["ultrawork"].content)
         self.assertIn("hermes_coding_harness/v1", skills["ultrawork"].content)
+        self.assertIn("## Tests-First Delivery", skills["ultrawork"].content)
+        self.assertIn("no implementation line before a failing test", skills["ultrawork"].content.lower())
+        self.assertIn("references/tdd-red-green.md", skills["ultrawork"].content)
+        self.assertIn("prepared_not_observed", skills["ultrawork"].content)
+        tdd_reference = {
+            (template.skill_name, template.relative_path): template.content
+            for template in builtin_skill_reference_templates()
+        }[("ultrawork", "references/tdd-red-green.md")]
+        self.assertIn("Output that was not pasted did not happen.", tdd_reference)
+        self.assertIn("a non-zero (red) run precedes a zero (green) run", tdd_reference)
+        self.assertIn("fix the code, not the test", tdd_reference)
+        self.assertIn("No upstream text is reproduced.", tdd_reference)
         self.assertIn("Blocking issues and warnings", skills["doctor"].content)
         self.assertIn("plugin register smoke", skills["doctor"].content)
 

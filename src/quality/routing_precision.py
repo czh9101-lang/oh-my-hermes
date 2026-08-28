@@ -547,6 +547,28 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_clarification",
         "",
     ),
+    # Negative controls for the tests-first delivery triggers on `ultrawork`
+    # ("red green refactor", "red-green refactor", "red-green",
+    # "failing test first"): a concept question and a why-is-it-failing
+    # diagnosis must stay off the tests-first delivery engine. The concept
+    # case follows the chain-models-concept shape (no forbidden_candidate:
+    # the direct-answer fallback may name low-score candidates while the
+    # case still fails on any dispatch, workflow card, or handoff action).
+    RoutingPrecisionCase(
+        "red-green-refactor-concept",
+        "A red-green-refactor concept question stays direct, not a tests-first run",
+        "explain what red green refactor means",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "tests-failing-question",
+        "A why-are-tests-failing question stays a clarification, not a tests-first run",
+        "why are the tests failing",
+        "answer_clarification",
+        "",
+        "ultrawork",
+    ),
     RoutingPrecisionCase("o013-dso", "DSO clarification excludes visual QA", "DSO revenue cutoff", "answer_clarification", "", "visual-qa"),
     RoutingPrecisionCase("o013-asc-606", "ASC 606 clarification excludes model setup", "ASC 606 model", "answer_clarification", "", "model-setup"),
     RoutingPrecisionCase("o013-liability-cap", "Liability clarification excludes model setup", "indemnity liability cap", "answer_clarification", "", "model-setup"),
@@ -1355,6 +1377,24 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "owner-learning-ulw-delivery",
         "ULW coding delivery opens the owner-choice handoff",
         "research, plan, implement, verify, and review this coding change in one cycle",
+        "dispatch",
+        "ultrawork",
+        "choose_executor",
+        "handoff",
+    ),
+    RoutingInterventionCase(
+        "tdd-implementation-red-green",
+        "TDD implementation requests open ultrawork's tests-first delivery",
+        "tdd implementation of the retry queue: write tests first, then make them pass",
+        "dispatch",
+        "ultrawork",
+        "choose_executor",
+        "handoff",
+    ),
+    RoutingInterventionCase(
+        "red-green-refactor-delivery",
+        "Red-green delivery requests open ultrawork's tests-first delivery",
+        "implement the parser with a failing test first, red-green",
         "dispatch",
         "ultrawork",
         "choose_executor",
