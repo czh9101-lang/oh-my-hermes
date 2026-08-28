@@ -28,6 +28,19 @@ _STEERING_DELTA_FIELDS = (
     "required_action",
     "verification_target_changed",
 )
+# A named required artifact, not an advisory phrase: "consult docs first" is
+# skippable, while a report block a reviewer can grep for is checkable. The
+# always-present rule (entries or the explicit none line) keeps the check
+# deterministic without OMH guessing at dispatch time whether a task is
+# SDK-touching.
+DOCS_CONSULTED_ARTIFACT_POLICY = (
+    "Docs consulted artifact: when the task touches an SDK, framework, or external library API, "
+    "read the official documentation before coding against it and record each source as an exact URL "
+    "(prefer the framework's llms.txt index when one exists) plus the version consulted. "
+    "The final report must contain a `Docs consulted:` block listing those URL+version entries; "
+    "for SDK-touching work a report without this block is incomplete. When no SDK or framework is "
+    "touched, the block must state `Docs consulted: none (no SDK/framework surface touched)`."
+)
 
 
 def build_executor_prompting_contract(
@@ -59,6 +72,7 @@ def build_executor_prompting_contract(
         "repository_first_policy": (
             "Inspect the repository, project instructions, and current diff before editing; reconcile the request with observed code facts."
         ),
+        "docs_consulted_policy": DOCS_CONSULTED_ARTIFACT_POLICY,
         "uncertainty_policy": (
             "When a missing fact changes scope, safety, or verification, ask one focused question or state the smallest reversible assumption before editing."
         ),
@@ -125,6 +139,7 @@ def render_executor_prompt_sections(
     intent = str(contract.get("intent", "unknown"))
     do_items = [
         str(contract.get("repository_first_policy", "Inspect the repository before editing.")),
+        str(contract.get("docs_consulted_policy", DOCS_CONSULTED_ARTIFACT_POLICY)),
         _strategy_instruction(strategy),
         "Implement only the requested scope after repository facts confirm it.",
     ]
@@ -148,6 +163,10 @@ def render_executor_prompt_sections(
         expected_result.append("A scoped change or review result aligned to the request.")
     expected_result.append(
         "A concise report with changed files, verification outcomes, blockers, and evidence refs."
+    )
+    expected_result.append(
+        "A `Docs consulted:` block with exact URL+version entries for any SDK/framework touched, "
+        "or its explicit none line; SDK-touching work without it is incomplete."
     )
     if review_required:
         expected_result.append("Review status and any remaining review risk are explicit.")
@@ -229,6 +248,7 @@ def _section(title: str, items: Iterable[str]) -> str:
 
 
 __all__ = [
+    "DOCS_CONSULTED_ARTIFACT_POLICY",
     "build_executor_prompting_contract",
     "render_executor_prompt_sections",
     "select_executor_prompting_strategy",

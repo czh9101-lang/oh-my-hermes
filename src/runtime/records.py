@@ -468,6 +468,7 @@ CODING_EXECUTOR_PROMPTING_CONTRACT_KEYS = (
     "task_source",
     "required_sections",
     "repository_first_policy",
+    "docs_consulted_policy",
     "uncertainty_policy",
     "verification_policy",
     "reporting_policy",
@@ -1683,6 +1684,7 @@ def _compact_executor_prompting_contract(value: Any) -> dict[str, Any]:
         "task_source": str(value.get("task_source", "")),
         "required_sections": _compact_string_list(value.get("required_sections", [])),
         "repository_first_policy": str(value.get("repository_first_policy", "")),
+        "docs_consulted_policy": str(value.get("docs_consulted_policy", "")),
         "uncertainty_policy": str(value.get("uncertainty_policy", "")),
         "verification_policy": str(value.get("verification_policy", "")),
         "reporting_policy": str(value.get("reporting_policy", "")),
@@ -2911,6 +2913,7 @@ def validate_executor_prompting_contract(contract: Any, label: str, *, expected_
         _require(not missing_sections, errors, f"{label} required_sections must include required sections: {missing_sections}")
     for key in (
         "repository_first_policy",
+        "docs_consulted_policy",
         "uncertainty_policy",
         "verification_policy",
         "reporting_policy",
@@ -2918,6 +2921,12 @@ def validate_executor_prompting_contract(contract: Any, label: str, *, expected_
         "claim_boundary",
     ):
         _require(isinstance(contract.get(key), str) and bool(str(contract.get(key))), errors, f"{label} {key} must be a non-empty string")
+    docs_policy = str(contract.get("docs_consulted_policy", "")).lower()
+    _require(
+        "docs consulted" in docs_policy and "incomplete" in docs_policy,
+        errors,
+        f"{label} docs_consulted_policy must require the named Docs consulted report block and mark SDK-touching work without it incomplete",
+    )
     template = str(contract.get("steering_delta_template", ""))
     for field in ("changed_constraint", "new_evidence", "required_action", "verification_target_changed"):
         _require("{" + field + "}" in template, errors, f"{label} steering_delta_template must include {{{field}}}")
