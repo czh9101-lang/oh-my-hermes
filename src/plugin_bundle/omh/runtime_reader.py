@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import heapq
 import json
 import math
 import os
@@ -13,6 +14,11 @@ from typing import Any, Callable
 
 from .approval_bypass import effective_approval_bypass
 from .hermes_delegation import read_hermes_native_subagents
+from .subagent_graph import project_subagent_graph
+from .subagent_graph_contract import (
+    GRAPH_CONTRACT_UNIT_LIMIT,
+    recorded_contract_blocker,
+)
 from .tool_bursts import tool_call_projection
 from .metadata import (
     OPTIONAL_HOOKS,
@@ -134,11 +140,41 @@ RAW_OR_HIDDEN_KEYS = {
 }
 MAX_HUD_METADATA_BYTES = 262_144
 MAX_HUD_TEXT_CHARS = 120
+MAX_WIDGET_HUD_BYTES = 60_000
+HUD_ADVERTISED_ITEM_LIMIT = 128
+FANOUT_GRAPH_DIR_LIMIT = 64
+FANOUT_GRAPH_STATUS_LIMIT = GRAPH_CONTRACT_UNIT_LIMIT
+_FANOUT_GRAPH_ID_RE = re.compile(r"^fanout-[0-9a-f]{12}$")
+_FANOUT_GRAPH_STATUSES = {
+    "running",
+    "already_completed",
+    "dry_run_planned",
+    "capability_snapshot_invalid",
+    "completed",
+    "failed",
+    "blocked_by_dependency",
+    "executor_not_ready",
+    "unsupported_for_local_dispatch",
+    "worktree_failed",
+    "not_selected",
+    "interrupted",
+    "model_choice_required",
+    "prepared_not_observed",
+}
+_FANOUT_DISPATCH_SCHEMA_VERSION = "fanout_dispatch_summary/v1"
+_FANOUT_ROSTER_SCHEMA_VERSION = "omh_running_work_board/v1"
+_INFLIGHT_MARKER_SCHEMA_VERSION = "omh_inflight_marker/v1"
 
 
 def _expand_path(value: str | Path) -> Path:
+    expanded = Path(os.path.expandvars(str(value))).expanduser()
     try:
-        return Path(os.path.expandvars(str(value))).expanduser().resolve()
+        if stat.S_ISLNK(expanded.lstat().st_mode):
+            raise RuntimeError("cannot use a symlink as a state root")
+    except FileNotFoundError:
+        pass
+    try:
+        return expanded.resolve()
     except OSError as exc:
         if exc.errno == errno.ELOOP:
             raise RuntimeError("cannot resolve path through a symlink loop") from exc
@@ -146,7 +182,54 @@ def _expand_path(value: str | Path) -> Path:
 
 
 def _hud_text(value: Any, *, limit: int = MAX_HUD_TEXT_CHARS) -> str:
-    return str(value or "").strip()[:limit]
+    return strip_control_characters(value)[:limit]
+
+
+def _fit_widget_hud_budget(payload: dict[str, Any]) -> dict[str, Any]:
+    if _widget_hud_bytes(payload) <= MAX_WIDGET_HUD_BYTES:
+        return payload
+    protected = {"schema_version", "privacy", "version", "profile", "active", "graph", "display"}
+    for item_limit in (64, 16, 4):
+        bounded = {
+            key: value if key in protected else _bounded_hud_value(value, item_limit=item_limit)
+            for key, value in payload.items()
+        }
+        if _widget_hud_bytes(bounded) <= MAX_WIDGET_HUD_BYTES:
+            return bounded
+    return {
+        key: (
+            value
+            if key in protected
+            else {}
+            if isinstance(value, dict)
+            else []
+            if isinstance(value, (list, tuple))
+            else _hud_text(value)
+            if isinstance(value, str)
+            else value
+        )
+        for key, value in payload.items()
+    }
+
+
+def _bounded_hud_value(value: Any, *, item_limit: int) -> Any:
+    if isinstance(value, str):
+        return value[:256]
+    if isinstance(value, (list, tuple)):
+        return [
+            _bounded_hud_value(item, item_limit=item_limit)
+            for item in value[:item_limit]
+        ]
+    if isinstance(value, dict):
+        return {
+            str(key): _bounded_hud_value(item, item_limit=item_limit)
+            for key, item in list(value.items())[:item_limit]
+        }
+    return value
+
+
+def _widget_hud_bytes(payload: dict[str, Any]) -> int:
+    return len(json.dumps(payload).encode("utf-8")) + 1
 
 
 def _default_omh_home() -> Path:
@@ -160,7 +243,7 @@ def _default_hermes_home() -> Path:
 def _read_json(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, RecursionError):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -227,20 +310,35 @@ def _read_hud_text(path: Path, *, root: Path | None = None) -> str | None:
         os.close(descriptor)
 
 
-def _read_hud_json(path: Path, *, root: Path | None = None) -> dict[str, Any]:
+def _read_hud_json_with_read_state(
+    path: Path,
+    *,
+    root: Path | None = None,
+) -> tuple[dict[str, Any], bool]:
     try:
         text = _read_hud_text(path, root=root)
+        if text is None:
+            return {}, False
         data = json.loads(text) if text is not None else {}
-    except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) and not _has_raw_or_hidden_content(data) else {}
+    except (ValueError, RecursionError):
+        return {}, False
+    if not isinstance(data, dict):
+        return {}, True
+    try:
+        return (data, True) if not _has_raw_or_hidden_content(data) else ({}, True)
+    except RecursionError:
+        return {}, False
+
+
+def _read_hud_json(path: Path, *, root: Path | None = None) -> dict[str, Any]:
+    return _read_hud_json_with_read_state(path, root=root)[0]
 
 
 def _read_hud_coding_projection(path: Path, *, root: Path | None = None) -> dict[str, Any]:
     try:
         text = _read_hud_text(path, root=root)
         data = json.loads(text) if text is not None else {}
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         return {}
     if not isinstance(data, dict):
         return {}
@@ -277,7 +375,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
             continue
         try:
             data = json.loads(line)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
             continue
         if isinstance(data, dict):
             records.append(data)
@@ -294,7 +392,7 @@ def _read_hud_jsonl(path: Path, *, root: Path | None = None) -> list[dict[str, A
             continue
         try:
             data = json.loads(line)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
             continue
         if isinstance(data, dict):
             records.append(data)
@@ -648,6 +746,7 @@ def read_omh_hud(
     limit: int = 3,
     token_metadata: dict[str, Any] | None = None,
     package_version: str = "",
+    graph_preference: str = "auto",
 ) -> dict[str, Any]:
     safe_preset = preset if preset in HUD_PRESETS else "focused"
     home = _expand_path(omh_home) if omh_home else _default_omh_home()
@@ -733,6 +832,11 @@ def read_omh_hud(
         merged["completed"] = int(merged.get("completed", 0)) + int(native["completed"])
         if merged.get("status") == "idle":
             merged["status"] = "observed"
+    payload["graph"] = _hud_subagent_graph(
+        home,
+        native_rows_present=bool(native["rows"]),
+        preference=_hud_graph_preference(graph_preference),
+    )
     payload["active"] = bool(
         payload["runtime"]["workflow"] != "idle"
         or payload["subagents"]["active"]
@@ -746,7 +850,344 @@ def read_omh_hud(
         "widget_lines": _hud_widget_lines(payload),
         "todo_lines": _hud_todo_lines(payload["todo"], preset=safe_preset),
     }
-    return payload
+    return _fit_widget_hud_budget(payload)
+
+
+def _hud_subagent_graph(
+    home: Path,
+    *,
+    native_rows_present: bool,
+    preference: str,
+) -> dict[str, object]:
+    record = _hud_local_fanout_record(home)
+    if isinstance(record, str):
+        return project_subagent_graph(
+            None,
+            {"units": []},
+            preference=preference,
+            blockers=(record,),
+        )
+    if record is None:
+        return project_subagent_graph(
+            None,
+            {"units": []},
+            preference=preference,
+            blockers=("host_no_native_dag",) if native_rows_present else (),
+        )
+    contract, provenance, roster, fanout_id, record_blocker = record
+    blockers: tuple[str, ...] = ()
+    if native_rows_present:
+        blockers = ("live_team",)
+    elif record_blocker:
+        blockers = (record_blocker,)
+    else:
+        provenance_blocker = recorded_contract_blocker(
+            contract,
+            provenance,
+            expected_fanout_id=fanout_id,
+        )
+        if provenance_blocker:
+            blockers = (provenance_blocker,)
+    return project_subagent_graph(
+        contract,
+        roster,
+        preference=preference,
+        blockers=blockers,
+    )
+
+
+def _hud_local_fanout_record(
+    home: Path,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str, str] | str | None:
+    fanout_root = home / "coding" / "fanout"
+    try:
+        fanout_root_stat = fanout_root.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "unreadable_fanout_root"
+    if not stat.S_ISDIR(fanout_root_stat.st_mode):
+        return "unreadable_fanout_root"
+
+    candidates: list[
+        tuple[
+            tuple[float, str],
+            Path,
+            dict[str, Any],
+            dict[str, Any],
+        ]
+    ] = []
+    invalid_contract_seen = False
+    unscored_read_fault = False
+    newest_read_fault_mtime: float | None = None
+    try:
+        for child in fanout_root.iterdir():
+            if not _FANOUT_GRAPH_ID_RE.fullmatch(child.name):
+                continue
+            try:
+                child_stat = child.lstat()
+            except OSError:
+                unscored_read_fault = True
+                continue
+            if not stat.S_ISDIR(child_stat.st_mode):
+                continue
+            contract_path = child / "fanout_contract.json"
+            try:
+                contract_path.lstat()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                updated_at = _hud_fanout_candidate_score(child)[0]
+                newest_read_fault_mtime = max(
+                    newest_read_fault_mtime or updated_at,
+                    updated_at,
+                )
+                continue
+            contract, contract_read = _read_hud_json_with_read_state(
+                contract_path,
+                root=home,
+            )
+            if not contract_read:
+                updated_at = _hud_fanout_candidate_score(child)[0]
+                newest_read_fault_mtime = max(
+                    newest_read_fault_mtime or updated_at,
+                    updated_at,
+                )
+                continue
+            provenance_path = child / "contract_provenance.json"
+            try:
+                provenance_path.lstat()
+            except FileNotFoundError:
+                invalid_contract_seen = True
+                continue
+            except OSError:
+                updated_at = _hud_fanout_candidate_score(child)[0]
+                newest_read_fault_mtime = max(
+                    newest_read_fault_mtime or updated_at,
+                    updated_at,
+                )
+                continue
+            provenance, provenance_read = _read_hud_json_with_read_state(
+                provenance_path,
+                root=home,
+            )
+            if not provenance_read:
+                updated_at = _hud_fanout_candidate_score(child)[0]
+                newest_read_fault_mtime = max(
+                    newest_read_fault_mtime or updated_at,
+                    updated_at,
+                )
+                continue
+            if recorded_contract_blocker(
+                contract,
+                provenance,
+                expected_fanout_id=child.name,
+            ):
+                invalid_contract_seen = True
+                continue
+            candidate = (
+                _hud_fanout_candidate_score(child),
+                child,
+                contract,
+                provenance,
+            )
+            if len(candidates) < FANOUT_GRAPH_DIR_LIMIT:
+                heapq.heappush(candidates, candidate)
+            else:
+                heapq.heappushpop(candidates, candidate)
+    except OSError:
+        return "unreadable_fanout_root"
+    if not candidates:
+        return (
+            "unverified_fanout_contract"
+            if invalid_contract_seen
+            or unscored_read_fault
+            or newest_read_fault_mtime is not None
+            else None
+        )
+    newest_verified_mtime = max(candidate[0][0] for candidate in candidates)
+    if (
+        unscored_read_fault
+        or newest_read_fault_mtime is not None
+        and newest_read_fault_mtime >= newest_verified_mtime
+    ):
+        return "unverified_fanout_contract"
+
+    selected: tuple[
+        tuple[float, bool, str],
+        dict[str, Any],
+        dict[str, Any],
+        dict[str, Any],
+        str,
+        str,
+    ] | None = None
+    for _, fanout_dir, contract, provenance in candidates:
+        fanout_id = fanout_dir.name
+        roster, status_blocker = _hud_fanout_roster(
+            home,
+            fanout_dir,
+            fanout_id,
+            contract,
+        )
+        updated_at = _hud_fanout_candidate_score(fanout_dir)[0]
+        running = any(
+            str(unit.get("status", "")) == "running"
+            for unit in roster["units"]
+            if isinstance(unit, dict)
+        )
+        score = (updated_at, running, fanout_id)
+        candidate = (
+            score,
+            contract,
+            provenance,
+            roster,
+            fanout_id,
+            status_blocker,
+        )
+        if selected is None or score > selected[0]:
+            selected = candidate
+    if selected is None:
+        return None
+    _, contract, provenance, roster, fanout_id, status_blocker = selected
+    return contract, provenance, roster, fanout_id, status_blocker
+
+
+def _hud_fanout_candidate_score(fanout_dir: Path) -> tuple[float, str]:
+    return (
+        max(
+            _hud_metadata_mtime(fanout_dir),
+            _hud_metadata_mtime(fanout_dir / "fanout_contract.json"),
+            _hud_metadata_mtime(fanout_dir / "dispatch_summary.json"),
+            _hud_metadata_mtime(fanout_dir / "inflight"),
+        ),
+        fanout_dir.name,
+    )
+
+
+def _hud_fanout_roster(
+    home: Path,
+    fanout_dir: Path,
+    fanout_id: str,
+    contract: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    raw_contract_units = contract.get("units")
+    contract_units = (
+        [unit for unit in raw_contract_units[:FANOUT_GRAPH_STATUS_LIMIT] if isinstance(unit, dict)]
+        if isinstance(raw_contract_units, list)
+        else []
+    )
+    units_by_id = {
+        str(unit.get("unit_id", "")): {
+            "fanout_id": fanout_id,
+            "unit_id": str(unit.get("unit_id", "")),
+            "status": "prepared_not_observed",
+        }
+        for unit in contract_units
+        if str(unit.get("unit_id", ""))
+    }
+    summary_path = fanout_dir / "dispatch_summary.json"
+    try:
+        summary_path.lstat()
+        summary_present = True
+    except FileNotFoundError:
+        summary_present = False
+    except OSError:
+        return _hud_graph_roster(fanout_id, units_by_id), "unreadable_fanout_status"
+    if summary_present:
+        summary = _read_hud_json(summary_path, root=home)
+        if not summary:
+            return _hud_graph_roster(fanout_id, units_by_id), "unreadable_fanout_status"
+        raw_summary_units = summary.get("units")
+        if (
+            summary.get("schema_version") != _FANOUT_DISPATCH_SCHEMA_VERSION
+            or summary.get("fanout_id") != fanout_id
+            or not isinstance(raw_summary_units, list)
+            or len(raw_summary_units) != len(units_by_id)
+            or len(raw_summary_units) > FANOUT_GRAPH_STATUS_LIMIT
+        ):
+            return _hud_graph_roster(fanout_id, units_by_id), "invalid_fanout_status"
+        seen_summary_units: set[str] = set()
+        for entry in raw_summary_units:
+            if not isinstance(entry, dict):
+                return _hud_graph_roster(fanout_id, units_by_id), "invalid_fanout_status"
+            unit_id = entry.get("unit_id")
+            if not isinstance(unit_id, str):
+                return _hud_graph_roster(fanout_id, units_by_id), "invalid_fanout_status"
+            if unit_id in seen_summary_units:
+                return _hud_graph_roster(fanout_id, units_by_id), "invalid_fanout_status"
+            status = entry.get("status")
+            if not isinstance(status, str):
+                return _hud_graph_roster(fanout_id, units_by_id), "invalid_fanout_status"
+            if unit_id not in units_by_id or status not in _FANOUT_GRAPH_STATUSES:
+                return _hud_graph_roster(fanout_id, units_by_id), "invalid_fanout_status"
+            seen_summary_units.add(unit_id)
+            units_by_id[unit_id]["status"] = status
+        if seen_summary_units != set(units_by_id):
+            return _hud_graph_roster(fanout_id, units_by_id), "invalid_fanout_status"
+    inflight_dir = fanout_dir / "inflight"
+    try:
+        inflight_dir.lstat()
+    except FileNotFoundError:
+        marker_paths: list[Path] = []
+    except OSError:
+        return _hud_graph_roster(fanout_id, units_by_id), "unreadable_fanout_status"
+    else:
+        if not inflight_dir.is_dir() or inflight_dir.is_symlink():
+            return _hud_graph_roster(fanout_id, units_by_id), "unreadable_fanout_status"
+        try:
+            marker_paths = []
+            for marker_path in inflight_dir.iterdir():
+                if marker_path.suffix != ".json":
+                    continue
+                marker_paths.append(marker_path)
+                if len(marker_paths) > FANOUT_GRAPH_STATUS_LIMIT:
+                    return _hud_graph_roster(fanout_id, units_by_id), "invalid_fanout_status"
+            marker_paths.sort(key=lambda path: path.name)
+        except OSError:
+            return _hud_graph_roster(fanout_id, units_by_id), "unreadable_fanout_status"
+    for marker_path in marker_paths:
+        unit_id = marker_path.stem
+        marker = _read_hud_json(marker_path, root=home)
+        if not marker:
+            return _hud_graph_roster(fanout_id, units_by_id), "unreadable_fanout_status"
+        if (
+            marker.get("schema_version") != _INFLIGHT_MARKER_SCHEMA_VERSION
+            or marker.get("fanout_id") != fanout_id
+            or marker.get("unit_id") != unit_id
+            or unit_id not in units_by_id
+        ):
+            return _hud_graph_roster(fanout_id, units_by_id), "invalid_fanout_status"
+        if units_by_id[unit_id]["status"] in {"prepared_not_observed", "running"}:
+            units_by_id[unit_id]["status"] = "running"
+    return _hud_graph_roster(fanout_id, units_by_id), ""
+
+
+def _hud_graph_roster(
+    fanout_id: str,
+    units_by_id: dict[str, dict[str, str]],
+) -> dict[str, Any]:
+    return {
+        "schema_version": _FANOUT_ROSTER_SCHEMA_VERSION,
+        "fanout_id": fanout_id,
+        "units": list(units_by_id.values()),
+    }
+
+
+def _hud_metadata_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _hud_graph_preference(override: str) -> str:
+    environment = str(os.environ.get("OMH_SUBAGENT_GRAPH", "")).strip()
+    requested = {override, environment}
+    if "off" in requested:
+        return "off"
+    if "on" in requested:
+        return "on"
+    return "auto"
 
 
 def format_omh_hud_line(payload: dict[str, Any], *, preset: str = "focused") -> str:
@@ -829,10 +1270,22 @@ def _plugin_capabilities(
         }
     )
     yaml_text = _read_hud_text(plugin_dir / "plugin.yaml", root=root) or ""
-    advertised_tools = set(_yaml_list_values(yaml_text, "provides_tools"))
-    advertised_hooks = set(_yaml_list_values(yaml_text, "provides_hooks"))
-    registered_tools = set(_string_list(last_distribution.get("registered_tools", [])))
-    registered_hooks = set(_string_list(last_distribution.get("registered_hooks", [])))
+    advertised_tools = set(
+        _yaml_list_values(yaml_text, "provides_tools")[:HUD_ADVERTISED_ITEM_LIMIT]
+    )
+    advertised_hooks = set(
+        _yaml_list_values(yaml_text, "provides_hooks")[:HUD_ADVERTISED_ITEM_LIMIT]
+    )
+    registered_tools = set(
+        _string_list(last_distribution.get("registered_tools", []))[
+            :HUD_ADVERTISED_ITEM_LIMIT
+        ]
+    )
+    registered_hooks = set(
+        _string_list(last_distribution.get("registered_hooks", []))[
+            :HUD_ADVERTISED_ITEM_LIMIT
+        ]
+    )
     tool_sources = advertised_tools | registered_tools
     hook_sources = advertised_hooks | registered_hooks
     return {

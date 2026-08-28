@@ -284,7 +284,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # `coding_executor_handoff/v1` / `coding_runtime_handoff/v1` constants, the
 # prepared-record-vs-fanout-dispatch qualifier on the mode-statement rule, and
 # the de-defaulted handoff_policy closing clause; warranted correction.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 741942
+# 741942 -> 744243: ultrawork gained dependency-topology selection, standalone
+# node and verification-fan-in contracts, PIN/RED/GREEN/SURFACE/CLEAN evidence
+# discipline, real-surface QA and cleanup receipts, and guarded natural
+# nomination for parallel-then-integrate work (+2301 chars); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 744243
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

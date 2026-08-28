@@ -207,7 +207,9 @@ def _required_decisions(pattern_id: str) -> list[str]:
             "approval_gates",
             "verification_gate",
         ]
-    if pattern_id in {"executor_session_handoff", "team_staged_pipeline", "hermes_coding_team_path", "swarm_batch", "worktree_isolated_workers"}:
+    if pattern_id == "team_staged_pipeline":
+        return ["dependency_topology", "executor_or_runtime_profile", "authority_scope", "verification_gate"]
+    if pattern_id in {"executor_session_handoff", "hermes_coding_team_path", "swarm_batch", "worktree_isolated_workers"}:
         return ["executor_or_runtime_profile", "authority_scope", "verification_gate"]
     if pattern_id == "loop_run_once":
         return ["permission_profile", "next_verification", "feedback_or_wait_policy"]

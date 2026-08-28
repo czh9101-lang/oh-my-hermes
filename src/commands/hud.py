@@ -31,6 +31,7 @@ def _hud_payload(args: argparse.Namespace) -> dict[str, Any]:
         preset=args.preset,
         limit=args.limit,
         token_metadata=_token_metadata(args),
+        graph_preference="on" if getattr(args, "graph", False) else "auto",
     )
 
 
@@ -59,5 +60,6 @@ def _add_hud_commands(sub) -> None:
     hud.add_argument("--context-remaining-percent", type=float, default=None, help="Optional host-provided context remaining percentage.")
     hud.add_argument("--watch", action="store_true", help="Keep printing the HUD line until interrupted.")
     hud.add_argument("--interval", type=float, default=2.0, help="Seconds between --watch refreshes.")
+    hud.add_argument("--graph", action="store_true", help="Show a safe recorded fanout graph when one is available.")
     hud.add_argument("--json", action="store_true", help="Print the full machine-readable HUD payload.")
     hud.set_defaults(func=cmd_hud)

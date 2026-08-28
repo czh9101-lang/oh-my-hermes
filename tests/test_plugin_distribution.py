@@ -19,7 +19,7 @@ from _local_package import load_local_package
 
 load_local_package()
 
-from omh.commands import setup as setup_module
+from omh.commands import setup as _setup_module
 from omh.paths import resolve_paths
 from omh.install.plugin_loader_observation import observe_real_loader_registration
 from omh.plugin_pack import inspect_plugin_bundle
@@ -279,11 +279,11 @@ class PluginDistributionTests(unittest.TestCase):
             },
         ]
         with mock.patch.object(
-            setup_module,
+            _setup_module,
             "tr",
             side_effect=lambda language, key: key,
         ):
-            lines = setup_module._doctor_observation_boundary_lines(checks, language="en")
+            lines = _setup_module._doctor_observation_boundary_lines(checks, language="en")
 
         self.assertEqual(
             lines,

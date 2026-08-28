@@ -103,6 +103,9 @@ packages = [
 "omh.plugin_bundle.omh.tools" = ["capability_families.json"]
 
 [dependency-groups]
+dev = [
+    "pytest==9.1.1",
+]
 lint = [
     "ruff==0.16.4",
 ]

@@ -7,7 +7,7 @@ from _local_package import load_local_package
 
 load_local_package()
 
-from omh.commands import setup as setup_module  # noqa: E402
+from omh.commands import setup as _setup_module  # noqa: E402
 from omh.commands.language import LANGUAGE_CODES, MESSAGES, tr  # noqa: E402
 from omh.maintenance.doctor import Check, _structural_search_check, doctor_ok  # noqa: E402
 from omh.maintenance.probe import _structural_search_capability  # noqa: E402
@@ -78,8 +78,8 @@ class StructuralSearchDetectionTests(unittest.TestCase):
             Check("command_path", True, "omh resolved"),
             Check("team_profile_packs", True, "optional OMH team profile packs are not installed"),
         ]
-        without_structural = setup_module._doctor_operator_summary(list(baseline))
-        with_structural = setup_module._doctor_operator_summary(
+        without_structural = _setup_module._doctor_operator_summary(list(baseline))
+        with_structural = _setup_module._doctor_operator_summary(
             [*baseline, _structural_search_check(which=_which_absent)]
         )
 
@@ -92,7 +92,7 @@ class StructuralSearchDetectionTests(unittest.TestCase):
         self.assertEqual(optional["status"], "ok")
 
     def test_check_groups_into_optional_surfaces_and_nothing_else(self) -> None:
-        summary = setup_module._doctor_operator_summary([_structural_search_check(which=_which_absent)])
+        summary = _setup_module._doctor_operator_summary([_structural_search_check(which=_which_absent)])
         groups = {group["name"]: group for group in summary["groups"]}
         self.assertEqual(groups["optional_surfaces"]["total"], 1)
         self.assertEqual(groups["optional_surfaces"]["passing"], 1)
@@ -120,8 +120,8 @@ class StructuralSearchDetectionTests(unittest.TestCase):
             _structural_search_capability(which=_which_absent)
 
     def _boundary_lines(self, checks: list[dict[str, object]]) -> list[str]:
-        with mock.patch.object(setup_module, "tr", side_effect=lambda language, key: key):
-            return setup_module._doctor_observation_boundary_lines(checks, language="en")
+        with mock.patch.object(_setup_module, "tr", side_effect=lambda language, key: key):
+            return _setup_module._doctor_observation_boundary_lines(checks, language="en")
 
     def test_boundary_line_present_branch(self) -> None:
         # Serialize the real Check through the doctor path: the branch is
