@@ -677,6 +677,17 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_directly",
         "direct_answer",
     ),
+    # The advisor filename shield: a question about the CLAUDE.md context file
+    # must not dispatch the external-advisor lane off the bare `claude` token.
+    # No forbidden_candidate — the clarify fallback may still name `ask` as a
+    # low-score candidate; the case fails on any dispatch.
+    RoutingPrecisionCase(
+        "context-file-question-not-advisor",
+        "A CLAUDE.md content question never dispatches the external advisor",
+        "CLAUDE.md 파일 내용 설명해줘",
+        "answer_clarification",
+        "",
+    ),
 )
 
 
@@ -2174,6 +2185,19 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "greenfield-build-korean-reaches-interview",
         "A Korean greenfield build request reaches the interview lane",
         "웹사이트 하나 만들어줘",
+        "dispatch",
+        "deep-interview",
+        "answer_clarification",
+        "clarification",
+    ),
+    # CLAUDE.md is a context FILE, not an advisor mention: before the advisor
+    # filename shield, the literal string matched `ask`'s bare `claude` token
+    # and beat the greenfield guard 9-to-8, dispatching the external-advisor
+    # lane at high confidence for a project-bootstrap request.
+    RoutingInterventionCase(
+        "greenfield-korean-context-file-reaches-interview",
+        "A Korean new-project request naming CLAUDE.md reaches the interview lane, not the advisor",
+        "새 프로젝트 시작하는데 README랑 CLAUDE.md 만들어줘",
         "dispatch",
         "deep-interview",
         "answer_clarification",
