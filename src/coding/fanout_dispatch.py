@@ -186,7 +186,13 @@ class _SpawnStagger:
             now = time.monotonic()
             slot = max(now, self._next)
             self._next = slot + self._interval
-        if slot > now:
+        # time.sleep can wake up to a timer tick early on Windows waitable
+        # timers, which would collapse the spacing; loop until the slot is
+        # actually reached on the monotonic clock.
+        while True:
+            now = time.monotonic()
+            if now >= slot:
+                return
             time.sleep(slot - now)
 
 
