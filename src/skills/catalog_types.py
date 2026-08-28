@@ -95,6 +95,7 @@ ULW_ENGINE_SKILL_NAMES = frozenset(
         "context",
         "deep-interview",
         "loop",
+        "maestro",
         "ralph",
         "ralplan",
         "research",

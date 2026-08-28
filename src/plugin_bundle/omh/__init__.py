@@ -79,7 +79,7 @@ def register(ctx):
     from .hooks.llm_hooks import pre_llm_call
     from .hooks.result_transforms import transform_tool_result
     from .hooks.session_hooks import on_session_end
-    from .hooks.tool_hooks import pre_tool_call
+    from .hooks.tool_hooks import post_tool_call, pre_tool_call
     from .hooks.verify_hooks import pre_verify
     from .tools.capability_tool import OMH_CAPABILITIES_SCHEMA, omh_capabilities_handler
     from .tools.chat_tool import OMH_INTERACT_SCHEMA, omh_interact_handler
@@ -197,5 +197,6 @@ def register(ctx):
     ctx.register_hook("on_session_end", on_session_end)
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_hook("pre_tool_call", pre_tool_call)
+    _register_optional_hook(ctx, "post_tool_call", post_tool_call)
     _register_optional_hook(ctx, "pre_verify", pre_verify)
     _register_optional_hook(ctx, "transform_tool_result", transform_tool_result)

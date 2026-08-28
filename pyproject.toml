@@ -107,7 +107,7 @@ dev = [
     "pytest==9.1.1",
 ]
 lint = [
-    "ruff==0.16.3",
+    "ruff==0.16.4",
 ]
 
 # Initial static-analysis baseline (issue #638). Scoped to Pyflakes (F) —

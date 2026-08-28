@@ -5,7 +5,7 @@ import json
 from ..approval_bypass import record_approval_bypass
 from ..host_observation import observe_plugin_hook_call
 from ..omh_roles import extract_role_marker, resolve_role_name, role_aliases, role_names
-from ..tool_bursts import record_tool_call
+from ..tool_bursts import record_tool_call, record_tool_call_close
 from ..toolcall_rules import toolcall_rule_directive
 
 
@@ -33,9 +33,15 @@ def pre_tool_call(**kwargs) -> dict[str, object] | None:
         # parallel-shot burst ledger (its claim boundary is "the host
         # dispatched the calls as one batch").
         return dict(rule_directive)
-    # Tick the parallel-shot ledger: concurrent batch members start within
-    # milliseconds of each other, and this is the only place OMH can see it.
-    record_tool_call(kwargs.get("tool_name"), omh_home=str(kwargs.get("omh_home", "") or ""))
+    # Tick the parallel-shot ledger and, when the host supplies a
+    # tool_call_id, open the in-flight entry post_tool_call closes. This is
+    # the only place OMH can see either fact.
+    record_tool_call(
+        kwargs.get("tool_name"),
+        omh_home=str(kwargs.get("omh_home", "") or ""),
+        tool_call_id=kwargs.get("tool_call_id"),
+        turn_id=kwargs.get("turn_id"),
+    )
     context_parts: list[str] = []
     payload: dict[str, object] = {}
     role_warning = _delegate_role_warning(kwargs)
@@ -46,6 +52,26 @@ def pre_tool_call(**kwargs) -> dict[str, object] | None:
         return None
     payload["context"] = "\n\n".join(context_parts)
     return payload
+
+
+def post_tool_call(**kwargs) -> None:
+    """Close the in-flight ledger entry pre_tool_call opened for this call.
+
+    A supported Hermes observer hook (`install/hook_integrity.py`
+    `HOOK_REVIEWS["post_tool_call"]`), paired with pre_tool_call by
+    tool_call_id. It never blocks or rewrites a tool result -- it only
+    closes the exact in-flight state the HUD's liveness signal reads, which
+    is what tells "stopped with an incomplete todo item" apart from "still
+    running" and keeps the parallel-shot badge from lingering past the ring
+    ceiling. A host that omits tool_call_id is a silent no-op here; the
+    entry pre_tool_call never opened simply never closes early.
+    """
+    observe_plugin_hook_call("post_tool_call", kwargs)
+    record_tool_call_close(
+        kwargs.get("tool_call_id"),
+        omh_home=str(kwargs.get("omh_home", "") or ""),
+    )
+    return None
 
 
 def _delegate_role_warning(kwargs: dict) -> str:

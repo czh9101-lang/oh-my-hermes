@@ -684,6 +684,47 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_directly",
         "direct_answer",
     ),
+    # The advisor filename shield: a question about the CLAUDE.md context file
+    # must not dispatch the external-advisor lane off the bare `claude` token.
+    # No forbidden_candidate — the clarify fallback may still name `ask` as a
+    # low-score candidate; the case fails on any dispatch.
+    RoutingPrecisionCase(
+        "context-file-question-not-advisor",
+        "A CLAUDE.md content question never dispatches the external advisor",
+        "CLAUDE.md 파일 내용 설명해줘",
+        "answer_clarification",
+        "",
+    ),
+    # Maestro shield: concept questions about maestro, prepared handoffs, or a
+    # coding-agent name must stay direct answers, never a maestro dispatch.
+    RoutingPrecisionCase(
+        "maestro-concept-question",
+        "A maestro concept question stays a direct answer",
+        "maestro가 뭐야?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "orchestra-conductor-not-maestro",
+        "An orchestra-conductor question never dispatches the maestro skill",
+        "what does maestro mean in an orchestra?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "handoff-concept-question",
+        "A prepared-handoff concept question stays a direct answer",
+        "what does a prepared handoff mean?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "codex-concept-keeps-shield",
+        "A Codex concept question never dispatches maestro off the named CLI",
+        "codex가 뭐야",
+        "answer_directly",
+        "direct_answer",
+    ),
 )
 
 
@@ -2186,6 +2227,19 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "answer_clarification",
         "clarification",
     ),
+    # CLAUDE.md is a context FILE, not an advisor mention: before the advisor
+    # filename shield, the literal string matched `ask`'s bare `claude` token
+    # and beat the greenfield guard 9-to-8, dispatching the external-advisor
+    # lane at high confidence for a project-bootstrap request.
+    RoutingInterventionCase(
+        "greenfield-korean-context-file-reaches-interview",
+        "A Korean new-project request naming CLAUDE.md reaches the interview lane, not the advisor",
+        "새 프로젝트 시작하는데 README랑 CLAUDE.md 만들어줘",
+        "dispatch",
+        "deep-interview",
+        "answer_clarification",
+        "clarification",
+    ),
     # Overroute guards for the greenfield shape. The creation opener is the
     # weakest signal in the message, so anything that claimed it on real
     # vocabulary keeps its lane.
@@ -2658,6 +2712,42 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "idea-to-deploy",
         "present_app_delivery_loop",
         "app_delivery_loop",
+    ),
+    RoutingInterventionCase(
+        "maestro-direct-invocation",
+        "Direct maestro invocation opens the coding-owner handoff",
+        "$maestro",
+        "dispatch",
+        "maestro",
+        "forward_plan_to_selected_workflow",
+        "plan",
+    ),
+    RoutingInterventionCase(
+        "coding-handoff-preparation-english",
+        "An English coding-handoff preparation request opens maestro",
+        "prepare the coding handoff for this work",
+        "dispatch",
+        "maestro",
+        "present_plan",
+        "plan",
+    ),
+    RoutingInterventionCase(
+        "korean-handoff-prompt-request",
+        "A Korean handoff-prompt request opens maestro",
+        "이 작업 위임 프롬프트 만들어줘",
+        "dispatch",
+        "maestro",
+        "present_plan",
+        "plan",
+    ),
+    RoutingInterventionCase(
+        "korean-coding-delegation-mechanic",
+        "A Korean coding-delegation handoff request opens maestro",
+        "코딩 위임 핸드오프 준비해줘",
+        "dispatch",
+        "maestro",
+        "forward_plan_to_selected_workflow",
+        "plan",
     ),
 )
 

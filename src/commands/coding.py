@@ -14,6 +14,12 @@ from ..coding.executor_capability_snapshots import (
     validate_executor_capability_snapshot,
     write_executor_capability_snapshot,
 )
+from ..coding.executor_skill_discovery import (
+    discovered_executor_skills,
+    skill_selection_card,
+    suggested_skill_sequence,
+)
+from ..coding.executors import EXECUTOR_PROFILES
 from ..executor_readiness import EXECUTOR_READINESS_PROFILES, probe_executor_readiness
 from ..hermes_planning import (
     build_plan_handoff_context_pack,
@@ -542,6 +548,22 @@ def cmd_coding_executor_readiness(args: argparse.Namespace) -> int:
         )
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
+    return 0
+
+
+def cmd_coding_executor_skills(args: argparse.Namespace) -> int:
+    if args.profile == "hermes":
+        raise OmhError("Hermes-native selection bypasses maestro; use the Hermes runtime path.")
+    project_root = Path(args.project_root) if args.project_root else None
+    payload = discovered_executor_skills(args.profile, project_root=project_root)
+    unit_role = getattr(args, "unit_role", "") or ""
+    if unit_role:
+        payload = dict(payload)
+        payload["suggested_sequence"] = suggested_skill_sequence(payload, unit_role)
+        card = skill_selection_card(payload, unit_role)
+        if card is not None:
+            payload["selection_card"] = card
+    _print_json(payload)
     return 0
 
 
@@ -2303,6 +2325,30 @@ def _add_coding_commands(sub) -> None:
     readiness.add_argument("--force", action="store_true", help="Run the probe even if a first-use result is already cached.")
     readiness.add_argument("--dry-run", action="store_true", help="Return the probe contract without running or caching it.")
     readiness.set_defaults(func=cmd_coding_executor_readiness)
+
+    executor_skills = coding_sub.add_parser(
+        "executor-skills",
+        help=(
+            "Report locally discovered skills for one coding-agent profile (read-only, metadata-only; "
+            "declared, not observed)."
+        ),
+    )
+    executor_skills.add_argument(
+        "--profile",
+        choices=EXECUTOR_PROFILES,
+        required=True,
+        help="Coding-agent profile to probe. Hermes-native selection is rejected; maestro never routes it here.",
+    )
+    executor_skills.add_argument(
+        "--project-root", default="", help="Optional project root to also probe project-local Claude Code skills."
+    )
+    executor_skills.add_argument(
+        "--unit-role",
+        default="",
+        help="Optional unit role; also returns a suggested skill sequence and, when a real choice exists, a selection card.",
+    )
+    executor_skills.add_argument("--json", action="store_true", help="Emit the machine payload (the default output).")
+    executor_skills.set_defaults(func=cmd_coding_executor_skills)
 
 
 def _add_capability_snapshot_commands(coding_sub) -> None:

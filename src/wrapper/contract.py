@@ -595,6 +595,7 @@ _CODING_OWNER_WORKFLOWS = frozenset(
     {
         "ultrawork",
         "ai-slop-cleaner",
+        "maestro",
     }
 )
 _CODING_OWNER_WHEN_CODE_SHAPED = frozenset({"code-review"})

@@ -113,6 +113,10 @@ _COMMAND_TRIGGER_PATTERNS = {
     for phrase in _COMMAND_TRIGGER_PHRASES
 }
 _TOOLBELT_READINESS_GUARD_ID = "toolbelt_readiness_before_generic_or_visual_fallback"
+# Bare advisor-name trigger tokens on the `ask` skill that are shielded when
+# they occur only inside a dotted context-file name (CLAUDE.md / GEMINI.md).
+_ADVISOR_NAME_TOKENS = frozenset({"claude", "gemini"})
+
 _ECOSYSTEM_IDENTITY_CONNECTOR_TRIGGER_NOISE = frozenset(
     {
         "agentchat",
@@ -1718,6 +1722,19 @@ def _score_definition(
         trigger_token_matches -= {"index", "refresh", "stale", "갱신"}
     if definition.name == "external-connector-readiness" and not ecosystem_identity_connector_match:
         trigger_token_matches -= _ECOSYSTEM_IDENTITY_CONNECTOR_TRIGGER_NOISE
+    # CLAUDE.md / GEMINI.md are agent context FILES, not advisor mentions: when
+    # the bare advisor name occurs only inside a dotted filename ("claude.md",
+    # "claude.md를"), the token must not pull the query toward the external
+    # advisor lane ("새 프로젝트 ... CLAUDE.md 만들어줘" dispatched `ask` at high
+    # confidence, beating the greenfield guard). A standalone advisor word
+    # anywhere in the query keeps the token, so "ask claude about CLAUDE.md"
+    # still reaches `ask`, as do the phrase triggers, which never depended on
+    # the bare token.
+    if definition.name == "ask" and trigger_token_matches & _ADVISOR_NAME_TOKENS:
+        words = normalized_query.split()
+        for token in tuple(trigger_token_matches & _ADVISOR_NAME_TOKENS):
+            if token not in words and any(word.startswith(f"{token}.") for word in words):
+                trigger_token_matches.remove(token)
     if not matched and not (trigger_token_matches - _GENERIC_TRIGGER_TOKENS):
         trigger_token_matches -= _GENERIC_TRIGGER_TOKENS
     for token in trigger_token_matches:
