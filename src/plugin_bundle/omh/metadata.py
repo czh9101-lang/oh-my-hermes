@@ -17,8 +17,16 @@ PROVIDED_TOOLS = (
     "omh_todo",
 )
 REQUIRED_HOOKS = ("on_session_end", "pre_llm_call", "pre_tool_call")
-OPTIONAL_HOOKS = ("pre_verify", "transform_tool_result")
-PROVIDED_HOOKS = REQUIRED_HOOKS + OPTIONAL_HOOKS
+# post_tool_call is optional (not every host offers it): it only closes the
+# in-flight ledger pre_tool_call opens for the HUD liveness signal, and a
+# host without it degrades silently to the pre-pairing burst-only behavior.
+OPTIONAL_HOOKS = ("post_tool_call", "pre_verify", "transform_tool_result")
+# Sorted rather than concatenated: several downstream readers (the real
+# loader observation's alphabetized registration report, the plugin.yaml
+# `provides_hooks` conformance check) compare against this tuple's literal
+# order, and required/optional membership stays independently checkable via
+# REQUIRED_HOOKS/OPTIONAL_HOOKS regardless of where a hook sorts.
+PROVIDED_HOOKS = tuple(sorted(REQUIRED_HOOKS + OPTIONAL_HOOKS))
 
 TOOL_FILE_STEMS = {
     "omh_capabilities": "capability_tool",

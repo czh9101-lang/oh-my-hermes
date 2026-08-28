@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from .approval_bypass import effective_approval_bypass
 from .hermes_delegation import read_hermes_native_subagents
-from .tool_bursts import latest_parallel_shot
+from .tool_bursts import latest_parallel_shot, tool_call_activity
 from .metadata import (
     OPTIONAL_HOOKS,
     PROVIDED_HOOKS,
@@ -676,6 +676,13 @@ def read_omh_hud(
         # Concurrent tool-call batches observed by the pre_tool_call hook;
         # the [OMH] status line brands a fresh batch as a parallel shot.
         "parallel_shot": latest_parallel_shot(str(home)),
+        # Exact in-flight tool-call state, paired from pre_tool_call and
+        # post_tool_call by tool_call_id: open_call_count/live answer "is
+        # something actually running right now" -- the question a lingering
+        # active todo item and a ring-saturated parallel-shot badge could not.
+        # A host without post_tool_call degrades silently: entries never open,
+        # so live stays False and the widget falls back to today's behavior.
+        "activity": tool_call_activity(str(home)),
         # Effective approval-bypass (yolo) state, read from the host's own
         # persisted surfaces (session row's /yolo flag, approvals.mode) so a
         # toggle between turns shows on the next widget poll; the hook

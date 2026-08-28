@@ -174,12 +174,12 @@ class ReviewedRecordTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             status = build_hook_integrity_status(_paths(tmp))
             widened = json.loads(json.dumps(status))
-            _record(widened, "pre_tool_call")["event_scope"] = ["pre_tool_call", "post_tool_call"]
+            _record(widened, "pre_tool_call")["event_scope"] = ["pre_tool_call", "post_verify"]
 
             errors = validate_hook_integrity_status(widened)
 
             self.assertTrue(any("outside VALID_HOOK_EVENTS" in error for error in errors))
-            self.assertTrue(any("post_tool_call" in error for error in errors))
+            self.assertTrue(any("post_verify" in error for error in errors))
 
     def test_the_status_shape_is_pinned(self) -> None:
         with TemporaryDirectory() as tmp:

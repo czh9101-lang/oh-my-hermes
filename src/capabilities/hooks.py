@@ -103,6 +103,10 @@ def _hook_payload_fields(name: str) -> list[str]:
         ]
     if name == "pre_tool_call":
         return ["context", "action", "message"]
+    if name == "post_tool_call":
+        # A pure observer: it closes the in-flight ledger entry for the HUD
+        # liveness signal and never returns a directive to the host.
+        return []
     if name == "on_session_end":
         return ["session_summary", "metadata_only"]
     if name == "pre_verify":
