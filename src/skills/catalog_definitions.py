@@ -45,6 +45,7 @@ from .catalog_types import (
     _HERMES_SETUP_SKIP_SEMANTICS,
     _HERMES_SETUP_WRITE_BOUNDARY,
     _MAESTRO_HERMES_OWNER_FINAL_CHECKLIST_NOTE,
+    _MAESTRO_RESULT_INTEGRATION_FINAL_CHECKLIST_NOTE,
 )
 
 _SPECIALIST_DOMAIN_HANDOFF_BOUNDARY = (
@@ -1063,7 +1064,8 @@ _DEFINITIONS = [
             "executing surface.",
         ),
         quality_tier="handoff-gated",
-        final_checklist=_HANDOFF_FINAL_CHECKLIST + (_MAESTRO_HERMES_OWNER_FINAL_CHECKLIST_NOTE,),
+        final_checklist=_HANDOFF_FINAL_CHECKLIST
+        + (_MAESTRO_HERMES_OWNER_FINAL_CHECKLIST_NOTE, _MAESTRO_RESULT_INTEGRATION_FINAL_CHECKLIST_NOTE),
         quality_bar=(
             ENGINE_ENTRY_CONFIRMATION_RULE,
             "Require the coding owner to already be chosen for this run -- named in the request, accepted when "
@@ -5780,6 +5782,7 @@ _DEFINITIONS = [
             "For X/Twitter scraping or trend analysis, keep x_platform_data as a domain affinity rather than a role alias: prefer confirmed-active Grok, then Kimi K3, then Gemini, without removing the rest of the route or overriding an explicit model.",
             "When a recommendation head is missing, choose the first confirmed-active owner-compatible candidate in that chain. Only after every selected category, role-slot, and domain chain is exhausted, consult the shared final order Claude Opus 5 then GPT-5.6 Sol. If no candidate is confirmed active anywhere, keep the selector on its owner's native default model and let the rest of OMH setup finish without a model-config write.",
             "Give provider-specific native next actions without claiming provider readiness: use installed Hermes flows for OpenAI OAuth/OpenAI Codex, Anthropic or an existing Claude provider, Qwen OAuth or Alibaba, Gemini/Google/Vertex, Grok/xAI, Kimi, GLM/Z.AI, or an already-working custom provider; preserve working alternatives.",
+            "Closing step: once model routing/chains are confirmed, ask once whether the user also wants to set up coding delegation (the maestro lane) for an external coding CLI -- do not ask before model setup is done and never auto-enable it. Point at `omh coding executor-skills --profile <profile>` for skill-set discovery, `~/.omh/routing/dispatch-models.json` for an optional per-owner model preference, and the `ulw-maestro` skill for the handoff itself; name Codex and Claude Code neutrally rather than favoring either.",
         ),
         why_this_exists=(
             "`model-setup` exists to turn local model history into a safe, user-confirmed activation flow: Hermes retains "

@@ -37,6 +37,15 @@ from omh.wrapper_sessions import (
 )
 
 
+# Fake `_detect_external_cli_profiles` result for setup-wizard tests that
+# exercise an unrelated interactive question: neither external CLI detected,
+# so `_ask_maestro_delegation_choice` asks nothing and mutates nothing.
+_NO_EXTERNAL_CLI_DETECTED = {
+    "claude-code": {"binary_present": False, "login_marker": "absent"},
+    "codex": {"binary_present": False, "login_marker": "absent"},
+}
+
+
 class CliTests(unittest.TestCase):
     def test_ops_design_orchestration_is_pure_and_prepared(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -2563,6 +2572,9 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                 "omh.commands.setup._try_star_github_repo",
                 return_value={"ok": True, "reason": "starred_or_already_starred"},
             ) as star, patch("omh.commands.setup._ask_single_choice") as single_choice, patch(
+                "omh.commands.setup._detect_external_cli_profiles",
+                return_value=_NO_EXTERNAL_CLI_DETECTED,
+            ), patch(
                 "omh.commands.setup._ask_yes_no",
                 return_value=True,
             ) as yes_no:
@@ -2591,6 +2603,9 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             with patch("omh.paths.Path.cwd", return_value=root), patch(
                 "omh.commands.setup._ask_single_choice", return_value="project"
             ) as single_choice, patch(
+                "omh.commands.setup._detect_external_cli_profiles",
+                return_value=_NO_EXTERNAL_CLI_DETECTED,
+            ), patch(
                 "omh.commands.setup._ask_yes_no",
                 return_value=True,
             ) as yes_no, patch(
@@ -2764,6 +2779,9 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             )
 
             with patch(
+                "omh.commands.setup._detect_external_cli_profiles",
+                return_value=_NO_EXTERNAL_CLI_DETECTED,
+            ), patch(
                 "omh.commands.setup._ask_yes_no",
                 return_value=False,
             ) as yes_no:
@@ -2784,6 +2802,100 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             config_text = config.read_text(encoding="utf-8")
             self.assertIn("  interface: cli\n", config_text)
             self.assertIn("  skin: default\n", config_text)
+
+    def test_setup_interactive_maestro_delegation_yes_seeds_scaffold_and_prints_pointers(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            omh_home = root / ".omh"
+            hermes_home = root / ".hermes"
+            base = ["--omh-home", str(omh_home), "--hermes-home", str(hermes_home)]
+
+            with patch(
+                "omh.commands.setup._detect_external_cli_profiles",
+                return_value={
+                    "claude-code": {"binary_present": True, "login_marker": "present"},
+                    "codex": {"binary_present": False, "login_marker": "absent"},
+                },
+            ), patch("omh.commands.setup._ask_yes_no", return_value=True) as yes_no:
+                status, stdout, stderr = run_cli(base + ["setup", "--interactive"], output_json=False)
+
+            self.assertEqual(status, 0, stderr)
+            # TUI identity choice, then the maestro-delegation question.
+            self.assertEqual(yes_no.call_count, 2)
+            second_prompt = yes_no.call_args_list[1].args[0]
+            self.assertIn("claude-code", second_prompt)
+            dispatch_models_path = omh_home / "routing" / "dispatch-models.json"
+            self.assertTrue(dispatch_models_path.exists())
+            seeded = json.loads(dispatch_models_path.read_text(encoding="utf-8"))
+            self.assertEqual(seeded, {"schema_version": "omh_dispatch_model_preferences/v1", "profiles": {}})
+            self.assertIn("dispatch-models.json", stdout)
+            self.assertIn("executor-skills", stdout)
+            self.assertIn("ulw-maestro", stdout)
+
+    def test_setup_interactive_maestro_delegation_no_changes_nothing(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            omh_home = root / ".omh"
+            hermes_home = root / ".hermes"
+            base = ["--omh-home", str(omh_home), "--hermes-home", str(hermes_home)]
+
+            with patch(
+                "omh.commands.setup._detect_external_cli_profiles",
+                return_value={
+                    "claude-code": {"binary_present": False, "login_marker": "absent"},
+                    "codex": {"binary_present": True, "login_marker": "absent"},
+                },
+            ), patch("omh.commands.setup._ask_yes_no", side_effect=[True, False]) as yes_no:
+                status, stdout, stderr = run_cli(base + ["setup", "--interactive"], output_json=False)
+
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(yes_no.call_count, 2)
+            self.assertFalse((omh_home / "routing" / "dispatch-models.json").exists())
+            self.assertNotIn("dispatch-models.json", stdout)
+
+    def test_setup_interactive_maestro_delegation_never_clobbers_existing_preferences(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            omh_home = root / ".omh"
+            hermes_home = root / ".hermes"
+            base = ["--omh-home", str(omh_home), "--hermes-home", str(hermes_home)]
+            dispatch_models_path = omh_home / "routing" / "dispatch-models.json"
+            dispatch_models_path.parent.mkdir(parents=True)
+            existing = '{"schema_version": "omh_dispatch_model_preferences/v1", "profiles": {"claude-code": "opus"}}'
+            dispatch_models_path.write_text(existing, encoding="utf-8")
+
+            with patch(
+                "omh.commands.setup._detect_external_cli_profiles",
+                return_value={
+                    "claude-code": {"binary_present": True, "login_marker": "present"},
+                    "codex": {"binary_present": False, "login_marker": "absent"},
+                },
+            ), patch("omh.commands.setup._ask_yes_no", return_value=True):
+                status, _, stderr = run_cli(base + ["setup", "--interactive"], output_json=False)
+
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(dispatch_models_path.read_text(encoding="utf-8"), existing)
+
+    def test_setup_non_interactive_yes_flag_never_asks_or_mutates_maestro_delegation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            omh_home = root / ".omh"
+            hermes_home = root / ".hermes"
+            base = ["--omh-home", str(omh_home), "--hermes-home", str(hermes_home)]
+
+            with patch(
+                "omh.commands.setup._detect_external_cli_profiles",
+                return_value={
+                    "claude-code": {"binary_present": True, "login_marker": "present"},
+                    "codex": {"binary_present": True, "login_marker": "present"},
+                },
+            ) as detect, patch("omh.commands.setup._ask_yes_no") as yes_no:
+                status, stdout, stderr = run_cli(base + ["setup", "--yes"], output_json=False)
+
+            self.assertEqual(status, 0, stderr)
+            yes_no.assert_not_called()
+            detect.assert_not_called()
+            self.assertFalse((omh_home / "routing" / "dispatch-models.json").exists())
 
     def test_setup_star_flag_records_star_headless(self) -> None:
         with TemporaryDirectory() as tmp:

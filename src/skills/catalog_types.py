@@ -282,6 +282,19 @@ _MAESTRO_HERMES_OWNER_FINAL_CHECKLIST_NOTE = (
     "Hermes runtime path, never this engine."
 )
 
+# The lifecycle bridge maestro's own dispatch semantics leave open: dispatch
+# ends at spawn/exit and never merges (docs/FANOUT.md, `DISPATCH_CLAIM_BOUNDARY`
+# in `fanout_dispatch.py`), but a unit finishing is not the end of the story.
+# `references/executor-prompt-composition.md` (Result Integration) carries the
+# full collect/verify/merge/report procedure; this is the always-loaded
+# pointer so an agent reading only SKILL.md still knows the bridge exists.
+_MAESTRO_RESULT_INTEGRATION_FINAL_CHECKLIST_NOTE = (
+    "Dispatch never merges: collect each unit's fanout_unit_result/v1 evidence, verify the integrated combination "
+    "of units (not just each one alone -- disjoint file scopes can still conflict at integration), and report "
+    "merged/unmerged per unit in the closing brief. Merging the unit branches remains an explicit operator or "
+    "reviewing-agent action; a dispatch receipt is never merge evidence."
+)
+
 _HANDOFF_RECOVERY_NOTES = (
     "If the selected executor is unavailable, ask for Codex, Claude Code, Hermes, or another runtime before retrying.",
     "If dispatch or result evidence is missing, keep the handoff prepared_not_observed and expose the next observable action.",
