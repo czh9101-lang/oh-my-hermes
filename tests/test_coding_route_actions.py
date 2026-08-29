@@ -246,6 +246,48 @@ class CodingRouteActionGuardTests(unittest.TestCase):
                 self.assertNotEqual(decision.next_action, NAMED_EXECUTOR_NEXT_ACTION)
                 self.assertEqual(decision.selected_owner, "")
 
+    def test_hyphenated_and_dotted_filenames_never_name_the_claude_code_owner(self) -> None:
+        # #1163 review P3-6: plain containment on "claude-code"/"claudecode"
+        # fired inside an ordinary hyphenated word or filename, so a message
+        # that only mentions a folder or file falsely named the executor.
+        for message in (
+            "my repo has a folder called claudecode-notes",
+            "read the claude-code.md file",
+        ):
+            with self.subTest(message=message):
+                decision = _decision(message)
+
+                self.assertNotEqual(decision.next_action, NAMED_EXECUTOR_NEXT_ACTION)
+                self.assertEqual(decision.selected_owner, "")
+
+    def test_hyphenated_and_dotted_filenames_never_name_the_codex_owner(self) -> None:
+        # Same hole, same fix, for the codex owner group.
+        for message in (
+            "my repo has a folder called codexnotes",
+            "check the codex-utils.py script",
+        ):
+            with self.subTest(message=message):
+                decision = _decision(message)
+
+                self.assertNotEqual(decision.next_action, NAMED_EXECUTOR_NEXT_ACTION)
+                self.assertEqual(decision.selected_owner, "")
+
+    def test_claude_code_and_codex_boundary_positives_still_resolve_the_owner(self) -> None:
+        # The boundary fix must not regress the legitimate mentions, including
+        # Korean particles attached directly to the Latin name.
+        for message, owner in (
+            ("Claude Code로 바로 열어줘", "claude-code"),
+            ("claude code로 구현해줘", "claude-code"),
+            ("claude-code로 열어줘", "claude-code"),
+            ("use codex to fix the login bug", "codex"),
+            ("codex로 이 버그 고쳐줘", "codex"),
+        ):
+            with self.subTest(message=message):
+                decision = _decision(message)
+
+                self.assertEqual(decision.next_action, NAMED_EXECUTOR_NEXT_ACTION)
+                self.assertEqual(decision.selected_owner, owner)
+
     def test_owner_learning_asks_then_exposes_reversible_fourth_default(self) -> None:
         state = empty_owner_preference_state()
 

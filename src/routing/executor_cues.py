@@ -61,12 +61,16 @@ def contains_boundary_phrase(text: str, phrases: tuple[str, ...]) -> bool:
     status" contains "pi status". An occurrence only counts here when the
     character immediately before the match is absent or non-alphanumeric --
     `str.isalnum()` is True for Hangul (and its NFKD jamo), so "라즈베리pi한테"
-    is rejected the same way "raspi" is -- and the character immediately after
-    the match is absent or not an ASCII alphanumeric. The trailing check is
-    deliberately ASCII-only: Korean particles attach directly to the right of a
-    Latin name ("opencode로", "omo runtime으로", "senpi가"), so a Hangul
-    continuation after the phrase is a particle naming the agent, while an
-    ASCII continuation ("opencodes") is a longer word that never named it.
+    is rejected the same way "raspi" is -- and the run of ASCII punctuation
+    immediately after the match (if any) is not itself followed by another
+    ASCII alphanumeric character. A lone trailing ASCII punctuation run
+    ("pi:", "claude-code.") is a sentence separator or a sentence-ending
+    period, so it still counts as a boundary; a Hangul continuation right
+    after the phrase ("opencode로", "omo runtime으로", "senpi가") is a particle
+    naming the agent, so that counts too. But punctuation that leads straight
+    into more ASCII alphanumeric text without a space ("claudecode-notes",
+    "claude-code.md", "codex-utils.py") is a hyphenated word or filename that
+    merely starts with the phrase, never a mention of it.
 
     Callers must pass `text` and `phrases` through the same fold
     (`normalized_phrase` on routing surfaces, plain lowering in coding
@@ -80,12 +84,25 @@ def _occurs_at_boundary(text: str, phrase: str) -> bool:
     while start != -1:
         end = start + len(phrase)
         before_is_boundary = start == 0 or not text[start - 1].isalnum()
-        after = text[end] if end < len(text) else ""
-        after_is_boundary = not (after.isascii() and after.isalnum())
-        if before_is_boundary and after_is_boundary:
+        if before_is_boundary and _after_is_boundary(text, end):
             return True
         start = text.find(phrase, start + 1)
     return False
+
+
+def _after_is_boundary(text: str, end: int) -> bool:
+    position = end
+    while position < len(text) and _is_ascii_punctuation(text[position]):
+        position += 1
+    if position >= len(text):
+        return True
+    following = text[position]
+    return not (following.isascii() and following.isalnum())
+
+
+def _is_ascii_punctuation(character: str) -> bool:
+    return character.isascii() and not character.isalnum() and not character.isspace()
+
 
 # Multi-word or non-tokenizable coding-delivery requests.
 #

@@ -771,6 +771,18 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_clarification",
         "",
     ),
+    # #1163 review follow-up: with `ask`'s bare `claude`/`gemini` triggers gone,
+    # a bare one-word "gemini" message no longer inflates `ask`'s score high
+    # enough to dispatch -- it ties with `prompt-import-readiness` at score 3
+    # and asks one clarifying question instead. This was noted by review as
+    # defensible but unpinned; this case locks the observed destination in.
+    RoutingPrecisionCase(
+        "bare-gemini-word-not-advisor-dispatch",
+        "A bare one-word 'gemini' message never dispatches the external advisor",
+        "gemini",
+        "answer_clarification",
+        "",
+    ),
 )
 
 

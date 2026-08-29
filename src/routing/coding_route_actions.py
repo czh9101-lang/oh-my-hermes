@@ -69,10 +69,14 @@ NAMED_EXECUTOR_OWNER_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 # Owner groups whose phrases hide inside ordinary words as raw substrings
-# ("promo runtime" contains "omo runtime", "api한테" contains "pi한테"). These
-# groups are matched with `contains_boundary_phrase`; every other group keeps
-# plain containment.
-_BOUNDARY_MATCHED_OWNERS: frozenset[str] = frozenset({"omo-runtime"})
+# ("promo runtime" contains "omo runtime", "api한테" contains "pi한테") or as
+# ordinary hyphenated words and filenames ("claudecode-notes", "claude-code.md",
+# "codex-utils.py" each contain a bare owner name that never named the
+# executor). These groups are matched with `contains_boundary_phrase`; every
+# other group keeps plain containment. `hermes`'s two-word phrases are
+# distinctive enough in practice that this fix is not extended to that group
+# here; extend it the same way if a similar hole is ever measured there.
+_BOUNDARY_MATCHED_OWNERS: frozenset[str] = frozenset({"codex", "claude-code", "omo-runtime"})
 
 # Request-led compatible routes. These cues name the *shape* of the coding owner the
 # request needs, never a vendor, so Hermes can pick a compatible route family without
