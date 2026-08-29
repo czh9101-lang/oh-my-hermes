@@ -146,8 +146,9 @@ work
 
 **Fanout dispatch**:
 OMH's one sanctioned execution surface — the explicit, operator-invoked
-`omh coding fanout dispatch` that spawns local agent CLIs as subprocesses.
-Nothing else in OMH executes anything.
+`omh coding fanout dispatch` (multi-unit) or its `omh coding run` single-run
+entry (one unit, same engine, one call) that spawns local agent CLIs as
+subprocesses. Nothing else in OMH executes anything.
 _Avoid_: implicit execution, background dispatch
 
 **Programmatic tool calling (`execute_code`)**:

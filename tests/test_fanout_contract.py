@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
@@ -152,7 +153,19 @@ class FanoutEngineTests(unittest.TestCase):
         self.assertTrue(is_degenerate_single_unit(units))
         redirect = single_unit_redirect(units)
         self.assertEqual(redirect["schema_version"], "fanout_redirect/v1")
-        self.assertEqual(redirect["next_command"], "omh coding delegate")
+        self.assertEqual(redirect["status"], "redirect_to_run")
+        self.assertEqual(redirect["next_command"], "omh coding run")
+
+    def test_single_unit_is_no_longer_a_hard_validation_floor(self) -> None:
+        """`validate_fanout_units` accepts one unit; only `fanout prepare` redirects it.
+
+        The two-unit floor was a prepare-time UX policy, not a technical
+        requirement -- `omh coding run` builds and dispatches a one-unit
+        contract through this same validator.
+        """
+        contract = build_fanout_contract("run one unit", [_UNITS[0]])
+        self.assertEqual(len(contract["units"]), 1)
+        self.assertEqual(contract["merge_plan"]["merge_order"], ["core"])
 
     def test_merge_order_tie_break_is_deterministic(self) -> None:
         units = [
@@ -1303,7 +1316,7 @@ class FanoutCliTests(unittest.TestCase):
             self.assertEqual(status, 2)
             self.assertIn("--limit must be at least 1", stderr)
 
-    def test_fanout_single_unit_redirects_to_delegate(self) -> None:
+    def test_fanout_single_unit_redirects_to_run(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             single = root / "single.json"
@@ -1317,7 +1330,79 @@ class FanoutCliTests(unittest.TestCase):
             self.assertEqual(status, 0, stderr)
             payload = json.loads(stdout)
             self.assertEqual(payload["schema_version"], "fanout_redirect/v1")
-            self.assertEqual(payload["next_command"], "omh coding delegate")
+            self.assertEqual(payload["next_command"], "omh coding run")
+
+    def test_coding_run_builds_and_dispatches_one_unit_through_the_fanout_bridge(self) -> None:
+        """`omh coding run` is the redirect's actual destination: a single CLI
+        call that builds a one-unit fanout contract and dispatches it through
+        the same engine `omh coding fanout dispatch` uses -- `--dry-run`
+        exercises the whole path (readiness, planned argv, worktree path)
+        without spawning a real agent CLI."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+            (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed.txt"], cwd=str(repo), check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"],
+                cwd=str(repo),
+                check=True,
+            )
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+
+            status, stdout, stderr = run_cli(
+                base
+                + [
+                    "coding",
+                    "run",
+                    "--owner",
+                    "claude-code",
+                    "--goal",
+                    "Research",
+                    "pricing",
+                    "approaches",
+                    "and",
+                    "write",
+                    "a",
+                    "summary.",
+                    "--repo-root",
+                    str(repo),
+                    "--dry-run",
+                ]
+            )
+
+            self.assertEqual(status, 0, stderr)
+            payload = json.loads(stdout)
+            self.assertEqual(payload["schema_version"], "coding_run/v1")
+            self.assertEqual(payload["owner"], "claude-code")
+            self.assertEqual(payload["isolation"], "isolated_worktree")
+            dispatch = payload["dispatch"]
+            self.assertTrue(dispatch["dry_run"])
+            self.assertEqual(len(dispatch["units"]), 1)
+            unit_result = dispatch["units"][0]
+            self.assertEqual(unit_result["unit_id"], "run")
+            self.assertEqual(unit_result["owner"], "claude-code")
+            self.assertIn("claude", unit_result["planned_argv"])
+
+            # `omh coding fanout show` proves the contract was recorded, not
+            # just held in memory for the one call -- the same observability
+            # every multi-unit fanout gets.
+            status, stdout, stderr = run_cli(base + ["coding", "fanout", "show", payload["fanout_id"]])
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(json.loads(stdout)["fanout_id"], payload["fanout_id"])
+
+    def test_coding_run_requires_a_goal(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+
+            # `--goal`/`--goal-file` is an argparse-required mutually exclusive
+            # group, so the parser itself exits 2 before `cmd_coding_run` runs.
+            with self.assertRaises(SystemExit) as raised:
+                run_cli(base + ["coding", "run", "--owner", "claude-code"])
+            self.assertEqual(raised.exception.code, 2)
 
     def test_fanout_prepare_normalizes_an_unsafe_owner_error(self) -> None:
         with TemporaryDirectory() as tmp:

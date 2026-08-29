@@ -40,6 +40,44 @@ goal to Hermes in chat; these commands are the backend surface.
    merge-ready units in the contract's `merge_order`; merging and the final
    integration gate remain the operator's or reviewing agent's job.
 
+## Single-run entry (`omh coding run`)
+
+The four-step ceremony above is built for a proposed multi-unit split; one
+already-chosen owner running one prepared task never needed it.
+`omh coding run --owner <profile> --goal <words...>` (or `--goal-file`)
+builds a one-unit `fanout_contract/v2` and calls the same `dispatch_fanout`
+engine in a single call — propose/freeze/dispatch collapse into one
+invocation, never a parallel spawn implementation. Everything above still
+applies unchanged at unit count one: an isolated per-unit worktree
+(`<repo>-fanout-<unit-id>`, branch `agent/<unit-id>`; a single run is never
+defaulted to the repo's own worktree, so its claim boundary stays exactly as
+narrow as a multi-unit fanout's), the executor-progress binding that drives
+the `(<executor>/maestro <model>)` HUD row, model routing and the
+dispatch-model-preference fallback, session/thread id capture, unit result
+intake, and the run summary. The contract is written under
+`~/.omh/coding/fanout/<id>/` exactly like `fanout prepare --record`, so
+`omh coding fanout show/brief/reap` all work against it afterward.
+
+Dispatch stays explicit per invocation and never merges: running this
+command against an explicitly-named owner IS the opt-in — there is no
+separate confirmation step to add on top of an operator (or an agent acting
+on the operator's own owner-naming message) typing the command.
+
+```sh
+omh coding run --owner claude-code --goal "Research pricing approaches and write a summary." \
+  [--goal-file prompt.md] [--unit-id run] [--file-scope . ] [--repo-root .] [--base-ref HEAD] \
+  [--timeout 1800] [--dry-run] [--run-verification]
+```
+
+The claude-code dispatch template's `--allowedTools "Bash(git add:*),Bash(git
+commit:*)"` (see **Spawnability is data** below) is unchanged by this entry
+point: it was scoped to the git verbs a coding unit's prompt asks for, so a
+non-coding single run (a pure research brief, for example) may complete with
+no git side effects, or may need a Bash call the template does not grant —
+the host's own `--permission-mode` is what actually governs the spawned CLI,
+and a tighter or looser tool policy is a separate, explicit decision on that
+template, not something this entry point silently widens.
+
 ## Spawn plan
 
 A split into more than four units has to say why. Up to four, the shape is
@@ -172,8 +210,12 @@ Rules:
   unassigned) are reported `unsupported_for_local_dispatch` with the unit
   handoff as a prepared-prompt fallback — no profile is privileged.
 - **Bridge dispatch is a separate axis from chat prompt-handoff.** Chat
-  surfaces keep their prompt-only semantics for prompt-only profiles; the
-  bridge is an operator-invoked command on a different surface.
+  surfaces keep their prompt-only semantics for prompt-only profiles (a
+  `coding_prompt_handoff/v1` record stays `dispatchable: false` no matter
+  what the bridge can do); the bridge — `omh coding fanout dispatch` for a
+  multi-unit split, `omh coding run` for one unit — is an operator-invoked
+  command on a different surface, and it is what actually spawns
+  claude-code, not the chat-prepared record.
 - **Goal integrity.** `--goal-file` must hash to the digest frozen in the
   contract; a diverged goal is refused.
 - **Safety-profile integrity.** The contract also freezes the
@@ -525,6 +567,11 @@ omh coding fanout migrate-legacy <fanout-id> \
 omh coding fanout dispatch <fanout-id> --goal-file goal.txt \
   [--repo-root .] [--base-ref HEAD] [--concurrency N] [--timeout 1800] \
   [--unit <id> ...] [--dry-run] [--run-verification]
+omh coding run --owner <profile> (--goal <words...> | --goal-file goal.txt) \
+  [--unit-id run] [--file-scope <path> ...] [--repo-root .] [--base-ref HEAD] \
+  [--timeout 1800] [--dry-run] [--run-verification] [--source discord]
+  # single-invocation: builds and dispatches a one-unit fanout_contract/v2 through
+  # the same engine as `fanout dispatch`; see "Single-run entry" above
 omh coding fanout reap <fanout-id> [--pid N ...]  # terminate marker-named
   # unit process groups (verify the dispatcher is dead first); refuses any
   # pid the inflight markers do not name — never kills by process name

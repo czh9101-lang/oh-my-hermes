@@ -8993,6 +8993,37 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                 self.assertNotEqual(payload["delegation"]["recommended_harness"], "coding-handling")
                 self.assertNotIn(message, json.dumps(payload))
 
+    def test_explicit_owner_choice_flag_delegates_the_same_conservative_examples(self) -> None:
+        """`--explicit-owner-choice` is the deliberate opt-in the previous test's
+        bare `--executor` never is: the same non-coding-shaped briefs now
+        reach `delegate` (a real handoff for the named owner), because the
+        operator (or an agent relaying the operator's own owner-naming
+        message) explicitly chose that owner for this run."""
+        cases = (
+            "prepare a source-backed business research brief for market evidence",
+            "we need a competitor market scan and strategy memo for next week's leadership meeting",
+        )
+        for message in cases:
+            with self.subTest(message=message):
+                status, stdout, stderr = run_cli(
+                    [
+                        "coding", "delegate",
+                        "--executor", "claude-code",
+                        "--explicit-owner-choice",
+                        "--source", "discord",
+                        message,
+                    ]
+                )
+
+                self.assertEqual(stderr, "")
+                self.assertEqual(status, 0)
+                payload = json.loads(stdout)
+                self.assertEqual(payload["delegation"]["action"], "delegate")
+                self.assertEqual(payload["work_owner_mode"], "prompt_only_handoff")
+                # The prepared RECORD's dispatchability contract is unchanged
+                # by this classification override.
+                self.assertFalse(payload["dispatchable"])
+
     def test_chat_interact_delegate_mode_keeps_retained_business_copy_executor_free(self) -> None:
         cases = (
             ("prepare a meeting agenda and record template for leadership sync", "meeting-brief"),

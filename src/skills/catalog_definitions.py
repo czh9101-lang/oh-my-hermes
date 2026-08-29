@@ -1060,8 +1060,8 @@ _DEFINITIONS = [
             "path.",
             "Never carry a discovered skill's description text into a composed prompt -- only its name and "
             "invocation string ever leave discovery; the description stays inside the classifier.",
-            "Never dispatch without an explicit user dispatch command; `omh coding fanout dispatch` is the only "
-            "executing surface.",
+            "Never dispatch without an explicit user dispatch command; the fanout-dispatch bridge -- `omh coding "
+            "fanout dispatch` or its `omh coding run` single-run entry -- is the only executing surface.",
         ),
         quality_tier="handoff-gated",
         final_checklist=_HANDOFF_FINAL_CHECKLIST
@@ -1073,9 +1073,16 @@ _DEFINITIONS = [
             "recommendation, a plan mention, or a previous run's owner is not a choice for this run. With no "
             "owner, two owners, or an unready owner, ask `choose_executor` once and stop; never pick the owner "
             "on the user's behalf.",
+            "When the coding owner was named explicitly for this run, the naming message is itself the "
+            "operator's dispatch opt-in: run compose, the readiness and permission probes, and the "
+            "fanout-dispatch bridge (`omh coding run` for one unit) as automatic steps to dispatch and report, "
+            "with no second confirmation in between. The ask-and-stop rule above stays exactly as written for "
+            "the no-owner or ambiguous-owner case -- this only shortens the path once that gate has already "
+            "passed.",
             "State the handoff mode before composing: claude-code is prompt-only (`coding_prompt_handoff/v1` -- "
-            "the prepared handoff record is never dispatchable and never described as a run; only `omh coding "
-            "fanout dispatch` ever spawns a CLI), codex is a dispatchable `coding_executor_handoff/v1`, and "
+            "the prepared handoff record is never dispatchable and never described as a run; only the "
+            "fanout-dispatch bridge -- `omh coding fanout dispatch` or its `omh coding run` single-run entry -- "
+            "ever spawns a CLI), codex is a dispatchable `coding_executor_handoff/v1`, and "
             "omx-runtime/omo-runtime/omc-runtime are `coding_runtime_handoff/v1`.",
             "Compose the prompt from the selected profile's DISCOVERED skills via `omh coding executor-skills "
             "--profile <profile>`: arrange the returned skills by the unit's role recipe, one named skill per "
@@ -1094,8 +1101,9 @@ _DEFINITIONS = [
             "Before real dispatch, observe execution (a `--version` or no-op call) and read the configured model "
             "from the executor's own config or output; a binary on PATH plus an auth file is `prepared`, never "
             "`observed`. Run a bounded permission probe before the real dispatch.",
-            "`omh coding fanout dispatch` is the only executing surface, explicit per invocation, and it never "
-            "merges; preparing, composing, or showing a prompt is never dispatch, and a dispatch receipt is never "
+            "The fanout-dispatch bridge -- `omh coding fanout dispatch` for a multi-unit split, or `omh coding "
+            "run` for one unit -- is the only executing surface, explicit per invocation, and it never merges; "
+            "preparing, composing, or showing a prompt is never dispatch, and a dispatch receipt is never "
             "review, CI, or merge evidence.",
             "Capture the executor's session id at dispatch (`--output-format json` -> `session_id` for Claude "
             "Code, `--json` -> `thread_id` for Codex) and carry it into every status line; a missing id is "
