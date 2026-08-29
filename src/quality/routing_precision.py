@@ -684,10 +684,15 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_directly",
         "direct_answer",
     ),
-    # The advisor filename shield: a question about the CLAUDE.md context file
-    # must not dispatch the external-advisor lane off the bare `claude` token.
-    # No forbidden_candidate — the clarify fallback may still name `ask` as a
-    # low-score candidate; the case fails on any dispatch.
+    # Retired advisor filename shield: `ask` no longer owns the bare
+    # `claude`/`gemini` tokens (executor detection moved to
+    # `routing/coding_route_actions.named_executor_owners`, applied only when
+    # Claude Code is the sole named owner), so the advisor lane is unreachable
+    # from a CLAUDE.md filename. Other skills still match the token at low
+    # score, which is why this case still earns its place: it pins that no
+    # low-score match ever becomes a dispatch. No forbidden_candidate —
+    # the clarify fallback may still name `ask` as a low-score candidate; the
+    # case fails on any dispatch.
     RoutingPrecisionCase(
         "context-file-question-not-advisor",
         "A CLAUDE.md content question never dispatches the external advisor",
@@ -753,6 +758,18 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "codex가 뭐야",
         "answer_directly",
         "direct_answer",
+    ),
+    # Ask bare-token retirement: "claude code가 뭐야" previously reached `ask` via
+    # the now-removed bare `claude` trigger at score 9. With that token gone the
+    # top catalog matches tie at score 4, so this pins the honest new
+    # destination -- one clarifying question, never a dispatch to the external
+    # advisor lane for a plain concept question.
+    RoutingPrecisionCase(
+        "claude-code-concept-question-not-advisor",
+        "A Claude Code concept question never dispatches the external advisor",
+        "claude code가 뭐야",
+        "answer_clarification",
+        "",
     ),
 )
 
@@ -2280,10 +2297,12 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "answer_clarification",
         "clarification",
     ),
-    # CLAUDE.md is a context FILE, not an advisor mention: before the advisor
-    # filename shield, the literal string matched `ask`'s bare `claude` token
-    # and beat the greenfield guard 9-to-8, dispatching the external-advisor
-    # lane at high confidence for a project-bootstrap request.
+    # CLAUDE.md is a context FILE, not an advisor mention. Before the bare-token
+    # retirement, the literal string matched `ask`'s bare `claude` token and beat
+    # the greenfield guard 9-to-8, dispatching the external-advisor lane at high
+    # confidence for a project-bootstrap request. `ask` no longer carries a bare
+    # `claude`/`gemini` trigger at all, so this case now pins the structural fix
+    # rather than the filename-carve-out shield that used to guard it.
     RoutingInterventionCase(
         "greenfield-korean-context-file-reaches-interview",
         "A Korean new-project request naming CLAUDE.md reaches the interview lane, not the advisor",

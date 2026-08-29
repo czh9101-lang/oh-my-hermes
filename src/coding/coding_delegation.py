@@ -75,7 +75,9 @@ from ..ingress import CHAT_SOURCES, extract_message_text, extract_source_metadat
 from ..isolation import build_isolation_plan
 from ..memory import validate_handoff_context_blocked, validate_handoff_context_pack, validate_project_memory_recall_pack
 from ..workflows.role_context_packs import build_role_context_pack, pin_role_context_pack
+from ..routing.coding_route_actions import named_executor_owners
 from ..routing.executor_cues import contains_boundary_phrase
+from ..routing.localization import normalized_phrase
 from ..routing.recommend import recommend_skills
 from ..workflows.blocked_work_records import decision_from_action_gate, request_class_shape
 from ..skills.catalog import (
@@ -503,10 +505,14 @@ def _build_coding_delegation_payload_native(
         and score >= 4
         and workflow in _RETAINED_HERMES_WORKFLOWS
         and intent == "coding"
-        and (plan_artifact is not None or _has_code_reference(message))
+        and (
+            plan_artifact is not None
+            or _has_code_reference(message)
+            or _names_claude_code_as_sole_executor(message)
+        )
     ):
         workflow = "plan"
-    action = _action_for(intent, score, workflow)
+    action = _action_for(intent, score, workflow, named_coding_agent=_names_claude_code_as_sole_executor(message))
     if force_coding_handoff and action == "clarify" and intent in {"coding", "review"} and score >= 4:
         action = "delegate"
     if action == "fallback":
@@ -1410,6 +1416,27 @@ def _inline_coding_policy_applies(lowered_message: str, intent: str, action: str
     return action != "delegate" or choice_required
 
 
+def _names_claude_code_as_sole_executor(message: str) -> bool:
+    """True when the message names the Claude Code executor, and only that one.
+
+    This is the delegation path's own detection of that executor name,
+    independent of any catalog trigger score: a request that names Claude Code
+    is coding-shaped even when it carries no other coding verb or file
+    reference. It is the one family `ask`'s retired bare `claude` trigger used
+    to catch as an accidental delegation-path side effect.
+
+    Detection goes through `routing.coding_route_actions.named_executor_owners`
+    -- the same owner resolver the coding-owner route decision uses -- rather
+    than a bare phrase check, and only counts when Claude Code is the *sole*
+    named owner. Every other named executor (Codex, Hermes coding, the
+    omo-runtime family) already reached the correct retained-workflow clarify
+    outcome on its own, and a message naming more than one owner is a genuine
+    owner-comparison question; broadening this detection to either case
+    regresses those clarifications.
+    """
+    return named_executor_owners(normalized_phrase(message)) == ("claude-code",)
+
+
 def _intent_for(message: str, workflow: str, score: int) -> str:
     if score == 0:
         return "unknown"
@@ -1417,7 +1444,7 @@ def _intent_for(message: str, workflow: str, score: int) -> str:
     if _coding_status_request_applies(lowered, workflow):
         return "coding"
     if workflow in _CATALOG_INTENT_RETAINED_WORKFLOWS:
-        if _has_any(lowered, coding_terms_for_intent("coding")):
+        if _has_any(lowered, coding_terms_for_intent("coding")) or _names_claude_code_as_sole_executor(message):
             return "coding"
         return coding_intent_for_skill(workflow)
     for intent in CODING_INTENT_PRIORITY:
@@ -1438,10 +1465,20 @@ def _coding_status_request_applies(lowered: str, workflow: str) -> bool:
     )
 
 
-def _action_for(intent: str, score: int, workflow: str) -> str:
+def _action_for(intent: str, score: int, workflow: str, *, named_coding_agent: bool = False) -> str:
     if intent == "unknown":
         return "fallback"
     if workflow in _RETAINED_HERMES_WORKFLOWS:
+        # A message that names the Claude Code executor still reaches a coding
+        # handoff even when the top catalog match is a retained Hermes workflow.
+        # This mirrors the unconditional delegate outcome `ask`'s retired bare
+        # `claude`/`gemini` triggers used to produce, and it applies regardless
+        # of `prefer_direct_coding_handoff`: callers that evaluate the
+        # retained-workflow contract directly (with that flag off) must observe
+        # the same delegate outcome the direct-handoff redirect above gives
+        # callers that leave it on.
+        if named_coding_agent and intent == "coding" and score >= 4:
+            return "delegate"
         return "clarify"
     if score < 4:
         return "clarify"

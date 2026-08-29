@@ -94,7 +94,7 @@ When Hermes exposes installed skill descriptions to the model, use this registry
 - `performance-goal`: `performance-goal`, `performance goal`, `latency`, `throughput`, `benchmark`
 - `ultraperf`: `ultraperf`, `$ultraperf`, `ulw-perf`, `performance audit`, `performance bottleneck`, `find the bottleneck`, `profile the hot path`, `memory leak investigation`, `token cost hotspot`
 - `wiki`: `wiki`, `project wiki`, `build a wiki`, `start a wiki`, `organize my notes`, `external knowledge store`, `knowledge base`, `Obsidian`, `markdown vault`
-- `ask`: `ask`, `$ask`, `external advisor`, `claude`, `gemini`, `ask claude`, `ask gemini`, `consult claude`, `consult gemini`
+- `ask`: `ask`, `$ask`, `external advisor`, `ask claude`, `ask gemini`, `consult claude`, `consult gemini`, `opinion from claude`, `opinion from gemini`
 - `cancel`: `cancel`, `$cancel`, `stop the workflow`, `abort the run`, `cancel the loop`
 - `skill`: `skill`, `$skill`, `skills`, `manage skills`
 - `doctor`: `doctor`, `$doctor`, `diagnose omh`, `installation health`
