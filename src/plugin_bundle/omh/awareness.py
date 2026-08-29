@@ -206,6 +206,8 @@ except ImportError:  # pragma: no cover - exercised by standalone plugin hosts.
         "짜 줘",
         "처리해",
         "작업해",
+        "맡겨",
+        "해줘",
         "実装",
         "修正",
         "解決",
