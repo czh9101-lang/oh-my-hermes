@@ -4339,7 +4339,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Do not use when:
   - The request is casual chat, a status-only acknowledgement, or another workflow has stronger routing evidence.
   - The user needs implementation, review, CI, merge, or external publishing evidence that has not been delegated or observed.
-- Strong routing signals: `ask`, `$ask`, `external advisor`, `claude`, `gemini`, `ask claude`, `ask gemini`, `consult claude`, `consult gemini`, `opinion from claude`, `opinion from gemini`, `second opinion`, `claude 의견`, `gemini 의견`
+- Strong routing signals: `ask`, `$ask`, `external advisor`, `ask claude`, `ask gemini`, `consult claude`, `consult gemini`, `opinion from claude`, `opinion from gemini`, `second opinion`, `claude 의견`, `gemini 의견`
 - Good example:
   - Prompt: ask: ask Claude as an external advisor to critique this plugin bridge plan before implementation.
   - Expected behavior: Prepare an advisor prompt, capture the response boundary, and summarize reusable critique.

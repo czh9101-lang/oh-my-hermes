@@ -293,7 +293,10 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # have Hermes as owner to consult `hermes_coding_harness/v1` -- with one line
 # stating that this engine does not apply when Hermes is the coding owner
 # (-183 chars); warranted correction, not growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 744060
+# 744060 -> 744066: `ask`'s retired bare `claude`/`gemini` trigger tokens (two
+# short entries) were replaced by a slightly longer explanatory comment in the
+# same trigger tuple (+6 chars net); warranted, one-time bookkeeping.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 744066
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

@@ -59,6 +59,48 @@ class CodingStatusAgentTermTests(unittest.TestCase):
         self.assertFalse(_coding_status_request_applies("senpi is a nice tool", "ultraprocess"))
 
 
+class NamedCodingAgentDelegationTests(unittest.TestCase):
+    """The ask bare-token retirement's prerequisite fix.
+
+    `ask`'s bare `claude`/`gemini` catalog triggers used to be the only reason a
+    request naming Claude Code outranked the retained `executor-runtime-readiness`
+    workflow and produced action=delegate. Dropping those tokens without a
+    replacement would silently downgrade "Claude Code로 바로 열어줘" to
+    action=clarify. The delegation path now detects the named executor directly
+    through `routing.coding_route_actions.named_executor_owners` -- and only
+    when Claude Code is the sole named owner -- independent of any catalog
+    trigger score.
+    """
+
+    def test_naming_codex_still_clarifies(self) -> None:
+        payload = build_coding_delegation_payload("Codex\ub85c \ubc14\ub85c \uc5f4\uc5b4\uc918")
+        self.assertEqual(payload["delegation"]["action"], "clarify")
+
+    def test_naming_two_owners_still_clarifies(self) -> None:
+        payload = build_coding_delegation_payload("claude code\ub791 codex \uc911\uc5d0 \uace8\ub77c\uc11c \uc5f4\uc5b4\uc918")
+        self.assertEqual(payload["delegation"]["action"], "clarify")
+
+    def test_naming_claude_code_without_a_code_reference_still_delegates(self) -> None:
+        payload = build_coding_delegation_payload("Claude Code로 바로 열어줘")
+        delegation = payload["delegation"]
+        self.assertEqual(delegation["action"], "delegate")
+        self.assertEqual(delegation["intent"], "coding")
+        self.assertEqual(delegation["recommended_workflow"], "plan")
+
+    def test_naming_claude_code_with_a_coding_verb_still_delegates(self) -> None:
+        payload = build_coding_delegation_payload("claude code로 구현해줘")
+        delegation = payload["delegation"]
+        self.assertEqual(delegation["action"], "delegate")
+        self.assertEqual(delegation["intent"], "coding")
+        self.assertEqual(delegation["recommended_workflow"], "plan")
+
+    def test_advisor_phrase_triggers_still_reach_ask(self) -> None:
+        payload = build_coding_delegation_payload("ask claude about this design")
+        delegation = payload["delegation"]
+        self.assertEqual(delegation["action"], "delegate")
+        self.assertEqual(delegation["recommended_workflow"], "ask")
+
+
 class CategoryPropagationTests(unittest.TestCase):
     def test_natural_ulw_category_reaches_root_and_hermes_handoff(self) -> None:
         payload = build_coding_delegation_payload(
