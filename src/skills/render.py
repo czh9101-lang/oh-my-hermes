@@ -24,7 +24,14 @@ from .catalog import (
     surface_exposure_for_skill,
     workflow_reference_definitions,
 )
-from .catalog_types import DELEGATION_TRANSPARENCY_RULES
+from .catalog_types import (
+    ADVERSARIAL_CONSENSUS_BUCKETS,
+    ADVERSARIAL_CONSENSUS_MAX_PERSPECTIVES,
+    ADVERSARIAL_CONSENSUS_MIN_PERSPECTIVES,
+    ADVERSARIAL_CONSENSUS_PERSPECTIVES,
+    ADVERSARIAL_CONSENSUS_ROUNDS,
+    DELEGATION_TRANSPARENCY_RULES,
+)
 from .expert_question_rendering import (
     copy_expert_question_payloads,
     expert_question_payloads,
@@ -2512,6 +2519,119 @@ Dispatch ends at spawn and exit -- it never merges (`docs/FANOUT.md`, `DISPATCH_
 2. **Verify the integrated combination, not just each unit alone.** A unit's own `verification_commands` (`--run-verification`) only prove that one worktree in isolation; disjoint `file_scope`s can still conflict once units land together on the same base. Name that outcome an integration conflict -- a distinct failure class from a per-unit verification failure -- and re-run the goal's own verification commands against the combined result, with a review pass, before calling any of it ready.
 3. **The merge itself is an explicit operator or reviewing-agent action.** No OMH command merges branches -- not dispatch, not a status or brief command. Merging the unit branches, in the contract's `merge_order`, is a manual git operation the operator or reviewing agent performs after integration verification and review pass; a dispatch receipt is never merge evidence, the same boundary this engine already holds for dispatch itself.
 4. **Report merged/unmerged per unit in the closing brief.** State which units actually merged and which did not, alongside the run summary, rather than one aggregate "done" -- an integration-ready unit that has not yet been merged is not the same claim as a merged one.
+"""
+
+
+def adversarial_consensus_reference_templates() -> list[SkillReferenceTemplate]:
+    return list(_adversarial_consensus_reference_templates_cached())
+
+
+@lru_cache(maxsize=1)
+def _adversarial_consensus_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
+    return (
+        SkillReferenceTemplate(
+            "adversarial-consensus", "references/consensus-protocol.md", _consensus_protocol_reference()
+        ),
+    )
+
+
+def _consensus_protocol_reference() -> str:
+    """Render the round-by-round protocol from the catalog's own vocabulary.
+
+    The perspective bounds, round order, and bucket names are interpolated from
+    `catalog_types` rather than retyped, so this reference and the always-loaded
+    `SKILL.md` quality bar cannot drift into two different protocols.
+    """
+    roster = ", ".join(f"`{name}`" for name in ADVERSARIAL_CONSENSUS_PERSPECTIVES)
+    buckets = ", ".join(f"**{bucket}**" for bucket in ADVERSARIAL_CONSENSUS_BUCKETS)
+    bucket_list = "\n".join(f"- **{bucket}**" for bucket in ADVERSARIAL_CONSENSUS_BUCKETS)
+    rounds = "\n".join(
+        f"{index}. {name}" for index, name in enumerate(ADVERSARIAL_CONSENSUS_ROUNDS, start=1)
+    )
+    return f"""# Adversarial Consensus Protocol
+
+Load this reference when running the rounds. The always-loaded skill body states the rules; this is the per-round procedure, the wording that keeps a perspective independent, and the failure modes that make a run look adversarial while producing agreement.
+
+Everything here is a prepared prompt contract. OMH runs no perspective and observes no round. A stated round transition is a declaration, not evidence that the round happened.
+
+## 1. The Roster
+
+Seat {ADVERSARIAL_CONSENSUS_MIN_PERSPECTIVES}-{ADVERSARIAL_CONSENSUS_MAX_PERSPECTIVES} perspectives. The suggested roster is {roster}, and each seat is defined by the angle it attacks from, not by a job title:
+
+| Seat | Attacks from |
+| --- | --- |
+| `skeptic` | The claim that is being assumed rather than shown. Asks what breaks if the load-bearing assumption is false. |
+| `validator` | Verifiability. Asks how anyone would know this worked, and what the failing case looks like. |
+| `researcher` | Prior art and current behavior. Asks what the sources, upstream docs, or the existing code already say. |
+| `architect` | Structure and blast radius. Asks what else this couples to and what it makes impossible later. |
+| `creative` | The unexamined framing. Asks what a different shape of the solution would cost, including doing nothing. |
+
+Substitute a domain seat (security, cost, operations, accessibility) when the problem needs one. Two seats arguing the same angle is a duplicate, not a perspective: the roster's value is coverage, and a duplicated angle buys none while making the run look broader than it is.
+
+## 2. The Rounds, In Order
+
+{rounds}
+
+The order is the contract. Independence exists only before any seat has read another's findings, and an attack round placed after a defense round is agreement with extra steps.
+
+### Round 1 - independent findings
+
+Each perspective produces its findings without seeing any other perspective's output. Prompt each seat separately with the same problem statement, and give each one the same context: the proposal, the decision it must inform, and the known constraints. Nothing else.
+
+Every finding names its evidence or labels itself an assumption. "This will not scale" is not a finding; "this holds every session in one process, and the deploy target runs four replicas behind a round-robin balancer" is.
+
+Record all findings before opening round two. If the host cannot keep a seat blind -- one context window, one transcript, one agent playing every part in sequence -- say so and mark the round's independence as caveated. A caveated round is still useful. A run that silently claims independence it did not have is not.
+
+### Round 2 - cross-attack
+
+Every perspective attacks other perspectives' findings, and never defends or restates its own. Self-defense in this round is the single most common way the exercise collapses: the moment a seat is allowed to answer its critics, the round turns into a debate the loudest seat wins, and the objections stop being independent.
+
+Each attack names the finding it targets and the specific reason it fails: unsupported evidence, a case it does not cover, a cost it does not price, or a conflict with another finding. A perspective with no objection to any other seat says so explicitly. An empty attack round is a roster defect -- state which angle is missing and fix the roster -- not consensus.
+
+### Round 3 - defend, refine, or concede
+
+Now, and only now, each perspective answers the objections against it. Exactly one verdict per objection:
+
+- **Defend** - the objection is answered with evidence the original finding already had or can now cite.
+- **Refine** - the objection lands partially; the finding is narrowed to what survives.
+- **Concede** - the objection lands; the finding is struck from the record.
+
+A conceded finding is struck, not softened into a hedge. "Possibly a concern" is how a conceded finding survives to become a Hard Constraint it never earned.
+
+## 3. Distillation - The Lead Subtracts Only
+
+The lead distills. Nothing new enters at distillation: every line in the bundle traces back to a finding that survived round three, and it goes into exactly one of these buckets:
+
+{bucket_list}
+
+- **{ADVERSARIAL_CONSENSUS_BUCKETS[0]}** are the non-negotiables the plan must satisfy. A constraint here is one no surviving objection disputes.
+- **{ADVERSARIAL_CONSENSUS_BUCKETS[1]}** are what the rounds actually settled, each with the reason it settled that way.
+- **{ADVERSARIAL_CONSENSUS_BUCKETS[2]}** are surviving objections that were refined rather than conceded: real, priced, and not blocking.
+- **{ADVERSARIAL_CONSENSUS_BUCKETS[3]}** are the disputes the rounds could not settle and the evidence that would settle them.
+
+The bucket set is closed. If distillation seems to need a fifth bucket, the extra content is a plan trying to escape -- move it into the handoff, not into a new bucket. An unsupported objection is an **{ADVERSARIAL_CONSENSUS_BUCKETS[3]}** entry, never a **{ADVERSARIAL_CONSENSUS_BUCKETS[0]}** one.
+
+## 4. The Mandatory Handoff
+
+The run ends with the bundle handed to a separate planning pass, and it ends there.
+
+State plainly that the bundle ({buckets}) is INPUT to planning, name the follow-on workflow -- `ralplan` when the plan itself needs review gates, `plan` when the shape is already agreed -- and stop.
+
+**The anti-pattern:** treating the bundle as the plan. The four buckets read like a plan's front matter, which is exactly why the substitution is tempting and exactly why it is wrong. The bundle contains no sequence, no owner, no acceptance criteria, and no verification commands, because producing those is the planner's job and this workflow deliberately never did it. Emitting steps here skips the reviewed-plan gate and ships a task list that nobody planned.
+
+## 5. Failure Modes
+
+| Looks like | Actually is | Fix |
+| --- | --- | --- |
+| Every seat agrees in round one | The seats were not independent, or the roster duplicates an angle | Re-run the seats separately; replace a duplicate seat |
+| Round two is polite | Self-defense leaked into the attack round | Restate the round rule and re-run round two |
+| Buckets full of "consider", "possibly", "may want to" | Conceded findings were softened instead of struck | Strike them; a hedge is not a constraint |
+| The bundle has steps and an order | The distillation became a plan | Move it to the planner handoff |
+| One long transcript, all seats | Independence was structural, not real | Keep it, and mark the caveat rather than claiming independence |
+
+## 6. Attribution
+
+The round structure, the no-self-defense rule, and the distill-only discipline are adapted from published multi-agent planning practice; no upstream text is reproduced. The bucket set, the closed-set rule, and the `prepared_not_observed` claim boundary are OMH's own contract vocabulary.
 """
 
 
