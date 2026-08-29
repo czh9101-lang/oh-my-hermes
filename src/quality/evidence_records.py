@@ -6,13 +6,19 @@ upgrades a supplied assertion into observed execution evidence.
 
 from __future__ import annotations
 
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from ..local_store import read_json_object_result
 
 QUALITY_EVIDENCE_PACKAGE_SCHEMA = "quality_evidence_package/v1"
+# `observed_tree` was added to the observation as an optional field and the
+# schema stayed at v1 on purpose: a bump would turn every stored v1 observation
+# into `unknown_schema`, which is a mass invalidation of existing evidence
+# rather than a freshness verdict about it. A reader that does not know the
+# field ignores it and behaves exactly as before.
 QUALITY_EVIDENCE_OBSERVATION_SCHEMA = "quality_evidence_observation/v1"
 QUALITY_EVIDENCE_ASSESSMENT_SCHEMA = "quality_evidence_assessment/v1"
 PREPARED_NOT_OBSERVED = "prepared_not_observed"
@@ -21,6 +27,41 @@ EVIDENCE_KINDS = frozenset({"test", "visual", "performance", "review", "ci", "pr
 RESULTS = frozenset({"passed", "failed", "unknown"})
 DIMENSION_STATES = frozenset({"satisfied", "unsatisfied", "unknown", "not_applicable"})
 _PACKAGE_FIELDS = frozenset({"schema_version", "status", "subject", "qa_scenarios", "review_requirements", "claim_requirements", "self_critique_questions", "claim_boundary"})
+_TREE_HASH_TIMEOUT_SECONDS = 15
+
+
+def current_git_tree_hash(
+    repo_root: str | Path | None = None,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+) -> str | None:
+    """Return the short tree hash of the checkout at `repo_root`, or None.
+
+    Read-only local git plumbing: no network call, nothing written, no ref
+    moved.  The tree hash is what makes freshness answerable at all -- it
+    survives a rebase or an amend that leaves tracked content identical, and
+    changes the moment that content differs, which a commit sha does not.
+
+    An absent git binary, a path outside a repository, a repository with no
+    commit, and a query that times out all return None.  That is the "the
+    question could not be answered" outcome and is deliberately distinct from
+    a known tree: only a caller holding a real hash may stamp one.
+    """
+    root = Path(repo_root).expanduser() if repo_root is not None else Path.cwd()
+    try:
+        completed = runner(
+            ["git", "rev-parse", "--short", "HEAD^{tree}"],
+            cwd=str(root),
+            text=True,
+            capture_output=True,
+            timeout=_TREE_HASH_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if getattr(completed, "returncode", 1) != 0:
+        return None
+    tree = str(getattr(completed, "stdout", "") or "").strip()
+    return tree or None
 
 
 def source_identity(repository_id: str, commit_sha: str, tree_sha: str) -> dict[str, str]:
@@ -113,8 +154,15 @@ def build_quality_evidence_observation(
     reference: str, observed_at: str, reporter: str, provenance: str = "supplied_unverified",
     record_ref: str | None = None, scenario_ids: Sequence[str] = (),
     review_requirement_ids: Sequence[str] = (), claim_ids: Sequence[str] = (), independence: str | None = None,
+    observed_tree: str | None = None,
 ) -> dict[str, object]:
-    """Build an observation bound to the package's canonical source identity."""
+    """Build an observation bound to the package's canonical source identity.
+
+    `observed_tree` is the git tree hash the observation was actually taken
+    against.  It is optional: an observation that omits it is complete and
+    assessed exactly as before, because a caller that cannot answer "which
+    tree" must not be made to guess one.
+    """
     observation = {"schema_version": QUALITY_EVIDENCE_OBSERVATION_SCHEMA, "evidence_id": evidence_id,
         "evidence_kind": evidence_kind, "result": result, "reference": reference,
         "observed_at": observed_at, "reporter": reporter, "source": _source_from_package(package),
@@ -122,6 +170,8 @@ def build_quality_evidence_observation(
         "review_requirement_ids": list(review_requirement_ids), "claim_ids": list(claim_ids)}
     if independence is not None:
         observation["independence"] = independence
+    if observed_tree is not None:
+        observation["observed_tree"] = observed_tree
     errors = validate_quality_evidence_observation(observation, package)
     if errors:
         raise ValueError("invalid quality evidence observation: " + ", ".join(errors))
@@ -162,6 +212,10 @@ def validate_quality_evidence_observation(
         errors.append("missing_observed_record_ref")
     if kind == "review" and observation.get("independence") not in {"independent", "self_review_only"}:
         errors.append("missing_review_independence")
+    if "observed_tree" in observation:
+        observed_tree = observation.get("observed_tree")
+        if not isinstance(observed_tree, str) or not observed_tree.strip():
+            errors.append("invalid_observed_tree")
     valid_ids = _package_ids(package)
     for field in ("scenario_ids", "review_requirement_ids", "claim_ids"):
         values = observation.get(field, [])
@@ -175,9 +229,21 @@ def validate_quality_evidence_observation(
 
 def assess_quality_evidence(
     package: Mapping[str, object], observations: Sequence[Mapping[str, object]] = (), *, now: datetime | None = None,
-    omh_home: str | Path | None = None,
+    omh_home: str | Path | None = None, current_tree: str | None = None,
 ) -> dict[str, object]:
-    """Derive independent dimensions and fail closed on drift or self-review."""
+    """Derive independent dimensions and fail closed on drift or self-review.
+
+    When `current_tree` is supplied, an observation stamped with a different
+    `observed_tree` is classified `stale_tree`: it was observed against content
+    that is no longer the tracked content, so it cannot speak for the current
+    tree.  Staleness is an assessment outcome only.  Nothing here relabels a
+    record, rewrites a stamp, or regenerates evidence; the stale observation is
+    left exactly as recorded and simply stops counting.
+
+    The parameter is explicit rather than probed: assessment stays a pure
+    function of what it is handed, and a caller that wants the live tree reads
+    it with `current_git_tree_hash()` first.
+    """
     package_errors = validate_quality_evidence_package(package)
     if package_errors:
         raise ValueError("invalid quality evidence package: " + ", ".join(package_errors))
@@ -188,6 +254,9 @@ def assess_quality_evidence(
         errors = validate_quality_evidence_observation(item, package)
         if errors:
             reasons.extend(errors)
+            continue
+        if _observed_tree_is_stale(item, current_tree):
+            reasons.append("stale_tree")
             continue
         if item.get("independence") == "self_review_only":
             reasons.append("self_review_only_not_admissible")
@@ -213,6 +282,10 @@ def assess_quality_evidence(
         reasons.append("contradictory_observations")
         scenario_state = "unsatisfied"
     freshness = "satisfied" if valid and all(dict(item.get("source", {})) == source for item in valid) else "unsatisfied" if "source_mismatch" in reasons else "unknown"
+    if "stale_tree" in reasons:
+        # A dropped stale observation must not leave freshness reading
+        # "satisfied" off the observations that survived beside it.
+        freshness = "unsatisfied"
     reviews = _package_ids(package)["review_requirement_ids"]
     independent = {rid for item in valid if item.get("evidence_kind") == "review" and item.get("independence") == "independent" and item.get("result") == "passed" for rid in item.get("review_requirement_ids", [])}
     review_state = "not_applicable" if not reviews else "satisfied" if independent >= reviews else "unknown" if not valid else "unsatisfied"
@@ -233,6 +306,21 @@ def assess_quality_evidence(
     dimensions = {name: _dimension(state, reasons, evidence_ids[name]) for name, state in states.items()}
     complete = all(item["status"] in {"satisfied", "not_applicable"} for item in dimensions.values())
     return {"schema_version": QUALITY_EVIDENCE_ASSESSMENT_SCHEMA, "source": source, "dimensions": dimensions, "ready_for_completion": complete, "next_action": "record_source_bound_observations" if not complete else "none", "reasons": list(dict.fromkeys(reasons)), "claim_boundary": "Assessment validates evidence consistency only; it does not prove external execution."}
+
+
+def _observed_tree_is_stale(observation: Mapping[str, object], current_tree: str | None) -> bool:
+    """True only when both trees are known and they differ.
+
+    An observation carrying no `observed_tree`, or an assessment given no
+    `current_tree`, is never stale here: the question was not asked, and an
+    unasked question must not become a staleness verdict.
+    """
+    if not isinstance(current_tree, str) or not current_tree.strip():
+        return False
+    observed_tree = observation.get("observed_tree")
+    if not isinstance(observed_tree, str) or not observed_tree.strip():
+        return False
+    return observed_tree.strip() != current_tree.strip()
 
 
 def _source_from_package(package: Mapping[str, object]) -> dict[str, str]:
@@ -313,6 +401,11 @@ def _record_is_admissible(
         if record.get(key) != observation.get(key):
             return False
     if "independence" in observation and record.get("independence") != observation.get("independence"):
+        return False
+    # A stamped observed tree is a claim about the underlying record, so the
+    # record has to carry the same one. An observation that stamps no tree
+    # keeps the pre-existing binding untouched.
+    if "observed_tree" in observation and record.get("observed_tree") != observation.get("observed_tree"):
         return False
     return True
 

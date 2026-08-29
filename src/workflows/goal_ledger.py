@@ -375,10 +375,18 @@ def record_goal_checkpoint(
     evidence_refs: Iterable[str] | None = None,
     notes_summary: str = "",
     linked_runtime_run_id: str = "",
+    observed_tree: str = "",
     expected_revision: int | None = None,
     mutation_id: str | None = None,
     outcome: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Append one checkpoint to a goal ledger.
+
+    `observed_tree` is the git tree hash the checkpoint's work was observed
+    against, read by the caller (see `current_git_tree_hash`). It is stamped as
+    recorded and never re-derived later: a checkpoint that carries no tree
+    stores the empty string, exactly as before, and stays readable as such.
+    """
     if status not in CHECKPOINT_STATUSES:
         raise ValueError(f"unsupported checkpoint status: {status}")
     if not summary.strip():
@@ -386,6 +394,7 @@ def record_goal_checkpoint(
     checkpoint_id = _mutation_item_id(mutation_id, "checkpoint")
     refs = [str(ref).strip() for ref in criteria_refs or [] if str(ref).strip()]
     evidence = _evidence_refs(evidence_refs)
+    observed_tree_ref = _safe_summary(observed_tree, limit=64)
     linked_runtime_ref = (
         _storage_id(linked_runtime_run_id, "linked_runtime_run_id") if linked_runtime_run_id.strip() else ""
     )
@@ -419,6 +428,7 @@ def record_goal_checkpoint(
             "evidence_refs": evidence,
             "notes_summary": _safe_summary(notes_summary) if notes_summary.strip() else "",
             "linked_runtime_run_id": linked_runtime_ref,
+            "observed_tree": observed_tree_ref,
         }
         goal["checkpoints"].append(checkpoint)
         goal["current_checkpoint"] = checkpoint["checkpoint_id"]
@@ -440,8 +450,12 @@ def record_goal_checkpoint(
         operation="record_goal_checkpoint",
         expected_revision=expected_revision,
         mutation_id=mutation_id,
+        # The observed tree is part of the checkpoint's content, so a retry
+        # reusing this mutation_id against a different tree is a content
+        # conflict to refuse, not a replay to serve from the stored record.
         mutation_digest=_mutation_digest(
-            "record_goal_checkpoint", summary, status, refs, evidence, notes_summary, linked_runtime_ref
+            "record_goal_checkpoint", summary, status, refs, evidence, notes_summary, linked_runtime_ref,
+            observed_tree_ref,
         ),
     )
     _record_goal_outcome(
@@ -1123,6 +1137,10 @@ def _validate_checkpoints(checkpoints: Any, errors: list[str]) -> None:
             errors.append(f"checkpoints[{index}].criteria_refs must be a list")
         if not isinstance(checkpoint.get("evidence_refs"), list):
             errors.append(f"checkpoints[{index}].evidence_refs must be a list")
+        # Optional, so a checkpoint written before the field existed stays
+        # valid; a present value still has to be a string.
+        if not isinstance(checkpoint.get("observed_tree", ""), str):
+            errors.append(f"checkpoints[{index}].observed_tree must be a string")
 
 
 def _validate_blockers(blockers: Any, errors: list[str]) -> None:
