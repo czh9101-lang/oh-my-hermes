@@ -100,6 +100,32 @@ class NamedCodingAgentDelegationTests(unittest.TestCase):
         self.assertEqual(delegation["action"], "delegate")
         self.assertEqual(delegation["recommended_workflow"], "ask")
 
+    def test_claude_code_hyphenated_folder_name_never_delegates(self) -> None:
+        # #1163 review P3-6: plain containment on "claude-code"/"claudecode"
+        # fired inside an ordinary hyphenated word, so a message that merely
+        # mentions a folder name reached action=delegate off a false owner
+        # detection. `named_executor_owners` now boundary-matches this group.
+        payload = build_coding_delegation_payload("my repo has a folder called claudecode-notes")
+        self.assertEqual(payload["delegation"]["action"], "clarify")
+
+    def test_claude_code_dotted_filename_never_delegates(self) -> None:
+        payload = build_coding_delegation_payload("read the claude-code.md file")
+        self.assertEqual(payload["delegation"]["action"], "clarify")
+
+    def test_bare_claude_word_never_delegates(self) -> None:
+        # #1163 PR risk note: with `ask`'s bare `claude`/`gemini` triggers
+        # retired, a bare one-word "claude" message no longer inflates a
+        # score that used to outrank the retained workflow. Bare "claude" is
+        # not the sole-named-Claude-Code-owner case (`named_executor_owners`
+        # requires "claude code"/"claude-code"/"claudecode", not bare
+        # "claude"), so the retained-workflow clarify outcome applies.
+        payload = build_coding_delegation_payload("claude")
+        self.assertEqual(payload["delegation"]["action"], "clarify")
+
+    def test_bare_gemini_word_never_delegates(self) -> None:
+        payload = build_coding_delegation_payload("gemini")
+        self.assertEqual(payload["delegation"]["action"], "clarify")
+
 
 class CategoryPropagationTests(unittest.TestCase):
     def test_natural_ulw_category_reaches_root_and_hermes_handoff(self) -> None:
