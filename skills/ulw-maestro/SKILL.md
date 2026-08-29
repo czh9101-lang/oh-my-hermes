@@ -45,8 +45,7 @@ Bad example:
 - The selected coding or runtime owner is named before any implementation claim.
 - Prepared handoff, dispatch, execution, verification, review, CI, and merge states are separated.
 - The final status cites observed runtime evidence or keeps the work prepared_not_observed.
-- When Hermes is the selected coding owner, use `hermes_coding_harness/v1` to keep builder, verifier, reviewer, docs, and PR lanes separate.
-- Report the current harness stage, owner, next action, and missing evidence without claiming PR creation, review, CI, merge-readiness, or merge until matching runtime observations exist.
+- When Hermes is the selected coding owner this engine does not apply -- Hermes-native selection uses the Hermes runtime path, never this engine.
 
 ## Recovery Notes
 
