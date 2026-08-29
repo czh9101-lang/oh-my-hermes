@@ -32,6 +32,8 @@ from omh.coding.fanout_artifacts import fanout_dispatch_summary_path  # noqa: E4
 from omh.coding.fanout_artifacts import fanout_unit_recovery_path  # noqa: E402
 from omh.coding.fanout_artifacts import unit_result_path  # noqa: E402
 from omh.coding.fanout_dispatch import (  # noqa: E402
+    FANOUT_DEPTH_ENV_VAR,
+    FANOUT_LINEAGE_ENV_VAR,
     _MAX_RECOVERY_PATHS,
     _apply_integration_readiness,
     _owner_skill_discoveries,
@@ -41,6 +43,10 @@ from omh.coding.fanout_dispatch import (  # noqa: E402
     dispatch_fanout,
     dispatch_model_preferences_path,
     verify_goal_matches_contract,
+)
+from omh.coding.parallelism_policy import (  # noqa: E402
+    FANOUT_MAX_DEPTH_DEFAULT,
+    FANOUT_RUN_SPAWN_CEILING_DEFAULT,
 )
 from omh.coding.executor_progress import read_progress_binding  # noqa: E402
 from omh.runtime.artifacts import append_journal_observation, create_run, show_run  # noqa: E402
@@ -3215,6 +3221,288 @@ class SpawnStaggerTests(unittest.TestCase):
             self.assertEqual(statuses, {"core": "completed", "docs": "completed"})
             self.assertEqual(len(spawn_times), 2)
             self.assertGreaterEqual(spawn_times[1] - spawn_times[0], 0.25)
+
+
+def _env_capturing_runner():
+    """Like `_agent_runner`, but keeps the env each fake agent spawn was given."""
+    envs: list[dict[str, str]] = []
+
+    def runner(argv, **kwargs):
+        if argv[0] == "git":
+            return subprocess.run(argv, **kwargs)
+        envs.append(dict(kwargs.get("env") or {}))
+        return _FakeCompleted(0, "done")
+
+    runner.envs = envs
+    return runner
+
+
+class FanoutSpawnGuardTests(unittest.TestCase):
+    """Recursion depth cap and per-run spawn ceiling.
+
+    `omh coding fanout dispatch` is OMH's only surface that starts real
+    processes, and a dispatched agent CLI can read its own instructions and
+    invoke the same command. These tests pin that a child is stamped with its
+    depth, that a stamped process refuses before any spawn, that one run can
+    only ever start `run_spawn_ceiling` agents, and — the negative controls —
+    that an ordinary operator dispatch is untouched by either bound.
+    """
+
+    _TWO_UNITS = [
+        {"unit_id": "core", "title": "Core work", "owner": "codex", "file_scope": ["src/core/"]},
+        {"unit_id": "docs", "title": "Docs work", "owner": "claude-code", "file_scope": ["docs/"]},
+    ]
+
+    def _setup(self, tmp: str, units=None):
+        root = Path(tmp)
+        paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+        repo, sha = _make_repo(root)
+        contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units or _UNITS))
+        return paths, repo, sha, contract
+
+    def test_depth_zero_dispatches_and_records_the_bounds_it_ran_under(self) -> None:
+        # The negative control for the whole feature: an operator's own
+        # invocation carries no marker, runs normally, and the summary states
+        # the bounds rather than leaving them implicit.
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            runner = _agent_runner()
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                runner=runner,
+                readiness=_ready,
+                env={},
+            )
+        self.assertNotIn("refused", summary)
+        statuses = {entry["unit_id"]: entry["status"] for entry in summary["units"]}
+        self.assertEqual(statuses, {"core": "completed", "docs": "completed", "tests": "completed"})
+        self.assertEqual(summary["spawn_guard"]["depth"], 0)
+        self.assertEqual(summary["spawn_guard"]["max_depth"], FANOUT_MAX_DEPTH_DEFAULT)
+        self.assertEqual(summary["spawn_guard"]["run_spawn_ceiling"], FANOUT_RUN_SPAWN_CEILING_DEFAULT)
+        self.assertEqual(summary["spawn_guard"]["spawns_claimed"], 3)
+
+    def test_every_child_environment_carries_the_depth_and_lineage_stamp(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp, self._TWO_UNITS)
+            runner = _env_capturing_runner()
+            dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                runner=runner,
+                readiness=_ready,
+                env={"PATH": "/usr/bin"},
+            )
+        self.assertEqual(len(runner.envs), 2)
+        lineages = set()
+        for child in runner.envs:
+            # The base environment is carried through, not replaced: a child
+            # that lost PATH would fail for reasons the guard never intended.
+            self.assertEqual(child["PATH"], "/usr/bin")
+            self.assertEqual(child[FANOUT_DEPTH_ENV_VAR], "1")
+            lineages.add(child[FANOUT_LINEAGE_ENV_VAR])
+        self.assertEqual(
+            lineages,
+            {f"{contract['fanout_id']}:core", f"{contract['fanout_id']}:docs"},
+        )
+
+    def test_a_nested_lineage_is_appended_not_replaced(self) -> None:
+        # Depth 0 with an inherited lineage is the shape a wrapper produces
+        # when it stamps provenance itself; the chain must extend so a later
+        # refusal names the whole path it came down.
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp, self._TWO_UNITS[:1])
+            runner = _env_capturing_runner()
+            dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=runner,
+                readiness=_ready,
+                env={FANOUT_LINEAGE_ENV_VAR: "outer:seed"},
+            )
+        self.assertEqual(
+            runner.envs[0][FANOUT_LINEAGE_ENV_VAR],
+            f"outer:seed/{contract['fanout_id']}:core",
+        )
+
+    def test_a_dispatch_at_max_depth_refuses_before_any_spawn(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            runner = _agent_runner()
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                runner=runner,
+                readiness=_ready,
+                env={FANOUT_DEPTH_ENV_VAR: "1", FANOUT_LINEAGE_ENV_VAR: "outer:core"},
+            )
+            self.assertTrue(summary["refused"])
+            self.assertEqual(summary["refusal_reason"], "fanout_depth_exceeded")
+            self.assertEqual(summary["spawn_guard"]["depth"], 1)
+            self.assertEqual(summary["spawn_guard"]["max_depth"], 1)
+            self.assertEqual(summary["spawn_guard"]["lineage"], "outer:core")
+            self.assertEqual(summary["units"], [])
+            # Nothing spawned, and no worktree was built for a unit that was
+            # never going to start.
+            self.assertEqual(runner.spawned, [])
+            self.assertEqual(sorted(p.name for p in Path(tmp).glob("*core*")), [])
+            # And nothing was persisted: a refusal must not overwrite the
+            # stored summary of the run that is actually in flight.
+            self.assertFalse(fanout_dispatch_summary_path(paths, contract["fanout_id"]).exists())
+
+    def test_a_deeper_marker_refuses_too_and_a_raised_cap_admits_it(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp, self._TWO_UNITS[:1])
+            refused = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=_agent_runner(),
+                readiness=_ready,
+                env={FANOUT_DEPTH_ENV_VAR: "3"},
+            )
+            self.assertTrue(refused["refused"])
+            # The cap is a tunable, not a hardcoded 1: raising it admits the
+            # same depth, and the child is stamped one deeper again.
+            runner = _env_capturing_runner()
+            allowed = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=runner,
+                readiness=_ready,
+                max_depth=4,
+                env={FANOUT_DEPTH_ENV_VAR: "3"},
+            )
+        self.assertNotIn("refused", allowed)
+        self.assertEqual(runner.envs[0][FANOUT_DEPTH_ENV_VAR], "4")
+
+    def test_a_corrupt_depth_marker_reads_as_depth_zero(self) -> None:
+        # Negative control on the reader: a malformed marker must not read as
+        # a LARGER depth and refuse a legitimate operator run.
+        from omh.coding.fanout_dispatch import read_fanout_depth
+
+        for raw in ("", "   ", "deep", "-1", "1.5", "٢"):
+            self.assertEqual(read_fanout_depth({FANOUT_DEPTH_ENV_VAR: raw}), 0, raw)
+        self.assertEqual(read_fanout_depth({}), 0)
+        self.assertEqual(read_fanout_depth({FANOUT_DEPTH_ENV_VAR: "2"}), 2)
+
+    def test_the_run_spawn_ceiling_stops_units_it_cannot_afford(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp, self._TWO_UNITS)
+            runner = _agent_runner()
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                concurrency=1,
+                runner=runner,
+                readiness=_ready,
+                spawn_ceiling=1,
+                env={},
+            )
+            statuses = {entry["unit_id"]: entry["status"] for entry in summary["units"]}
+            self.assertEqual(statuses["core"], "completed")
+            self.assertEqual(statuses["docs"], "spawn_ceiling_reached")
+            self.assertEqual(len(runner.spawned), 1)
+            self.assertEqual(summary["spawn_guard"]["spawns_claimed"], 1)
+            refused = next(entry for entry in summary["units"] if entry["unit_id"] == "docs")
+            self.assertIn("run_spawn_ceiling", refused["reason"])
+            # A unit stopped by the ceiling never reached its worktree, so it
+            # claims none of the evidence ladder.
+            self.assertFalse(refused["process_succeeded"])
+            self.assertFalse(refused["integration_ready"])
+            self.assertFalse((repo.parent / f"{repo.name}-unit-docs").exists())
+
+    def test_a_ceiling_above_the_unit_count_changes_nothing(self) -> None:
+        # The negative control for the ceiling: an ordinary run inside its
+        # budget dispatches exactly as it did before the guard existed.
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            runner = _agent_runner()
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                runner=runner,
+                readiness=_ready,
+                spawn_ceiling=10,
+                env={},
+            )
+        statuses = {entry["unit_id"]: entry["status"] for entry in summary["units"]}
+        self.assertEqual(statuses, {"core": "completed", "docs": "completed", "tests": "completed"})
+        self.assertEqual(len(runner.spawned), 3)
+
+    def test_a_dry_run_neither_spends_the_budget_nor_stamps_a_child(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            runner = _env_capturing_runner()
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                dry_run=True,
+                runner=runner,
+                readiness=_ready,
+                spawn_ceiling=1,
+                env={},
+            )
+        statuses = {entry["status"] for entry in summary["units"]}
+        self.assertEqual(statuses, {"dry_run_planned"})
+        self.assertEqual(runner.envs, [])
+        self.assertEqual(summary["spawn_guard"]["spawns_claimed"], 0)
+
+    def test_the_cli_prints_the_refusal_and_exits_non_zero(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp, self._TWO_UNITS[:1])
+            goal = Path(tmp) / "goal.txt"
+            goal.write_text(_GOAL, encoding="utf-8")
+            argv = [
+                "--omh-home",
+                str(paths.omh_home),
+                "--hermes-home",
+                str(paths.hermes_home),
+                "coding",
+                "fanout",
+                "dispatch",
+                contract["fanout_id"],
+                "--goal-file",
+                str(goal),
+                "--repo-root",
+                str(repo),
+                "--dry-run",
+            ]
+            with mock.patch.dict("os.environ", {FANOUT_DEPTH_ENV_VAR: "1"}):
+                status, stdout, stderr = run_cli(argv)
+        self.assertEqual(status, 1, stderr)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["refused"])
+        self.assertEqual(payload["refusal_reason"], "fanout_depth_exceeded")
 
 
 if __name__ == "__main__":

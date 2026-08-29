@@ -14,6 +14,8 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from omh.coding.parallelism_policy import (
+    FANOUT_MAX_DEPTH_DEFAULT,
+    FANOUT_RUN_SPAWN_CEILING_DEFAULT,
     build_parallelism_policy,
     read_parallelism_policy,
     resolve_fanout_concurrency,
@@ -168,6 +170,71 @@ class FanoutConcurrencyResolutionTests(unittest.TestCase):
         # note does not apply to it.
         flagged = resolve_fanout_concurrency(policy, 3)
         self.assertFalse(flagged["clamped"])
+
+
+class SpawnGuardPolicyTests(unittest.TestCase):
+    """`max_depth` and `run_spawn_ceiling` read like every other tunable here.
+
+    They bound the same one subprocess exception the widths do, from a
+    different direction, so they get the same validated-override-plus-
+    disclosure treatment rather than a private constant nobody can edit.
+    """
+
+    def _write_profile(self, paths: OmhPaths, parallelism: object) -> None:
+        profile = build_setup_profile()
+        profile["parallelism"] = parallelism
+        paths.setup_profile_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(paths.setup_profile_path, profile, private=True)
+
+    def test_defaults_match_the_omo_spawn_guard(self) -> None:
+        self.assertEqual(FANOUT_MAX_DEPTH_DEFAULT, 1)
+        self.assertEqual(FANOUT_RUN_SPAWN_CEILING_DEFAULT, 60)
+        policy = build_parallelism_policy()
+        self.assertEqual(policy["max_depth"], 1)
+        self.assertEqual(policy["run_spawn_ceiling"], 60)
+
+    def test_stored_overrides_apply(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            self._write_profile(paths, {"max_depth": 2, "run_spawn_ceiling": 12})
+            policy = read_parallelism_policy(paths)
+            self.assertEqual(policy["max_depth"], 2)
+            self.assertEqual(policy["run_spawn_ceiling"], 12)
+            self.assertEqual(policy["ignored_keys"], [])
+
+    def test_out_of_range_values_fall_back_and_are_disclosed(self) -> None:
+        # A profile that asks for unbounded nesting or a five-figure spawn
+        # budget is a typo, not a policy; it falls back and says so.
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            self._write_profile(paths, {"max_depth": 99, "run_spawn_ceiling": 0})
+            policy = read_parallelism_policy(paths)
+            self.assertEqual(policy["max_depth"], 1)
+            self.assertEqual(policy["run_spawn_ceiling"], 60)
+            self.assertIn("max_depth", policy["ignored_keys"])
+            self.assertIn("run_spawn_ceiling", policy["ignored_keys"])
+
+    def test_a_pool_wider_than_the_whole_budget_is_clamped_and_disclosed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            self._write_profile(paths, {"run_spawn_ceiling": 3})
+            policy = read_parallelism_policy(paths)
+            self.assertEqual(policy["global_concurrency"], 3)
+            self.assertEqual(policy["global_concurrency_clamped_from"], 8)
+            # The per-lane clamp reads the width the pool will actually run
+            # with, so the cascade lands on the same number.
+            self.assertEqual(policy["default_concurrency"], 3)
+            self.assertEqual(policy["default_concurrency_clamped_from"], 5)
+
+    def test_the_resolution_carries_the_guard_into_the_dispatch_record(self) -> None:
+        policy = build_parallelism_policy()
+        policy["max_depth"] = 2
+        policy["run_spawn_ceiling"] = 9
+        policy["global_concurrency_clamped_from"] = 8
+        resolution = resolve_fanout_concurrency(policy, None)
+        self.assertEqual(resolution["max_depth"], 2)
+        self.assertEqual(resolution["run_spawn_ceiling"], 9)
+        self.assertEqual(resolution["global_concurrency_clamped_from"], 8)
 
 
 class CliWiringTests(unittest.TestCase):
