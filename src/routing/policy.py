@@ -1213,6 +1213,65 @@ _GREENFIELD_OTHER_LANE_TOKENS = _normalized_token_set(
         "테스트",
     }
 )
+# A repo that was just initialized and nothing else has a fresh empty surface;
+# the caller genuinely does not know the next step, which one clarifying
+# interview answers - unlike a generic picker guessing among unrelated
+# workflows (ops review, research, code review) on the bare word "what".
+_GREENFIELD_POST_INIT_PHRASES = (
+    "just ran git init",
+    "i just ran git init",
+    "just did git init",
+    "just initialized the repo",
+    "just initialized this repo",
+    "just initialized a repo",
+    "git init, what now",
+    "git init what now",
+    "ran git init, now what",
+    "ran git init now what",
+)
+# Bootstrap-file nouns whose repo-file identity is unambiguous once tokenized.
+# Any two of these together with an add/create/set-up action name a full
+# "give me the starter files" request rather than a single-file edit -
+# `_direct_coding_task_guard_applies` already owns "add a toggle" style edits
+# on one named surface; this only fires alongside a concrete, multi-file
+# bootstrap ask so it cannot hijack "why does my .gitignore not work"
+# (troubleshooting), "explain what a LICENSE file is" (concept), or
+# "add this rule to .gitignore" (an edit naming exactly one file).
+_PROJECT_BOOTSTRAP_FILE_NOUN_TOKENS = _normalized_token_set(
+    {
+        "license",
+        "gitignore",
+        "readme",
+    }
+)
+_PROJECT_BOOTSTRAP_ACTION_PHRASES = (
+    "add a",
+    "add an",
+    "add the",
+    "create a",
+    "create an",
+    "set up",
+    "setup",
+    "generate a",
+    "make a",
+)
+# A generic "give me the standard files" ask names no file by noun, but
+# pairing a conventional-files phrase with an explicitly empty/new/bare repo
+# is as concrete as naming LICENSE/README/.gitignore outright.
+_PROJECT_BOOTSTRAP_GENERIC_FILE_PHRASES = (
+    "standard project files",
+    "standard repo files",
+    "standard repository files",
+    "boilerplate project files",
+    "project boilerplate files",
+)
+_PROJECT_BOOTSTRAP_EMPTY_REPO_PHRASES = (
+    "empty repo",
+    "empty repository",
+    "empty project",
+    "bare repo",
+    "bare repository",
+)
 _PRODUCT_SHAPING_CONTEXT_TOKENS = _normalized_token_set(
     {
         "onboarding",
@@ -5621,6 +5680,12 @@ def _greenfield_build_guard_applies(
     repo can be read for, a creation request names something no amount of repo
     inspection can answer. The second is the definition of a materially
     ambiguous product request, which is what `deep-interview` is for.
+
+    `_GREENFIELD_POST_INIT_PHRASES` extends the same lane to "I just ran git
+    init, what now" - no build verb, but the same empty-surface shape: nothing
+    a repo read can answer, and a genuine clarification candidate rather than
+    the unrelated low-confidence guesses (ops review, research, code review)
+    a bare "what" otherwise scores against.
     """
     if direct_coding_task_applies is None:
         direct_coding_task_applies = _direct_coding_task_guard_applies(normalized_query, query_tokens)
@@ -5634,7 +5699,10 @@ def _greenfield_build_guard_applies(
     # is incidental to a question about how something is done.
     if _contains_phrase(normalized_query, _GREENFIELD_QUESTION_OPENERS):
         return False
-    if not _contains_phrase(normalized_query, _GREENFIELD_CREATION_PHRASES):
+    creation_signal = _contains_phrase(normalized_query, _GREENFIELD_CREATION_PHRASES) or _contains_phrase(
+        normalized_query, _GREENFIELD_POST_INIT_PHRASES
+    )
+    if not creation_signal:
         return False
     # A referent that points back at existing work is an edit, however it is
     # phrased: "make a copy of this file" is not a greenfield product request.
@@ -6062,11 +6130,11 @@ def _app_delivery_loop_guard_applies(normalized_query: str, query_tokens: set[st
     delivery_terms = len({"plan", "handoff", "qa", "release", "deploy"} & query_tokens) >= 3
     if idea and (path or delivery_terms):
         return True
-    return _greenfield_project_bootstrap_requested(normalized_query)
+    return _greenfield_project_bootstrap_requested(normalized_query, query_tokens)
 
 
-def _greenfield_project_bootstrap_requested(normalized_query: str) -> bool:
-    return _contains_phrase(
+def _greenfield_project_bootstrap_requested(normalized_query: str, query_tokens: set[str]) -> bool:
+    if _contains_phrase(
         normalized_query,
         (
             "bootstrap the project",
@@ -6079,6 +6147,24 @@ def _greenfield_project_bootstrap_requested(normalized_query: str) -> bool:
             "set up a new repo",
             "set up a new repository",
         ),
+    ):
+        return True
+    # A fully-specified bootstrap-file ask ("add a LICENSE and .gitignore to
+    # this project", "create a new repo with README, LICENSE and CI") already
+    # names what it wants; nothing about it is materially ambiguous, so it
+    # dispatches straight to the delivery loop's bootstrap pass instead of
+    # detouring through deep-interview. Requiring an add/create/set-up action
+    # phrase keeps a single-file edit ("add this rule to .gitignore") or a
+    # troubleshooting/concept question ("why does my .gitignore not work",
+    # "explain what a LICENSE file is") from ever reaching this branch.
+    if not _contains_phrase(normalized_query, _PROJECT_BOOTSTRAP_ACTION_PHRASES):
+        return False
+    if len(_PROJECT_BOOTSTRAP_FILE_NOUN_TOKENS & query_tokens) >= 2:
+        return True
+    # A generic "standard project files" ask names no file by noun, but paired
+    # with an explicitly empty/new/bare repo it is just as concrete.
+    return _contains_phrase(normalized_query, _PROJECT_BOOTSTRAP_GENERIC_FILE_PHRASES) and _contains_phrase(
+        normalized_query, _PROJECT_BOOTSTRAP_EMPTY_REPO_PHRASES
     )
 
 

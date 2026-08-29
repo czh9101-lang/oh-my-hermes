@@ -49,6 +49,7 @@ from .policy import (
 )
 from .policy import _doctor_health_guard_applies
 from .policy import _explicit_skill_candidate_is_negated
+from .policy import _greenfield_project_bootstrap_requested
 from .policy import _hermes_setup_guide_requested
 from .policy import _github_event_ops_guard_applies
 from .policy import _invocation_token
@@ -1866,7 +1867,13 @@ def _route_chat_message_cached(
     ambiguous = _is_ambiguous(full_recommendations)
     explicit_loop_signal = _explicit_loop_signal(routing_message, full_recommendations)
     file_or_text_lookup = is_file_or_text_lookup_question(routing_message) and not (
-        candidate_skill == "source-finder" and "source-finder" in normalized_phrase(routing_message)
+        (candidate_skill == "source-finder" and "source-finder" in normalized_phrase(routing_message))
+        or (
+            candidate_skill == "idea-to-deploy"
+            and _greenfield_project_bootstrap_requested(
+                normalized_phrase(routing_message), routing_tokens(normalized_phrase(routing_message))
+            )
+        )
     )
     direct_answer = _is_plain_direct_answer_question(
         routing_message,
@@ -2698,6 +2705,16 @@ def _file_lookup_fast_path_decision(
     if _operator_surface_fast_path_match(routing_message) is not None:
         return None
     if not is_file_or_text_lookup_question(routing_message):
+        return None
+    # A fully-specified bootstrap-file request ("set up the standard project
+    # files for this empty repo") shares vocabulary with a file-lookup
+    # question ("files" + "project"/"repo") but is an action, not a question;
+    # let it fall through to the app-delivery-loop guard instead of a
+    # zero-score file-lookup fallback.
+    normalized_routing_message = normalized_phrase(routing_message)
+    if _greenfield_project_bootstrap_requested(
+        normalized_routing_message, routing_tokens(normalized_routing_message)
+    ):
         return None
     selected_harness = primary_harness_for_skill(_ROUTER_SKILL)
     reason = FILE_LOOKUP_REASON
