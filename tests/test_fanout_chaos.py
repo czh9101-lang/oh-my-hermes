@@ -189,11 +189,15 @@ class FanoutChaosTests(unittest.TestCase):
         # The frontier property itself — the reason the wave barrier was
         # removed. Under the barrier, u1 (dependent on fast u0) could not
         # start until the unrelated slow sibling drained the wave; under
-        # frontier admission it starts while `slow` is still running. This
-        # deterministic shape needs a real sleep, which the seeded bench
-        # deliberately avoids — hence a separate test.
+        # frontier admission it starts while `slow` is still running.
+        #
+        # `slow` is held on a threading.Event that only opens once `u1` has
+        # been observed starting, so the assertion below cannot lose a race
+        # against wall-clock scheduling noise (this was a real flake on a
+        # loaded Windows CI runner with a fixed 1.0s sleep here). The wait
+        # carries a generous timeout so a genuine frontier-admission
+        # regression still fails the test instead of hanging forever.
         import threading as _threading
-        import time as _time
 
         units = [
             {"unit_id": "slow", "title": "Slow sibling", "owner": "codex", "file_scope": ["src/slow/"]},
@@ -206,6 +210,7 @@ class FanoutChaosTests(unittest.TestCase):
             repo, sha = _make_repo(root)
             contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
             slow_done = _threading.Event()
+            u1_started = _threading.Event()
             events: list[tuple[str, str, bool]] = []
             events_lock = _threading.Lock()
 
@@ -216,8 +221,11 @@ class FanoutChaosTests(unittest.TestCase):
                 unit_id = cwd.rsplit("-fanout-", 1)[-1]
                 with events_lock:
                     events.append(("start", unit_id, slow_done.is_set()))
+                if unit_id == "u1":
+                    u1_started.set()
                 if unit_id == "slow":
-                    _time.sleep(1.0)
+                    started = u1_started.wait(timeout=10.0)
+                    self.assertTrue(started, "u1 never started while slow was still running")
                     slow_done.set()
                 with events_lock:
                     events.append(("end", unit_id, slow_done.is_set()))
