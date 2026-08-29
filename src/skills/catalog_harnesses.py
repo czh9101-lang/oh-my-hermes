@@ -3221,6 +3221,7 @@ _PRIMARY_HARNESSES = {
     "ultraqa": "qa-specialist",
     "plan": "planning",
     "ralplan": "planning",
+    "adversarial-consensus": "planning",
     "code-review": "critic",
     "ai-slop-cleaner": "coding-handling",
     "model-setup": "hermes-setup",

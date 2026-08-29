@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import json
+import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -10,9 +11,19 @@ from omh.quality.evidence_records import (
     assess_quality_evidence,
     build_quality_evidence_observation,
     build_quality_evidence_package,
+    current_git_tree_hash,
     validate_quality_evidence_observation,
     validate_quality_evidence_package,
 )
+
+
+class _CompletedProcess:
+    """Minimal stand-in for the `subprocess.run` result the helper reads."""
+
+    def __init__(self, returncode: int, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 class QualityEvidenceRecordsTests(unittest.TestCase):
@@ -73,6 +84,7 @@ class QualityEvidenceRecordsTests(unittest.TestCase):
             "review_requirement_ids": observation.get("review_requirement_ids", []),
             "claim_ids": observation.get("claim_ids", []),
             **({"independence": observation["independence"]} if "independence" in observation else {}),
+            **({"observed_tree": observation["observed_tree"]} if "observed_tree" in observation else {}),
             "executor_target": self.package["subject"]["executor_target"],
             "observed": True,
             "provenance": "omh_observed_record",
@@ -278,6 +290,132 @@ class QualityEvidenceRecordsTests(unittest.TestCase):
         for item in observations:
             self._write_record(item)
         self.assertEqual(assess_quality_evidence(package, observations, omh_home=self.omh_home)["dimensions"]["ci_status"]["status"], "unsatisfied")
+
+    def test_evidence_observed_against_the_current_tree_stays_fresh(self) -> None:
+        observation = self._observation(observed_tree="tree-aaa")
+        self.assertEqual(validate_quality_evidence_observation(observation, self.package), [])
+
+        assessment = assess_quality_evidence(
+            self.package, [observation], omh_home=self.omh_home, current_tree="tree-aaa"
+        )
+
+        self.assertEqual(assessment["dimensions"]["source_freshness"]["status"], "satisfied")
+        self.assertEqual(assessment["dimensions"]["scenario_coverage"]["status"], "satisfied")
+        self.assertNotIn("stale_tree", assessment["reasons"])
+
+    def test_evidence_observed_against_another_tree_is_stale(self) -> None:
+        observation = self._observation(observed_tree="tree-aaa")
+
+        assessment = assess_quality_evidence(
+            self.package, [observation], omh_home=self.omh_home, current_tree="tree-bbb"
+        )
+
+        self.assertIn("stale_tree", assessment["reasons"])
+        self.assertEqual(assessment["dimensions"]["source_freshness"]["status"], "unsatisfied")
+        self.assertEqual(assessment["dimensions"]["scenario_coverage"]["status"], "unknown")
+        self.assertFalse(assessment["ready_for_completion"])
+
+    def test_stale_evidence_is_classified_and_never_rewritten(self) -> None:
+        observation = self._observation(observed_tree="tree-aaa")
+        record = self.omh_home / str(observation["record_ref"])
+        before = record.read_text(encoding="utf-8")
+
+        assess_quality_evidence(
+            self.package, [observation], omh_home=self.omh_home, current_tree="tree-bbb"
+        )
+
+        self.assertEqual(observation["observed_tree"], "tree-aaa")
+        self.assertEqual(record.read_text(encoding="utf-8"), before)
+
+    def test_a_fresh_observation_beside_a_stale_one_does_not_restore_freshness(self) -> None:
+        fresh = self._observation(evidence_id="fresh", observed_tree="tree-bbb")
+        stale = self._observation(evidence_id="stale", observed_tree="tree-aaa")
+
+        assessment = assess_quality_evidence(
+            self.package, [fresh, stale], omh_home=self.omh_home, current_tree="tree-bbb"
+        )
+
+        self.assertEqual(assessment["dimensions"]["source_freshness"]["status"], "unsatisfied")
+        self.assertEqual(assessment["dimensions"]["source_freshness"]["evidence_ids"], ["fresh"])
+
+    def test_evidence_without_an_observed_tree_is_assessed_exactly_as_before(self) -> None:
+        observation = self._observation()
+        self.assertNotIn("observed_tree", observation)
+
+        baseline = assess_quality_evidence(self.package, [observation], omh_home=self.omh_home)
+        with_current_tree = assess_quality_evidence(
+            self.package, [observation], omh_home=self.omh_home, current_tree="tree-bbb"
+        )
+
+        self.assertEqual(with_current_tree, baseline)
+        self.assertNotIn("stale_tree", with_current_tree["reasons"])
+        self.assertEqual(with_current_tree["dimensions"]["scenario_coverage"]["status"], "satisfied")
+
+    def test_an_unknown_current_tree_never_becomes_a_staleness_verdict(self) -> None:
+        observation = self._observation(observed_tree="tree-aaa")
+
+        assessment = assess_quality_evidence(self.package, [observation], omh_home=self.omh_home)
+
+        self.assertNotIn("stale_tree", assessment["reasons"])
+        self.assertEqual(assessment["dimensions"]["scenario_coverage"]["status"], "satisfied")
+
+    def test_observed_tree_must_be_a_nonblank_string_and_match_the_record(self) -> None:
+        blank = self._observation(observed_tree="  ")
+        self.assertIn("invalid_observed_tree", validate_quality_evidence_observation(blank, self.package))
+
+        observation = self._observation(observed_tree="tree-aaa")
+        record = self.omh_home / str(observation["record_ref"])
+        payload = json.loads(record.read_text(encoding="utf-8"))
+        payload["observed_tree"] = "tree-bbb"
+        record.write_text(json.dumps(payload), encoding="utf-8")
+
+        assessment = assess_quality_evidence(
+            self.package, [observation], omh_home=self.omh_home, current_tree="tree-aaa"
+        )
+        self.assertIn("unresolved_observed_record", assessment["reasons"])
+
+    def test_builder_stamps_the_observed_tree_only_when_one_is_supplied(self) -> None:
+        stamped = build_quality_evidence_observation(
+            self.package, evidence_id="stamped", evidence_kind="test", result="passed", reference="tests",
+            observed_at="2026-07-16T00:00:00Z", reporter="executor", provenance="omh_observed_record",
+            record_ref="runtime/stamped.json", scenario_ids=["scenario-pass"], observed_tree="tree-aaa",
+        )
+        unstamped = build_quality_evidence_observation(
+            self.package, evidence_id="unstamped", evidence_kind="test", result="passed", reference="tests",
+            observed_at="2026-07-16T00:00:00Z", reporter="executor", provenance="omh_observed_record",
+            record_ref="runtime/unstamped.json", scenario_ids=["scenario-pass"],
+        )
+
+        self.assertEqual(stamped["observed_tree"], "tree-aaa")
+        self.assertNotIn("observed_tree", unstamped)
+
+    def test_current_git_tree_hash_reads_the_short_tree_and_fails_soft(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def runner(argv: list[str], **kwargs: object) -> _CompletedProcess:
+            calls.append({"argv": argv, **kwargs})
+            return _CompletedProcess(0, stdout="abc1234\n")
+
+        self.assertEqual(current_git_tree_hash(self.omh_home, runner=runner), "abc1234")
+        self.assertEqual(calls[0]["argv"], ["git", "rev-parse", "--short", "HEAD^{tree}"])
+        self.assertEqual(calls[0]["cwd"], str(self.omh_home))
+
+        def failing(argv: list[str], **kwargs: object) -> _CompletedProcess:
+            return _CompletedProcess(128, stderr="not a git repository")
+
+        def blank(argv: list[str], **kwargs: object) -> _CompletedProcess:
+            return _CompletedProcess(0, stdout="\n")
+
+        def missing_binary(argv: list[str], **kwargs: object) -> _CompletedProcess:
+            raise FileNotFoundError("git")
+
+        def timed_out(argv: list[str], **kwargs: object) -> _CompletedProcess:
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=15)
+
+        self.assertIsNone(current_git_tree_hash(self.omh_home, runner=failing))
+        self.assertIsNone(current_git_tree_hash(self.omh_home, runner=blank))
+        self.assertIsNone(current_git_tree_hash(self.omh_home, runner=missing_binary))
+        self.assertIsNone(current_git_tree_hash(self.omh_home, runner=timed_out))
 
     def test_self_review_never_counts_with_independent_review(self) -> None:
         reviews = [
