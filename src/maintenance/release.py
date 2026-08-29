@@ -321,7 +321,18 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # the operator's model-choice phrasing and the flag's unvalidated,
 # never-silently-falls-back passthrough to the executor (+639 chars);
 # warranted growth for a real per-run model-override capability.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 746326
+# 746326 -> 756725: the new `adversarial-consensus` (`omh-adversarial-consensus`)
+# skill was added -- an independent-perspectives / cross-attack / distill-only
+# planning contract whose always-loaded body is 10441 chars, close to
+# `ralplan`'s 9616 and well under `ultrawork`'s 23879. The round-by-round
+# procedure, the per-seat angle table, and the failure-mode table live in the
+# on-demand `references/consensus-protocol.md` (6894 chars), outside this
+# budget; what is always loaded is the roster bound, the round order, the
+# independence and no-self-defense rules, the closed bucket set, and the
+# mandatory planner handoff -- the rules that are wrong to discover late. The
+# remainder of the delta is the `+N more` lane line regenerating across the
+# eleven other `intent_to_plan` skills; warranted growth for a new workflow.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 756725
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

@@ -509,6 +509,41 @@ DEEP_INTERVIEW_CLARITY_DIMENSIONS = (
     "success criteria",
 )
 
+# Adversarial-consensus vocabulary. Single source of truth for every surface
+# that states the perspective bounds, the round order, or the distillation
+# buckets: the catalog quality bar and final checklist, and the rendered
+# `references/consensus-protocol.md`. Never restate these as literals or
+# spelled-out ordinals; interpolate them so one edit moves every surface
+# together.
+ADVERSARIAL_CONSENSUS_MIN_PERSPECTIVES = 3
+ADVERSARIAL_CONSENSUS_MAX_PERSPECTIVES = 5
+# The suggested roster, not a closed set: a perspective earns its seat by
+# attacking the problem from an angle no other seat covers, so a domain-specific
+# substitution is expected and a duplicate angle is the real defect.
+ADVERSARIAL_CONSENSUS_PERSPECTIVES = (
+    "skeptic",
+    "validator",
+    "researcher",
+    "architect",
+    "creative",
+)
+# Ordered, and the order is the contract: independence is only real before any
+# perspective has read another's findings, and an attack round that runs after
+# a defense round is just agreement with extra steps.
+ADVERSARIAL_CONSENSUS_ROUNDS = (
+    "independent findings",
+    "cross-attack",
+    "defend, refine, or concede",
+)
+# Closed set. The distillation writes into these four buckets and nothing else;
+# a fifth bucket is how a distillation quietly becomes the plan it must not be.
+ADVERSARIAL_CONSENSUS_BUCKETS = (
+    "Hard Constraints",
+    "Decisions",
+    "Risks",
+    "Open Questions",
+)
+
 DECISION_FRONTIER_POLICY_SCHEMA_VERSION = "decision_frontier_policy/v1"
 DECISION_FRONTIER_HARNESS = "decision-frontier"
 DECISION_FRONTIER_BUDGET_SCOPE = "clarification_episode"
