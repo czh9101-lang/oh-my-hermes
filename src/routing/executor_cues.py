@@ -91,6 +91,13 @@ def _occurs_at_boundary(text: str, phrase: str) -> bool:
 #
 # Japanese entries avoid dakuten/handakuten characters because `normalized_phrase`
 # strips combining marks, so only mark-free forms survive on both routing surfaces.
+#
+# "해줘" and "맡겨" are broad on their own -- most Korean requests end in "해줘",
+# and "맡겨" alone can report an unrelated hand-off -- but every consumer of this
+# tuple only calls it after an explicit named coding-agent phrase already matched
+# (see `named_coding_agent_delivery_requested` in `routing/policy.py` and
+# `_named_coding_agent_delivery_signal` in `plugin_bundle/omh/awareness.py`), so
+# the combination stays unambiguous.
 CODING_DELIVERY_REQUEST_PHRASES: tuple[str, ...] = (
     "open a pr",
     "open the pr",
@@ -112,6 +119,8 @@ CODING_DELIVERY_REQUEST_PHRASES: tuple[str, ...] = (
     "짜 줘",
     "처리해",
     "작업해",
+    "맡겨",
+    "해줘",
     "実装",
     "修正",
     "解決",

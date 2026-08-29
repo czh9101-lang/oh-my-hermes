@@ -695,6 +695,35 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_clarification",
         "",
     ),
+    # Claude-delegation collision guard: "클로드한테" plus a delivery postposition
+    # is unambiguous executor delegation only once it co-occurs with a delegation
+    # verb (see `_claude_bare_name_delegation_requested` in `routing/policy.py`).
+    # An advisor-shaped ask using the same postposition must stay non-delivery.
+    RoutingPrecisionCase(
+        "claude-ask-not-delegation",
+        "Asking Claude for input never dispatches the named coding-agent delivery lane",
+        "클로드한테 물어봐줘",
+        "answer_clarification",
+        "",
+    ),
+    # Bare "해줘" collision guards: `CODING_DELIVERY_REQUEST_PHRASES` gained "해줘"
+    # (see `routing/executor_cues.py`), which is safe only because every consumer
+    # also requires an explicit named coding-agent phrase. Neither message below
+    # names one, so neither may reach the coding-delivery dispatch lane.
+    RoutingPrecisionCase(
+        "bare-haejwo-no-agent-name",
+        "A bare 'do it' request without a named coding agent never dispatches",
+        "그거 해줘",
+        "answer_clarification",
+        "",
+    ),
+    RoutingPrecisionCase(
+        "urgent-haejwo-no-agent-name",
+        "An urgent 'do it fast' request without a named coding agent never dispatches",
+        "빨리 해줘",
+        "answer_clarification",
+        "",
+    ),
     # Maestro shield: concept questions about maestro, prepared handoffs, or a
     # coding-agent name must stay direct answers, never a maestro dispatch.
     RoutingPrecisionCase(
@@ -1568,6 +1597,30 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "executor-runtime-readiness",
         "prepare_executor_runtime_readiness",
         "executor_runtime_readiness",
+    ),
+    # Claude delegation postposition + verb: bare "클로드" stays out of the named
+    # coding-agent phrase table (advisor/executor ambiguity), but the ambiguity
+    # disappears once the name co-occurs with the unambiguous delegation verb
+    # "맡겨" (see `_claude_bare_name_delegation_requested` in `routing/policy.py`).
+    RoutingInterventionCase(
+        "korean-claude-delegation-verb",
+        "Korean 'have Claude take it' delegation opens the named coding-agent delivery lane",
+        "클로드한테 이거 맡겨줘",
+        "dispatch",
+        "ultrawork",
+        "choose_executor",
+        "handoff",
+    ),
+    # "해줘" joined `CODING_DELIVERY_REQUEST_PHRASES`: safe only in composition
+    # with an explicit named coding-agent phrase, which "codex" already supplies.
+    RoutingInterventionCase(
+        "codex-generic-haejwo-delivery",
+        "A named-CLI 'just do it' request opens the named coding-agent delivery lane",
+        "codex로 해줘",
+        "dispatch",
+        "ultrawork",
+        "send_to_executor",
+        "handoff",
     ),
     RoutingInterventionCase(
         "scheduled-research-blueprint",
@@ -3000,7 +3053,12 @@ def _evaluate_precision_case(case: RoutingPrecisionCase, *, source: str) -> dict
     if observed["raw_message_echoed"]:
         issues.append("raw message echoed in machine payload")
     boundary = str(observed["claim_boundary"] or "")
-    if observed["route_action"] == "clarify" or case.forbidden_candidate:
+    # A clarification-expected case can reach the clarification response through
+    # either the dedicated `clarify` route action or a low-confidence `fallback`
+    # that still asks one question (see the `allowed_route_actions` leniency
+    # above) -- both surface the same "no execution" boundary text, so key this
+    # off the expectation rather than the observed route action.
+    if case.expected_next_action == "answer_clarification" or case.forbidden_candidate:
         if boundary != "No execution has started.":
             issues.append("missing no-execution claim boundary")
     elif not boundary.startswith("No OMH workflow"):

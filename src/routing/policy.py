@@ -7599,12 +7599,35 @@ def _contains_named_coding_agent_phrase(normalized_query: str) -> bool:
     runtime" contains "omo runtime", so raw containment named an executor the
     message never mentioned (see `contains_boundary_phrase` in
     `routing/executor_cues.py` for the boundary rule).
+
+    Bare "클로드" stays out of `SUBSTRING_NAMED_CODING_AGENT_PHRASES` on purpose
+    (it is an external-advisor name as often as an executor name -- see
+    `_claude_bare_name_delegation_requested` below for the narrow exception).
     """
     if _contains_phrase(normalized_query, SUBSTRING_NAMED_CODING_AGENT_PHRASES):
         return True
-    return contains_boundary_phrase(
+    if contains_boundary_phrase(
         normalized_query, _normalized_phrase_options(OMO_RUNTIME_CODING_AGENT_PHRASES)
-    )
+    ):
+        return True
+    return _claude_bare_name_delegation_requested(normalized_query)
+
+
+# Bare "클로드" alone is ambiguous (advisor vs. executor), so it never joins
+# `SUBSTRING_NAMED_CODING_AGENT_PHRASES`. The ambiguity disappears once the name
+# co-occurs with an unambiguous delegation verb: "클로드한테 이거 맡겨줘" can only mean
+# "have Claude do it", never "ask Claude about it". The verb list stays narrow to
+# delegation-only shapes -- unlike the broad coding-action stems in
+# `CODING_DELIVERY_REQUEST_PHRASES` (구현/수정/고쳐/...), which can appear inside an
+# advisor-shaped report ("클로드한테 물어봤는데 아직 수정 안됐대") and would reintroduce
+# the same ambiguity bare "클로드" was excluded to avoid.
+_CLAUDE_BARE_NAME_DELEGATION_VERB_PHRASES: tuple[str, ...] = ("맡겨",)
+
+
+def _claude_bare_name_delegation_requested(normalized_query: str) -> bool:
+    if not _contains_phrase(normalized_query, ("클로드",)):
+        return False
+    return _contains_phrase(normalized_query, _CLAUDE_BARE_NAME_DELEGATION_VERB_PHRASES)
 
 
 def _executor_runtime_readiness_guard_applies(normalized_query: str, query_tokens: set[str]) -> bool:
