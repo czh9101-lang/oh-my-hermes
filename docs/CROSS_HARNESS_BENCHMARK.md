@@ -114,6 +114,65 @@ python3 -m omh.cli benchmark score --stdin \
   < benchmarks/cross-harness/v1/example-passing-submission.json
 ```
 
+## Live lane (agent/maintainer)
+
+AUDIENCE: agent/maintainer. The `benchmark` command above never executes
+anything. [benchmarks/cross-harness/live](../benchmarks/cross-harness/live) is a
+separate controller that does: it executes the corpus command binding, and on
+explicit request one isolated Hermes child through
+`omh coding hermes-child dispatch --confirm-dispatch`, then emits an ordinary
+`cross_harness_benchmark_cli_input/v1` envelope alongside a
+`cross_harness_live_receipt/v1` receipt. The lane adds a producer, not a
+contract: the `v1` corpus, submission schema, scoring semantics, and both
+production trust anchors are unchanged, and every envelope it emits is scored by
+the same parser, evaluator, and scorer as a mailed-in file.
+
+Because the offline scorer describes only what it can prove, a controller-run
+envelope still scores `evidence_authenticity: "unverified_submission"` and
+`execution_verified: false`. Controller provenance therefore lives in the
+separate receipt, which binds the envelope digest to its observation ids and
+carries two facts `v1` cannot express: an ordered authenticity tier
+(`fake_adapter`, `unverified_submission`, `mixed_controller_and_submitted`,
+`controller_observed`) and an `efficiency` block. Efficiency is reported outside
+the quality score: it earns no points, changes no level, and is absent from the
+envelope entirely. Telemetry the child did not report stays null and is never
+estimated.
+
+The controller submits a fixture result only for a predicate it observed itself.
+Four fixtures qualify: `evidence-command-binding` from the executed binding's
+machine result, `ultrawork-child-propagation` from the dispatch process exit,
+`ultrawork-observed-runtime` from the `routing_observation/v1` status, and
+`evidence-runtime-observation` from whether a valid observation was produced.
+The other eleven are absent, so the evaluator reports them `unsupported` — a
+visible coverage gap, never a pass. `--base` fills them from an existing
+submission; those results are recorded as `carried_from_base` with no
+observation ids and the tier drops to `mixed_controller_and_submitted`.
+
+Nothing runs by default. `--mode fake` is the default, starts no process, and
+submits simulated results as `prepared` evidence, which is below every fixture's
+required class, so a fake run cannot pass a fixture or certify. `--mode probe`
+executes only the free local binding. `--mode dispatch` requires both
+`--allow-paid-live` and `--max-paid-calls N`, and refuses before any subprocess
+otherwise; `--allow-paid-live` outside dispatch mode is refused as well.
+
+```sh
+PYTHONPATH=. python3 benchmarks/cross-harness/live/bench.py doctor
+PYTHONPATH=. python3 benchmarks/cross-harness/live/bench.py run --mode fake
+PYTHONPATH=. python3 benchmarks/cross-harness/live/bench.py run --mode probe \
+  --envelope-output artifacts/live-envelope.json \
+  --receipt-output artifacts/live-receipt.json
+python3 -m omh.cli benchmark report --input artifacts/live-envelope.json
+```
+
+Controller observation is still not general live-quality proof. Report the
+receipt's tier beside the score's `evidence_authenticity` and
+`execution_verified`; never merge them, and never read a
+`mixed_controller_and_submitted` receipt as making its carried results observed.
+[benchmarks/cross-harness/live/README.md](../benchmarks/cross-harness/live/README.md)
+holds the operator detail;
+[tests/test_cross_harness_live_lane.py](../tests/test_cross_harness_live_lane.py)
+asserts the machine behaviour.
+
 ## Manual QA
 
 Run from the repository root.
@@ -126,6 +185,10 @@ Run from the repository root.
 6. Report the unsupported input; confirm unsupported coverage and exit 1. Do not report it as pass.
 7. Score the partial input; confirm partial status and exit 1.
 8. Run `python3 -m omh.cli harness validate`; it remains a separate generated-harness validation surface.
+9. Run the live lane's `doctor`; confirm `default_mode: "fake"` and that no process started.
+10. Run the live lane with `--mode fake`; confirm the receipt reports `fake_adapter`, an empty `controller_observed_fixture_ids`, and that scoring the emitted envelope is not contract-certified.
+11. Run the live lane with `--mode dispatch` and no paid flags; confirm exit 2 and `reason_code: "paid_live_not_allowed"` before any subprocess.
+12. Run the live lane with `--mode probe`; confirm `evidence-command-binding` passes, the receipt reports `controller_observed`, and the score still reports `evidence_authenticity: "unverified_submission"`.
 
 The benchmark command must create no `.omh` directory or runtime artifact in an isolated directory. It is pure input-to-output evaluation: no network calls, subprocess dispatch, executor launch, persistent runtime state, skill-body loading, or production-routing mutation belongs here.
 
