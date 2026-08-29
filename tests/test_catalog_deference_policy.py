@@ -101,9 +101,13 @@ NON_SKILL_BACKTICKS = frozenset(
 # `ultraprocess`/`ultragoal` to `ultrawork`'s delivery-boundary and
 # durable-checkpoint capabilities, adding two loop -> ultrawork cases, one new
 # pair, and loop as a new deferring owner.
-EXPECTED_DEFERENCE_CASES = 135
-EXPECTED_DEFERENCE_PAIRS = 144
-EXPECTED_DEFERRING_OWNERS = 47
+# `adversarial-consensus` is a new deferring owner: its do_not_use_when points
+# at `ralplan` (the plan itself), `deep-interview` (a proposal too vague to
+# attack), `code-review` (finished code, not a proposal), and `ultraqa`
+# (hostile runtime scenarios) -- four cases, four new pairs.
+EXPECTED_DEFERENCE_CASES = 139
+EXPECTED_DEFERENCE_PAIRS = 148
+EXPECTED_DEFERRING_OWNERS = 48
 
 # The ratchet. Recording a new inversion must be a visible edit to this number,
 # not one more dict line with a plausible sentence attached.

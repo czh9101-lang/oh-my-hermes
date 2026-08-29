@@ -790,6 +790,38 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_directly",
         "direct_answer",
     ),
+    # Adversarial-consensus shield: the workflow's vocabulary is borrowed from
+    # security ("red team"), machine learning ("적대적 공격"), and ordinary English
+    # ("perspective", "poke holes"). A question ABOUT any of those words is a
+    # concept question, never a request to run three adversarial rounds.
+    RoutingPrecisionCase(
+        "adversarial-consensus-concept-question",
+        "An adversarial-consensus concept question stays a direct answer",
+        "what does adversarial consensus mean?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "adversarial-attack-ml-concept",
+        "An adversarial-attack ML question never dispatches the consensus rounds",
+        "적대적 공격이 뭐야?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "red-team-security-concept",
+        "A security red-team concept question stays a direct answer",
+        "what is a red team?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "hyperplan-concept-question",
+        "A hyperplan vocabulary question stays a direct answer",
+        "hyperplan 뜻이 뭐야?",
+        "answer_directly",
+        "direct_answer",
+    ),
     # Ask bare-token retirement: "claude code가 뭐야" previously reached `ask` via
     # the now-removed bare `claude` trigger at score 9. With that token gone the
     # top catalog matches tie at score 4, so this pins the honest new
@@ -2918,6 +2950,54 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "코딩 위임 핸드오프 준비해줘",
         "dispatch",
         "maestro",
+        "forward_plan_to_selected_workflow",
+        "plan",
+    ),
+    RoutingInterventionCase(
+        "adversarial-consensus-direct-invocation",
+        "Direct adversarial-consensus invocation opens the consensus rounds",
+        "$adversarial-consensus",
+        "dispatch",
+        "adversarial-consensus",
+        "forward_plan_to_selected_workflow",
+        "plan",
+    ),
+    RoutingInterventionCase(
+        "red-team-plan-before-writing",
+        "A red-team request on an unwritten plan opens the consensus rounds",
+        "red team this plan before I write it",
+        "dispatch",
+        "adversarial-consensus",
+        "forward_plan_to_selected_workflow",
+        "plan",
+    ),
+    RoutingInterventionCase(
+        "adversarial-planning-request",
+        "An adversarial planning request opens the consensus rounds, not generic planning",
+        "adversarial planning for the redis session-store move",
+        "dispatch",
+        "adversarial-consensus",
+        "forward_plan_to_selected_workflow",
+        "plan",
+    ),
+    RoutingInterventionCase(
+        "korean-multi-perspective-attack",
+        "A Korean multi-perspective attack request opens the consensus rounds",
+        "다관점 검토로 이 제안 공격해줘",
+        "dispatch",
+        "adversarial-consensus",
+        "forward_plan_to_selected_workflow",
+        "plan",
+    ),
+    # The other half of the adversarial-consensus guard: a plain planning
+    # request keeps `plan`. The workflow's triggers carry the word `plan`, so
+    # without this case a trigger-token regression would look like a pass.
+    RoutingInterventionCase(
+        "plain-planning-request-keeps-plan",
+        "A plain planning request stays with generic planning, not the consensus rounds",
+        "make a plan for the onboarding rewrite",
+        "dispatch",
+        "plan",
         "forward_plan_to_selected_workflow",
         "plan",
     ),

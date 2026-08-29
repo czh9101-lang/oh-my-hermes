@@ -3669,5 +3669,184 @@ class FanoutUnitRetryTests(unittest.TestCase):
         self.assertEqual(summary["units"][0]["retry"]["final_decision"], "spawn_ceiling_reached")
 
 
+def _live_output_runner(snapshots_by_unit: dict[str, list[str]]):
+    """Like `_agent_runner`, but opts into the mid-run stdout seam: for a
+    matching unit it hands the dispatch's `on_output` hook each snapshot in
+    order before returning, with the last snapshot as the final stdout —
+    the same cumulative-stream shape the signal-safe runner produces."""
+
+    spawned: list[list[str]] = []
+
+    def runner(argv, **kwargs):
+        if argv[0] == "git":
+            return subprocess.run(argv, **kwargs)
+        spawned.append(list(argv))
+        prompt = " ".join(argv)
+        on_output = kwargs.get("on_output")
+        stdout = "done"
+        for unit_id, snapshots in snapshots_by_unit.items():
+            if unit_id in prompt and snapshots:
+                for snapshot in snapshots:
+                    if on_output is not None:
+                        on_output(snapshot)
+                stdout = snapshots[-1]
+        return _FakeCompleted(0, stdout)
+
+    runner.accepts_on_output = True
+    runner.spawned = spawned
+    return runner
+
+
+class FanoutDispatchLiveUnitTelemetryTests(unittest.TestCase):
+    """Mid-run token telemetry for Maestro-lane HUD rows: the runner hands the
+    dispatch periodic stdout snapshots, the reporter parses the same
+    `omh_unit_telemetry/v1` surface the terminal close uses, and the unit's
+    binding journal carries `running` events whose signal holds the count —
+    which is what lets the TUI row show tokens while the process still runs
+    instead of only in the instant before the closed row disappears."""
+
+    def _setup(self, tmp: str, units=None):
+        root = Path(tmp)
+        paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+        repo, sha = _make_repo(root)
+        contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units or _UNITS))
+        return paths, repo, sha, contract
+
+    def _codex_usage_line(self, input_tokens: int, output_tokens: int, total: int) -> str:
+        return (
+            json.dumps(
+                {
+                    "type": "token_count",
+                    "total_token_usage": {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": total,
+                    },
+                }
+            )
+            + "\n"
+        )
+
+    def test_mid_run_codex_token_updates_surface_as_running_events(self) -> None:
+        from omh.coding import fanout_dispatch as dispatch_module
+
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            core = {entry["unit_id"]: entry for entry in contract["units"]}["core"]
+            run_ref = core["run_ref"]
+            first = self._codex_usage_line(900, 100, 1000)
+            second = first + self._codex_usage_line(2000, 500, 2500)
+            # Three snapshots: the middle repeats the first count, proving the
+            # reporter writes only when the reported count actually moved.
+            runner = _live_output_runner({"core": [first, first, second]})
+
+            interval = dispatch_module.LIVE_UNIT_TELEMETRY_MIN_INTERVAL_SECONDS
+            dispatch_module.LIVE_UNIT_TELEMETRY_MIN_INTERVAL_SECONDS = 0.0
+            try:
+                dispatch_fanout(
+                    paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                    only_units=["core"], runner=runner, readiness=_ready,
+                )
+            finally:
+                dispatch_module.LIVE_UNIT_TELEMETRY_MIN_INTERVAL_SECONDS = interval
+
+            events = _progress_events(paths, run_ref)
+            running = [event for event in events if event["event_type"] == "running_no_diff_observed"]
+            self.assertEqual(
+                [event["signal"]["tokens_total"] for event in running], [1000, 2500]
+            )
+            completed = next(event for event in events if event["event_type"] == "executor_completed")
+            # The terminal close re-parses the full stdout independently of
+            # every snapshot, so the closing event carries the final count.
+            self.assertEqual(completed["signal"]["tokens_total"], 2500)
+
+    def test_live_reports_throttle_to_the_minimum_parse_interval(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            core = {entry["unit_id"]: entry for entry in contract["units"]}["core"]
+            run_ref = core["run_ref"]
+            first = self._codex_usage_line(900, 100, 1000)
+            second = first + self._codex_usage_line(2000, 500, 2500)
+            # Default 10s interval, two immediate snapshots with different
+            # counts: the second parse is throttled, so only one live event
+            # lands and the moved count still arrives via the terminal close.
+            runner = _live_output_runner({"core": [first, second]})
+
+            dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["core"], runner=runner, readiness=_ready,
+            )
+
+            events = _progress_events(paths, run_ref)
+            running = [event for event in events if event["event_type"] == "running_no_diff_observed"]
+            self.assertEqual([event["signal"]["tokens_total"] for event in running], [1000])
+            completed = next(event for event in events if event["event_type"] == "executor_completed")
+            self.assertEqual(completed["signal"]["tokens_total"], 2500)
+
+    def test_plain_protocol_runner_sees_no_on_output_kwarg(self) -> None:
+        """An injected runner without the capability marker keeps the plain
+        protocol — the dispatch must not hand it a kwarg it never accepted."""
+        seen_kwargs: list[set[str]] = []
+
+        def runner(argv, **kwargs):
+            if argv[0] == "git":
+                return subprocess.run(argv, **kwargs)
+            seen_kwargs.append(set(kwargs))
+            return _FakeCompleted(0, "done")
+
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["core"], runner=runner, readiness=_ready,
+            )
+        self.assertTrue(seen_kwargs)
+        for kwargs in seen_kwargs:
+            self.assertNotIn("on_output", kwargs)
+            self.assertNotIn("on_spawn", kwargs)
+
+    def test_claude_result_usage_sums_input_and_output_at_close(self) -> None:
+        """Claude's result object states input and output but no total; the
+        close path now reports their sum (the Hermes-native input+output
+        convention) instead of leaving the row's count absent forever."""
+
+        stdout = json.dumps(
+            {
+                "result": "done",
+                "session_id": "sess_x",
+                "usage": {"input_tokens": 2, "output_tokens": 4, "cache_read_input_tokens": 100},
+            }
+        )
+
+        def runner(argv, **kwargs):
+            if argv[0] == "git":
+                return subprocess.run(argv, **kwargs)
+            return _FakeCompleted(0, stdout)
+
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            docs = {entry["unit_id"]: entry for entry in contract["units"]}["docs"]
+            run_ref = docs["run_ref"]
+            dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["docs"], runner=runner, readiness=_ready,
+            )
+            completed = next(
+                event for event in _progress_events(paths, run_ref)
+                if event["event_type"] == "executor_completed"
+            )
+            self.assertEqual(completed["signal"]["tokens_total"], 6)
+
+    def test_reported_unit_tokens_prefers_stated_total_and_sums_reported_parts(self) -> None:
+        from omh.coding.fanout_dispatch import _reported_unit_tokens
+
+        self.assertEqual(_reported_unit_tokens({"tokens_total": 1000, "input_tokens": 1}), 1000)
+        self.assertEqual(_reported_unit_tokens({"input_tokens": 2, "output_tokens": 4}), 6)
+        self.assertEqual(_reported_unit_tokens({"output_tokens": 4}), 4)
+        # Absent counts stay absent, and bools never read as counts.
+        self.assertIsNone(_reported_unit_tokens({}))
+        self.assertIsNone(_reported_unit_tokens({"tokens_total": True}))
+
+
 if __name__ == "__main__":
     unittest.main()

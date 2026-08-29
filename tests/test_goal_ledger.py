@@ -27,7 +27,11 @@ from omh.goal_ledger import (
     validate_goal_ledger,
 )
 from omh.paths import resolve_paths
-from omh.record_revision import APPLIED_MUTATIONS_LIMIT, applied_mutation_key
+from omh.record_revision import (
+    APPLIED_MUTATIONS_LIMIT,
+    ConflictingMutationReplay,
+    applied_mutation_key,
+)
 
 
 class GoalLedgerTests(unittest.TestCase):
@@ -80,6 +84,75 @@ class GoalLedgerTests(unittest.TestCase):
             self.assertEqual(updated["acceptance_criteria"][0]["evidence_refs"], ["tests/test_goal_ledger.py"])
             self.assertEqual(updated["linked_runtime_runs"], ["run-42"])
             self.assertEqual(read_goal_ledger(paths, "goal-checkpoint")["checkpoints"][0]["status"], "done")
+
+    def test_checkpoint_stamps_the_tree_the_work_was_observed_against(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            create_goal_ledger(
+                paths, "Stamp the observed tree", [{"id": "AC-tree", "summary": "Tree is stamped"}], goal_id="goal-tree"
+            )
+
+            updated = record_goal_checkpoint(
+                paths,
+                "goal-tree",
+                "Ran the suite",
+                criteria_refs=["AC-tree"],
+                evidence_refs=["tests/test_goal_ledger.py"],
+                observed_tree="abc1234",
+            )
+
+            self.assertEqual(updated["checkpoints"][0]["observed_tree"], "abc1234")
+            stored = read_goal_ledger(paths, "goal-tree")
+            self.assertEqual(stored["checkpoints"][0]["observed_tree"], "abc1234")
+
+    def test_a_checkpoint_without_an_observed_tree_records_no_tree(self) -> None:
+        # The stamp is optional: a caller that cannot answer "which tree" must
+        # keep recording checkpoints exactly as before rather than guess one.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            create_goal_ledger(
+                paths, "Skip the observed tree", [{"id": "AC-none", "summary": "No tree"}], goal_id="goal-no-tree"
+            )
+
+            updated = record_goal_checkpoint(paths, "goal-no-tree", "Drafted the notes", status="in_progress")
+
+            self.assertEqual(updated["checkpoints"][0]["observed_tree"], "")
+            self.assertTrue(validate_goal_ledger(read_goal_ledger(paths, "goal-no-tree"))["ok"])
+
+    def test_a_checkpoint_written_before_the_field_existed_stays_valid(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            create_goal_ledger(
+                paths, "Read an older ledger", [{"id": "AC-old", "summary": "Old shape"}], goal_id="goal-old"
+            )
+            record_goal_checkpoint(paths, "goal-old", "Recorded earlier", status="in_progress")
+            path = goal_ledger_path(paths, "goal-old")
+            goal = json.loads(path.read_text(encoding="utf-8"))
+            goal["checkpoints"][0].pop("observed_tree")
+            path.write_text(json.dumps(goal), encoding="utf-8")
+
+            self.assertTrue(validate_goal_ledger(read_goal_ledger(paths, "goal-old"))["ok"])
+
+    def test_a_retry_stamping_a_different_tree_is_refused_not_replayed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            create_goal_ledger(
+                paths, "Refuse a divergent retry", [{"id": "AC-retry", "summary": "Retry is guarded"}], goal_id="goal-retry-tree"
+            )
+            record_goal_checkpoint(
+                paths, "goal-retry-tree", "Ran the suite", status="in_progress",
+                mutation_id="cp-tree-1", observed_tree="abc1234",
+            )
+
+            with self.assertRaises(ConflictingMutationReplay):
+                record_goal_checkpoint(
+                    paths, "goal-retry-tree", "Ran the suite", status="in_progress",
+                    mutation_id="cp-tree-1", observed_tree="def5678",
+                )
+
+            stored = read_goal_ledger(paths, "goal-retry-tree")
+            self.assertEqual(len(stored["checkpoints"]), 1)
+            self.assertEqual(stored["checkpoints"][0]["observed_tree"], "abc1234")
 
     def test_completion_gate_rejects_pending_criteria_with_summary_only_output(self) -> None:
         with TemporaryDirectory() as tmp:

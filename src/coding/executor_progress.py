@@ -1330,6 +1330,13 @@ def transition_fingerprint(event: dict[str, Any]) -> str:
                 "latest_progress_event_type",
                 "progress_snapshot_hash",
                 "codex_artifact_sha256",
+                # A moved token counter IS a transition: without it, a unit's
+                # mid-run token updates (identical type, status, and summary)
+                # collapse into `duplicate_transition` after the first one and
+                # the HUD row's count freezes. Lanes that do not want
+                # token-drift cadence are still gated by their binding's
+                # `minimum_repeat_interval_seconds`.
+                "tokens_total",
             )
             if signal.get(key) not in (None, "")
         },

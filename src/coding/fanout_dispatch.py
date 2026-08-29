@@ -127,6 +127,7 @@ def signal_safe_unit_runner(
     capture_output: bool = False,
     timeout: float | None = None,
     on_spawn: Callable[[subprocess.Popen], None] | None = None,
+    on_output: Callable[[str], None] | None = None,
 ) -> subprocess.CompletedProcess:
     """Drop-in for `subprocess.run` that owns each child as a process group.
 
@@ -136,6 +137,12 @@ def signal_safe_unit_runner(
     timeout, and its pid is real state the fanout reaper can verify against
     the inflight marker. `on_spawn` hands the live process to the caller
     (the dispatch path records the pid in the unit's inflight marker).
+
+    `on_output` receives the stdout captured SO FAR, at a fixed poll cadence
+    while the child runs — the seam the dispatch path uses to read a unit's
+    cumulative token telemetry mid-run instead of only after exit. It only
+    engages for text-mode captured output (the dispatch path's shape); any
+    other shape keeps the plain blocking `communicate` exactly as before.
     """
     pipe = subprocess.PIPE if capture_output else None
     process = subprocess.Popen(
@@ -163,7 +170,15 @@ def signal_safe_unit_runner(
                 # A raising hook must not leak the child it was handed.
                 terminate_process_group(process, UNIT_TERMINATE_GRACE_SECONDS, signal.SIGTERM)
                 raise
-            stdout, stderr = process.communicate(timeout=timeout)
+            if on_output is not None and capture_output and text:
+                stdout, stderr = _communicate_with_output_polls(
+                    process,
+                    timeout=timeout,
+                    on_output=on_output,
+                    poll_seconds=UNIT_OUTPUT_POLL_SECONDS,
+                )
+            else:
+                stdout, stderr = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             # The whole group dies with the leader — a timed-out unit must
             # not leave grandchildren running against the worktree.
@@ -178,6 +193,82 @@ def signal_safe_unit_runner(
 # retry decorator) can propagate it so the dispatch path keeps recording the
 # reapable pid instead of silently dropping it.
 signal_safe_unit_runner.accepts_on_spawn = True  # type: ignore[attr-defined]
+# Same marker pattern for the mid-run stdout seam: injected test runners keep
+# the plain protocol unless they opt in, exactly like `accepts_on_spawn`.
+signal_safe_unit_runner.accepts_on_output = True  # type: ignore[attr-defined]
+
+# Cadence of mid-run stdout snapshots handed to `on_output`. Also the upper
+# bound the poll loop waits between liveness checks, so timeout precision is
+# never worse than one poll step.
+UNIT_OUTPUT_POLL_SECONDS = 5.0
+
+
+def _drain_stream(stream: Any, chunks: list[str]) -> None:
+    # Line-at-a-time on purpose: a text stream's `read(n)` blocks until n
+    # characters accumulate, which starves the mid-run snapshots of
+    # everything until EOF. `readline` returns as each line lands — the
+    # exact granularity of the JSONL telemetry the snapshots exist to carry.
+    try:
+        while True:
+            line = stream.readline()
+            if not line:
+                return
+            chunks.append(line)
+    except (OSError, ValueError):
+        # A pipe closing mid-read (interrupt, group kill) ends the drain; the
+        # chunks captured before that still return to the caller.
+        return
+
+
+def _snapshot_output(on_output: Callable[[str], None], chunks: list[str]) -> None:
+    try:
+        on_output("".join(chunks))
+    except Exception:
+        # A raising snapshot hook is telemetry-only narration; unlike a
+        # raising on_spawn hook it must never kill the unit it observes.
+        return
+
+
+def _communicate_with_output_polls(
+    process: subprocess.Popen,
+    *,
+    timeout: float | None,
+    on_output: Callable[[str], None],
+    poll_seconds: float,
+) -> tuple[str, str]:
+    """`communicate()` with periodic mid-run stdout snapshots.
+
+    Reader threads drain both pipes continuously (the same deadlock guard
+    `communicate` provides), while the waiting thread wakes every poll step
+    to hand `on_output` the stdout collected so far. The overall timeout
+    keeps `communicate`'s contract: `TimeoutExpired` raises to the caller,
+    who terminates the group.
+    """
+    collected: dict[str, list[str]] = {"stdout": [], "stderr": []}
+    threads: list[threading.Thread] = []
+    for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+        if stream is None:
+            continue
+        thread = threading.Thread(target=_drain_stream, args=(stream, collected[name]), daemon=True)
+        thread.start()
+        threads.append(thread)
+    deadline = None if timeout is None else time.monotonic() + float(timeout)
+    step = max(0.2, float(poll_seconds))
+    while True:
+        wait_for = step
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(process.args, float(timeout or 0))
+            wait_for = min(step, remaining)
+        try:
+            process.wait(timeout=wait_for)
+            break
+        except subprocess.TimeoutExpired:
+            _snapshot_output(on_output, collected["stdout"])
+    for thread in threads:
+        thread.join(timeout=UNIT_TERMINATE_GRACE_SECONDS)
+    return "".join(collected["stdout"]), "".join(collected["stderr"])
 
 
 # Spacing between real agent-CLI spawn starts of one fanout. Providers cache
@@ -1640,6 +1731,13 @@ def _open_fanout_progress_binding(
             now=started_at,
             worktree=str(worktree),
             source=_FANOUT_PROGRESS_SOURCE,
+            # The default 120s repeat interval would suppress the mid-run
+            # token updates `_live_unit_telemetry_reporter` posts (same event
+            # type each time) down to two-minute granularity on the HUD row.
+            # A unit binding is short-lived and its reporter only writes when
+            # the count moved, so the journal cadence matches the reporter's
+            # own throttle instead.
+            minimum_repeat_interval_seconds=int(LIVE_UNIT_TELEMETRY_MIN_INTERVAL_SECONDS),
         )
         binding = write_progress_binding(paths, binding)
         signal = build_safe_progress_signal(
@@ -1699,7 +1797,6 @@ def _close_fanout_progress_binding(
         return
     try:
         telemetry = parse_unit_telemetry(owner, stdout_text)
-        tokens_total = telemetry.get("tokens_total")
         cost_usd = telemetry.get("cost_usd")
         signal = build_safe_progress_signal(
             executor_profile=str(binding.get("executor_profile", "")),
@@ -1707,7 +1804,7 @@ def _close_fanout_progress_binding(
             routed_model=routed_model,
             routed_reasoning_effort=routed_effort,
             explicit_summary=title,
-            tokens_total=tokens_total if isinstance(tokens_total, int) else None,
+            tokens_total=_reported_unit_tokens(telemetry),
             cost_usd=cost_usd if isinstance(cost_usd, (int, float)) and not isinstance(cost_usd, bool) else None,
         )
         observe_executor_progress(paths, binding, signal)
@@ -1773,6 +1870,90 @@ def _consider_unit_retry(
         max_retries=max_retries,
         rng=rng,
     )
+
+
+def _reported_unit_tokens(telemetry: Mapping[str, Any]) -> int | None:
+    """The one display count a unit's reported telemetry supports.
+
+    `tokens_total` when the CLI itself stated a total (codex's cumulative
+    `total_token_usage` carries one); otherwise the sum of the reported input
+    and output counts — the same input+output convention the Hermes-native
+    HUD rows already use, and aggregation of stated values in the
+    `tokens_billable` sense, never an estimate. Claude's result object states
+    input and output but no total, so without this fallback its rows carried
+    no count at all. Absent counts stay absent: None, never zero.
+    """
+    total = telemetry.get("tokens_total")
+    if isinstance(total, int) and not isinstance(total, bool):
+        return total
+    parts = (telemetry.get("input_tokens"), telemetry.get("output_tokens"))
+    counts = [part for part in parts if isinstance(part, int) and not isinstance(part, bool)]
+    return sum(counts) if counts else None
+
+
+# Minimum spacing between mid-run telemetry parses of one unit's stdout.
+# The runner snapshots every UNIT_OUTPUT_POLL_SECONDS; parsing (bounded but
+# not free) and journal writes throttle further, and a write only happens
+# when the reported count actually moved.
+LIVE_UNIT_TELEMETRY_MIN_INTERVAL_SECONDS = 10.0
+
+
+def _live_unit_telemetry_reporter(
+    paths: OmhPaths,
+    *,
+    owner: str,
+    routed_model: str,
+    routed_effort: str,
+    title: str,
+    binding_ref: Callable[[], dict[str, Any] | None],
+    binding_set: Callable[[dict[str, Any]], None],
+) -> Callable[[str], None]:
+    """Best-effort mid-run token reporting for a unit's HUD row.
+
+    Before this seam existed, a Maestro-lane row showed no token count until
+    the process exited — and the closed binding dropped the row on the next
+    poll, so the count was never visible live at all ('maestro세션은 어캐
+    tokens 측정함?'). The runner hands this hook the stdout captured so far;
+    it parses the same `omh_unit_telemetry/v1` surface the terminal close
+    already uses (codex's cumulative token events mid-run; claude reports
+    usage only in its terminal result, so its live rows stay honestly blank)
+    and reports the count as a `running` progress signal on the unit's
+    binding. Reporting only — never execution or result evidence, and a
+    failure here never disturbs the dispatch.
+    """
+    throttle: dict[str, Any] = {"next_at": 0.0, "count": None}
+
+    def report(stdout_snapshot: str) -> None:
+        binding = binding_ref()
+        if binding is None or not stdout_snapshot:
+            return
+        now = time.monotonic()
+        if now < throttle["next_at"]:
+            return
+        throttle["next_at"] = now + LIVE_UNIT_TELEMETRY_MIN_INTERVAL_SECONDS
+        tokens = _reported_unit_tokens(parse_unit_telemetry(owner, stdout_snapshot))
+        if tokens is None or tokens == throttle["count"]:
+            return
+        try:
+            signal = build_safe_progress_signal(
+                executor_profile=str(binding.get("executor_profile", "")),
+                process_status="running",
+                routed_model=routed_model,
+                routed_reasoning_effort=routed_effort,
+                explicit_summary=title,
+                tokens_total=tokens,
+            )
+            observation = observe_executor_progress(paths, binding, signal)
+        except (ExecutorProgressError, OSError):
+            return
+        throttle["count"] = tokens
+        # Hand the caller the updated binding so the later pid/close calls
+        # carry this observation's reporter state instead of a stale copy.
+        updated = observation.get("binding")
+        if isinstance(updated, dict):
+            binding_set(updated)
+
+    return report
 
 
 def _dispatch_unit(
@@ -2093,6 +2274,26 @@ def _dispatch_unit(
                 progress_binding = _record_fanout_progress_pid(paths, progress_binding, process.pid)
 
             spawn_kwargs["on_spawn"] = _record_pid
+        if getattr(runner, "accepts_on_output", False):
+            # Mid-run token telemetry for the unit's HUD row, from the stdout
+            # captured so far. Same opt-in marker pattern as accepts_on_spawn:
+            # injected plain-protocol test runners never see the kwarg. Wired
+            # once, outside the attempt loop: the reporter's own throttle is
+            # per-unit, so a retry keeps reporting into the same row rather
+            # than opening a second one.
+            def _replace_binding(updated: dict[str, Any]) -> None:
+                nonlocal progress_binding
+                progress_binding = updated
+
+            spawn_kwargs["on_output"] = _live_unit_telemetry_reporter(
+                paths,
+                owner=owner,
+                routed_model=routed_model,
+                routed_effort=routed_effort,
+                title=unit_title,
+                binding_ref=lambda: progress_binding,
+                binding_set=_replace_binding,
+            )
         while True:
             attempt += 1
             output_tail = ""

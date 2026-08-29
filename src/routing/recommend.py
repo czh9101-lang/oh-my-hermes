@@ -176,6 +176,37 @@ _RISKY_REFACTOR_FOLLOWUP_GUIDANCE_PREFIX = (
     "Treat this as a follow-up only after an accepted reviewed plan; do not present cleanup "
     "as the first action for risk-marked refactoring language. "
 )
+# Complete phrases that mean the adversarial round explicitly. Without the
+# direct match these lose to `plan`, which scores 18 on any sentence containing
+# the word: "adversarial planning for the redis migration" gave `plan` +5 name,
+# +2 phase, +3 trigger token and +6 metadata against this workflow's +6 phrase.
+# The boost is sized above that band and below the guard rules', so an explicit
+# adversarial request wins while a bare planning request is untouched.
+_ADVERSARIAL_CONSENSUS_EXPLICIT_PHRASES = tuple(
+    normalized_phrase(phrase)
+    for phrase in (
+        "adversarial-consensus",
+        "adversarial consensus",
+        "adversarial planning",
+        "adversarial plan review",
+        "red team this plan",
+        "red-team this plan",
+        "red team the proposal",
+        "red-team the proposal",
+        "multi-perspective review",
+        "multiple perspectives",
+        "independent perspectives",
+        "attack this proposal",
+        "poke holes in this",
+        "hyperplan",
+        "적대적 검토",
+        "다관점 검토",
+        "여러 관점에서 검토",
+        "레드팀 검토",
+        "이 계획 반박",
+        "허점 찾아",
+    )
+)
 _FAILURE_SIGNAL_AUDIT_EXPLICIT_PHRASES = tuple(
     normalized_phrase(phrase)
     for phrase in (
@@ -1619,6 +1650,36 @@ _SIBLING_POINTER_METADATA_TOKENS = {
 # `models` and `work` look like observed-work inventory requests.
 _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     "running-work-board": frozenset({"board", "models", "running", "units", "what", "which", "work"}),
+    # `adversarial-consensus` names its mechanic with ordinary planning words --
+    # "red team this plan", "attack this proposal", "poke holes in this". Split
+    # into tokens they are the vocabulary of every planning request: crediting
+    # `plan` alone made the catalog question "what can OMH do for plan?" score
+    # this workflow at high confidence and show its card instead of the picker.
+    # The distinctive tokens (`adversarial`, `consensus`, `perspective`,
+    # `red-team`, `hyperplan`, `적대적`, `다관점`, `레드팀`, `반박`, `허점`) still
+    # score; these carry the intent only inside a complete trigger phrase, which
+    # the +6 phrase match already covers.
+    "adversarial-consensus": frozenset(
+        {
+            "attack",
+            "holes",
+            "independent",
+            "multi",
+            "multiple",
+            "plan",
+            "planning",
+            "poke",
+            "proposal",
+            "red",
+            "review",
+            "team",
+            "검토",
+            "계획",
+            "관점에서",
+            "여러",
+            "찾아",
+        }
+    ),
 }
 
 
@@ -1736,6 +1797,9 @@ def _score_definition(
         score += 72
         matched.update(f"domain_action:{cue}" for cue in domain_operator_override.matched_cues)
 
+    if definition.name == "adversarial-consensus" and _adversarial_consensus_explicit_match(normalized_query):
+        score += 30
+        matched.add("direct:adversarial_consensus")
     if definition.name == "failure-signal-audit" and _failure_signal_audit_explicit_match(normalized_query):
         score += 34
         matched.add("direct:failure_signal_audit")
@@ -2329,6 +2393,13 @@ def _trigger_phrase_match(query: str, value: str) -> bool:
 
 def _explicit_phrase_match(query: str, value: str) -> bool:
     return bool(query and value and value in query)
+
+
+def _adversarial_consensus_explicit_match(normalized_query: str) -> bool:
+    return any(
+        _explicit_phrase_match(normalized_query, phrase)
+        for phrase in _ADVERSARIAL_CONSENSUS_EXPLICIT_PHRASES
+    )
 
 
 def _failure_signal_audit_explicit_match(normalized_query: str) -> bool:

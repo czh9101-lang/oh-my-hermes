@@ -511,6 +511,49 @@ class TuiWidgetPackTests(unittest.TestCase):
         # per-call cost) render with a `~`; true zeros render nothing.
         self.assertIn("row.cost_approximate ? '~' : ''", widget)
         self.assertIn("cost > 0 ? `${approximate ? '~' : ''}$${cost.toFixed(3)}` : ''", widget)
+        # Claude Code's token-counter idiom (184.8k, 2.1m): observed subagent
+        # token counts render per row and summed on the header, one decimal
+        # with trailing .0 trimmed. The row segment sits BEFORE cost so the
+        # narrow-terminal drop order sheds the dollar figure first and keeps
+        # the token count; a zero renders nothing, exactly like cost.
+        self.assertIn("const tokenCountText", widget)
+        self.assertIn(".toFixed(1).replace(/\\.0$/, '')", widget)
+        # The unit break sits where one-decimal rounding lands (999,950 reads
+        # 1m, never 1000k), sub-thousand counts render bare, and a fractional
+        # or zero value renders nothing rather than a broken-looking "0 tok".
+        self.assertIn("value < 999_950 ?", widget)
+        self.assertIn("if (value < 1000) return", widget)
+        self.assertIn("|| value < 1) return ''", widget)
+        # Claude Code-style grid ('절대위치로 … 클로드코드처럼 정렬'): a
+        # fixed right-anchored tail `state · elapsed · N tokens`, each piece
+        # padded to constant cell widths so the columns line up vertically
+        # across rows; the token count anchors the right edge ('tokens로
+        # 해주고 맨 오른쪽에') and the metadata drop loop sheds rate, cost,
+        # and turn without ever touching the tail.
+        self.assertIn("` · ${tokenText.padStart(6)} tokens`", widget)
+        self.assertIn("h(Text, { color: statusColor }, layout.tailState)", widget)
+        self.assertIn("h(Text, { color: t.color.muted }, layout.tailRest)", widget)
+        # The tokens column exists per LIST: a row with no observed count
+        # holds the grid with blank cells, and a wave with no counts at all
+        # drops the column instead of wasting the width.
+        self.assertIn("' '.repeat(tokensWidth)", widget)
+        self.assertIn(
+            "const tokensColumn = [...mainRows, ...rows].some(row => tokenCountText(row.tokens))",
+            widget,
+        )
+        self.assertIn("tokens: tokens > 0 ? `${tokenCountText(tokens)} tokens` : ''", widget)
+        # The summed count anchors the header's right edge too, and the
+        # header has no drop loop, so the segment hides below 100 columns
+        # instead of pushing ctx and the yolo readout past truncate-end.
+        self.assertIn("columns >= 100 && metrics.tokens", widget)
+        self.assertIn("` • ${metrics.tokens}`", widget)
+        self.assertLess(widget.index("' • yolo mode: '"), widget.index("` • ${metrics.tokens}`"))
+        # Delegate goals (row titles) are a FIXED padded column capped at
+        # ~40% of the terminal, 48 cells at most, and always shrink before
+        # the tail: the metadata column starts aligned and the tail block
+        # keeps its right anchor even on narrow terminals.
+        self.assertIn("Math.min(48, Math.floor(columns * 0.4))", widget)
+        self.assertIn("Math.min(actionCap, budget - cellWidth(prefix) - tailWidth - 2)", widget)
         # The plan panel's liveness cues are the ONE sanctioned animation:
         # a colour wave through the active item's characters plus a walking
         # ellipsis on the [Plan] header, both mounted only while an active

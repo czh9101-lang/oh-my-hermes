@@ -7,6 +7,7 @@ from .procedure_rendering import specialist_procedure_reference_markdown
 from .render import (
     SkillReferenceTemplate,
     SkillTemplate,
+    adversarial_consensus_reference_templates,
     buzz_reference_templates,
     buzz_skill,
     code_review_reference_templates,
@@ -47,6 +48,7 @@ def builtin_skill_reference_templates() -> list[SkillReferenceTemplate]:
         *buzz_reference_templates(),
         *loop_reference_templates(),
         *maestro_reference_templates(),
+        *adversarial_consensus_reference_templates(),
         *ultrawork_reference_templates(),
         *idea_to_deploy_reference_templates(),
         *[
