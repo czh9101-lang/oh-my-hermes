@@ -40,9 +40,11 @@ from .catalog_types import (
     ProcedureStep,
     SkillDefinition,
     SkillExample,
+    _HANDOFF_FINAL_CHECKLIST,
     _HERMES_SETUP_FIVE_STEP_BAR,
     _HERMES_SETUP_SKIP_SEMANTICS,
     _HERMES_SETUP_WRITE_BOUNDARY,
+    _MAESTRO_HERMES_OWNER_FINAL_CHECKLIST_NOTE,
 )
 
 _SPECIALIST_DOMAIN_HANDOFF_BOUNDARY = (
@@ -1061,6 +1063,7 @@ _DEFINITIONS = [
             "executing surface.",
         ),
         quality_tier="handoff-gated",
+        final_checklist=_HANDOFF_FINAL_CHECKLIST + (_MAESTRO_HERMES_OWNER_FINAL_CHECKLIST_NOTE,),
         quality_bar=(
             ENGINE_ENTRY_CONFIRMATION_RULE,
             "Require the coding owner to already be chosen for this run -- named in the request, accepted when "

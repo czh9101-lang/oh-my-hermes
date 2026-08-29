@@ -270,6 +270,18 @@ _HERMES_CODING_HARNESS_FINAL_CHECKLIST = (
     "Report the current harness stage, owner, next action, and missing evidence without claiming PR creation, review, CI, merge-readiness, or merge until matching runtime observations exist.",
 )
 
+# maestro cannot reuse the generic Hermes-owner harness line above: its own
+# safety rule ("Never route a Hermes-owned lane through this engine") and its
+# facade's HermesNativeSelectionError mean the engine structurally cannot have
+# Hermes as the selected owner, so `hermes_coding_harness/v1` guidance never
+# applies here. This is the one honest replacement line for maestro's own
+# `final_checklist` override -- see its `SkillDefinition` in
+# catalog_definitions.py.
+_MAESTRO_HERMES_OWNER_FINAL_CHECKLIST_NOTE = (
+    "When Hermes is the selected coding owner this engine does not apply -- Hermes-native selection uses the "
+    "Hermes runtime path, never this engine."
+)
+
 _HANDOFF_RECOVERY_NOTES = (
     "If the selected executor is unavailable, ask for Codex, Claude Code, Hermes, or another runtime before retrying.",
     "If dispatch or result evidence is missing, keep the handoff prepared_not_observed and expose the next observable action.",

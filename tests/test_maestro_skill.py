@@ -174,5 +174,39 @@ class MaestroExecutorNeutralityTests(unittest.TestCase):
                 self.assertEqual(overlap, set())
 
 
+class MaestroHermesOwnerChecklistTests(unittest.TestCase):
+    """#1156 review defect, fixed here: `maestro` structurally cannot have
+    Hermes as the selected coding owner (safety rule 3, "Never route a
+    Hermes-owned lane through this engine", plus the facade's
+    `HermesNativeSelectionError`), so its own `final_checklist` must not
+    instruct using `hermes_coding_harness/v1` for a Hermes-owned lane. Other
+    handoff-gated skills that CAN take Hermes as owner keep the original
+    line -- pinned here via `ai-slop-cleaner`.
+    """
+
+    def test_maestro_final_checklist_does_not_instruct_hermes_coding_harness_use(self) -> None:
+        definition = _maestro_definition()
+        checklist = " ".join(definition.final_checklist)
+        self.assertNotIn("use `hermes_coding_harness/v1`", checklist)
+
+    def test_maestro_final_checklist_states_the_engine_does_not_apply_for_hermes_owner(self) -> None:
+        definition = _maestro_definition()
+        checklist = " ".join(definition.final_checklist)
+        self.assertIn(
+            "When Hermes is the selected coding owner this engine does not apply -- "
+            "Hermes-native selection uses the Hermes runtime path, never this engine.",
+            checklist,
+        )
+
+    def test_other_handoff_gated_skill_keeps_the_original_hermes_coding_harness_line(self) -> None:
+        definitions = {item.name: item for item in builtin_definitions()}
+        checklist = " ".join(definitions["ai-slop-cleaner"].final_checklist)
+        self.assertIn(
+            "When Hermes is the selected coding owner, use `hermes_coding_harness/v1` "
+            "to keep builder, verifier, reviewer, docs, and PR lanes separate.",
+            checklist,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
