@@ -228,6 +228,8 @@ alias に provider 固有の wire ID が必要な場合は、`model_provider_rou
 
 Hermes に **モデルをセットアップして** と頼むと、確認や変更ができます。これは編集可能な優先設定であり、benchmark 結果ではありません。詳しい設定、fallback、provider、所有権のルールは [Guided Model Setup](docs/INSTALLATION.md#guided-model-setup) を参照してください。
 
+コーディング委任の dispatch（`omh coding run` / `omh coding fanout dispatch`）は、このファイルとは別の、operator が自分で設定する preference を読みます。Claude Code で最強クラスのティアを使うには `~/.omh/routing/dispatch-models.json` に `"claude-code": "opus"` を設定するか、`omh coding run` の一回の実行に `--model opus` を渡してください。`codex` も、アカウントで使える model id を確認した上で同様に設定できます。スキーマと完全な優先順位は `docs/FANOUT.md`（Dispatch-model preference）を参照してください。
+
 <details>
 <summary><strong>または、以下を Hermes や別の coding agent に貼り付けてください</strong></summary>
 
@@ -257,7 +259,7 @@ Do not replace the resolved SHA with main. Execute the pinned protocol's OS-appr
 | ⚡ `ulw-research` | 実際のコードとウェブを調べ、出典を残し、怪しければ裏取りします。 |
 | ⚡ `ulw-plan` | 選択肢の比較、リスク、完了基準まで合意したレビュー済み計画を作ります。 |
 | ⚡ `ulw-work` | 承認済み計画を、同じファイルに触れない並列レーンで実行します。 |
-| ⚡ `ulw-maestro` | 選んだコーディング CLI に、そのCLI自身にインストールされたスキルから組み立てたプロンプトで作業を渡します。 |
+| ⚡ `ulw-maestro` | Claude Code または Codex に委任したタスクを実行 — そのCLI自身のインストール済みスキルから組み立てたプロンプトで、ライブに起動し、ドック行とスティアリング可能なセッションを持ちます。 |
 | ⚡ `ulw-loop` | 計画 → 実装 → レビューを、ゴールが本当に通るまで回します。 |
 | ⚡ `ulw-qa` | わざと過酷なシナリオで攻撃し、壊れた所を直します。 |
 | ⚡ `ulw-perf` | 本当に遅く高コストな場所を測り、ホットパスを一つずつ修正します。 |

@@ -179,10 +179,10 @@ window.OMH_I18N = {
     "ulw.maestro.title": { en: "Maestro", ko: "Maestro", ja: "Maestro", zh: "Maestro" },
     "ulw.maestro.tag": { en: "External handoff", ko: "외부 핸드오프", ja: "外部ハンドオフ", zh: "外部交接" },
     "ulw.maestro.body": {
-      en: "Prepares the handoff for the coding agent you chose.",
-      ko: "선택한 코딩 에이전트를 위한 핸드오프를 준비합니다.",
-      ja: "選んだコーディングエージェントのためのハンドオフを準備します。",
-      zh: "为你选择的编码代理准备交接。"
+      en: "Runs the work on Claude Code or Codex, spawned live with a steerable session.",
+      ko: "Claude Code 또는 Codex에서 작업을 실행 — 실시간으로 구동되고 세션을 조종할 수 있습니다.",
+      ja: "Claude Code または Codex で作業を実行 — ライブで起動し、セッションを操作できます。",
+      zh: "在 Claude Code 或 Codex 上运行任务 —— 实时启动，会话可操控。"
     },
     "ulw.plan.title": { en: "Ralplan", ko: "Ralplan", ja: "Ralplan", zh: "Ralplan" },
     "ulw.plan.tag": { en: "Reviewed plan", ko: "검토된 계획", ja: "レビュー済み計画", zh: "评审过的计划" },

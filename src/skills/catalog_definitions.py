@@ -1101,6 +1101,14 @@ _DEFINITIONS = [
             "Before real dispatch, observe execution (a `--version` or no-op call) and read the configured model "
             "from the executor's own config or output; a binary on PATH plus an auth file is `prepared`, never "
             "`observed`. Run a bounded permission probe before the real dispatch.",
+            "When the user names a model for this delegated run (for example \"opus로 돌려줘\", \"fable로 돌려줘\", "
+            "\"use opus\"), pass it through `omh coding run`'s `--model` flag (or the unit's `model` field under "
+            "`omh coding fanout dispatch`) using the executor's own accepted identifier -- codex and claude-code "
+            "both take `--model`, so an alias like `opus` or a full id like `claude-opus-5` reaches the CLI "
+            "unmodified.",
+            "That named model is handed to the executor verbatim, unvalidated; an unknown or unentitled value "
+            "surfaces as the executor's own observed exit failure, never a silent fallback to the dispatch-model "
+            "preference or the executor's own default.",
             "The fanout-dispatch bridge -- `omh coding fanout dispatch` for a multi-unit split, or `omh coding "
             "run` for one unit -- is the only executing surface, explicit per invocation, and it never merges; "
             "preparing, composing, or showing a prompt is never dispatch, and a dispatch receipt is never "

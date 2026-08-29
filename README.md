@@ -317,6 +317,14 @@ preferences, not benchmark results. See
 [Guided Model Setup](docs/INSTALLATION.md#guided-model-setup) for the detailed
 setup, fallback, provider, and ownership rules.
 
+Coding delegation dispatch (`omh coding run` / `omh coding fanout dispatch`)
+reads a separate, operator-set preference, not this file: for the strongest
+Claude Code tier, set `"claude-code": "opus"` in
+`~/.omh/routing/dispatch-models.json`, or pass `--model opus` on one `omh
+coding run` invocation; set an equivalent `codex` entry once you have
+confirmed the model id your account is entitled to. See `docs/FANOUT.md`
+(Dispatch-model preference) for the schema and the full precedence order.
+
 <details>
 <summary><strong>Or paste this into Hermes or another coding agent</strong></summary>
 
@@ -349,7 +357,7 @@ rest. Full catalog: [Workflow Reference](docs/WORKFLOWS.md).
 | ⚡ `ulw-research` | Digs through real code and the live web, keeps sources, and verifies anything doubtful. |
 | ⚡ `ulw-plan` | Builds a reviewed plan: options compared, risks named, done-criteria agreed. |
 | ⚡ `ulw-work` | Runs an accepted plan in parallel lanes that never touch the same file. |
-| ⚡ `ulw-maestro` | Hands a chosen coding CLI the work with a prompt built from its own installed skills. |
+| ⚡ `ulw-maestro` | Runs a delegated task on Claude Code or Codex — prompt composed from the CLI's own installed skills, spawned live with a dock row and a steerable session. |
 | ⚡ `ulw-loop` | Cycles plan → build → review until the goal actually passes. |
 | ⚡ `ulw-qa` | Attacks the build with hostile scenarios and fixes what breaks. |
 | ⚡ `ulw-perf` | Measures where it is actually slow or expensive, then fixes one hot path at a time. |

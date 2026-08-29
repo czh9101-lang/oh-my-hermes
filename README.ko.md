@@ -225,6 +225,8 @@ alias에 provider 전용 wire ID가 필요하면 `model_provider_routes/v1` 형�
 
 Hermes에게 **모델을 설정해 줘**라고 요청해 검토하거나 변경할 수 있습니다. 이는 편집 가능한 선호이며 benchmark 결과가 아닙니다. 자세한 설정, fallback, provider, 소유권 규칙은 [Guided Model Setup](docs/INSTALLATION.md#guided-model-setup)을 참조하세요.
 
+코딩 위임 dispatch(`omh coding run` / `omh coding fanout dispatch`)는 이 파일과 별도로, operator가 직접 설정하는 preference를 읽습니다: Claude Code에서 가장 강력한 티어를 쓰려면 `~/.omh/routing/dispatch-models.json`에 `"claude-code": "opus"`를 설정하거나, `omh coding run` 한 번 실행에 `--model opus`를 넘기세요. `codex`도 계정이 사용 가능한 모델 id를 확인한 뒤 동일하게 설정하면 됩니다. 스키마와 전체 우선순위는 `docs/FANOUT.md`(Dispatch-model preference)를 참조하세요.
+
 <details>
 <summary><strong>또는 아래 내용을 Hermes나 다른 coding agent에 붙여 넣으세요</strong></summary>
 
@@ -254,7 +256,7 @@ Do not replace the resolved SHA with main. Execute the pinned protocol's OS-appr
 | ⚡ `ulw-research` | 실제 코드와 웹을 뒤져 조사하고, 출처를 남기고, 의심스러우면 검증합니다. |
 | ⚡ `ulw-plan` | 선택지 비교, 리스크, 완료 기준까지 합의된 검토 계획을 만듭니다. |
 | ⚡ `ulw-work` | 승인된 계획을 같은 파일을 건드리지 않는 병렬 레인으로 실행합니다. |
-| ⚡ `ulw-maestro` | 선택한 코딩 CLI에게, 그 CLI에 설치된 스킬로 구성한 프롬프트와 함께 작업을 넘깁니다. |
+| ⚡ `ulw-maestro` | Claude Code 또는 Codex에 위임한 작업을 실행 — 해당 CLI에 설치된 스킬로 구성한 프롬프트로 실시간 구동되며, 대시보드 행과 조종 가능한 세션을 제공합니다. |
 | ⚡ `ulw-loop` | 계획 → 구현 → 리뷰를 목표가 진짜 통과할 때까지 돌립니다. |
 | ⚡ `ulw-qa` | 일부러 험한 시나리오로 공격해 보고, 깨지는 곳을 고칩니다. |
 | ⚡ `ulw-perf` | 어디가 진짜 느리고 비싼지 측정한 뒤, 핫패스를 하나씩 고칩니다. |

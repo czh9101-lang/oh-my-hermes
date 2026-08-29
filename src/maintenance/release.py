@@ -314,7 +314,14 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # dispatch with no second confirmation (the no-owner/ambiguous-owner
 # ask-and-stop rule is unchanged) (+714 chars); warranted growth for a real
 # new dispatch surface and its automatic-flow contract.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 745687
+# 745687 -> 746326: `omh coding run` gained `--model`/`--effort` flags for a
+# per-run model choice (precedence: the flag beats a routed handoff model,
+# which beats the dispatch-models.json preference, which beats the executor
+# CLI's own default); maestro's quality bar gained two matching rules naming
+# the operator's model-choice phrasing and the flag's unvalidated,
+# never-silently-falls-back passthrough to the executor (+639 chars);
+# warranted growth for a real per-run model-override capability.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 746326
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
