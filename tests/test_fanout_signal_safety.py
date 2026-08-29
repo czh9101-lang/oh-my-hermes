@@ -20,6 +20,7 @@ from tempfile import TemporaryDirectory
 
 from omh.coding.fanout import build_fanout_contract
 from omh.coding.fanout_artifacts import fanout_dispatch_summary_path, write_fanout_contract
+from omh.coding import fanout_dispatch as fanout_dispatch_module
 from omh.coding.fanout_dispatch import (
     dispatch_fanout,
     signal_safe_unit_runner,
@@ -122,6 +123,88 @@ class SignalSafeRunnerTests(unittest.TestCase):
             time.sleep(0.05)
         with self.assertRaises(ProcessLookupError):
             os.killpg(seen["pid"], 0)
+
+    def test_on_output_hands_mid_run_stdout_snapshots_and_final_output_is_complete(self) -> None:
+        """The mid-run stdout seam: every snapshot is a prefix of the final
+        stdout (the reader drains continuously, the hook only ever sees what
+        was captured so far), at least one snapshot arrives while the child
+        still runs, and the returned CompletedProcess is byte-complete."""
+        script = (
+            "import time\n"
+            "print('line-a', flush=True)\n"
+            "time.sleep(2)\n"
+            "print('line-b', flush=True)\n"
+        )
+        snapshots: list[str] = []
+        poll = fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS
+        fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS = 0.2
+        try:
+            completed = signal_safe_unit_runner(
+                [sys.executable, "-c", script],
+                text=True,
+                capture_output=True,
+                timeout=30,
+                on_output=snapshots.append,
+            )
+        finally:
+            fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS = poll
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("line-a", completed.stdout)
+        self.assertIn("line-b", completed.stdout)
+        self.assertTrue(snapshots)
+        for snapshot in snapshots:
+            self.assertTrue(completed.stdout.startswith(snapshot))
+        self.assertTrue(any("line-a" in snapshot and "line-b" not in snapshot for snapshot in snapshots))
+
+    @posix_only
+    def test_timeout_with_on_output_still_raises_and_kills_the_group(self) -> None:
+        seen: dict[str, int] = {}
+
+        def on_spawn(process) -> None:
+            seen["pid"] = process.pid
+
+        poll = fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS
+        fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS = 0.2
+        try:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                signal_safe_unit_runner(
+                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    text=True,
+                    capture_output=True,
+                    timeout=0.5,
+                    on_spawn=on_spawn,
+                    on_output=lambda text: None,
+                )
+        finally:
+            fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS = poll
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(seen["pid"], 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(seen["pid"], 0)
+
+    def test_raising_on_output_hook_never_kills_the_unit(self) -> None:
+        def raising_hook(text: str) -> None:
+            raise RuntimeError("telemetry-only hook must be swallowed")
+
+        poll = fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS
+        fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS = 0.2
+        try:
+            completed = signal_safe_unit_runner(
+                [sys.executable, "-c", "import time; print('ok', flush=True); time.sleep(1)"],
+                text=True,
+                capture_output=True,
+                timeout=30,
+                on_output=raising_hook,
+            )
+        finally:
+            fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS = poll
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("ok", completed.stdout)
 
     @posix_only
     def test_terminate_live_unit_groups_reaps_a_registered_unit(self) -> None:

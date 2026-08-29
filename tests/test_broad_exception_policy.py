@@ -78,6 +78,16 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "orphan behind.",
     ),
     ClassifiedSite(
+        "src/coding/fanout_dispatch.py",
+        "_snapshot_output",
+        INTENTIONAL,
+        "The mid-run stdout snapshot hook is telemetry-only narration for a unit's HUD row: a "
+        "raising hook must never kill or time out the unit it observes, so the handler returns "
+        "and the poll loop keeps waiting on the process. Nothing is relabeled — no count is "
+        "reported for that snapshot (an absent count, never a zero), the next poll retries, and "
+        "the terminal close still parses the full stdout independently of every snapshot.",
+    ),
+    ClassifiedSite(
         "src/workflows/domain_intelligence_store_security.py",
         "_open_store_lock_descriptor",
         INTENTIONAL,
@@ -237,8 +247,8 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # function. `_write_candidate_batch`, `_is_catalog_question`, `pre_llm_call`,
 # and `_resume_unlocked` each hold two handlers, so the handler count is four
 # above the anchor count.
-EXPECTED_HANDLER_COUNT = 23
-EXPECTED_ANCHOR_COUNT = 19
+EXPECTED_HANDLER_COUNT = 24
+EXPECTED_ANCHOR_COUNT = 20
 
 
 class DerivedSite(NamedTuple):
