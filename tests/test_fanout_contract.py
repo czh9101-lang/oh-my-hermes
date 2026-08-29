@@ -1337,9 +1337,26 @@ class FanoutCliTests(unittest.TestCase):
         call that builds a one-unit fanout contract and dispatches it through
         the same engine `omh coding fanout dispatch` uses -- `--dry-run`
         exercises the whole path (readiness, planned argv, worktree path)
-        without spawning a real agent CLI."""
+        without spawning a real agent CLI. The readiness probe resolves the
+        owner binary live, so the test ships its own `claude` shim on PATH
+        instead of assuming the machine has one (the CI runners do not)."""
+        import os
+        import sys
+
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            if sys.platform == "win32":
+                (bin_dir / "claude.bat").write_text(
+                    "@echo off\r\necho claude shim 0.0.0\r\n", encoding="utf-8"
+                )
+            else:
+                shim = bin_dir / "claude"
+                shim.write_text("#!/bin/sh\necho 'claude shim 0.0.0'\n", encoding="utf-8")
+                shim.chmod(0o755)
+            shim_path = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+            self.enterContext(mock.patch.dict(os.environ, {"PATH": shim_path}))
             repo = root / "repo"
             repo.mkdir()
             subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
