@@ -198,6 +198,12 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
         "explicit `omh menubar status --observe-local-processes` (also invoked by the opted-in "
         "native helper); reads local process status, spawns no agent."
     ),
+    "src/quality/evidence_records.py": (
+        "`current_git_tree_hash()`, reached from `omh goal checkpoint`, runs one bounded local "
+        "read-only `git rev-parse --short HEAD^{tree}` so a recorded observation carries the tree "
+        "it was observed against. It reads a hash and nothing else: no ref moves, no work starts, "
+        "and a machine with no git or no repository answers None instead of a stamp."
+    ),
 }
 
 # Alternative spawn routes. No allowlist: `subprocess` is the only sanctioned
@@ -506,6 +512,12 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
         "`rev-parse --show-toplevel`, run BEFORE the `add -N` above, to prove the recovery probe is "
         "standing in the unit's own worktree and not in whatever repository encloses it; read-only, "
         "and the reason the `add` entry's containment claim is checked rather than asserted"
+    ),
+    ("src/quality/evidence_records.py", ("rev-parse", "HEAD^{tree}")): (
+        "`rev-parse --short HEAD^{tree}` reads the tree hash a quality-evidence observation is "
+        "recorded against, so assessment can later tell evidence about the current tracked content "
+        "from evidence about older content; read-only local object lookup, names no remote, and it "
+        "resolves no ref the caller supplied"
     ),
 }
 
