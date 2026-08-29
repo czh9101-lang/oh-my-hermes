@@ -684,6 +684,37 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_directly",
         "direct_answer",
     ),
+    # Bootstrap-file noun guard: naming LICENSE/.gitignore/README does not by
+    # itself mean "create the project" - a concept question about one of them
+    # stays a direct answer with no forbidden_candidate needed (same
+    # chain-models-concept shape as the pair above; only one noun is present,
+    # so the >=2-noun bootstrap-file threshold never engages).
+    RoutingPrecisionCase(
+        "license-file-concept-direct",
+        "A LICENSE-file concept question stays direct, not the bootstrap dispatch",
+        "explain what a LICENSE file is",
+        "answer_directly",
+        "direct_answer",
+    ),
+    # These two name exactly one bootstrap-file noun and no add/create/set-up
+    # multi-file ask, so the bootstrap-file guard must never claim them even
+    # though the candidate list still surfaces other real workflows.
+    RoutingPrecisionCase(
+        "gitignore-troubleshooting-not-bootstrap",
+        "A .gitignore troubleshooting question stays clarification, not the bootstrap dispatch",
+        "why does my .gitignore not work",
+        "answer_clarification",
+        "",
+        "idea-to-deploy",
+    ),
+    RoutingPrecisionCase(
+        "gitignore-single-rule-edit-not-bootstrap",
+        "Adding one rule to an existing .gitignore stays clarification, not the bootstrap dispatch",
+        "add this rule to .gitignore",
+        "answer_clarification",
+        "",
+        "idea-to-deploy",
+    ),
     # Retired advisor filename shield: `ask` no longer owns the bare
     # `claude`/`gemini` tokens (executor detection moved to
     # `routing/coding_route_actions.named_executor_owners`, applied only when
@@ -2796,6 +2827,63 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "idea-to-deploy",
         "present_app_delivery_loop",
         "app_delivery_loop",
+    ),
+    # Wider greenfield-bootstrap reach (#1152 follow-up): the phrases above all
+    # name the bootstrap action itself ("bootstrap the project"); these name
+    # the bootstrap FILES instead, which is just as fully specified a request
+    # and should not detour through a clarifying interview or fall to a
+    # zero-score file lookup.
+    RoutingInterventionCase(
+        "greenfield-standard-project-files-empty-repo",
+        "A generic 'standard project files' ask for an explicitly empty repo reaches the app delivery loop",
+        "set up the standard project files for this empty repo",
+        "dispatch",
+        "idea-to-deploy",
+        "present_app_delivery_loop",
+        "app_delivery_loop",
+    ),
+    RoutingInterventionCase(
+        "greenfield-add-license-and-gitignore",
+        "Naming two starter files for the current project reaches the app delivery loop, not memory capture",
+        "add a LICENSE and .gitignore to this project",
+        "dispatch",
+        "idea-to-deploy",
+        "present_app_delivery_loop",
+        "app_delivery_loop",
+    ),
+    RoutingInterventionCase(
+        "greenfield-new-repo-readme-license-ci",
+        "A new-repo request naming README, LICENSE, and CI reaches the app delivery loop over the interview and onboarding ties",
+        "create a new repo with README, LICENSE and CI",
+        "dispatch",
+        "idea-to-deploy",
+        "present_app_delivery_loop",
+        "app_delivery_loop",
+    ),
+    # A fresh `git init` with no files named yet is genuinely underspecified -
+    # unlike the three cases above, this stays a clarifying interview instead
+    # of dispatching the delivery loop outright.
+    RoutingInterventionCase(
+        "greenfield-git-init-what-now-reaches-interview",
+        "'I just ran git init, what now' reaches the interview lane instead of unrelated low-confidence guesses",
+        "I just ran git init, what now",
+        "dispatch",
+        "deep-interview",
+        "answer_clarification",
+        "clarification",
+    ),
+    # Overroute guard for the bootstrap-file shape: fixing a typo in an
+    # existing README is a one-file edit in a repo that already exists, so it
+    # keeps the direct coding lane rather than being pulled into the bootstrap
+    # dispatch by the bare "readme" noun.
+    RoutingInterventionCase(
+        "readme-typo-edit-keeps-direct-coding-task",
+        "Fixing a README typo in an existing repo keeps the direct coding lane, not the bootstrap dispatch",
+        "README 오타 고쳐줘",
+        "dispatch",
+        "ultrawork",
+        "choose_executor",
+        "handoff",
     ),
     RoutingInterventionCase(
         "maestro-direct-invocation",
