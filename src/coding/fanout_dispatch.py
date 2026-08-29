@@ -9,6 +9,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import random
 import shlex
 import shutil
 import signal
@@ -49,6 +50,13 @@ from .fanout_contracts import (
 )
 from .inflight import InflightMarkerError, clear_inflight_marker, write_inflight_marker
 from .parallelism_policy import FANOUT_MAX_DEPTH_DEFAULT, FANOUT_RUN_SPAWN_CEILING_DEFAULT
+from .fanout_retry import (
+    FANOUT_MAX_RETRIES,
+    RETRY_CLAIM_BOUNDARY,
+    RETRY_POLICY_SCHEMA_VERSION,
+    classify_unit_failure,
+    evaluate_unit_retry,
+)
 from .unit_prompt_protocol import shared_unit_preamble_lines, unit_protocol_lines
 from .fanout_unit_results import validate_check_rows, validate_unit_result
 from .unit_telemetry import parse_unit_telemetry
@@ -991,6 +999,11 @@ def dispatch_fanout(
     max_depth: int | None = None,
     spawn_ceiling: int | None = None,
     env: Mapping[str, str] | None = None,
+    # The retry policy's two impure inputs, injected so the whole ladder is
+    # assertable without a clock and without a single sleep in a test.
+    max_retries: int = FANOUT_MAX_RETRIES,
+    rng: Callable[[], float] = random.random,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     # The spawn guard runs before every other check, including the two
     # boundary re-checks below: it is the only one whose whole job is that no
@@ -1200,6 +1213,9 @@ def dispatch_fanout(
                 spawn_ledger=spawn_ledger,
                 dispatch_depth=current_depth,
                 base_env=guard_env,
+                max_retries=max_retries,
+                rng=rng,
+                sleep=sleep,
             )
 
         def _admit_frontier() -> None:
@@ -1699,6 +1715,66 @@ def _close_fanout_progress_binding(
         return
 
 
+def _consider_unit_retry(
+    paths: OmhPaths,
+    *,
+    attempt: int,
+    exit_code: int,
+    output_tail: str,
+    stderr_tail: str,
+    sidecar_path: Path | None,
+    worktree: Path,
+    base_sha: str,
+    runner: Callable[..., Any],
+    max_retries: int,
+    rng: Callable[[], float],
+) -> dict[str, Any]:
+    """Decide whether this failed attempt earns another one, and say why.
+
+    The replay-safety half is measured, not assumed: the SAME recovery probe
+    that reports what a failed unit left behind answers "has this unit produced
+    an observed side effect", and it is called with an empty `fanout_id` so a
+    mid-flight probe never persists an intermediate record over the real one
+    written at the end. The probe only runs for a failure already classified as
+    transient -- a terminal failure is not retried whatever the worktree holds,
+    so measuring it would be work spent on an answer nobody reads.
+    """
+    # Derived once and passed to both calls: the retry verdict and the
+    # persisted provider-limit evidence must never disagree about whether this
+    # failure was limit-shaped.
+    limit_label = _limit_shaped_label(output_tail, stderr_tail)
+    classification = classify_unit_failure(
+        exit_code=exit_code,
+        output_tail=output_tail,
+        stderr_tail=stderr_tail,
+        limit_shaped=limit_label,
+    )
+    recovery: dict[str, Any] | None = None
+    artifact_observed = False
+    if classification["retryable"] and attempt <= max_retries:
+        artifact_observed = sidecar_path is not None and sidecar_path.is_file()
+        if not artifact_observed:
+            recovery = _capture_unit_recovery(
+                paths,
+                fanout_id="",
+                unit_id="",
+                worktree=worktree,
+                base_sha=base_sha,
+                runner=runner,
+            )
+    return evaluate_unit_retry(
+        attempt=attempt,
+        exit_code=exit_code,
+        output_tail=output_tail,
+        stderr_tail=stderr_tail,
+        limit_shaped=limit_label,
+        recovery=recovery,
+        artifact_observed=artifact_observed,
+        max_retries=max_retries,
+        rng=rng,
+    )
+
+
 def _dispatch_unit(
     paths: OmhPaths,
     unit: Mapping[str, Any],
@@ -1720,6 +1796,9 @@ def _dispatch_unit(
     spawn_ledger: _SpawnLedger | None = None,
     dispatch_depth: int = 0,
     base_env: Mapping[str, str] | None = None,
+    max_retries: int = FANOUT_MAX_RETRIES,
+    rng: Callable[[], float] = random.random,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     from .model_inventory import catalog_fingerprint_note
 
@@ -1975,6 +2054,10 @@ def _dispatch_unit(
     # up to its freshness window. See _open_fanout_progress_binding.
     progress_binding: dict[str, Any] | None = None
     spawn_kwargs: dict[str, Any] = {}
+    # One entry per FAILED attempt, each carrying why it did or did not lead to
+    # another one. An empty list means the unit succeeded first try.
+    retry_decisions: list[dict[str, Any]] = []
+    attempt = 0
     try:
         progress_binding = _open_fanout_progress_binding(
             paths,
@@ -2010,34 +2093,74 @@ def _dispatch_unit(
                 progress_binding = _record_fanout_progress_pid(paths, progress_binding, process.pid)
 
             spawn_kwargs["on_spawn"] = _record_pid
+        while True:
+            attempt += 1
+            output_tail = ""
+            stdout_text = ""
+            stderr_tail = ""
+            exit_code = 1
             # Real spawns only (the same seam as the pid hook): stagger this
             # unit's start so the first dispatch of the fanout writes the
             # provider prompt cache the byte-identical sibling preambles read.
-            if spawn_stagger is not None:
+            # Inside the loop, so a retry is spaced from its siblings too.
+            if spawn_stagger is not None and "on_spawn" in spawn_kwargs:
                 spawn_stagger.reserve()
-        completed = runner(
-            argv,
-            cwd=str(worktree),
-            # The lineage stamp goes in at the Popen boundary, not into the
-            # dispatcher's own environment: an agent CLI that reads its
-            # instructions and reaches for `omh coding fanout dispatch`
-            # refuses on the depth it inherits here.
-            env=child_env,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            **spawn_kwargs,
-        )
-        exit_code = int(getattr(completed, "returncode", 1))
-        stdout_text = str(getattr(completed, "stdout", "") or "")
-        output_tail = stdout_text[-2000:]
-        stderr_tail = str(getattr(completed, "stderr", "") or "")[-2000:]
-    except FileNotFoundError:
-        exit_code, output_tail = 127, f"{argv[0]} not found on PATH"
-    except subprocess.TimeoutExpired:
-        exit_code, output_tail = 124, f"unit timed out after {timeout}s"
-    except OSError as exc:
-        exit_code, output_tail = 1, f"spawn failed: {exc}"
+            try:
+                completed = runner(
+                    argv,
+                    cwd=str(worktree),
+                    # The lineage stamp goes in at the Popen boundary, not into
+                    # the dispatcher's own environment: an agent CLI that reads
+                    # its instructions and reaches for `omh coding fanout
+                    # dispatch` refuses on the depth it inherits here.
+                    env=child_env,
+                    text=True,
+                    capture_output=True,
+                    timeout=timeout,
+                    **spawn_kwargs,
+                )
+                exit_code = int(getattr(completed, "returncode", 1))
+                stdout_text = str(getattr(completed, "stdout", "") or "")
+                output_tail = stdout_text[-2000:]
+                stderr_tail = str(getattr(completed, "stderr", "") or "")[-2000:]
+            except FileNotFoundError:
+                exit_code, output_tail = 127, f"{argv[0]} not found on PATH"
+            except subprocess.TimeoutExpired:
+                exit_code, output_tail = 124, f"unit timed out after {timeout}s"
+            except OSError as exc:
+                exit_code, output_tail = 1, f"spawn failed: {exc}"
+            if exit_code == 0:
+                break
+            decision = _consider_unit_retry(
+                paths,
+                attempt=attempt,
+                exit_code=exit_code,
+                output_tail=output_tail,
+                stderr_tail=stderr_tail,
+                sidecar_path=sidecar_path,
+                worktree=worktree,
+                base_sha=base_sha,
+                runner=runner,
+                max_retries=max_retries,
+                rng=rng,
+            )
+            retry_decisions.append(decision)
+            if not decision.get("retry"):
+                break
+            # A retry is another real spawn and spends the run's budget like
+            # any other; when the budget is gone the unit stops here with its
+            # decision already recorded.
+            if spawn_ledger is not None and not spawn_ledger.claim():
+                decision["retry"] = False
+                decision["decision"] = "spawn_ceiling_reached"
+                break
+            # An interrupted batch must not start a fresh attempt nobody will
+            # collect -- the same rule the pool's own workers follow.
+            if _INTERRUPT_FLAG.is_set():
+                decision["retry"] = False
+                decision["decision"] = "interrupted"
+                break
+            sleep(float(decision["delay_seconds"]))
     finally:
         _clear_inflight(paths, fanout_id, unit_id)
         _close_fanout_progress_binding(
@@ -2144,6 +2267,25 @@ def _dispatch_unit(
     if limit_label:
         result["limit_shaped"] = True
         result["limit_pattern"] = limit_label
+    if retry_decisions:
+        # Only when something actually failed once: a unit that succeeded on
+        # its first attempt carries no retry key at all, so the presence of
+        # this block is itself the signal.
+        final = retry_decisions[-1]
+        result["retry"] = {
+            "schema_version": RETRY_POLICY_SCHEMA_VERSION,
+            "attempts": attempt,
+            "max_retries": max_retries,
+            "final_decision": str(final.get("decision", "")),
+            "decisions": retry_decisions,
+            "claim_boundary": RETRY_CLAIM_BOUNDARY,
+        }
+        if final.get("decision") == "surfaced_for_continuation":
+            # The headline of the replay-safety predicate: this unit COULD
+            # have been retried and deliberately was not, because re-running
+            # it from base would destroy the work its failure left behind.
+            # The recovery record captured just below is how it is continued.
+            result["retry_blocked_by_side_effects"] = True
     if exit_code != 0:
         # A failed unit still owns its worktree, and whatever it managed to
         # write is the only thing standing between the operator and redoing

@@ -169,6 +169,30 @@ Rules:
   `spawn_guard` block alongside how much of the budget the run used. Neither
   is verification, review, or merge evidence — a run inside its bounds is not
   thereby correct.
+- **Retries are classified, and never replayed over observed work.** A failed
+  unit is retried only when both answers come back yes, in this order. First,
+  is the failure transient? A provider rate limit, an overload, an HTTP 5xx, a
+  socket reset or hang-up is the executor's transport failing; a real non-zero
+  exit from a test or verification run is the unit's own answer and is
+  **terminal**, never retried. A timeout and a missing executable get their own
+  terminal classes. Second, is the unit replay-safe? Only a unit that has
+  produced **no observed side effect** may be re-dispatched: the recovery probe
+  measures the worktree, and `recovery_available` (files written) or
+  `capture_failed` (unmeasurable) both block the replay — "I could not tell"
+  fails closed. A result sidecar on disk blocks it too. A transient failure
+  that is not replay-safe is surfaced through the existing
+  `recovery_available` path as work to **continue**, with
+  `retry_blocked_by_side_effects` on the unit entry, rather than silently
+  re-run from base — which would destroy exactly the work the failure left
+  behind. Backoff is `min(2s * 2^(attempt-1), 30s)` scaled by 75–100% jitter,
+  bounded at two retries, so a fanout of N units that all hit one rate limit
+  does not retry in lockstep and re-trigger it. Every attempt spends the
+  `run_spawn_ceiling` budget like any other spawn. The unit entry's `retry`
+  block records the attempts and the reason trying stopped — `terminal`,
+  `retries_exhausted`, `surfaced_for_continuation`, `spawn_ceiling_reached`,
+  or `interrupted`; a unit that succeeded first try carries no block at all. A
+  retry is another attempt, not evidence: a unit that passed on attempt three
+  is no more verified than one that passed on attempt one.
 - **Admission is dependency-frontier, not wave-barrier.** A unit starts the
   moment every unit it depends on has completed and a pool slot is free —
   never because a wave boundary was reached — so an unrelated slow sibling
