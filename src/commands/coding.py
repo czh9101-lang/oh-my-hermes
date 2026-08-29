@@ -1638,6 +1638,20 @@ def _record_fanout_board_emission(paths, watched_runs: list[str], payload: dict,
         )
 
 
+def _fanout_dispatch_exit_code(summary: dict) -> int:
+    """130 for a cut-short batch, 1 for a refusal, 0 otherwise.
+
+    A spawn-guard refusal exits non-zero on purpose: the summary is still
+    printed as JSON so a wrapper can read `refusal_reason`, but a shell that
+    only checks the status must not read "nothing was dispatched" as success.
+    """
+    if summary.get("interrupted"):
+        return 130
+    if summary.get("refused"):
+        return 1
+    return 0
+
+
 def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
     import subprocess as _subprocess
 
@@ -1681,13 +1695,15 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             concurrency=concurrency["applied"],
             per_owner_lanes=parallelism["per_owner"],
             concurrency_policy=concurrency,
+            max_depth=parallelism["max_depth"],
+            spawn_ceiling=parallelism["run_spawn_ceiling"],
             timeout=args.timeout,
             only_units=args.unit,
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
         )
         _print_json(summary)
-        return 130 if summary.get("interrupted") else 0
+        return _fanout_dispatch_exit_code(summary)
     resolved = _subprocess.run(
         ["git", "rev-parse", args.base_ref],
         cwd=str(repo_root),
@@ -1711,6 +1727,8 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             concurrency=concurrency["applied"],
             per_owner_lanes=parallelism["per_owner"],
             concurrency_policy=concurrency,
+            max_depth=parallelism["max_depth"],
+            spawn_ceiling=parallelism["run_spawn_ceiling"],
             timeout=args.timeout,
             only_units=args.unit,
             dry_run=bool(args.dry_run),
@@ -1719,7 +1737,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
     _print_json(summary)
-    return 130 if summary.get("interrupted") else 0
+    return _fanout_dispatch_exit_code(summary)
 
 
 def cmd_coding_run(args: argparse.Namespace) -> int:
@@ -1834,6 +1852,8 @@ def cmd_coding_run(args: argparse.Namespace) -> int:
             concurrency=concurrency["applied"],
             per_owner_lanes=parallelism["per_owner"],
             concurrency_policy=concurrency,
+            max_depth=parallelism["max_depth"],
+            spawn_ceiling=parallelism["run_spawn_ceiling"],
             timeout=args.timeout,
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
@@ -1854,7 +1874,7 @@ def cmd_coding_run(args: argparse.Namespace) -> int:
         ),
     }
     _print_json(payload)
-    return 130 if summary.get("interrupted") else 0
+    return _fanout_dispatch_exit_code(summary)
 
 
 def cmd_coding_fanout_reap(args: argparse.Namespace) -> int:

@@ -48,6 +48,7 @@ from .fanout_contracts import (
     verification_command_argv,
 )
 from .inflight import InflightMarkerError, clear_inflight_marker, write_inflight_marker
+from .parallelism_policy import FANOUT_MAX_DEPTH_DEFAULT, FANOUT_RUN_SPAWN_CEILING_DEFAULT
 from .unit_prompt_protocol import shared_unit_preamble_lines, unit_protocol_lines
 from .fanout_unit_results import validate_check_rows, validate_unit_result
 from .unit_telemetry import parse_unit_telemetry
@@ -293,6 +294,94 @@ class _SpawnStagger:
             if now >= slot:
                 return
             time.sleep(slot - now)
+
+
+# Lineage stamp carried into every child environment this module spawns.
+# `_DEPTH` is how many dispatch generations deep that child already is (the
+# operator's own invocation is depth 0, its children run at depth 1);
+# `_LINEAGE` is the human-readable chain of `<fanout_id>:<unit_id>` steps that
+# got there, so a refusal names which run it came out of instead of only
+# reporting a number. Both are namespaced under OMH_ and are the only thing
+# the guard reads: a child cannot be trusted to report its own depth, but it
+# cannot forge a smaller one either without the operator editing the env by
+# hand, which is the same trust boundary every other env tunable has.
+FANOUT_DEPTH_ENV_VAR = "OMH_FANOUT_DEPTH"
+FANOUT_LINEAGE_ENV_VAR = "OMH_FANOUT_LINEAGE"
+# A lineage chain is metadata on a refusal, not a queue: bound it so a
+# pathological nesting cannot grow the child environment without limit.
+_MAX_LINEAGE_CHARS = 512
+FANOUT_DEPTH_REFUSAL_REASON = "fanout_depth_exceeded"
+SPAWN_CEILING_STATUS = "spawn_ceiling_reached"
+FANOUT_SPAWN_GUARD_CLAIM_BOUNDARY = (
+    "The spawn guard bounds how many local agent-CLI processes one `omh coding fanout dispatch` run may "
+    "start and how deep dispatch may nest. It is a refusal, not verification, review, or merge evidence, "
+    "and a run inside its bounds is not thereby correct."
+)
+
+
+def read_fanout_depth(env: Mapping[str, str]) -> int:
+    """The dispatch generation this process is already running at.
+
+    Anything this module did not write reads as depth 0 — an absent marker is
+    the ordinary operator invocation, and a corrupt one must not accidentally
+    read as a LARGER depth that refuses a legitimate run. ASCII digits only:
+    `str.isdigit()` alone accepts Arabic-Indic and other decimal forms that
+    `int()` then parses into a depth nothing here ever stamped.
+    """
+    raw = str(env.get(FANOUT_DEPTH_ENV_VAR, "") or "").strip()
+    if not raw.isascii() or not raw.isdigit():
+        return 0
+    return int(raw)
+
+
+def fanout_child_env(
+    base_env: Mapping[str, str],
+    *,
+    depth: int,
+    fanout_id: str,
+    unit_id: str,
+) -> dict[str, str]:
+    """`base_env` plus this dispatcher's lineage stamp, for one child spawn.
+
+    Every process this module starts gets the stamp, verification commands
+    included: a guard a child sidesteps by shelling out one more level is not
+    a guard.
+    """
+    lineage_step = f"{fanout_id or 'unrecorded'}:{unit_id}"
+    parent_lineage = str(base_env.get(FANOUT_LINEAGE_ENV_VAR, "") or "").strip()
+    lineage = f"{parent_lineage}/{lineage_step}" if parent_lineage else lineage_step
+    return {
+        **dict(base_env),
+        FANOUT_DEPTH_ENV_VAR: str(depth + 1),
+        FANOUT_LINEAGE_ENV_VAR: lineage[-_MAX_LINEAGE_CHARS:],
+    }
+
+
+class _SpawnLedger:
+    """The per-run total-spawn budget, claimed once per real agent-CLI start.
+
+    Separate from the pool width on purpose: the pool bounds how many units
+    run at once, this bounds how many are ever started by one run. A claim is
+    taken BEFORE the unit worktree is created, so a refused unit costs nothing
+    and leaves nothing behind to clean up.
+    """
+
+    def __init__(self, ceiling: int) -> None:
+        self.ceiling = max(1, int(ceiling))
+        self._lock = threading.Lock()
+        self._claimed = 0
+
+    def claim(self) -> bool:
+        with self._lock:
+            if self._claimed >= self.ceiling:
+                return False
+            self._claimed += 1
+            return True
+
+    @property
+    def claimed(self) -> int:
+        with self._lock:
+            return self._claimed
 
 
 DISPATCH_CLAIM_BOUNDARY = (
@@ -858,6 +947,7 @@ def _run_verification_command(
     command: str,
     worktree: Path,
     runner: Callable[..., Any],
+    child_env: Mapping[str, str] | None = None,
 ) -> tuple[str, str]:
     """Run one command in the unit worktree; return its status and a bounded tail.
 
@@ -873,7 +963,10 @@ def _run_verification_command(
         completed = runner(
             argv,
             cwd=str(worktree),
-            env={**os.environ, **env_overrides},
+            # The dispatcher's lineage stamp when the caller passed one: a
+            # declared verification command is a child of this dispatch too,
+            # and a depth guard a command can shell around is not a guard.
+            env={**(os.environ if child_env is None else child_env), **env_overrides},
             text=True,
             capture_output=True,
             timeout=_VERIFICATION_COMMAND_TIMEOUT,
@@ -905,6 +998,7 @@ def _run_unit_verification(
     worktree: Path,
     owner: str,
     runner: Callable[..., Any],
+    child_env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run one unit's declared verification commands and record what was observed.
 
@@ -921,7 +1015,7 @@ def _run_unit_verification(
     rows: list[dict[str, object]] = []
     failures: list[str] = []
     for command in commands:
-        status, detail = _run_verification_command(command, worktree, runner)
+        status, detail = _run_verification_command(command, worktree, runner, child_env)
         rows.append(
             {
                 "command": command,
@@ -985,7 +1079,29 @@ def dispatch_fanout(
     live_safety_profile_revision: str | None = None,
     per_owner_lanes: Mapping[str, int] | None = None,
     concurrency_policy: Mapping[str, Any] | None = None,
+    max_depth: int | None = None,
+    spawn_ceiling: int | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
+    # The spawn guard runs before every other check, including the two
+    # boundary re-checks below: it is the only one whose whole job is that no
+    # subprocess starts, and a refusal must not depend on a contract read, a
+    # readiness probe, or a worktree first.
+    guard_env: Mapping[str, str] = os.environ if env is None else env
+    effective_max_depth = FANOUT_MAX_DEPTH_DEFAULT if max_depth is None else max(1, int(max_depth))
+    current_depth = read_fanout_depth(guard_env)
+    if current_depth >= effective_max_depth:
+        return _depth_refusal_summary(
+            contract,
+            dry_run=dry_run,
+            base_sha=base_sha,
+            depth=current_depth,
+            max_depth=effective_max_depth,
+            lineage=str(guard_env.get(FANOUT_LINEAGE_ENV_VAR, "") or ""),
+        )
+    spawn_ledger = _SpawnLedger(
+        FANOUT_RUN_SPAWN_CEILING_DEFAULT if spawn_ceiling is None else spawn_ceiling
+    )
     # Both boundary re-checks run first, before discovery, readiness probing,
     # any unit spawn, and any summary write: nothing downstream should observe a
     # contract whose goal or safety profile no longer matches the live state.
@@ -1172,6 +1288,9 @@ def dispatch_fanout(
                 discoveries=discoveries,
                 capability_precheck=capability_prechecks[unit_id],
                 spawn_stagger=spawn_stagger,
+                spawn_ledger=spawn_ledger,
+                dispatch_depth=current_depth,
+                base_env=guard_env,
             )
 
         def _admit_frontier() -> None:
@@ -1284,6 +1403,16 @@ def dispatch_fanout(
         # How the pool width was chosen (policy default vs flag, any clamp)
         # so a dispatch record answers "why did only N run at once".
         summary["concurrency"] = dict(concurrency_policy)
+    # The bounds this run actually ran under, and how much of the budget it
+    # used: a unit refused as `spawn_ceiling_reached` is otherwise the only
+    # trace, and a summary that hit the ceiling exactly should say so.
+    summary["spawn_guard"] = {
+        "depth": current_depth,
+        "max_depth": effective_max_depth,
+        "run_spawn_ceiling": spawn_ledger.ceiling,
+        "spawns_claimed": spawn_ledger.claimed,
+        "claim_boundary": FANOUT_SPAWN_GUARD_CLAIM_BOUNDARY,
+    }
     if interrupted_by is not None:
         # A cut-short batch says so; units that never started carry the
         # `interrupted` status rather than silently vanishing from the
@@ -1317,6 +1446,50 @@ def dispatch_fanout(
         # operator is at the keyboard reading it.
         raise interrupted_by
     return summary
+
+
+def _depth_refusal_summary(
+    contract: Mapping[str, Any],
+    *,
+    dry_run: bool,
+    base_sha: str,
+    depth: int,
+    max_depth: int,
+    lineage: str,
+) -> dict[str, Any]:
+    """The refusal a too-deeply-nested dispatch returns instead of spawning.
+
+    Shaped as a dispatch summary so a wrapper parses one schema either way,
+    with an empty `units` list because nothing ran and a machine-readable
+    `refusal_reason` so the refusal is a code, not prose to grep. Never
+    persisted: no unit was dispatched, and overwriting the stored summary
+    would erase the parent run's observed telemetry with a blank.
+    """
+    return {
+        "schema_version": FANOUT_DISPATCH_SCHEMA_VERSION,
+        "fanout_id": contract.get("fanout_id", ""),
+        "dry_run": dry_run,
+        "observed_at": utc_now(),
+        "merge_order": [],
+        "units": [],
+        "integration_ready_units": [],
+        "recovery_available_units": [],
+        "auto_merge": False,
+        "refused": True,
+        "refusal_reason": FANOUT_DEPTH_REFUSAL_REASON,
+        "spawn_guard": {
+            "depth": depth,
+            "max_depth": max_depth,
+            "lineage": lineage,
+            "claim_boundary": FANOUT_SPAWN_GUARD_CLAIM_BOUNDARY,
+        },
+        "reason": (
+            f"dispatch refused at depth {depth} (max_depth {max_depth}): a dispatched agent CLI "
+            "must not start another fanout dispatch; run this contract from the operator's own shell"
+        ),
+        "base_sha": base_sha,
+        "claim_boundary": f"{DISPATCH_CLAIM_BOUNDARY} {FANOUT_CLAIM_BOUNDARY}",
+    }
 
 
 def _with_carried_recovery(
@@ -1725,6 +1898,9 @@ def _dispatch_unit(
     discoveries: Mapping[str, Mapping[str, Any]] | None = None,
     capability_precheck: tuple[str, dict[str, Any] | None, list[str]],
     spawn_stagger: _SpawnStagger | None = None,
+    spawn_ledger: _SpawnLedger | None = None,
+    dispatch_depth: int = 0,
+    base_env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     from .model_inventory import catalog_fingerprint_note
 
@@ -1871,6 +2047,28 @@ def _dispatch_unit(
                 else:
                     planned["skill_sequence_source"] = "none"
         return planned
+    # Claimed here, after the dry-run return and BEFORE the worktree is
+    # created: a run that has spent its whole spawn budget must not leave a
+    # trail of empty worktrees for units it was never going to start.
+    if spawn_ledger is not None and not spawn_ledger.claim():
+        return {
+            "unit_id": unit_id,
+            "run_ref": run_ref,
+            "owner": owner,
+            "status": SPAWN_CEILING_STATUS,
+            **_dispatch_status_ladder(),
+            "reason": (
+                f"run spawn ceiling of {spawn_ledger.ceiling} reached before this unit started; "
+                "re-dispatch the remaining units, or raise `run_spawn_ceiling` in the setup "
+                "profile's parallelism block"
+            ),
+        }
+    child_env = fanout_child_env(
+        os.environ if base_env is None else base_env,
+        depth=dispatch_depth,
+        fanout_id=fanout_id,
+        unit_id=unit_id,
+    )
     from .worktree_creator import ensure_fanout_unit_worktree
 
     worktree_record = ensure_fanout_unit_worktree(
@@ -2016,7 +2214,17 @@ def _dispatch_unit(
                 binding_set=_replace_binding,
             )
         completed = runner(
-            argv, cwd=str(worktree), text=True, capture_output=True, timeout=timeout, **spawn_kwargs
+            argv,
+            cwd=str(worktree),
+            # The lineage stamp goes in at the Popen boundary, not into the
+            # dispatcher's own environment: an agent CLI that reads its
+            # instructions and reaches for `omh coding fanout dispatch`
+            # refuses on the depth it inherits here.
+            env=child_env,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            **spawn_kwargs,
         )
         exit_code = int(getattr(completed, "returncode", 1))
         stdout_text = str(getattr(completed, "stdout", "") or "")
@@ -2096,6 +2304,7 @@ def _dispatch_unit(
             worktree=worktree,
             owner=owner,
             runner=runner,
+            child_env=child_env,
         )
     result = {
         "unit_id": unit_id,

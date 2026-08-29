@@ -152,6 +152,23 @@ Rules:
   re-running `omh setup` writes it out, and rewrites the whole profile
   while doing so. `lane_budget_default` is advisory context for
   Hermes-native lanes — OMH never enforces a lane count inside Hermes.
+- **Dispatch does not nest, and one run has a total spawn budget.** Every
+  child this command starts — the agent CLI and any declared verification
+  command — is stamped with `OMH_FANOUT_DEPTH` and `OMH_FANOUT_LINEAGE`. A
+  dispatch that starts inside such a child reads its inherited depth and
+  refuses before any subprocess exists, returning a dispatch summary carrying
+  `refused: true`, `refusal_reason: "fanout_depth_exceeded"`, and a
+  `spawn_guard` block naming the depth, the cap, and the lineage it came down;
+  the CLI exits 1. Separately, one run may only ever START
+  `run_spawn_ceiling` agent processes (default 60, OMO's own
+  `DEFAULT_FANOUT_LIMIT`); a unit that arrives after the budget is spent
+  returns `spawn_ceiling_reached` before its worktree is created, so nothing
+  is left behind to clean up. Both are `parallelism` block tunables
+  (`max_depth`, default 1) read with the same validated-override-plus-
+  disclosure shape as the widths, and both are recorded in the summary's
+  `spawn_guard` block alongside how much of the budget the run used. Neither
+  is verification, review, or merge evidence — a run inside its bounds is not
+  thereby correct.
 - **Admission is dependency-frontier, not wave-barrier.** A unit starts the
   moment every unit it depends on has completed and a pool slot is free —
   never because a wave boundary was reached — so an unrelated slow sibling
