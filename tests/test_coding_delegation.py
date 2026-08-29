@@ -60,7 +60,7 @@ class CodingStatusAgentTermTests(unittest.TestCase):
 
 
 class NamedCodingAgentDelegationTests(unittest.TestCase):
-    """The ask bare-token retirement's prerequisite fix.
+    """The ask bare-token retirement's prerequisite fix, now executor-neutral.
 
     `ask`'s bare `claude`/`gemini` catalog triggers used to be the only reason a
     request naming Claude Code outranked the retained `executor-runtime-readiness`
@@ -68,17 +68,58 @@ class NamedCodingAgentDelegationTests(unittest.TestCase):
     replacement would silently downgrade "Claude Code로 바로 열어줘" to
     action=clarify. The delegation path now detects the named executor directly
     through `routing.coding_route_actions.named_executor_owners` -- and only
-    when Claude Code is the sole named owner -- independent of any catalog
-    trigger score.
+    when a single `EXTERNAL_CLI_PROFILES` member (Claude Code or Codex) is the
+    sole named owner -- independent of any catalog trigger score. A user who
+    names one external CLI with an imperative has already made the explicit
+    owner choice, so Codex now reaches the same delegate outcome Claude Code
+    always has (#1163's Directive). Naming two owners, a runtime owner such as
+    Hermes coding or the omo-runtime family (pi/senpi/opencode), or asking a
+    status/diagnostic question about the named executor all keep the clarify
+    outcome.
     """
 
-    def test_naming_codex_still_clarifies(self) -> None:
-        payload = build_coding_delegation_payload("Codex\ub85c \ubc14\ub85c \uc5f4\uc5b4\uc918")
-        self.assertEqual(payload["delegation"]["action"], "clarify")
+    def test_naming_codex_now_delegates(self) -> None:
+        # Renamed from `test_naming_codex_still_clarifies`: naming Codex alone
+        # with an imperative now reaches the same delegate outcome naming
+        # Claude Code alone always has.
+        payload = build_coding_delegation_payload("Codex로 바로 열어줘")
+        delegation = payload["delegation"]
+        self.assertEqual(delegation["action"], "delegate")
+        self.assertEqual(delegation["intent"], "coding")
+
+    def test_naming_codex_with_a_coding_verb_now_delegates(self) -> None:
+        payload = build_coding_delegation_payload("codex로 구현해줘")
+        delegation = payload["delegation"]
+        self.assertEqual(delegation["action"], "delegate")
+        self.assertEqual(delegation["intent"], "coding")
 
     def test_naming_two_owners_still_clarifies(self) -> None:
-        payload = build_coding_delegation_payload("claude code\ub791 codex \uc911\uc5d0 \uace8\ub77c\uc11c \uc5f4\uc5b4\uc918")
+        payload = build_coding_delegation_payload("claude code랑 codex 중에 골라서 열어줘")
         self.assertEqual(payload["delegation"]["action"], "clarify")
+
+    def test_naming_runtime_owner_still_clarifies(self) -> None:
+        # Runtime owners (Hermes coding, the omo-runtime family) are not
+        # external CLIs -- `EXTERNAL_CLI_PROFILES` is only `("claude-code",
+        # "codex")` -- so naming one alone keeps the retained-workflow clarify
+        # outcome even with an identical imperative shape to the Codex/Claude
+        # Code cases above.
+        hermes_payload = build_coding_delegation_payload("Hermes coding으로 구현해줘")
+        self.assertEqual(hermes_payload["delegation"]["action"], "clarify")
+        omo_runtime_payload = build_coding_delegation_payload("omo runtime으로 구현해줘")
+        self.assertEqual(omo_runtime_payload["delegation"]["action"], "clarify")
+
+    def test_status_question_about_named_codex_still_clarifies(self) -> None:
+        # A status/diagnostic question about the named executor is not an
+        # imperative delivery request, so it must not gain the delegate
+        # outcome the imperative cases above now get.
+        for message in (
+            "is codex broken",
+            "codex 상태 어때",
+            "코덱스가 지금 어디까지 했는지 알려줘",
+        ):
+            with self.subTest(message=message):
+                payload = build_coding_delegation_payload(message)
+                self.assertEqual(payload["delegation"]["action"], "clarify")
 
     def test_naming_claude_code_without_a_code_reference_still_delegates(self) -> None:
         payload = build_coding_delegation_payload("Claude Code로 바로 열어줘")
