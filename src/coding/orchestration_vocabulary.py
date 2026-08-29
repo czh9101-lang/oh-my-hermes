@@ -9,9 +9,15 @@ nothing here prepares or dispatches a handoff.
 
 Two facts the entries state and must not overclaim:
 
-- ``claude-code`` is prompt-only. OMH prepares a prompt handoff for Claude
-  Code and never invokes it, so the Maestro entry says "prepares a handoff
-  for" and never claims invocation.
+- ``claude-code`` is prompt-only on the Maestro RECORD axis. OMH prepares a
+  prompt handoff for Claude Code and never runs it from that path, so the
+  Maestro entry says "prepares a handoff for" and never claims it as the
+  thing that runs the work. Execution is a separate, explicit axis: the
+  fanout dispatch bridge (`omh coding fanout dispatch`, and its `omh coding
+  run` single-run entry) already spawns local agent CLIs -- including
+  claude-code -- as its own operator-invoked, per-invocation opt-in. A
+  prepared prompt handoff and a bridge dispatch are two different records;
+  neither claim substitutes for the other.
 - Mixture and Maestro never share subagent-unit language. Mixture binds a
   model per role to Hermes subagents inside one harness; Maestro hands an
   external coding CLI the work after an explicit user choice.
@@ -104,7 +110,9 @@ _TERMS: Final[tuple[dict[str, object], ...]] = (
         "meaning": (
             "The path by which an external coding CLI becomes the coding "
             "owner after an explicit user choice; OMH prepares a handoff for "
-            "the chosen CLI and never runs it."
+            "the chosen CLI on this path and never runs it here -- running it "
+            "is a separate, explicit fanout-dispatch-bridge action, not this "
+            "prepared record."
         ),
         "audience": "operator",
         "entry_points": ("choose_executor",),

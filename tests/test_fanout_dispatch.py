@@ -2332,6 +2332,51 @@ class FanoutDispatchMaestroProgressRowTests(unittest.TestCase):
             self.assertIn("executor_dispatched", events)
             self.assertIn("executor_completed", events)
 
+    def test_single_unit_contract_dispatches_through_the_same_engine_and_hud_path(self) -> None:
+        """`omh coding run`'s one-unit contract is not a parallel spawn path --
+        it drives this exact `dispatch_fanout` engine, so the #1158
+        executor-progress binding lifecycle (open on spawn, close on exit,
+        which is what makes and then removes the `(claude-code/maestro
+        <model>)` HUD row) applies unchanged down to a single unit. Read
+        through the plugin-bundle `read_omh_hud` mirror the TUI dock actually
+        reads, the same regression shape as
+        `test_hud_projects_a_real_fanout_dispatch_binding_with_live_elapsed`.
+        """
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        with TemporaryDirectory() as tmp:
+            unit = {
+                "unit_id": "run",
+                "title": "Research pricing approaches",
+                "owner": "claude-code",
+                "file_scope": ["."],
+            }
+            paths, repo, sha, contract = self._setup(tmp, units=[unit])
+            run_ref = contract["units"][0]["run_ref"]
+
+            summary = dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                runner=_agent_runner(), readiness=_ready,
+            )
+
+            self.assertEqual(len(summary["units"]), 1)
+            self.assertTrue(summary["units"][0]["process_succeeded"])
+            binding = read_progress_binding(paths, "run", run_ref)
+            self.assertIsNotNone(binding)
+            self.assertEqual(binding["executor_profile"], "claude_code")
+            self.assertEqual(binding["delivery"]["source"], "fanout_dispatch")
+            self.assertEqual(binding["state"], "closed")
+            events = [event["event_type"] for event in _progress_events(paths, run_ref)]
+            self.assertIn("executor_dispatched", events)
+            self.assertIn("executor_completed", events)
+
+            # A closed binding drops out of the HUD's active-executor
+            # projection on the next read -- the same behavior a multi-unit
+            # fanout's finished units already have, proving the single-unit
+            # path was never given a separate, unreviewed HUD lifecycle.
+            payload = read_omh_hud(paths.omh_home, paths.hermes_home)
+            self.assertEqual(payload["maestro"]["rows"], [])
+
     def test_failed_unit_also_closes_its_maestro_binding(self) -> None:
         with TemporaryDirectory() as tmp:
             paths, repo, sha, contract = self._setup(tmp)

@@ -350,6 +350,7 @@ def build_coding_delegation_payload(
     prefer_direct_coding_handoff: bool = True,
     preserve_preferred_workflow: bool = False,
     force_coding_handoff: bool = False,
+    explicit_owner_choice: bool = False,
     capability_snapshot_directory: Path | None = None,
     project_root: str | Path | None = None,
     governance_default: str = "not_applicable",
@@ -393,6 +394,7 @@ def build_coding_delegation_payload(
                 prefer_direct_coding_handoff=prefer_direct_coding_handoff,
                 preserve_preferred_workflow=preserve_preferred_workflow,
                 force_coding_handoff=force_coding_handoff,
+                explicit_owner_choice=explicit_owner_choice,
                 capability_snapshot_directory=capability_snapshot_directory,
                 project_root=project_root,
                 governance_default=governance_default,
@@ -430,6 +432,7 @@ def build_coding_delegation_payload(
         prefer_direct_coding_handoff=prefer_direct_coding_handoff,
         preserve_preferred_workflow=preserve_preferred_workflow,
         force_coding_handoff=force_coding_handoff,
+        explicit_owner_choice=explicit_owner_choice,
         capability_snapshot_directory=capability_snapshot_directory,
         project_root=project_root,
         governance_default=governance_default,
@@ -460,6 +463,7 @@ def _build_coding_delegation_payload_native(
     prefer_direct_coding_handoff: bool = True,
     preserve_preferred_workflow: bool = False,
     force_coding_handoff: bool = False,
+    explicit_owner_choice: bool = False,
     capability_snapshot_directory: Path | None = None,
     project_root: str | Path | None = None,
     governance_default: str = "not_applicable",
@@ -525,7 +529,17 @@ def _build_coding_delegation_payload_native(
         )
     ):
         workflow = "plan"
-    action = _action_for(intent, score, workflow, named_coding_agent=_names_sole_external_executor(message))
+    action = _action_for(
+        intent,
+        score,
+        workflow,
+        named_coding_agent=_names_sole_external_executor(message),
+        # Only a genuine per-run owner choice overrides the genre veto -- a
+        # resolved default (`executor_target == "choose"`) never counts, and
+        # callers are required to have already excluded default/learned
+        # resolutions before setting this flag.
+        explicit_owner_choice=explicit_owner_choice and executor_target != "choose",
+    )
     if force_coding_handoff and action == "clarify" and intent in {"coding", "review"} and score >= 4:
         action = "delegate"
     if action == "fallback":
@@ -1490,7 +1504,14 @@ def _coding_status_request_applies(lowered: str, workflow: str) -> bool:
     )
 
 
-def _action_for(intent: str, score: int, workflow: str, *, named_coding_agent: bool = False) -> str:
+def _action_for(
+    intent: str,
+    score: int,
+    workflow: str,
+    *,
+    named_coding_agent: bool = False,
+    explicit_owner_choice: bool = False,
+) -> str:
     if intent == "unknown":
         return "fallback"
     if workflow in _RETAINED_HERMES_WORKFLOWS:
@@ -1511,6 +1532,26 @@ def _action_for(intent: str, score: int, workflow: str, *, named_coding_agent: b
         # status/diagnostic questions about the executor, so no separate score
         # floor is needed here.
         if named_coding_agent and intent == "coding":
+            return "delegate"
+        if explicit_owner_choice and intent != "coding" and score >= 4:
+            # The operator (or an agent acting on the operator's own
+            # owner-naming message) explicitly chose the external coding
+            # owner for this run -- via a CLI `--executor` flag or the
+            # maestro engine invocation, never a resolved default. That
+            # choice is the run's own opt-in and makes the request the
+            # chosen owner's to run regardless of task GENRE: a research
+            # brief with a named owner is not vetoed for being "research,
+            # not coding." Scoped to `intent != "coding"` (the actual genre
+            # mismatch this exists to fix) so a message that already reads
+            # as coding-shaped, but too thin to name a real task ("fix
+            # maybe"), keeps clarifying even with an explicit owner --
+            # `named_coding_agent` above is the one thing strong enough to
+            # override that case, and only when the owner is named in the
+            # message itself. Callers thread this only from genuine per-run
+            # provenance (see `_resolved_executor_for_delegate` and the
+            # wrapper's `explicit`/`message_mention` executor-resolution
+            # sources); a caller-default or learned-preference resolution
+            # never sets it.
             return "delegate"
         return "clarify"
     if score < 4:

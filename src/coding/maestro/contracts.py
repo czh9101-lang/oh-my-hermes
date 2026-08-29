@@ -42,6 +42,12 @@ class ExternalHandoffRequest:
     prefer_direct_coding_handoff: bool = True
     preserve_preferred_workflow: bool = False
     force_coding_handoff: bool = False
+    # True only when the caller already knows the coding owner was named for
+    # THIS run -- a CLI `--executor` flag or a message that names the sole
+    # owner, never a resolved default or learned preference. Bypasses the
+    # intent-genre veto so an explicitly-delegated brief is the owner's to
+    # run regardless of task genre.
+    explicit_owner_choice: bool = False
     capability_snapshot_directory: Path | None = None
     project_root: str | Path | None = None
     governance_default: str = "not_applicable"

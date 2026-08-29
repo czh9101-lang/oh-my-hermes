@@ -4360,6 +4360,13 @@ def _attach_coding_owner_handoff(
         executor_target=resolved_executor_target,
         main_agent_model=main_agent_model,
         force_coding_handoff=True,
+        # Narrower than `force_coding_handoff` above (which this call always
+        # sets): only "explicit" (an operator/CLI-named owner) and
+        # "message_mention" (named in the chat message text) are a genuine
+        # per-run owner choice. "setup_profile", "learned_owner_preference",
+        # and "caller_default" are resolved defaults, never a choice for this
+        # run, so they never bypass the intent-genre veto.
+        explicit_owner_choice=executor_resolution.get("source") in {"explicit", "message_mention"},
         preferred_workflow=str(route_payload.get("selected_skill", "")),
         preferred_workflow_score=_intish(route_payload.get("score", 0)),
         preserve_preferred_workflow=resolved_executor_target == "hermes",

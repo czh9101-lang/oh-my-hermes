@@ -306,7 +306,15 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # budget); model-setup gained one closing-step quality-bar line pointing a
 # finished model-setup pass at the same maestro-delegation setup surfaces
 # (+907 chars total); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 744973
+# 744973 -> 745687: maestro's quality bar and safety rules gained the
+# fanout-dispatch single-run entry point (`omh coding run`): the mode-statement
+# rule and the "only executing surface" rule now name it alongside `omh coding
+# fanout dispatch`, and a new rule states that an explicitly-named owner
+# proceeds automatically through compose, readiness/permission probes, and
+# dispatch with no second confirmation (the no-owner/ambiguous-owner
+# ask-and-stop rule is unchanged) (+714 chars); warranted growth for a real
+# new dispatch surface and its automatic-flow contract.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 745687
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

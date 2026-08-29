@@ -67,6 +67,17 @@ def cmd_coding_delegate(args: argparse.Namespace) -> int:
         plan_artifact: dict[str, object] | None = None
         context_pack = _context_pack(args)
         executor_target = _resolved_executor_for_delegate(args)
+        # `--explicit-owner-choice` is a SEPARATE, deliberate flag from
+        # `--executor`: bare `--executor` alone stays exactly as conservative
+        # as before (see `test_grounded_operator_examples_keep_non_coding_handoffs_conservative`
+        # and `test_runtime_delegation_status_does_not_dispatch_fallback_or_clarify`
+        # in tests/test_cli.py, both of which pass `--executor` for a
+        # generic or ambiguous message and require `clarify`). A caller sets
+        # this flag only when it already knows the coding owner was named
+        # for THIS run -- an agent relaying the operator's own owner-naming
+        # chat message, or an explicit maestro-engine choice -- never as a
+        # wrapper/script default.
+        explicit_owner_choice = bool(getattr(args, "explicit_owner_choice", False))
         if args.from_plan:
             if args.event_json or args.stdin or args.message:
                 raise ValueError("coding delegate --from-plan cannot be combined with --stdin, --event-json, or message arguments")
@@ -104,6 +115,7 @@ def cmd_coding_delegate(args: argparse.Namespace) -> int:
             message_context_mode="full" if args.include_message_full else "bounded",
             source_metadata=source_metadata,
             executor_target=executor_target,
+            explicit_owner_choice=explicit_owner_choice,
             context_pack=context_pack,
             memory_recall_pack=memory_recall_pack,
             plan_artifact=plan_artifact,
@@ -1710,6 +1722,124 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
     return 130 if summary.get("interrupted") else 0
 
 
+def cmd_coding_run(args: argparse.Namespace) -> int:
+    """Build a one-unit fanout contract for an explicitly-chosen owner and dispatch it now.
+
+    This is the single-invocation surface for the case the fanout ceremony was
+    never built for: one already-chosen coding owner running one prepared
+    task. It drives the SAME `build_fanout_contract` / `write_fanout_contract`
+    / `dispatch_fanout` machinery `omh coding fanout prepare` and `omh coding
+    fanout dispatch` already use -- never a parallel spawn implementation --
+    so per-unit worktree isolation, the executor-progress HUD binding, model
+    routing and the dispatch-model-preference fallback, session/thread id
+    capture, unit result intake, and the run summary all apply unchanged.
+
+    Dispatch stays explicit per invocation and never merges; running this
+    command against an explicitly-named owner IS the opt-in -- there is no
+    separate propose/freeze step to expose to a caller that already knows
+    what it wants run.
+    """
+    import subprocess as _subprocess
+
+    from ..coding.executor_capability_snapshots import (
+        ExecutorCapabilitySnapshotError,
+        resolved_executor_capability_snapshot,
+    )
+    from ..coding.fanout import build_fanout_contract
+    from ..coding.fanout_artifacts import write_fanout_contract
+    from ..coding.fanout_contracts import FanoutContractError
+    from ..coding.fanout_dispatch import dispatch_fanout
+    from ..coding.model_routing import EXECUTOR_MODEL_OPTIONS
+    from ..coding.parallelism_policy import read_parallelism_policy, resolve_fanout_concurrency
+
+    paths = _paths(args)
+    if args.goal_file:
+        goal_text = (
+            sys.stdin.read()
+            if args.goal_file == "-"
+            else Path(args.goal_file).expanduser().read_text(encoding="utf-8")
+        )
+    else:
+        goal_text = " ".join(args.goal or []).strip()
+    if not goal_text.strip():
+        raise OmhError("coding run requires a goal: pass --goal words, or --goal-file")
+
+    unit: dict[str, object] = {
+        "unit_id": args.unit_id,
+        "title": " ".join(goal_text.split())[:120],
+        "owner": args.owner,
+        "file_scope": args.file_scope or ["."],
+        "depends_on": [],
+    }
+    needs_inventory = args.owner not in EXECUTOR_MODEL_OPTIONS
+    try:
+        capability_snapshots = {
+            args.owner: resolved_executor_capability_snapshot(
+                args.owner,
+                paths.executor_capability_snapshots_dir,
+            )
+        }
+        contract = build_fanout_contract(
+            goal_text,
+            [unit],
+            source=args.source,
+            source_metadata=_explicit_source_metadata(args),
+            local_catalogs=_local_model_catalogs() if needs_inventory else {},
+            capability_snapshots=capability_snapshots,
+        )
+    except (FanoutContractError, ExecutorCapabilitySnapshotError) as exc:
+        raise OmhError(str(exc)) from exc
+    # Recorded unconditionally, unlike `fanout prepare --record`: the whole
+    # point of this command is to run the unit now, and `omh coding fanout
+    # show/brief/reap` need the contract on disk to project it afterward.
+    contract = write_fanout_contract(paths, contract)
+
+    repo_root = Path(args.repo_root).expanduser().resolve()
+    resolved = _subprocess.run(
+        ["git", "rev-parse", args.base_ref],
+        cwd=str(repo_root),
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    if resolved.returncode != 0:
+        raise OmhError(f"could not resolve --base-ref {args.base_ref!r} in {repo_root}: {resolved.stderr.strip()}")
+    parallelism = read_parallelism_policy(paths)
+    concurrency = resolve_fanout_concurrency(parallelism, None)
+    try:
+        summary = dispatch_fanout(
+            paths,
+            contract,
+            goal_text=goal_text,
+            repo_root=repo_root,
+            base_sha=resolved.stdout.strip(),
+            source_ref=args.base_ref,
+            concurrency=concurrency["applied"],
+            per_owner_lanes=parallelism["per_owner"],
+            concurrency_policy=concurrency,
+            timeout=args.timeout,
+            dry_run=bool(args.dry_run),
+            run_verification=bool(args.run_verification),
+        )
+    except ValueError as exc:
+        raise OmhError(str(exc)) from exc
+    payload = {
+        "schema_version": "coding_run/v1",
+        "fanout_id": contract.get("fanout_id", ""),
+        "unit_id": args.unit_id,
+        "owner": args.owner,
+        "isolation": "isolated_worktree",
+        "dispatch": summary,
+        "claim_boundary": (
+            "This drives the same fanout propose/freeze/dispatch machinery as "
+            "`omh coding fanout dispatch`, scoped to one unit. Dispatch is not "
+            "review, CI, or merge evidence, and it never merges."
+        ),
+    }
+    _print_json(payload)
+    return 130 if summary.get("interrupted") else 0
+
+
 def cmd_coding_fanout_reap(args: argparse.Namespace) -> int:
     from ..coding.fanout_reap import reap_fanout_units
 
@@ -2060,6 +2190,42 @@ def _add_coding_commands(sub) -> None:
     )
     fanout_reap.set_defaults(func=cmd_coding_fanout_reap)
 
+    run_cmd = coding_sub.add_parser(
+        "run",
+        help=(
+            "Single-invocation bridge: build a one-unit fanout contract for an explicitly "
+            "chosen coding owner and dispatch it immediately (isolated worktree, never merges; "
+            "running this command against a named owner is itself the opt-in)."
+        ),
+    )
+    run_cmd.add_argument(
+        "--owner",
+        choices=EXECUTOR_PROFILES,
+        required=True,
+        help="The coding owner explicitly chosen for this run.",
+    )
+    run_goal = run_cmd.add_mutually_exclusive_group(required=True)
+    run_goal.add_argument("--goal", nargs="+", help="Task/prompt text for this run.")
+    run_goal.add_argument("--goal-file", help="File with the task/prompt text, or '-' for stdin.")
+    run_cmd.add_argument("--unit-id", default="run", help="Unit id for the frozen contract (lowercase slug).")
+    run_cmd.add_argument(
+        "--file-scope",
+        action="append",
+        default=None,
+        help="Boundary path(s) this run may touch (repeatable); defaults to the whole repo ('.').",
+    )
+    run_cmd.add_argument("--source", choices=CHAT_SOURCES, default="generic")
+    run_cmd.add_argument("--repo-root", default=".", help="Repository the unit worktree branches from.")
+    run_cmd.add_argument("--base-ref", default="HEAD", help="Ref resolved once to a SHA the unit branch starts from.")
+    run_cmd.add_argument("--timeout", type=int, default=1800, help="Subprocess timeout in seconds.")
+    run_cmd.add_argument("--dry-run", action="store_true", help="Resolve readiness, argv, and worktree paths; spawn nothing.")
+    run_cmd.add_argument(
+        "--run-verification",
+        action="store_true",
+        help="Run the unit's contract verification_commands in its worktree after the process exits 0.",
+    )
+    run_cmd.set_defaults(func=cmd_coding_run)
+
     model_route = coding_sub.add_parser(
         "model-route",
         help="Resolve the prepared model route for one executor profile (metadata only, never invocation).",
@@ -2176,6 +2342,16 @@ def _add_coding_commands(sub) -> None:
         choices=CODING_EXECUTOR_TARGETS,
         default=None,
         help="Optional coding executor target for wrapper handoff payloads.",
+    )
+    delegate.add_argument(
+        "--explicit-owner-choice",
+        action="store_true",
+        help=(
+            "The coding owner was named explicitly for THIS run (an operator/agent choice, "
+            "never a caller default) -- bypasses the retained-workflow genre veto for a "
+            "non-coding-shaped brief when combined with --executor; a bare --executor alone "
+            "never does."
+        ),
     )
     delegate.add_argument("--stdin", action="store_true", help="Read the raw coding task from stdin.")
     delegate.add_argument(

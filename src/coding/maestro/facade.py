@@ -66,6 +66,7 @@ def build_external_handoff(request: ExternalHandoffRequest) -> PreparedExternalH
         prefer_direct_coding_handoff=request.prefer_direct_coding_handoff,
         preserve_preferred_workflow=request.preserve_preferred_workflow,
         force_coding_handoff=request.force_coding_handoff,
+        explicit_owner_choice=request.explicit_owner_choice,
         capability_snapshot_directory=request.capability_snapshot_directory,
         project_root=request.project_root,
         governance_default=request.governance_default,

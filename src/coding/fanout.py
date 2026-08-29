@@ -181,10 +181,8 @@ def _frozen_safety_profile_revision() -> str:
 
 
 def validate_fanout_units(units: Sequence[Mapping[str, object]]) -> None:
-    if len(units) < 2:
-        raise FanoutContractError(
-            "fanout requires at least two units; route a single unit through `omh coding delegate` instead"
-        )
+    if len(units) < 1:
+        raise FanoutContractError("fanout requires at least one unit")
     seen: set[str] = set()
     known = {str(unit.get("unit_id", "")) for unit in units}
     for unit in units:
@@ -349,12 +347,22 @@ def is_degenerate_single_unit(units: Sequence[Mapping[str, object]]) -> bool:
 
 
 def single_unit_redirect(units: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    """The redirect `fanout prepare` returns instead of freezing a one-unit split.
+
+    The heavy propose/freeze ceremony this subcommand runs is built for
+    multi-unit splits with boundary and dependency structure to validate; one
+    unit has none of that. `omh coding run` builds and dispatches a one-unit
+    fanout contract in a single call through the same engine, so it is the
+    executing surface this redirect now points at (`omh coding delegate`
+    still prepares a non-dispatchable handoff record for owner selection, but
+    never spawns anything).
+    """
     unit = dict(units[0]) if units else {}
     return {
         "schema_version": "fanout_redirect/v1",
-        "status": "redirect_to_delegate",
+        "status": "redirect_to_run",
         "reason": "A single work unit does not need a fanout contract.",
-        "next_command": "omh coding delegate",
+        "next_command": "omh coding run",
         "unit_id": str(unit.get("unit_id", "")),
     }
 

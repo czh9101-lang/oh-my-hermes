@@ -168,6 +168,99 @@ class NamedCodingAgentDelegationTests(unittest.TestCase):
         self.assertEqual(payload["delegation"]["action"], "clarify")
 
 
+class ExplicitOwnerChoiceOverrideTests(unittest.TestCase):
+    """An explicitly-chosen owner's brief is theirs to run regardless of genre.
+
+    A research-shaped brief with no coding verb or file reference used to be
+    refused for an already-named external owner (the retained-workflow
+    clarify branch in `_action_for`), even when the operator passed
+    `--executor claude-code` or the message named the owner. The override is
+    additive and gated narrowly on genuine per-run provenance:
+    `explicit_owner_choice=True` bypasses the genre veto only when combined
+    with a real external `executor_target`; a resolved default
+    (`executor_target="choose"`) never bypasses it, matching the "never a
+    default" boundary in AGENTS.md.
+    """
+
+    # Deliberately free of every `coding_terms_for_intent("coding")` token
+    # (add/build/change/code/fix/implement/modify/write/...) so `_intent_for`
+    # falls through to the catalog's own "planning" intent for this workflow
+    # instead of accidentally reading as coding-shaped -- the override is
+    # scoped to `intent != "coding"`, so a fixture that collides with a
+    # coding term would silently stop exercising it.
+    _RESEARCH_BRIEF = (
+        "Research the best pricing model for our SaaS tier and summarize the findings for the team."
+    )
+
+    def test_explicit_owner_choice_delegates_a_research_brief(self) -> None:
+        payload = build_coding_delegation_payload(
+            self._RESEARCH_BRIEF,
+            executor_target="claude-code",
+            explicit_owner_choice=True,
+        )
+        delegation = payload["delegation"]
+        # Confirms the fixture actually exercises the genre-mismatch branch:
+        # a coding-term collision would silently intent="coding" this and
+        # route through a different (unrelated) branch instead.
+        self.assertEqual(delegation["intent"], "planning")
+        self.assertEqual(delegation["action"], "delegate")
+        self.assertEqual(payload["work_owner_mode"], "prompt_only_handoff")
+        # The prepared RECORD stays exactly as honest as before: still
+        # non-dispatchable. The override changes classification, never the
+        # dispatchability contract.
+        self.assertFalse(payload["dispatchable"])
+
+    def test_explicit_owner_choice_delegates_a_research_brief_to_codex(self) -> None:
+        payload = build_coding_delegation_payload(
+            self._RESEARCH_BRIEF,
+            executor_target="codex",
+            explicit_owner_choice=True,
+        )
+        delegation = payload["delegation"]
+        self.assertEqual(delegation["action"], "delegate")
+        self.assertEqual(payload["work_owner_mode"], "external_executor")
+        self.assertTrue(payload["dispatchable"])
+
+    def test_implicit_research_brief_still_clarifies(self) -> None:
+        """Negative control: no owner named, same brief -- unchanged refusal."""
+        payload = build_coding_delegation_payload(self._RESEARCH_BRIEF)
+        self.assertEqual(payload["delegation"]["action"], "clarify")
+
+    def test_named_owner_without_the_explicit_flag_still_clarifies(self) -> None:
+        """Negative control: an executor_target alone is not per-run provenance."""
+        payload = build_coding_delegation_payload(
+            self._RESEARCH_BRIEF,
+            executor_target="claude-code",
+        )
+        self.assertEqual(payload["delegation"]["action"], "clarify")
+
+    def test_a_resolved_default_never_bypasses_the_veto(self) -> None:
+        """Negative control: `executor_target="choose"` is never a choice for this run."""
+        payload = build_coding_delegation_payload(
+            self._RESEARCH_BRIEF,
+            executor_target="choose",
+            explicit_owner_choice=True,
+        )
+        self.assertEqual(payload["delegation"]["action"], "clarify")
+
+    def test_a_thin_coding_shaped_message_still_clarifies_even_with_an_explicit_owner(self) -> None:
+        """Negative control pinning `tests/test_cli.py`'s
+        `test_runtime_delegation_status_does_not_dispatch_fallback_or_clarify`:
+        a message that already reads as coding-shaped (`intent == "coding"`)
+        but is too thin to name a real task keeps clarifying even with an
+        explicit owner -- the override is scoped to the genre mismatch
+        (`intent != "coding"`), not to every retained-workflow clarify.
+        """
+        payload = build_coding_delegation_payload(
+            "fix maybe",
+            executor_target="codex",
+            explicit_owner_choice=True,
+        )
+        delegation = payload["delegation"]
+        self.assertEqual(delegation["intent"], "coding")
+        self.assertEqual(delegation["action"], "clarify")
+
+
 class CategoryPropagationTests(unittest.TestCase):
     def test_natural_ulw_category_reaches_root_and_hermes_handoff(self) -> None:
         payload = build_coding_delegation_payload(
