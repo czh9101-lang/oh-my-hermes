@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final, Iterable, Mapping
 
+from ..coding.executor_auth_signals import (
+    AUTH_SIGNAL_PROFILES,
+    auth_signal_for_profile,
+    last_limit_signal_for_profile,
+)
 from ..codex_progress import summarize_codex_jsonl_text
 from ..goal_ledger import build_goal_completion_gate, read_goal_ledger
 from ..hashutil import sha256_text
@@ -45,6 +50,61 @@ EXECUTOR_LOOP_CAPABILITY_SCHEMA = "executor_loop_capability/v1"
 LOOP_CYCLE_NARRATION_SCHEMA = "loop_cycle_narration/v1"
 LOOP_INVOCATION_SCHEMA = "loop_invocation/v1"
 LOOP_CONSTRAINT_ASSESSMENT_SCHEMA = "loop_constraint_assessment/v1"
+LOOP_STOP_LADDER_SCHEMA = "loop_stop_ladder/v1"
+
+# The ordered stop ladder evaluated before a tick advances. The tuple order IS
+# the ladder: assess_loop_stop_ladder walks it top to bottom, the first rung
+# that fires stops the tick, and every rung below it is recorded
+# `not_evaluated` rather than `clear` - a lower rung that was never consulted
+# must never read as a rung that passed. Per-rung rationale:
+# - Rung 1, explicit_cancel: a human already said stop. Nothing below it can
+#   outrank an explicit decision, and a cancelled linked goal refuses every
+#   ledger mutation anyway, so any work the loop prepared under it is
+#   unrecordable by construction.
+# - Rung 2, rate_limit_signal: an observed limit-shaped dispatch failure for
+#   the active executor profile. Above auth because a rate limit is the
+#   cheaper, more common, and self-clearing of the two, and because a loop
+#   that keeps iterating into a limit window is the single most expensive
+#   failure mode a persistence loop has.
+# - Rung 3, auth_failure_signal: no local login marker for the executor
+#   profile this tick is about to hand work to. Gated on the planned action
+#   being executor_dispatch on purpose - `executor_auth_signals` states that
+#   markers rank candidates and never veto one, because an API-key or
+#   environment-token install legitimately reads `absent`. This rung does not
+#   veto a candidate: it stops the loop at the one moment its own next act is
+#   to hand work to a CLI for which omh can see no login at all.
+# - Rung 4, no_progress_cap: the loop is running but nothing is being written
+#   down. Last because it is the only rung whose evidence is the loop's own
+#   history rather than an external signal, so it must not pre-empt a stop
+#   whose cause is already known and named.
+LOOP_STOP_REASONS: Final[tuple[str, ...]] = (
+    "explicit_cancel",
+    "rate_limit_signal",
+    "auth_failure_signal",
+    "no_progress_cap",
+)
+LOOP_STOP_RUNG_STATES: Final[tuple[str, ...]] = ("clear", "fired", "not_applicable", "not_evaluated")
+# Two consecutive ticks that write no new goal-ledger record. Keyed to records
+# written rather than ticks attempted: attempts are what a stuck loop produces
+# in abundance, so counting them measures the symptom instead of the progress.
+LOOP_NO_PROGRESS_TICK_CAP: Final[int] = 2
+LOOP_STOP_LADDER_CLAIM_BOUNDARY: Final[str] = (
+    "A stop-ladder verdict is local policy over already-recorded signals. A stop is a stop with a "
+    "named reason - it is not a completion, a failure verdict on the goal, provider quota truth, or "
+    "evidence that any provider rejected a request."
+)
+_LOOP_STOP_NEXT_ACTIONS: Final[dict[str, str]] = {
+    "explicit_cancel": "show_loop_status",
+    "rate_limit_signal": "wait_for_executor_limit_reset",
+    "auth_failure_signal": "confirm_executor_login_or_retarget",
+    "no_progress_cap": "record_goal_blocker_for_stuck_loop",
+}
+_LOOP_STOP_EVIDENCE_SOURCES: Final[dict[str, str]] = {
+    "explicit_cancel": "goal_ledger.status",
+    "rate_limit_signal": "executor_auth_signals.last_limit_signal_for_profile",
+    "auth_failure_signal": "executor_auth_signals.auth_signal_for_profile",
+    "no_progress_cap": "runtime.no_progress_ticks",
+}
 
 _INNER_TIER_EXPECTED_SIGNAL = (
     "Cheap focused evidence such as syntax, compile, schema validation, command smoke, "
@@ -924,6 +984,253 @@ def update_loop_permission(
     )
 
 
+def goal_ledger_entry_count(goal: Mapping[str, Any] | None) -> int:
+    """Records written into one goal ledger: checkpoints, blockers, quality gates.
+
+    The three lists a loop can actually append to. Acceptance criteria are
+    declared at creation and only change status, so counting them would make a
+    loop that writes nothing look like a loop that started well.
+    """
+    if not isinstance(goal, Mapping):
+        return 0
+    total = 0
+    for key in ("checkpoints", "blockers", "quality_gates"):
+        entries = goal.get(key)
+        if isinstance(entries, list):
+            total += len(entries)
+    return total
+
+
+def assess_loop_stop_ladder(
+    cycle: dict[str, Any],
+    *,
+    planned_action: str = "",
+    goal_linked: bool = False,
+    goal_status: str = "",
+    ledger_entry_count: int = 0,
+    limit_signal: Mapping[str, Any] | None = None,
+    auth_signal: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Walk LOOP_STOP_REASONS in order and name the first rung that stops the tick.
+
+    Pure policy over signals the caller already read, in the idiom
+    `build_account_authorization` uses: the ladder never probes, so the same
+    verdict is reproducible from a recorded snapshot. `read_loop_stop_ladder`
+    is the reading half.
+    """
+    runtime = _runtime_state(cycle.get("runtime"))
+    executor_profile = _preferred_executor(_dict_value(cycle, "authority_envelope"))
+    previous_count = int(runtime["ledger_entry_count"])
+    if not goal_linked:
+        no_progress_ticks = 0
+    elif ledger_entry_count > previous_count:
+        no_progress_ticks = 0
+    else:
+        no_progress_ticks = int(runtime["no_progress_ticks"]) + 1
+
+    verdicts: list[tuple[str, str]] = [
+        _stop_rung_explicit_cancel(goal_linked, goal_status),
+        _stop_rung_rate_limit(executor_profile, limit_signal),
+        _stop_rung_auth_failure(executor_profile, planned_action, auth_signal),
+        _stop_rung_no_progress(goal_linked, no_progress_ticks),
+    ]
+
+    rungs: list[dict[str, Any]] = []
+    stop_reason = "none"
+    stop_rung = 0
+    detail = "No stop-ladder rung fired; the tick may advance."
+    for index, reason in enumerate(LOOP_STOP_REASONS):
+        state, rung_detail = verdicts[index]
+        if stop_reason != "none":
+            state, rung_detail = "not_evaluated", "A higher rung already stopped this tick."
+        rungs.append(
+            {
+                "rung": index + 1,
+                "reason": reason,
+                "state": state,
+                "detail": rung_detail,
+                "evidence_source": _LOOP_STOP_EVIDENCE_SOURCES[reason],
+            }
+        )
+        if state == "fired":
+            stop_reason = reason
+            stop_rung = index + 1
+            detail = rung_detail
+    return {
+        "schema_version": LOOP_STOP_LADDER_SCHEMA,
+        "loop_id": str(cycle.get("loop_id", "")),
+        "stop": stop_reason != "none",
+        "stop_reason": stop_reason,
+        "stop_rung": stop_rung,
+        "executor_profile": executor_profile,
+        "planned_action": str(planned_action),
+        "detail": detail,
+        "next_action": _LOOP_STOP_NEXT_ACTIONS.get(stop_reason, ""),
+        "ledger_entry_count": ledger_entry_count if goal_linked else previous_count,
+        "no_progress_ticks": no_progress_ticks,
+        "no_progress_cap": LOOP_NO_PROGRESS_TICK_CAP,
+        "rungs": rungs,
+        "claim_boundary": LOOP_STOP_LADDER_CLAIM_BOUNDARY,
+    }
+
+
+def _stop_rung_explicit_cancel(goal_linked: bool, goal_status: str) -> tuple[str, str]:
+    if not goal_linked:
+        return ("not_applicable", "This loop carries no linked goal ledger to cancel.")
+    if goal_status == "cancelled":
+        return (
+            "fired",
+            "The linked goal ledger is cancelled; it refuses every checkpoint, blocker, and gate.",
+        )
+    return ("clear", f"The linked goal ledger status is `{goal_status or 'unknown'}`.")
+
+
+def _stop_rung_rate_limit(executor_profile: str, limit_signal: Mapping[str, Any] | None) -> tuple[str, str]:
+    if executor_profile not in AUTH_SIGNAL_PROFILES:
+        return ("not_applicable", f"`{executor_profile}` records no limit signals.")
+    if not isinstance(limit_signal, Mapping) or not limit_signal:
+        return ("clear", f"No limit-shaped dispatch failure is recorded for `{executor_profile}`.")
+    if limit_signal.get("stale") is not False:
+        # Missing freshness means the stored stamp did not parse. Same
+        # direction `_stamp_age_seconds` takes: what cannot be shown fresh is
+        # not treated as fresh, so an unreadable stamp never fabricates a stop.
+        return ("clear", "The recorded limit signal is stale or undatable, so it is history rather than state.")
+    label = str(limit_signal.get("pattern_label", "") or "unlabelled")
+    return (
+        "fired",
+        f"A `{label}` limit-shaped dispatch failure was observed for `{executor_profile}` "
+        "inside the freshness horizon.",
+    )
+
+
+def _stop_rung_auth_failure(
+    executor_profile: str, planned_action: str, auth_signal: Mapping[str, Any] | None
+) -> tuple[str, str]:
+    if planned_action != "executor_dispatch":
+        return (
+            "not_applicable",
+            f"This tick plans `{planned_action or 'nothing'}`, so it hands no work to an executor CLI.",
+        )
+    marker = str((auth_signal or {}).get("login_marker", "") or "")
+    if marker in {"", "not_applicable"}:
+        return ("not_applicable", f"`{executor_profile}` carries no local login marker to read.")
+    if marker == "absent":
+        return (
+            "fired",
+            f"This tick would dispatch to `{executor_profile}` and omh sees no local login marker for it. "
+            "An absent marker is file presence only - an API-key or environment-token install reads absent "
+            "while working, and no provider rejected anything here.",
+        )
+    return ("clear", f"The `{executor_profile}` login marker reads `{marker}`.")
+
+
+def _stop_rung_no_progress(goal_linked: bool, no_progress_ticks: int) -> tuple[str, str]:
+    if not goal_linked:
+        return ("not_applicable", "Without a linked goal ledger there are no records to key progress to.")
+    if no_progress_ticks >= LOOP_NO_PROGRESS_TICK_CAP:
+        return (
+            "fired",
+            f"{no_progress_ticks} consecutive ticks wrote no new goal-ledger record "
+            f"(cap {LOOP_NO_PROGRESS_TICK_CAP}).",
+        )
+    return (
+        "clear",
+        f"{no_progress_ticks} consecutive ticks without a new goal-ledger record, under the "
+        f"{LOOP_NO_PROGRESS_TICK_CAP} cap.",
+    )
+
+
+def read_loop_stop_ladder(
+    paths: OmhPaths,
+    cycle: dict[str, Any],
+    *,
+    planned_action: str = "",
+    home: Path | None = None,
+) -> dict[str, Any]:
+    """Read the ladder's inputs, then hand them to the pure assessment.
+
+    The auth marker is read only when the tick plans `executor_dispatch`: the
+    marker file is the potentially large `~/.claude.json`, and a research or
+    planning tick has no executor CLI to confirm.
+    """
+    linked_goal_id = str(cycle.get("linked_goal_id", ""))
+    goal_linked = False
+    goal_status = ""
+    ledger_entry_count = 0
+    if linked_goal_id:
+        try:
+            goal = read_goal_ledger(paths, linked_goal_id)
+        except (FileNotFoundError, ValueError):
+            # An unreadable link is a setup gap, not a stop reason. Reporting
+            # it as `not_applicable` keeps the ladder from inventing a cancel
+            # or a stuck marker out of a missing file.
+            goal = None
+        if isinstance(goal, dict):
+            goal_linked = True
+            goal_status = str(goal.get("status", ""))
+            ledger_entry_count = goal_ledger_entry_count(goal)
+    executor_profile = _preferred_executor(_dict_value(cycle, "authority_envelope"))
+    limit_signal: dict[str, object] = {}
+    if executor_profile in AUTH_SIGNAL_PROFILES:
+        limit_signal = last_limit_signal_for_profile(paths, executor_profile)
+    auth_signal: dict[str, object] = {}
+    if planned_action == "executor_dispatch":
+        auth_signal = auth_signal_for_profile(executor_profile, home=home)
+    return assess_loop_stop_ladder(
+        cycle,
+        planned_action=planned_action,
+        goal_linked=goal_linked,
+        goal_status=goal_status,
+        ledger_entry_count=ledger_entry_count,
+        limit_signal=limit_signal,
+        auth_signal=auth_signal,
+    )
+
+
+def validate_loop_stop_ladder(value: object) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(value, dict):
+        return ["stop_ladder must be an object"]
+    if value.get("schema_version") != LOOP_STOP_LADDER_SCHEMA:
+        errors.append(f"stop_ladder.schema_version must be {LOOP_STOP_LADDER_SCHEMA}")
+    stop_reason = str(value.get("stop_reason", ""))
+    if stop_reason not in set(LOOP_STOP_REASONS) | {"none"}:
+        errors.append("stop_ladder.stop_reason is unsupported")
+    if value.get("stop") is not (stop_reason != "none"):
+        errors.append("stop_ladder.stop must agree with stop_reason")
+    for key in ("no_progress_ticks", "no_progress_cap", "stop_rung", "ledger_entry_count"):
+        count = value.get(key)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            errors.append(f"stop_ladder.{key} must be a non-negative integer")
+    rungs = value.get("rungs")
+    if not isinstance(rungs, list) or len(rungs) != len(LOOP_STOP_REASONS):
+        errors.append(f"stop_ladder.rungs must hold {len(LOOP_STOP_REASONS)} entries")
+        return errors
+    for index, rung in enumerate(rungs):
+        if not isinstance(rung, dict):
+            errors.append(f"stop_ladder.rungs[{index}] must be an object")
+            continue
+        if rung.get("reason") != LOOP_STOP_REASONS[index]:
+            errors.append(f"stop_ladder.rungs[{index}].reason must be {LOOP_STOP_REASONS[index]}")
+        if rung.get("rung") != index + 1:
+            errors.append(f"stop_ladder.rungs[{index}].rung must be {index + 1}")
+        if rung.get("state") not in LOOP_STOP_RUNG_STATES:
+            errors.append(f"stop_ladder.rungs[{index}].state is unsupported")
+    return errors
+
+
+def _loop_stuck_marker(ladder: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "recorded_at": utc_now(),
+        "reason": str(ladder["stop_reason"]),
+        "no_progress_ticks": int(ladder["no_progress_ticks"]),
+        "ledger_entry_count": int(ladder["ledger_entry_count"]),
+        "summary": str(ladder["detail"]),
+        "next_action": str(ladder["next_action"]),
+        "claim_boundary": LOOP_STOP_LADDER_CLAIM_BOUNDARY,
+    }
+
+
 def tick_loop_runtime(
     paths: OmhPaths,
     loop_id: str,
@@ -939,6 +1246,7 @@ def tick_loop_runtime(
     note: str = "",
     expected_revision: int | None = None,
     mutation_id: str | None = None,
+    home: Path | None = None,
 ) -> dict[str, Any]:
     def mutate(cycle: dict[str, Any]) -> dict[str, Any]:
         # The plan and the queue item are derived from the cycle read inside
@@ -946,6 +1254,26 @@ def tick_loop_runtime(
         # computed against permissions or a queue that had already moved on.
         envelope = _dict_value(cycle, "authority_envelope")
         plan = _next_runtime_plan(cycle, envelope)
+        # The stop ladder runs before the queue item is built, on the plan this
+        # tick would actually carry out. A stop appends nothing, raises no
+        # heartbeat, and names its own reason: a refused tick has to be
+        # distinguishable from a tick that ran and found nothing to do.
+        ladder = read_loop_stop_ladder(
+            paths, cycle, planned_action=str(plan["planned_action"]), home=home
+        )
+        if ladder["stop"]:
+            runtime = _runtime_state(cycle.get("runtime"))
+            runtime["ledger_entry_count"] = int(ladder["ledger_entry_count"])
+            runtime["no_progress_ticks"] = int(ladder["no_progress_ticks"])
+            runtime["last_stop_reason"] = str(ladder["stop_reason"])
+            runtime["last_stop_at"] = utc_now()
+            runtime["stop_ladder"] = ladder
+            if ladder["stop_reason"] == "no_progress_cap":
+                runtime["stuck_marker"] = _loop_stuck_marker(ladder)
+            cycle["runtime"] = runtime
+            cycle["next_action"] = str(ladder["next_action"])
+            cycle["updated_at"] = utc_now()
+            return cycle
         queue_item = _runtime_queue_item(
             cycle,
             envelope,
@@ -966,6 +1294,11 @@ def tick_loop_runtime(
         runtime["last_trigger"] = queue_item["trigger"]
         runtime["last_planned_action"] = queue_item["planned_action"]
         runtime["last_queue_id"] = queue_item["queue_id"]
+        runtime["ledger_entry_count"] = int(ladder["ledger_entry_count"])
+        runtime["no_progress_ticks"] = int(ladder["no_progress_ticks"])
+        runtime["last_stop_reason"] = "none"
+        runtime["stop_ladder"] = ladder
+        runtime.pop("stuck_marker", None)
         runtime.setdefault("queue", []).append(queue_item)
         cycle["runtime"] = runtime
         if queue_item["status"] == "prepared_not_observed":
@@ -1050,6 +1383,13 @@ def run_loop_once_result(paths: OmhPaths, loop_id: str) -> dict[str, Any]:
         advanced = created_queue_count > 0
         outcome = "created_tick" if advanced else "no_eligible_tick"
         queue_id = str(queue[-1].get("queue_id", "")) if queue else ""
+    stop_reason = str(runtime.get("last_stop_reason", "") or "none")
+    if outcome == "no_eligible_tick" and stop_reason != "none":
+        # A refused tick reports the ladder rung that refused it. Collapsing it
+        # into no_eligible_tick would report a stop as an absence of work.
+        # `pending_queue_exists` keeps its own name: that call never ticked, so
+        # the stored reason belongs to an earlier tick, not to this one.
+        outcome = "stopped_by_ladder"
     return {
         "loop": cycle,
         "run_once": {
@@ -1060,6 +1400,7 @@ def run_loop_once_result(paths: OmhPaths, loop_id: str) -> dict[str, Any]:
             "created_queue_count": created_queue_count,
             "queue_id": queue_id,
             "pending_queue_count": sum(1 for item in queue if item.get("status") == "prepared_not_observed"),
+            "stop_reason": stop_reason,
             "next_action": str(cycle.get("next_action", "")),
             "claim_boundary": _runtime_claim_boundary(),
         },
@@ -2430,20 +2771,36 @@ def _runtime_state(value: object | None = None) -> dict[str, Any]:
     queue = runtime.get("queue", [])
     if not isinstance(queue, list):
         queue = []
-    try:
-        heartbeat_count = int(runtime.get("heartbeat_count", 0) or 0)
-    except (TypeError, ValueError):
-        heartbeat_count = 0
-    return {
+    state: dict[str, Any] = {
         "schema_version": LOOP_RUNTIME_SCHEMA,
-        "heartbeat_count": heartbeat_count,
+        "heartbeat_count": _non_negative_count(runtime.get("heartbeat_count")),
         "last_tick_at": str(runtime.get("last_tick_at", "")),
         "last_trigger": _safe_summary(str(runtime.get("last_trigger", "")), limit=80),
         "last_planned_action": _safe_summary(str(runtime.get("last_planned_action", "")), limit=80),
         "last_queue_id": _safe_summary(str(runtime.get("last_queue_id", "")), limit=140),
+        # Stop-ladder accounting. `ledger_entry_count` is the goal-ledger record
+        # count observed at the last tick, and `no_progress_ticks` counts the
+        # consecutive ticks since that number last moved - the pair is what
+        # keys the cap to records written rather than ticks attempted.
+        "ledger_entry_count": _non_negative_count(runtime.get("ledger_entry_count")),
+        "no_progress_ticks": _non_negative_count(runtime.get("no_progress_ticks")),
+        "last_stop_reason": str(runtime.get("last_stop_reason", "") or "none"),
+        "last_stop_at": str(runtime.get("last_stop_at", "")),
         "queue": queue,
         "claim_boundary": _runtime_claim_boundary(),
     }
+    for key in ("stop_ladder", "stuck_marker"):
+        carried = runtime.get(key)
+        if isinstance(carried, dict):
+            state[key] = carried
+    return state
+
+
+def _non_negative_count(value: object) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _next_runtime_plan(cycle: dict[str, Any], envelope: dict[str, Any]) -> dict[str, str]:
@@ -2814,6 +3171,9 @@ def _runtime_summary(cycle: dict[str, Any]) -> dict[str, Any]:
         "last_queue_reason": str(last.get("reason", "")),
         "blocked_queue_count": sum(1 for item in queue if item.get("status") in {"blocked", "blocked_by_permission", "blocked_by_wait"}),
         "observed_queue_count": sum(1 for item in queue if item.get("status") == "observed" and item.get("observed") is True),
+        "last_stop_reason": runtime["last_stop_reason"],
+        "no_progress_ticks": runtime["no_progress_ticks"],
+        "no_progress_cap": LOOP_NO_PROGRESS_TICK_CAP,
         "claim_boundary": _runtime_claim_boundary(),
     }
 
@@ -3357,6 +3717,16 @@ def _validate_runtime(runtime: object) -> list[str]:
         return ["runtime must be an object"]
     if runtime.get("schema_version") != LOOP_RUNTIME_SCHEMA:
         errors.append(f"runtime.schema_version must be {LOOP_RUNTIME_SCHEMA}")
+    for key in ("heartbeat_count", "ledger_entry_count", "no_progress_ticks"):
+        count = runtime.get(key)
+        if count is not None and (isinstance(count, bool) or not isinstance(count, int) or count < 0):
+            errors.append(f"runtime.{key} must be a non-negative integer")
+    last_stop_reason = runtime.get("last_stop_reason")
+    if last_stop_reason is not None and last_stop_reason not in set(LOOP_STOP_REASONS) | {"none", ""}:
+        errors.append("runtime.last_stop_reason is unsupported")
+    stop_ladder = runtime.get("stop_ladder")
+    if stop_ladder is not None:
+        errors.extend(f"runtime.{error}" for error in validate_loop_stop_ladder(stop_ladder))
     queue = runtime.get("queue", [])
     if not isinstance(queue, list):
         errors.append("runtime.queue must be a list")
