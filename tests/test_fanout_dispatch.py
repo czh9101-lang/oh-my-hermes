@@ -3505,6 +3505,170 @@ class FanoutSpawnGuardTests(unittest.TestCase):
         self.assertEqual(payload["refusal_reason"], "fanout_depth_exceeded")
 
 
+def _flaky_runner(*, failures: dict[str, list[str]], write_units: set[str] | None = None):
+    """A fake agent whose per-unit stdout is scripted attempt by attempt.
+
+    `failures[unit_id]` is the tail each successive FAILED attempt reports; the
+    list running out means the next attempt succeeds. Units in `write_units`
+    write a real file into their worktree on every attempt, which is what makes
+    the replay-safety predicate observe a side effect.
+    """
+    attempts: dict[str, int] = {}
+
+    def owns(prompt: str, unit_id: str) -> bool:
+        return f"agent/{unit_id} in the current worktree" in prompt
+
+    def runner(argv, **kwargs):
+        if argv[0] == "git":
+            return subprocess.run(argv, **kwargs)
+        prompt = " ".join(argv)
+        cwd = Path(str(kwargs.get("cwd", ".")))
+        for unit_id, tails in failures.items():
+            if not owns(prompt, unit_id):
+                continue
+            index = attempts.get(unit_id, 0)
+            attempts[unit_id] = index + 1
+            if unit_id in (write_units or set()):
+                (cwd / f"{unit_id}_partial.py").write_text("value = 1\n", encoding="utf-8")
+            if index < len(tails):
+                return _FakeCompleted(1, tails[index])
+            return _FakeCompleted(0, "done")
+        return _FakeCompleted(0, "done")
+
+    runner.attempts = attempts
+    return runner
+
+
+class FanoutUnitRetryTests(unittest.TestCase):
+    """The retry policy driven through the real dispatch engine.
+
+    No sleeps: the clock and the random source are injected, so a delay is
+    asserted by the value handed to the recorder rather than by waiting for it.
+    """
+
+    _ONE_UNIT = [{"unit_id": "core", "title": "Core work", "owner": "codex", "file_scope": ["src/core/"]}]
+
+    def _setup(self, tmp: str):
+        root = Path(tmp)
+        paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+        repo, sha = _make_repo(root)
+        contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, self._ONE_UNIT))
+        return paths, repo, sha, contract
+
+    def _dispatch(self, paths, repo, sha, contract, runner, delays, **kwargs):
+        return dispatch_fanout(
+            paths,
+            contract,
+            goal_text=_GOAL,
+            repo_root=repo,
+            base_sha=sha,
+            runner=runner,
+            readiness=_ready,
+            # Floor jitter, so the asserted delay is an exact number rather
+            # than a range.
+            rng=lambda: 0.0,
+            sleep=delays.append,
+            **kwargs,
+        )
+
+    def test_a_transient_failure_on_a_clean_worktree_is_retried_with_backoff(self) -> None:
+        delays: list[float] = []
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            runner = _flaky_runner(failures={"core": ["Error: socket hang up", "http 503 service unavailable"]})
+            summary = self._dispatch(paths, repo, sha, contract, runner, delays)
+        entry = summary["units"][0]
+        self.assertEqual(entry["status"], "completed")
+        self.assertEqual(runner.attempts["core"], 3)
+        self.assertEqual(entry["retry"]["attempts"], 3)
+        self.assertEqual(
+            [row["decision"] for row in entry["retry"]["decisions"]], ["retrying", "retrying"]
+        )
+        self.assertEqual(
+            [row["failure_class"] for row in entry["retry"]["decisions"]],
+            ["transient_transport", "transient_transport"],
+        )
+        # min(2 * 2^(n-1), 30) at the 75% jitter floor.
+        self.assertEqual(delays, [1.5, 3.0])
+
+    def test_a_transient_failure_with_observed_side_effects_is_surfaced_not_retried(self) -> None:
+        # The predicate this whole policy exists for: the failure is retryable,
+        # the budget is untouched, and the unit is still not re-run because a
+        # re-dispatch would destroy the work its worktree already holds.
+        delays: list[float] = []
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            runner = _flaky_runner(
+                failures={"core": ["Error: socket hang up"]}, write_units={"core"}
+            )
+            summary = self._dispatch(paths, repo, sha, contract, runner, delays)
+        entry = summary["units"][0]
+        self.assertEqual(entry["status"], "failed")
+        self.assertEqual(runner.attempts["core"], 1)
+        self.assertEqual(delays, [])
+        self.assertTrue(entry["retry_blocked_by_side_effects"])
+        decision = entry["retry"]["decisions"][0]
+        self.assertEqual(decision["decision"], "surfaced_for_continuation")
+        self.assertTrue(decision["retryable"])
+        self.assertEqual(decision["replay_verdict"], "observed_side_effects")
+        # Surfaced through the path an operator already reads, not a new one.
+        self.assertEqual(entry["recovery"]["outcome"], "recovery_available")
+        self.assertEqual(summary["recovery_available_units"], ["core"])
+
+    def test_a_real_test_failure_is_never_retried(self) -> None:
+        delays: list[float] = []
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            runner = _flaky_runner(failures={"core": ["FAILED (failures=2, errors=0)", "done"]})
+            summary = self._dispatch(paths, repo, sha, contract, runner, delays)
+        entry = summary["units"][0]
+        self.assertEqual(entry["status"], "failed")
+        # One attempt, even though a second one would have "succeeded": a
+        # terminal failure is the unit's answer, not a transport blip.
+        self.assertEqual(runner.attempts["core"], 1)
+        self.assertEqual(delays, [])
+        self.assertEqual(entry["retry"]["final_decision"], "terminal")
+        self.assertNotIn("retry_blocked_by_side_effects", entry)
+
+    def test_retries_are_bounded_and_the_exhaustion_is_recorded(self) -> None:
+        delays: list[float] = []
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            runner = _flaky_runner(failures={"core": ["socket hang up"] * 6})
+            summary = self._dispatch(paths, repo, sha, contract, runner, delays, max_retries=2)
+        entry = summary["units"][0]
+        self.assertEqual(entry["status"], "failed")
+        self.assertEqual(runner.attempts["core"], 3)
+        self.assertEqual(len(delays), 2)
+        self.assertEqual(entry["retry"]["final_decision"], "retries_exhausted")
+
+    def test_a_first_try_success_carries_no_retry_record(self) -> None:
+        # The negative control: the presence of the block is itself the signal,
+        # so an untroubled dispatch must not grow one.
+        delays: list[float] = []
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            summary = self._dispatch(paths, repo, sha, contract, _agent_runner(), delays)
+        entry = summary["units"][0]
+        self.assertEqual(entry["status"], "completed")
+        self.assertNotIn("retry", entry)
+        self.assertEqual(delays, [])
+
+    def test_a_retry_spends_the_run_spawn_budget(self) -> None:
+        # A retry is a real spawn. Left uncounted it would let one flaky unit
+        # walk past the ceiling the operator set.
+        delays: list[float] = []
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            runner = _flaky_runner(failures={"core": ["socket hang up"] * 4})
+            summary = self._dispatch(
+                paths, repo, sha, contract, runner, delays, spawn_ceiling=2, max_retries=3
+            )
+        self.assertEqual(runner.attempts["core"], 2)
+        self.assertEqual(summary["spawn_guard"]["spawns_claimed"], 2)
+        self.assertEqual(summary["units"][0]["retry"]["final_decision"], "spawn_ceiling_reached")
+
+
 def _live_output_runner(snapshots_by_unit: dict[str, list[str]]):
     """Like `_agent_runner`, but opts into the mid-run stdout seam: for a
     matching unit it hands the dispatch's `on_output` hook each snapshot in
@@ -3682,6 +3846,7 @@ class FanoutDispatchLiveUnitTelemetryTests(unittest.TestCase):
         # Absent counts stay absent, and bools never read as counts.
         self.assertIsNone(_reported_unit_tokens({}))
         self.assertIsNone(_reported_unit_tokens({"tokens_total": True}))
+
 
 if __name__ == "__main__":
     unittest.main()
