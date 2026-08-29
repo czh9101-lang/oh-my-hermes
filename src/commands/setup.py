@@ -23,6 +23,12 @@ from ..version import __version__
 from ..command_path import COMMAND_PATH_MISSING_NEXT_ACTION, inspect_omh_command_path
 from ..capabilities.registry import capability_summary
 from ..capabilities.skills import skill_capabilities
+from ..coding.executor_auth_signals import auth_signal_for_profile
+from ..coding.executors import EXTERNAL_CLI_PROFILES
+from ..coding.fanout_dispatch import (
+    DISPATCH_MODEL_PREFERENCE_SCHEMA_VERSION,
+    dispatch_model_preferences_path,
+)
 from ..coding.hermes_model_config import (
     apply_hermes_model_config,
     inspect_hermes_model_config,
@@ -2270,6 +2276,94 @@ def _ask_tui_identity_choice(args: argparse.Namespace, paths: OmhPaths, language
     )
 
 
+# Binary name per external CLI profile, read-only PATH lookup only -- never
+# invoked. Mirrors `_COMMANDS` in `coding/executor_readiness.py` (that table
+# is module-private and also carries runtime-only profiles setup never asks
+# about); kept as its own small map so this file does not reach into another
+# module's private state for two literals that are unlikely to drift.
+_EXTERNAL_CLI_BINARY_BY_PROFILE: dict[str, str] = {"claude-code": "claude", "codex": "codex"}
+
+
+def _detect_external_cli_profiles(home: Path | None = None) -> dict[str, dict[str, object]]:
+    """Read-only, no-invoke detection for the two external coding CLIs.
+
+    A binary on PATH plus a local auth/config marker is `prepared` evidence,
+    never `observed` (READINESS_EVIDENCE_RULE in `coding/coding_delegation.py`):
+    this never runs either CLI, so "detected" means the binary resolves on
+    PATH, and the login marker only refines the printed label.
+    """
+    detected: dict[str, dict[str, object]] = {}
+    for profile in EXTERNAL_CLI_PROFILES:
+        command = _EXTERNAL_CLI_BINARY_BY_PROFILE[profile]
+        signal = auth_signal_for_profile(profile, home=home)
+        detected[profile] = {
+            "binary_present": shutil.which(command) is not None,
+            "login_marker": signal.get("login_marker", "unknown"),
+        }
+    return detected
+
+
+def _ask_maestro_delegation_choice(args: argparse.Namespace, paths: OmhPaths, language: str) -> None:
+    """Ask, at most once, whether to set up the maestro coding-delegation lane.
+
+    Only reached from the interactive wizard (`_setup_should_interact`), so
+    `--yes`, `--no-interactive`, `--json`, and non-TTY runs never see this
+    question and never mutate anything here. No CLI is ever invoked to answer
+    it -- see `_detect_external_cli_profiles`. A "no" or no detected CLI
+    changes nothing and prints nothing persistent.
+    """
+    if hasattr(args, "_maestro_delegation_choice"):
+        return
+    detected = _detect_external_cli_profiles()
+    detected_profiles = [profile for profile in EXTERNAL_CLI_PROFILES if detected[profile]["binary_present"]]
+    if not detected_profiles:
+        args._maestro_delegation_choice = None
+        return
+    accepted = _ask_yes_no(
+        tr(language, "maestro_delegation_prompt", clis=", ".join(detected_profiles)),
+        default=False,
+        use_color=_use_color(),
+        note=tr(language, "maestro_delegation_note"),
+        language=language,
+    )
+    args._maestro_delegation_choice = accepted
+    if not accepted:
+        return
+    seed_result = _seed_dispatch_model_preferences_result(paths, dry_run=False)
+    print(tr(language, "maestro_delegation_seeded", path=str(seed_result.get("path", ""))))
+    print(tr(language, "maestro_delegation_pointers"))
+
+
+def _seed_dispatch_model_preferences_result(paths: OmhPaths, *, dry_run: bool) -> dict[str, object]:
+    """Seed the optional per-owner dispatch-model preference document, if absent.
+
+    This document is otherwise operator-edited only -- nothing else seeds or
+    writes it automatically. An explicit "yes" to the maestro-delegation setup
+    question is the only caller, and only when the file does not already
+    exist; an existing file, however it got there, is never overwritten.
+    """
+    path = dispatch_model_preferences_path(paths.omh_home)
+    payload: dict[str, object] = {
+        "schema_version": "dispatch_model_preference_seed/v1",
+        "path": str(path),
+        "dry_run": bool(dry_run),
+    }
+    if path.exists():
+        payload["status"] = "already_present"
+        return payload
+    if dry_run:
+        payload["status"] = "dry_run"
+        return payload
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = {
+        "schema_version": DISPATCH_MODEL_PREFERENCE_SCHEMA_VERSION,
+        "profiles": {},
+    }
+    atomic_write_text(path, json.dumps(document, indent=2, sort_keys=True) + "\n")
+    payload["status"] = "seeded"
+    return payload
+
+
 def _print_model_preview_review(payload: dict[str, object], *, language: str) -> None:
     print_model_preview_review(
         payload,
@@ -2379,6 +2473,7 @@ def _run_setup_wizard(args: argparse.Namespace, paths, language: str) -> None:
         print(f"{tr(language, 'hermes_config')}: {_color(str(paths.hermes_config_path), '36', use_color)} ({tr(language, 'status_will_create')})")
     print(f"{tr(language, 'managed_skills')}: {_color(str(paths.skills_dir), '36', use_color)}")
     _ask_tui_identity_choice(args, paths, language)
+    _ask_maestro_delegation_choice(args, paths, language)
 
     if not args.profile and not getattr(args, "default_executor", None):
         # No upfront coding-owner question: safety-first records "choose" so

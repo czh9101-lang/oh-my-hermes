@@ -407,6 +407,64 @@ preference, an agent/maintainer may run `omh coding model-routing reset
 --route-family <id>`; this does not alter aliases, recommendations, providers,
 or credentials.
 
+### External coding CLI handoff (claude-code / codex)
+
+**Audience: agents and maintainers.** Normal users describe the goal to
+Hermes in chat; the commands below are the backend surface that lets Hermes
+(or an operator) discover and configure the Maestro external-handoff stack for
+Claude Code and Codex. Discovery and configuration here are read-only and
+never spend a token; the one exception is the readiness probe in step 2,
+which runs a bounded no-op call against the CLI itself to earn the word
+"observed." Order follows `EXTERNAL_CLI_PROFILES` in
+`src/coding/executors.py`: claude-code first, then codex — neither is the
+implicit default.
+
+1. **Install and authenticate the CLI yourself.** OMH does not install, log
+   in, or hold credentials for either CLI — that stays each CLI's own
+   installer and login flow, run once outside OMH.
+2. **Verify with a readiness probe, not a file check.**
+   ```sh
+   omh coding executor-readiness --executor claude-code
+   omh coding executor-readiness --executor codex
+   ```
+   This is the honest evidence boundary the router itself holds
+   (`READINESS_EVIDENCE_RULE`): *"A binary on PATH and an auth file are not
+   run evidence."* A binary on `PATH` plus a local auth/config marker is
+   `prepared`, not `observed` — the probe actually invokes the CLI (a
+   `--version` or no-op call) and reads its configured model before calling it
+   ready. Treat a `prepared`-only result as not yet ready.
+3. **Optional: set a dispatch-model preference.** `omh coding fanout
+   dispatch` spawns each CLI headlessly and falls back to a `--model` value
+   only when a unit's prepared handoff routed no model at all. That fallback
+   is operator-edited only — nothing seeds or writes it automatically — at
+   `~/.omh/routing/dispatch-models.json`
+   (`omh_dispatch_model_preferences/v1`, a `profiles` map from owner to model
+   string, e.g. `{"schema_version": "omh_dispatch_model_preferences/v1",
+   "profiles": {"claude-code": "opus"}}`). Neither profile ships a shipped
+   default; `"opus"` is documented here only as the recommended claude-code
+   value for an operator whose account is entitled to that tier. See
+   `docs/FANOUT.md` (Dispatch-model preference) for the full schema.
+4. **Check what the CLI's own skills contribute to a handoff prompt.**
+   ```sh
+   omh coding executor-skills --profile claude-code
+   omh coding executor-skills --profile codex
+   ```
+   Read-only and metadata-only: it reports the profile's locally *declared*
+   skills (name, invocation string, role) that the Maestro lane arranges into
+   a composed prompt — a discovered `SKILL.md` is evidence the file exists,
+   never evidence the receiving agent loads or honors it.
+5. **Know where routing sends the delegation intent.** Once a coding-owner
+   choice for a run is explicit, the handoff is composed by the `ulw-maestro`
+   skill — the skill-facing surface of the Maestro lane
+   (`src/coding/maestro/`) described under "Hermes-native and Maestro
+   ownership" above. `omh coding capability-snapshot` freezes the per-owner
+   evidence a fanout dispatch requires before it will run, and `omh coding
+   fanout dispatch` remains the one sanctioned execution surface: explicit
+   per invocation, local-only, and it never merges (see Fanout: Parallel
+   Split, Dispatch Bridge, and Merge Contract in `docs/FANOUT.md`).
+   `omh_delegate_route`'s `~/.omh/routing/route-provenance.json` records only
+   prepared routes, never dispatch or execution evidence.
+
 ## Windows
 
 OMH runs natively on Windows. The full test suite is an enforcing CI gate on

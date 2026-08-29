@@ -296,7 +296,17 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # 744060 -> 744066: `ask`'s retired bare `claude`/`gemini` trigger tokens (two
 # short entries) were replaced by a slightly longer explanatory comment in the
 # same trigger tuple (+6 chars net); warranted, one-time bookkeeping.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 744066
+# 744066 -> 744973: maestro gained one final-checklist note naming the
+# post-dispatch result-integration procedure -- collect each unit's
+# `fanout_unit_result/v1` evidence, verify the integrated combination (not
+# just each unit alone), and report merged/unmerged per unit, since merging
+# stays an explicit operator/reviewing-agent action dispatch never performs
+# (the full collect/verify/merge/report walkthrough lives in
+# `references/executor-prompt-composition.md`, outside this always-loaded
+# budget); model-setup gained one closing-step quality-bar line pointing a
+# finished model-setup pass at the same maestro-delegation setup surfaces
+# (+907 chars total); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 744973
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
