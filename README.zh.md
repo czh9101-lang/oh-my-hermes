@@ -226,6 +226,8 @@ $ cat ~/.omh/routing/model-chains.json
 
 请让 Hermes **设置我的模型**，以查看或更改这些推荐。它们是可编辑的偏好，不是 benchmark 结果。详细的设置、fallback、provider 与所有权规则见 [Guided Model Setup](docs/INSTALLATION.md#guided-model-setup)。
 
+编码委派的 dispatch（`omh coding run` / `omh coding fanout dispatch`）读取的是与本文件分开、由 operator 自行设置的 preference：要在 Claude Code 上使用最强档位，在 `~/.omh/routing/dispatch-models.json` 中设置 `"claude-code": "opus"`，或在单次 `omh coding run` 调用中传入 `--model opus`；`codex` 在确认账号可用的 model id 后同样设置即可。完整的 schema 与优先级顺序见 `docs/FANOUT.md`（Dispatch-model preference）。
+
 <details>
 <summary><strong>也可以把以下内容粘贴给 Hermes 或其他 coding agent</strong></summary>
 
@@ -255,7 +257,7 @@ Do not replace the resolved SHA with main. Execute the pinned protocol's OS-appr
 | ⚡ `ulw-research` | 翻真实代码和网页做调研，留下出处，可疑就核实。 |
 | ⚡ `ulw-plan` | 做一份评审过的计划：比过方案、点明风险、定好完成标准。 |
 | ⚡ `ulw-work` | 把已确认的计划放进互不碰同一文件的并行车道执行。 |
-| ⚡ `ulw-maestro` | 把工作交给你选择的编码 CLI，并用它自己安装的技能组装提示词。 |
+| ⚡ `ulw-maestro` | 在 Claude Code 或 Codex 上运行委派的任务 —— 提示词由该 CLI 自身安装的技能组装而成，实时启动，附带仪表行和可操控的会话。 |
 | ⚡ `ulw-loop` | 计划 → 实现 → 评审，循环到目标真正通过。 |
 | ⚡ `ulw-qa` | 故意用狠场景攻击，坏哪修哪。 |
 | ⚡ `ulw-perf` | 先测出真正慢和贵的地方，再逐条修热路径。 |

@@ -800,10 +800,13 @@ _ULW_ENGINE_PRESENTATIONS: dict[str, dict[str, object]] = {
         "site_cues": ("ultrawork", "parallel work"),
     },
     "maestro": {
-        "summary": "Hands a chosen coding CLI the work with a prompt built from its own installed skills.",
+        "summary": (
+            "Runs a delegated task on Claude Code or Codex — prompt composed from the CLI's own "
+            "installed skills, spawned live with a dock row and a steerable session."
+        ),
         "site_tag": "External handoff",
         "site_title": "Maestro",
-        "site_body": "Prepares the handoff for the coding agent you chose.",
+        "site_body": "Runs the work on Claude Code or Codex, spawned live with a steerable session.",
         "site_cues": ("ulw-maestro", "coding handoff"),
     },
     "ralph": {

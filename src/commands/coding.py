@@ -1734,6 +1734,12 @@ def cmd_coding_run(args: argparse.Namespace) -> int:
     routing and the dispatch-model-preference fallback, session/thread id
     capture, unit result intake, and the run summary all apply unchanged.
 
+    `--model`/`--effort` are this run's own explicit choice: precedence is
+    `--model` flag > routed handoff model > dispatch-models.json preference >
+    the executor CLI's own default. The value passes through to the spawned
+    CLI unvalidated; an unknown model surfaces as that CLI's own observed
+    exit failure, never a silent fallback.
+
     Dispatch stays explicit per invocation and never merges; running this
     command against an explicitly-named owner IS the opt-in -- there is no
     separate propose/freeze step to expose to a caller that already knows
@@ -1770,6 +1776,17 @@ def cmd_coding_run(args: argparse.Namespace) -> int:
         "owner": args.owner,
         "file_scope": args.file_scope or ["."],
         "depends_on": [],
+        # An explicit `--model` here routes through the same
+        # `model_route_for_unit` machinery `omh coding fanout prepare` units
+        # already use (see `_contract_unit` in fanout.py): it becomes the
+        # unit's frozen `handoff.model_route`, which the dispatch-model
+        # preference in dispatch_fanout only ever fills a GAP in, never
+        # overrides. That gives the documented precedence for free: this
+        # flag > dispatch-models.json preference > the executor CLI's own
+        # default -- passthrough, unvalidated, exactly like `model-route
+        # --model`.
+        "model": args.model or "",
+        "reasoning_effort": args.effort or "",
     }
     needs_inventory = args.owner not in EXECUTOR_MODEL_OPTIONS
     try:
@@ -2224,6 +2241,16 @@ def _add_coding_commands(sub) -> None:
         action="store_true",
         help="Run the unit's contract verification_commands in its worktree after the process exits 0.",
     )
+    run_cmd.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "Explicit model id for this run; always passes through unvalidated. Precedence: this flag "
+            "beats a routed handoff model, which beats the dispatch-models.json preference, which beats "
+            "the executor CLI's own default."
+        ),
+    )
+    run_cmd.add_argument("--effort", default=None, help="Reasoning effort for profiles that support one.")
     run_cmd.set_defaults(func=cmd_coding_run)
 
     model_route = coding_sub.add_parser(

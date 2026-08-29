@@ -58,6 +58,12 @@ intake, and the run summary. The contract is written under
 `~/.omh/coding/fanout/<id>/` exactly like `fanout prepare --record`, so
 `omh coding fanout show/brief/reap` all work against it afterward.
 
+`--model`/`--effort` set this one run's own model choice, unvalidated
+passthrough to the spawned CLI; precedence is `--model` flag > routed
+handoff model > `dispatch-models.json` preference > the executor CLI's own
+default, and the value the flag resolves to is what the HUD row and the
+recorded unit result both show.
+
 Dispatch stays explicit per invocation and never merges: running this
 command against an explicitly-named owner IS the opt-in — there is no
 separate confirmation step to add on top of an operator (or an agent acting
@@ -66,7 +72,7 @@ on the operator's own owner-naming message) typing the command.
 ```sh
 omh coding run --owner claude-code --goal "Research pricing approaches and write a summary." \
   [--goal-file prompt.md] [--unit-id run] [--file-scope . ] [--repo-root .] [--base-ref HEAD] \
-  [--timeout 1800] [--dry-run] [--run-verification]
+  [--timeout 1800] [--dry-run] [--run-verification] [--model opus] [--effort high]
 ```
 
 The claude-code dispatch template's `--allowedTools "Bash(git add:*),Bash(git
@@ -357,7 +363,9 @@ Rules:
   names a per-owner `--model` value dispatch uses only when a unit's prepared
   handoff routed no model at all — it never overrides a resolved
   `coding_model_route/v2`/`v1`, and a frozen `choice_required` route still
-  fails closed before this is ever read. Editing the JSON file directly is
+  fails closed before this is ever read. Full precedence for `omh coding
+  run`: its own `--model` flag > a routed handoff model > this preference
+  file > the executor CLI's own default. Editing the JSON file directly is
   the supported surface; there is no dedicated CLI editor. No profile ships a
   default: a model an account is not entitled to is an observed exit failure
   with no fallback walk, so an unset entry — meaning the spawned CLI's own
@@ -569,7 +577,8 @@ omh coding fanout dispatch <fanout-id> --goal-file goal.txt \
   [--unit <id> ...] [--dry-run] [--run-verification]
 omh coding run --owner <profile> (--goal <words...> | --goal-file goal.txt) \
   [--unit-id run] [--file-scope <path> ...] [--repo-root .] [--base-ref HEAD] \
-  [--timeout 1800] [--dry-run] [--run-verification] [--source discord]
+  [--timeout 1800] [--dry-run] [--run-verification] [--source discord] \
+  [--model <id>] [--effort <level>]
   # single-invocation: builds and dispatches a one-unit fanout_contract/v2 through
   # the same engine as `fanout dispatch`; see "Single-run entry" above
 omh coding fanout reap <fanout-id> [--pid N ...]  # terminate marker-named

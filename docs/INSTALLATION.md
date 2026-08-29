@@ -293,7 +293,9 @@ seeds or writes it automatically — and applies to a different surface:
 `omh coding fanout dispatch`'s `--model` fallback for a spawned agent CLI,
 used only when a unit's prepared handoff routed no model at all. See
 `docs/FANOUT.md` (Dispatch-model preference) for the schema and the
-`claude-code`/`codex` behavior it fills the gap for.
+`claude-code`/`codex` behavior it fills the gap for; on `omh coding run` it
+sits below that command's own `--model` flag and any routed handoff model,
+above only the executor CLI's own default.
 
 ### Reaching models through a provider
 
@@ -442,8 +444,10 @@ implicit default.
    string, e.g. `{"schema_version": "omh_dispatch_model_preferences/v1",
    "profiles": {"claude-code": "opus"}}`). Neither profile ships a shipped
    default; `"opus"` is documented here only as the recommended claude-code
-   value for an operator whose account is entitled to that tier. See
-   `docs/FANOUT.md` (Dispatch-model preference) for the full schema.
+   value for an operator whose account is entitled to that tier. A one-off
+   run can skip this file entirely with `omh coding run --model <id>`, which
+   always outranks it. See `docs/FANOUT.md` (Dispatch-model preference) for
+   the full schema.
 4. **Check what the CLI's own skills contribute to a handoff prompt.**
    ```sh
    omh coding executor-skills --profile claude-code

@@ -1410,6 +1410,155 @@ class FanoutCliTests(unittest.TestCase):
             self.assertEqual(status, 0, stderr)
             self.assertEqual(json.loads(stdout)["fanout_id"], payload["fanout_id"])
 
+    def test_coding_run_model_flag_beats_the_dispatch_model_preference(self) -> None:
+        """`--model`/`--effort` on `omh coding run` route through the same
+        `model_route_for_unit` machinery a `fanout prepare` unit's own
+        `model`/`reasoning_effort` fields already use, so the flag becomes
+        the unit's frozen `handoff.model_route` and the dispatch-model
+        preference (`_dispatch_model_preference`) only ever fills a gap the
+        flag left, never overrides it -- same claude shim pattern as
+        `test_coding_run_builds_and_dispatches_one_unit_through_the_fanout_bridge`,
+        the CLI path hits the live readiness probe even under `--dry-run`."""
+        import os
+        import sys
+
+        from omh.coding.fanout_dispatch import dispatch_model_preferences_path
+        from omh.system.local_store import atomic_write_json
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            if sys.platform == "win32":
+                (bin_dir / "claude.bat").write_text(
+                    "@echo off\r\necho claude shim 0.0.0\r\n", encoding="utf-8"
+                )
+            else:
+                shim = bin_dir / "claude"
+                shim.write_text("#!/bin/sh\necho 'claude shim 0.0.0'\n", encoding="utf-8")
+                shim.chmod(0o755)
+            shim_path = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+            self.enterContext(mock.patch.dict(os.environ, {"PATH": shim_path}))
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"],
+                cwd=str(repo),
+                check=True,
+            )
+            omh_home = root / ".omh"
+            config_path = dispatch_model_preferences_path(omh_home)
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(
+                config_path,
+                {
+                    "schema_version": "omh_dispatch_model_preferences/v1",
+                    "profiles": {"claude-code": "preference-model-should-lose"},
+                },
+            )
+            base = ["--omh-home", str(omh_home), "--hermes-home", str(root / ".hermes")]
+
+            status, stdout, stderr = run_cli(
+                base
+                + [
+                    "coding",
+                    "run",
+                    "--owner",
+                    "claude-code",
+                    "--goal",
+                    "Summarize",
+                    "pricing",
+                    "notes.",
+                    "--repo-root",
+                    str(repo),
+                    "--model",
+                    "opus",
+                    "--effort",
+                    "high",
+                    "--dry-run",
+                ]
+            )
+
+            self.assertEqual(status, 0, stderr)
+            unit_result = json.loads(stdout)["dispatch"]["units"][0]
+            self.assertEqual(unit_result["model"], "opus")
+            self.assertIn("--model", unit_result["planned_argv"])
+            self.assertIn("opus", unit_result["planned_argv"])
+            self.assertIn("--effort", unit_result["planned_argv"])
+            self.assertIn("high", unit_result["planned_argv"])
+            self.assertNotIn("preference-model-should-lose", unit_result["planned_argv"])
+
+    def test_coding_run_model_flag_reaches_codex_argv(self) -> None:
+        """Mirrors the claude-code case for codex's own option shape
+        (`--model` then `--config model_reasoning_effort=<effort>`, inserted
+        before the prompt) -- the run CLI test path hits the live readiness
+        probe, so this ships its own `codex` shim on PATH rather than
+        assuming the machine has one."""
+        import os
+        import sys
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            if sys.platform == "win32":
+                (bin_dir / "codex.bat").write_text(
+                    "@echo off\r\necho codex shim 0.0.0\r\n", encoding="utf-8"
+                )
+            else:
+                shim = bin_dir / "codex"
+                shim.write_text("#!/bin/sh\necho 'codex shim 0.0.0'\n", encoding="utf-8")
+                shim.chmod(0o755)
+            shim_path = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+            self.enterContext(mock.patch.dict(os.environ, {"PATH": shim_path}))
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"],
+                cwd=str(repo),
+                check=True,
+            )
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+
+            status, stdout, stderr = run_cli(
+                base
+                + [
+                    "coding",
+                    "run",
+                    "--owner",
+                    "codex",
+                    "--goal",
+                    "Summarize",
+                    "pricing",
+                    "notes.",
+                    "--repo-root",
+                    str(repo),
+                    "--model",
+                    "gpt-codex-max",
+                    "--effort",
+                    "high",
+                    "--dry-run",
+                ]
+            )
+
+            self.assertEqual(status, 0, stderr)
+            unit_result = json.loads(stdout)["dispatch"]["units"][0]
+            self.assertEqual(unit_result["model"], "gpt-codex-max")
+            self.assertEqual(
+                unit_result["planned_argv"],
+                [
+                    "codex",
+                    "exec",
+                    "--model",
+                    "gpt-codex-max",
+                    "--config",
+                    "model_reasoning_effort=high",
+                    "<unit prompt>",
+                ],
+            )
+
     def test_coding_run_requires_a_goal(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
