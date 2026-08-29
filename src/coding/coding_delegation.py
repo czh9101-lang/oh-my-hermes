@@ -26,6 +26,7 @@ from ..coding_contracts import (
 from .action_gate import evaluate_action_gate, split_handoff_safety_contract
 from .prompting import build_executor_prompting_contract, render_executor_prompt_sections
 from ..executors import (
+    EXTERNAL_CLI_PROFILES,
     HERMES_CODING_TEAM_WRAPPER_ACTIONS,
     denied_executor_selection,
     executor_label,
@@ -297,6 +298,18 @@ _CODING_STATUS_REQUEST_TERMS = (
     "완료",
     "끝났",
 )
+# Same status/diagnostic vocabulary as `_CODING_STATUS_REQUEST_TERMS`, minus
+# "session"/"세션" plus "broken": naming a sole external CLI executor
+# (`_names_sole_external_executor`) should reach the retained-workflow delegate
+# outcome only for an imperative delivery request, not a status/health question
+# about that executor -- "is codex broken" and "코덱스가 지금 뭐하고있는지
+# 알려줘" ask about the executor, they do not hand it work. "session"/"세션" is
+# excluded on purpose: it also appears in genuine delegate imperatives such as
+# "claude code 작업 세션 열어줘" and "codex 세션 켜서 작업 시작하게 해줘", where
+# the noun names the object of the command rather than a status question.
+_EXECUTOR_STATUS_QUERY_TERMS = tuple(
+    term for term in _CODING_STATUS_REQUEST_TERMS if term not in {"session", "세션"}
+) + ("broken",)
 
 
 @dataclass(frozen=True)
@@ -508,11 +521,11 @@ def _build_coding_delegation_payload_native(
         and (
             plan_artifact is not None
             or _has_code_reference(message)
-            or _names_claude_code_as_sole_executor(message)
+            or _names_sole_external_executor(message)
         )
     ):
         workflow = "plan"
-    action = _action_for(intent, score, workflow, named_coding_agent=_names_claude_code_as_sole_executor(message))
+    action = _action_for(intent, score, workflow, named_coding_agent=_names_sole_external_executor(message))
     if force_coding_handoff and action == "clarify" and intent in {"coding", "review"} and score >= 4:
         action = "delegate"
     if action == "fallback":
@@ -1416,25 +1429,37 @@ def _inline_coding_policy_applies(lowered_message: str, intent: str, action: str
     return action != "delegate" or choice_required
 
 
-def _names_claude_code_as_sole_executor(message: str) -> bool:
-    """True when the message names the Claude Code executor, and only that one.
+def _names_sole_external_executor(message: str) -> bool:
+    """True when the message names exactly one external coding CLI executor.
 
     This is the delegation path's own detection of that executor name,
-    independent of any catalog trigger score: a request that names Claude Code
-    is coding-shaped even when it carries no other coding verb or file
+    independent of any catalog trigger score: a request that names an
+    external coding CLI (Claude Code or Codex -- `EXTERNAL_CLI_PROFILES`) is
+    coding-shaped even when it carries no other coding verb or file
     reference. It is the one family `ask`'s retired bare `claude` trigger used
     to catch as an accidental delegation-path side effect.
 
     Detection goes through `routing.coding_route_actions.named_executor_owners`
     -- the same owner resolver the coding-owner route decision uses -- rather
-    than a bare phrase check, and only counts when Claude Code is the *sole*
-    named owner. Every other named executor (Codex, Hermes coding, the
-    omo-runtime family) already reached the correct retained-workflow clarify
-    outcome on its own, and a message naming more than one owner is a genuine
-    owner-comparison question; broadening this detection to either case
-    regresses those clarifications.
+    than a bare phrase check, and only counts when a single `EXTERNAL_CLI_PROFILES`
+    member is the *sole* named owner. A user who names one external CLI with an
+    imperative has already made the explicit owner choice, so the delegation
+    path yields the same delegate outcome for Codex that it always has for
+    Claude Code. Hermes coding and the omo-runtime family are runtime owners,
+    not external CLIs, and stay on the retained-workflow clarify outcome; a
+    message naming more than one owner is a genuine owner-comparison question.
+    Broadening this detection to either case regresses those clarifications.
+
+    A message that only asks about the named executor's status, progress, or
+    health ("is codex broken", "코덱스가 지금 뭐하고있는지 알려줘") is excluded
+    even when it is the sole named owner: it is a diagnostic question, not an
+    imperative delivery request, and must keep reaching the retained-workflow
+    clarify outcome (`_EXECUTOR_STATUS_QUERY_TERMS`).
     """
-    return named_executor_owners(normalized_phrase(message)) == ("claude-code",)
+    owners = named_executor_owners(normalized_phrase(message))
+    if len(owners) != 1 or owners[0] not in EXTERNAL_CLI_PROFILES:
+        return False
+    return not _has_any(message.lower(), _EXECUTOR_STATUS_QUERY_TERMS)
 
 
 def _intent_for(message: str, workflow: str, score: int) -> str:
@@ -1444,7 +1469,7 @@ def _intent_for(message: str, workflow: str, score: int) -> str:
     if _coding_status_request_applies(lowered, workflow):
         return "coding"
     if workflow in _CATALOG_INTENT_RETAINED_WORKFLOWS:
-        if _has_any(lowered, coding_terms_for_intent("coding")) or _names_claude_code_as_sole_executor(message):
+        if _has_any(lowered, coding_terms_for_intent("coding")) or _names_sole_external_executor(message):
             return "coding"
         return coding_intent_for_skill(workflow)
     for intent in CODING_INTENT_PRIORITY:
@@ -1469,15 +1494,23 @@ def _action_for(intent: str, score: int, workflow: str, *, named_coding_agent: b
     if intent == "unknown":
         return "fallback"
     if workflow in _RETAINED_HERMES_WORKFLOWS:
-        # A message that names the Claude Code executor still reaches a coding
-        # handoff even when the top catalog match is a retained Hermes workflow.
-        # This mirrors the unconditional delegate outcome `ask`'s retired bare
+        # A message that names a sole external CLI executor (Claude Code or
+        # Codex -- `EXTERNAL_CLI_PROFILES`) still reaches a coding handoff even
+        # when the top catalog match is a retained Hermes workflow. This
+        # mirrors the unconditional delegate outcome `ask`'s retired bare
         # `claude`/`gemini` triggers used to produce, and it applies regardless
         # of `prefer_direct_coding_handoff`: callers that evaluate the
         # retained-workflow contract directly (with that flag off) must observe
         # the same delegate outcome the direct-handoff redirect above gives
-        # callers that leave it on.
-        if named_coding_agent and intent == "coding" and score >= 4:
+        # callers that leave it on. The score threshold is intentionally not
+        # applied here: naming the sole external executor is independent of the
+        # generic catalog trigger score by design (see
+        # `_names_sole_external_executor`'s docstring), and some equally
+        # coding-shaped Codex phrasings score lower on this catalog than their
+        # Claude Code equivalents. `named_coding_agent` already screens out
+        # status/diagnostic questions about the executor, so no separate score
+        # floor is needed here.
+        if named_coding_agent and intent == "coding":
             return "delegate"
         return "clarify"
     if score < 4:

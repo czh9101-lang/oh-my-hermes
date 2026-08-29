@@ -5456,12 +5456,12 @@ _DEFINITIONS = [
             # Bare `claude`/`gemini` used to live here as ambiguous advisor-vs-executor
             # tokens. They were retired once `coding_delegation.build_coding_delegation_payload`
             # learned to detect a named coding executor directly through
-            # `routing/coding_route_actions.named_executor_owners` -- and only when Claude
-            # Code is the sole named owner (see `_names_claude_code_as_sole_executor` and its
-            # use in `_intent_for` and the retained-workflow-to-`plan` redirect), so
-            # "Claude Code로 바로 열어줘" and its siblings no longer need this trigger's score to
-            # reach action=delegate. The phrase triggers below still carry every real advisor
-            # intent without them.
+            # `routing/coding_route_actions.named_executor_owners` -- and only when a single
+            # external CLI executor (Claude Code or Codex -- see `_names_sole_external_executor`
+            # and its use in `_intent_for` and the retained-workflow-to-`plan` redirect) is the
+            # sole named owner, so "Claude Code로 바로 열어줘", "Codex로 바로 열어줘", and their
+            # siblings no longer need this trigger's score to reach action=delegate. The phrase
+            # triggers below still carry every real advisor intent without them.
             "ask claude",
             "ask gemini",
             "consult claude",
