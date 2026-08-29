@@ -67,6 +67,7 @@ export default function register(sdk) {
       .concat(Array.isArray(payload.maestro?.rows) ? payload.maestro.rows : [])
       .concat(Array.isArray(payload.subagents?.rows) ? payload.subagents.rows : [])
     const cost = rows.reduce((sum, row) => sum + (Number.isFinite(row.cost_usd) ? row.cost_usd : 0), 0)
+    const tokens = rows.reduce((sum, row) => sum + (Number.isFinite(row.tokens) ? row.tokens : 0), 0)
     const approximate = rows.some(row => row.cost_approximate)
     const main = Array.isArray(payload.maestro?.rows) ? payload.maestro.rows[0] : null
     const ctx = main && Number.isFinite(main.context_percentage)
@@ -77,6 +78,14 @@ export default function register(sdk) {
       // token-derived approximation carries a `~`, and a true zero with no
       // approximation renders nothing (a constant $0.000 read as broken).
       cost: cost > 0 ? `${approximate ? '~' : ''}$${cost.toFixed(3)}` : '',
+      // Summed observed subagent tokens in the host gauge's own idiom
+      // (184.8k tokens). Zero renders nothing, same as cost: this is agent
+      // consumption, not the session gauge the host statusline already owns.
+      // Like cost, the sum covers the rows the reader projects (live and
+      // lingering bindings), so it is a live figure that can shrink as rows
+      // age out or fall past the reader's cap — never a monotonic session
+      // total, which the metadata-only projection has no state to carry.
+      tokens: tokens > 0 ? `${tokenCountText(tokens)} tokens` : '',
       ctx: Number.isFinite(ctx) ? `ctx ${ctx}%` : 'ctx --',
     }
   }
@@ -148,6 +157,21 @@ export default function register(sdk) {
   }
   const truncateCells = (value, limit) => truncateTextCells(safeText(value), limit)
 
+  // The host's own gauge idiom (36.4k/272k) and Claude Code's token counter
+  // (184.8k, 2.1m): one decimal, trailing .0 trimmed, bare integers under a
+  // thousand. Subagent tokens are observed usage sums (input+output), so the
+  // count stays exact even on subscription-billed hosts where only the COST
+  // is a token-derived approximation — the owner asked for tokens '근사값으로
+  // 라도' there, and the honest answer is better: the real count.
+  const tokenCountText = value => {
+    if (!Number.isFinite(value) || value < 1) return ''
+    if (value < 1000) return `${Math.floor(value)}`
+    // Unit break sits where one-decimal rounding lands, so 999,950 reads
+    // 1m, never 1000k.
+    const [amount, unit] = value < 999_950 ? [value / 1000, 'k'] : [value / 1_000_000, 'm']
+    return `${amount.toFixed(1).replace(/\.0$/, '')}${unit}`
+  }
+
   const elapsedText = value => {
     if (!Number.isFinite(value)) return ''
     const seconds = Math.max(0, Math.floor(value))
@@ -165,7 +189,7 @@ export default function register(sdk) {
   const observedPercent = (label, value) =>
     Number.isFinite(value) ? `${label} ${value}%` : ''
 
-  const activityLayout = (row, columns, main, extraSeconds) => {
+  const activityLayout = (row, columns, main, extraSeconds, tokensColumn) => {
     const state = safeText(row.state) || 'running'
     const stateText = columns < 100 ? ({ running: 'run', blocked: 'block', failed: 'fail' })[state] || state : state
     const taskId = truncateCells(safeText(row.task_id) || safeText(row.role) || 'agent', 8).padEnd(8)
@@ -203,9 +227,12 @@ export default function register(sdk) {
     const turn = Number.isFinite(row.turn_count) ? `turn ${row.turn_count}` : ''
     const tools = Number.isFinite(row.tool_count) ? `${row.tool_count} tools` : ''
     const turnTools = turn && tools ? `${turn} (${tools})` : turn || tools
+    const tokenText = tokenCountText(row.tokens)
     const optional = [
       dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route),
       metricSegment('fallback', Number.isFinite(row.fallback_count) && row.fallback_count > 0 ? `fallback:${row.fallback_count}` : ''),
+      metricSegment('cache', observedPercent('cache', row.cache_hit_percentage)),
+      metricSegment('context', observedPercent('ctx', row.context_percentage)),
       metricSegment('turn', turnTools),
       // A subscription-billed host records no per-call cost, so the reader
       // supplies a token-derived approximation flagged cost_approximate —
@@ -219,46 +246,61 @@ export default function register(sdk) {
           : '',
       ),
       metricSegment('rate', Number.isFinite(row.tokens_per_second) ? `${Math.round(row.tokens_per_second)} tok/s` : ''),
-      metricSegment('cache', observedPercent('cache', row.cache_hit_percentage)),
-      metricSegment('context', observedPercent('ctx', row.context_percentage)),
     ].filter(segment => segment.text)
     const running = !row.state || row.state === 'running'
     // A running row's elapsed ticks in real time: the snapshot's value plus
     // the seconds since it arrived, re-rendered by the animation clock.
     // Finished rows keep the frozen precise value.
     const elapsed = running ? (row.elapsed_seconds || 0) + extraSeconds : row.elapsed_seconds
-    const required = [
-      metricSegment('cache', observedPercent('cache', row.cache_hit_percentage)),
-      metricSegment('context', observedPercent('ctx', row.context_percentage)),
-      metricSegment('state', stateText),
-      metricSegment('elapsed', elapsedText(elapsed)),
-    ].filter(segment => segment.text)
-    optional.splice(-2)
+    // Claude Code's task list is the reference the owner pointed at
+    // ('절대위치로 … 클로드코드처럼 정렬', '이런느낌으로'): a grid, not a
+    // sentence. The title is a FIXED column (padded, ~40% of the terminal,
+    // 48 cells at most — '서브에이전트 세션 제목을 좀 축약'), variable
+    // metadata fills the middle, and a fixed-width tail sits flush against
+    // the right edge on every row: `state · elapsed · N tokens`, each piece
+    // padded to a constant cell width so the dots and the tokens column line
+    // up vertically across rows. Tokens anchor the right edge ('tokens로
+    // 해주고 맨 오른쪽에') and are never shed — the middle metadata drops
+    // rate, then cost, then turn before the tail loses anything ('달러
+    // 이런거 나와있긴 한데 … 소모한 토큰도 나왔으면'). A row with no
+    // observed tokens keeps the column as blank cells (only while some row
+    // has tokens to align with), never a fabricated zero.
+    const padCells = (text, width) => `${text}${' '.repeat(Math.max(0, width - cellWidth(text)))}`
+    const stateWidth = columns < 100 ? 5 : 7
+    const tokensWidth = tokensColumn ? 16 : 0
+    const tailWidth = stateWidth + 3 + 7 + tokensWidth
+    const tokensPiece = tokenText
+      ? ` · ${tokenText.padStart(6)} tokens`
+      : ' '.repeat(tokensWidth)
+    const tailState = padCells(stateText, stateWidth)
+    const tailRest = ` · ${padCells(elapsedText(elapsed) || '0s', 7)}${tokensColumn ? tokensPiece : ''}`
     const prefix = `${taskId} `
     const separator = '  ·  '
     const budget = Math.max(24, columns - 4)
-    const minimumAction = columns >= 120 ? 26 : columns >= 90 ? 18 : 10
-    const segments = [...optional, ...required]
-    while (segments.length > required.length) {
+    const actionCap = Math.max(10, Math.min(48, Math.floor(columns * 0.4)))
+    const actionWidth = Math.max(8, Math.min(actionCap, budget - cellWidth(prefix) - tailWidth - 2))
+    const fixedWidth = cellWidth(prefix) + actionWidth + tailWidth
+    const segments = [...optional]
+    while (segments.length) {
       const metadata = segments.map(item => item.text).join(separator)
-      if (cellWidth(prefix) + minimumAction + cellWidth(separator) + cellWidth(metadata) <= budget) break
-      segments.splice(segments.length - required.length - 1, 1)
+      if (fixedWidth + cellWidth(separator) + cellWidth(metadata) + 2 <= budget) break
+      segments.pop()
     }
     const metadata = segments.map(segment => segment.text).join(separator)
-    const actionBudget = Math.max(
-      8,
-      budget - cellWidth(prefix) - cellWidth(metadata) - (metadata ? cellWidth(separator) : 0),
-    )
+    const used = fixedWidth + (metadata ? cellWidth(separator) + cellWidth(metadata) : 0)
     return {
-      action: truncateCells(row.action, actionBudget),
+      action: padCells(truncateCells(row.action, actionWidth), actionWidth),
       metadata,
+      pad: ' '.repeat(Math.max(0, budget - used)),
       segments,
+      tailRest,
+      tailState,
       taskId: main ? 'MAIN'.padEnd(8) : taskId,
     }
   }
 
-  function ActivityRow({ columns, extraSeconds, frame, main, row, t }) {
-    const layout = activityLayout(row, columns, main, extraSeconds)
+  function ActivityRow({ columns, extraSeconds, frame, main, row, t, tokensColumn }) {
+    const layout = activityLayout(row, columns, main, extraSeconds, tokensColumn)
     const blocked = row.state === 'blocked' || row.state === 'failed'
     const done = row.state === 'done'
     const marker = blocked ? '▲' : done ? '✓' : SPINNER_FRAMES[frame % SPINNER_FRAMES.length]
@@ -269,34 +311,42 @@ export default function register(sdk) {
       h(Text, { color: blocked ? t.color.error : done ? t.color.ok : t.color.warn }, `${marker} `),
       h(Text, { color: t.color.muted }, `${layout.taskId} `),
       h(Text, { color: t.color.text }, layout.action),
-      layout.metadata ? h(Text, { color: t.color.muted }, '  ·  ') : null,
       ...layout.segments.map((segment, index) =>
         h(
           Text,
           {
-            color: segment.kind === 'state'
-              ? statusColor
-              : segment.kind === 'route'
-                ? t.color.label
-                // A fallback or exhausted route is a warning-grade fact: the
-                // lane is NOT running the chain head the category names.
-                : segment.kind === 'route-fallback'
-                  // A dispatched-executor identity is warn-colored for the
-                  // same reason as a fallback route: it marks the row as
-                  // something other than the plain Hermes-native default,
-                  // here the Maestro lane's own spawned CLI.
-                  || segment.kind === 'maestro'
-                  ? t.color.warn
-                  : t.color.muted,
+            color: segment.kind === 'route'
+              ? t.color.label
+              // A fallback or exhausted route is a warning-grade fact: the
+              // lane is NOT running the chain head the category names.
+              : segment.kind === 'route-fallback'
+                // A dispatched-executor identity is warn-colored for the
+                // same reason as a fallback route: it marks the row as
+                // something other than the plain Hermes-native default,
+                // here the Maestro lane's own spawned CLI.
+                || segment.kind === 'maestro'
+                ? t.color.warn
+                : t.color.muted,
             key: `${segment.kind}-${index}`,
           },
-          `${index ? '  ·  ' : ''}${segment.text}`,
+          `  ·  ${segment.text}`,
         )
       ),
+      // The fixed tail: state keeps its status color, the elapsed and
+      // tokens columns rest muted, and the pad in front right-anchors the
+      // whole block so every row's columns line up.
+      h(Text, {}, layout.pad),
+      h(Text, { color: statusColor }, layout.tailState),
+      h(Text, { color: t.color.muted }, layout.tailRest),
     )
   }
 
   function ActivityRows({ columns, extraSeconds, frame, mainRows, rows, t }) {
+    // The tokens column exists for the LIST, not per row: one row with an
+    // observed count gives every row the column (blank where unobserved) so
+    // the grid holds; a wave with no counts at all drops the column instead
+    // of wasting sixteen blank cells on every row.
+    const tokensColumn = [...mainRows, ...rows].some(row => tokenCountText(row.tokens))
     return h(
       Box,
       { flexDirection: 'column', width: '100%' },
@@ -309,6 +359,7 @@ export default function register(sdk) {
           main: true,
           row,
           t,
+          tokensColumn,
         })
       ),
       ...rows.map((row, index) =>
@@ -319,6 +370,7 @@ export default function register(sdk) {
           key: `${safeText(row.task_id)}-${index}`,
           row,
           t,
+          tokensColumn,
         })
       ),
     )
@@ -444,8 +496,9 @@ export default function register(sdk) {
         Text,
         { wrap: 'truncate-end' },
         // Always visible: the owner kept the branded status row and asked for
-        // live session metrics on it. Cost and ctx come from sessionMetrics
-        // above -- observed values or "--", never fabricated totals.
+        // live session metrics on it. Tokens, cost and ctx come from
+        // sessionMetrics above -- observed values or "--", never fabricated
+        // totals.
         h(Text, { bold: true, color: t.color.primary }, '⚚ [OMH]'),
         version ? h(Text, { color: t.color.muted }, ` v${version}`) : null,
         h(Text, { color: t.color.border }, SEPARATOR),
@@ -494,6 +547,13 @@ export default function register(sdk) {
                 payload.yolo.enabled ? 'on' : 'off',
               ),
             )
+          : null,
+        // The summed token count anchors the header's right edge, matching
+        // the rows' rightmost tokens column ('맨 오른쪽에 두는게'). The line
+        // has no drop loop, only truncate-end, so below 100 columns it hides
+        // rather than being the segment that pushes everything else off.
+        columns >= 100 && metrics.tokens
+          ? h(Text, { color: t.color.muted }, ` • ${metrics.tokens}`)
           : null,
       ),
       graphActive
