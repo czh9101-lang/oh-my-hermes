@@ -3139,18 +3139,38 @@ class SpawnStaggerTests(unittest.TestCase):
     staggered while injected test runners stay untouched."""
 
     def test_reserve_spaces_consecutive_slots(self) -> None:
-        import time as _time
-
+        # A real wall-clock sleep here is inherently racy under CPU
+        # contention: the assertion has been observed failing on loaded
+        # machines when the scheduler delivers a slightly-short gap. Inject
+        # a fake clock/sleep instead — same seam as the retry policy's
+        # `sleep` parameter elsewhere in this module — and assert on the
+        # reservation schedule the code actually computed, which is
+        # deterministic regardless of real scheduling.
         from omh.coding.fanout_dispatch import _SpawnStagger
 
-        stagger = _SpawnStagger(0.05)
+        class _FakeClock:
+            def __init__(self) -> None:
+                self.now = 0.0
+                self.slept: list[float] = []
+
+            def monotonic(self) -> float:
+                return self.now
+
+            def sleep(self, seconds: float) -> None:
+                self.slept.append(seconds)
+                self.now += seconds
+
+        clock = _FakeClock()
+        stagger = _SpawnStagger(0.05, monotonic=clock.monotonic, sleep=clock.sleep)
         starts: list[float] = []
         for _ in range(3):
             stagger.reserve()
-            starts.append(_time.monotonic())
-        # Scheduler slack tolerance downward: sleeps may wake a hair early.
+            starts.append(clock.now)
         self.assertGreaterEqual(starts[1] - starts[0], 0.045)
         self.assertGreaterEqual(starts[2] - starts[1], 0.045)
+        # The fake sleep advances the clock by exactly the requested delay,
+        # so the reserved slots land exactly one interval apart.
+        self.assertEqual(clock.slept, [0.05, 0.05])
 
     def test_injected_runner_without_marker_never_staggers(self) -> None:
         import time as _time

@@ -284,24 +284,36 @@ class _SpawnStagger:
     provider prompt cache the siblings read; parallel identical requests
     would each pay a full cache write."""
 
-    def __init__(self, interval: float) -> None:
+    def __init__(
+        self,
+        interval: float,
+        *,
+        # The clock and sleep are injected, same seam as the retry policy's
+        # `sleep` parameter below, so the reservation schedule this class
+        # computes is assertable without a real clock and without a single
+        # wall-clock sleep in a test.
+        monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._interval = max(0.0, interval)
         self._lock = threading.Lock()
         self._next = 0.0
+        self._monotonic = monotonic
+        self._sleep = sleep
 
     def reserve(self) -> None:
         with self._lock:
-            now = time.monotonic()
+            now = self._monotonic()
             slot = max(now, self._next)
             self._next = slot + self._interval
         # time.sleep can wake up to a timer tick early on Windows waitable
         # timers, which would collapse the spacing; loop until the slot is
         # actually reached on the monotonic clock.
         while True:
-            now = time.monotonic()
+            now = self._monotonic()
             if now >= slot:
                 return
-            time.sleep(slot - now)
+            self._sleep(slot - now)
 
 
 # Lineage stamp carried into every child environment this module spawns.
