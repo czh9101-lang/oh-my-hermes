@@ -58,7 +58,12 @@ from .fanout_retry import (
     evaluate_unit_retry,
 )
 from .unit_prompt_protocol import shared_unit_preamble_lines, unit_protocol_lines
-from .fanout_unit_results import validate_check_rows, validate_unit_result
+from .fanout_unit_results import (
+    FANOUT_UNIT_RESULT_CHECK_STATUSES,
+    FANOUT_UNIT_RESULT_PROCESS_STATUSES,
+    validate_check_rows,
+    validate_unit_result,
+)
 from .unit_telemetry import parse_unit_telemetry
 
 FANOUT_DISPATCH_SCHEMA_VERSION = "fanout_dispatch_summary/v1"
@@ -638,7 +643,18 @@ def build_unit_prompt(
 
 
 def _unit_result_prompt_lines(contract: Mapping[str, Any]) -> list[str]:
-    """Executor-neutral, typed sidecar contract appended to a live unit prompt."""
+    """Executor-neutral, typed sidecar contract appended to a live unit prompt.
+
+    The closed enums are spelled out with their exact literals — imported from
+    the validator's own tuples so prompt and validation can never drift. The
+    validator deliberately never infers or aliases (a "success" it normalized
+    into "process_succeeded" would launder an executor claim), so this prompt
+    is the ONLY channel that tells a foreign executor which values validate;
+    omitting them produced real `unit_result_invalid` outcomes on work that
+    had succeeded (#1190).
+    """
+    process_values = " or ".join(f'"{value}"' for value in FANOUT_UNIT_RESULT_PROCESS_STATUSES)
+    check_values = ", ".join(f'"{value}"' for value in FANOUT_UNIT_RESULT_CHECK_STATUSES)
     return [
         "Before exiting, write one fanout_unit_result/v1 JSON sidecar to exactly "
         f"{contract.get('path', '')}.",
@@ -648,8 +664,10 @@ def _unit_result_prompt_lines(contract: Mapping[str, Any]) -> list[str]:
         f"schema_version=fanout_unit_result/v1, unit_id={contract.get('unit_id', '')}, "
         f"run_id={contract.get('run_id', '')}, fanout_id={contract.get('fanout_id', '')}, "
         f"base_sha={contract.get('base_sha', '')}; head_sha is the git HEAD you leave behind.",
+        f"process_status must be exactly {process_values} — no other value validates.",
         "Each checks row fields: command, status, evidence_ref, reported_by, observed_by, "
         "observation_source.",
+        f"Each checks row status must be exactly one of {check_values} — no other value validates.",
         "For every executor-authored checks row, set reported_by=executor. observed_by and "
         "observation_source are dispatcher-owned; leave both null. Sidecar validation records "
         "only a report and never verification.",
