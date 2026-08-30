@@ -726,6 +726,103 @@ def _parsed_chain_entry(raw: str) -> dict[str, str]:
     return {"model_id": text, "reasoning_effort": ""}
 
 
+def _stdin_is_tty() -> bool:
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _chain_display_text(chain) -> str:
+    return " > ".join(
+        str(entry.get("model_id", ""))
+        + (f" {entry.get('reasoning_effort')}" if entry.get("reasoning_effort") else "")
+        for entry in chain
+    )
+
+
+def category_maestro_interview(paths) -> int:
+    """Numbered per-profile/category interview over the Maestro category table.
+
+    Mirrors `omh model-chains interview` (the native lane's editor): Enter
+    keeps the current chain, choosing the built-in default clears an operator
+    override, and a custom entry goes through the same validation `set` uses.
+    Non-interactive callers get a refusal that names the scriptable path
+    instead of a hanging prompt.
+    """
+    from ..coding.category_maestro import (
+        CATEGORY_MAESTRO_PROFILES,
+        clear_category_maestro_chain,
+        read_category_maestro_config,
+        set_category_maestro_chain,
+    )
+    from ..coding.model_routing import BUILTIN_CATEGORY_MODELS, MODEL_CATEGORIES
+
+    if not _stdin_is_tty():
+        print(
+            "omh: interview needs a terminal; use `omh coding category-maestro show` and "
+            "`omh coding category-maestro set <profile> <category> <model[:effort]>...` instead.",
+            file=sys.stderr,
+        )
+        return 2
+    config = read_category_maestro_config(paths.omh_home)
+    operator_profiles = config.get("profiles", {}) if isinstance(config, dict) else {}
+    print("Category-maestro interview — Enter keeps the current chain.")
+    changed = 0
+    for profile in CATEGORY_MAESTRO_PROFILES:
+        walk = input(f"\nConfigure {profile}? [y/N]: ").strip().casefold()
+        if walk not in ("y", "yes"):
+            continue
+        operator_categories = operator_profiles.get(profile, {})
+        for category in MODEL_CATEGORIES:
+            operator_chain = (
+                operator_categories.get(category) if isinstance(operator_categories, dict) else None
+            )
+            builtin_chain = BUILTIN_CATEGORY_MODELS[profile].get(category, ())
+            current = operator_chain if operator_chain else builtin_chain
+            source = "operator" if operator_chain else "built-in"
+            options: list[str] = [f"keep current ({source}): {_chain_display_text(current)}"]
+            if operator_chain:
+                options.append(f"built-in default: {_chain_display_text(builtin_chain)}")
+            options.append("custom entry (`model[:effort], ...`)")
+            print(f"\n[{profile} / {category}]")
+            for index, label in enumerate(options, start=1):
+                print(f"  {index}) {label}")
+            raw = input(f"choose 1-{len(options)} [1]: ").strip() or "1"
+            try:
+                pick = int(raw)
+            except ValueError:
+                pick = 0
+            if not 1 <= pick <= len(options):
+                print("  unrecognized choice; keeping current")
+                continue
+            if pick == 1:
+                continue
+            if operator_chain and pick == 2:
+                clear_category_maestro_chain(paths.omh_home, profile, category)
+                changed += 1
+                continue
+            custom = input("  chain: ").strip()
+            entries = [
+                _parsed_chain_entry(token)
+                for token in (piece.strip() for piece in custom.split(","))
+                if token
+            ]
+            try:
+                set_category_maestro_chain(paths.omh_home, profile, category, entries)
+            except ValueError as exc:
+                print(f"  {exc}; keeping current")
+                continue
+            changed += 1
+    if not changed:
+        print("\nNo changes.")
+        return 0
+    from ..coding.category_maestro import category_maestro_path
+
+    print(f"\nSaved {changed} chain{'' if changed == 1 else 's'} to {category_maestro_path(paths.omh_home)}.")
+    return 0
+
+
 def cmd_coding_category_maestro(args: argparse.Namespace) -> int:
     from ..coding.category_maestro import (
         CATEGORY_MAESTRO_PROFILES,
@@ -738,6 +835,8 @@ def cmd_coding_category_maestro(args: argparse.Namespace) -> int:
 
     paths = _paths(args)
     command = args.category_maestro_command
+    if command == "interview":
+        return category_maestro_interview(paths)
     if command == "set":
         try:
             result = set_category_maestro_chain(
@@ -2518,6 +2617,11 @@ def _add_coding_commands(sub) -> None:
     category_maestro_clear.add_argument("category", help="Model category to clear.")
     category_maestro_clear.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
     category_maestro_clear.set_defaults(func=cmd_coding_category_maestro)
+    category_maestro_interview_cmd = category_maestro_sub.add_parser(
+        "interview",
+        help="Walk each profile's categories with numbered choices on a terminal (Enter keeps the current chain).",
+    )
+    category_maestro_interview_cmd.set_defaults(func=cmd_coding_category_maestro)
 
     model_routing = coding_sub.add_parser(
         "model-routing",

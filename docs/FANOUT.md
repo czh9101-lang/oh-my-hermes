@@ -437,7 +437,10 @@ Rules:
   `omh coding category-maestro set <profile> <category> <model[:effort]>...`
   (the tail after the last colon is the effort only when it is a known level
   — off/minimal/low/medium/high/xhigh/max/auto — so colon-tagged model ids
-  like `qwen2.5-coder:7b` stay intact), inspect the effective table with
+  like `qwen2.5-coder:7b` stay intact) or walk it guided with
+  `omh coding category-maestro interview` (also offered by the interactive
+  `omh setup` maestro step; non-terminal callers get the scriptable path
+  named instead of a hanging prompt), inspect the effective table with
   `omh coding category-maestro show` (operator overrides are marked, invalid
   config pieces are named, a broken file reads as absent and never blocks a
   dispatch), and restore a built-in chain with
@@ -656,6 +659,7 @@ omh coding model-route [--executor <profile>] [--role <role>] [--model <id>] [--
 omh coding category-maestro show [--json]      # effective category table, operator overrides marked
 omh coding category-maestro set <profile> <category> <model[:effort]>...
 omh coding category-maestro clear <profile> <category>
+omh coding category-maestro interview          # guided per-profile walk (terminal only)
 omh coding model-inventory [--json]
 omh coding composition-guide [--model <id>] [--json]
 ```

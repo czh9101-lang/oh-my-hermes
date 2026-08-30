@@ -433,6 +433,61 @@ class CategoryMaestroCliTests(unittest.TestCase):
             self.assertNotEqual(status, 0)
             self.assertIn("no-such", stderr)
 
+    def test_interview_refuses_without_a_terminal_and_names_the_scriptable_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            base = ["--omh-home", str(Path(tmp) / ".omh")]
+            status, _stdout, stderr = run_cli(
+                base + ["coding", "category-maestro", "interview"], output_json=False
+            )
+            self.assertEqual(status, 2)
+            self.assertIn("category-maestro set", stderr)
+            self.assertIn("category-maestro show", stderr)
+
+    def test_interview_applies_clear_custom_and_keep_choices(self) -> None:
+        from unittest.mock import patch
+
+        from omh.coding.model_routing import MODEL_CATEGORIES
+
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp) / ".omh"
+            set_category_maestro_chain(
+                home, "codex", "ultrabrain", [{"model_id": "old-pick", "reasoning_effort": "xhigh"}]
+            )
+            # claude-code first (skipped), then codex: ultrabrain has an
+            # override so option 2 is the built-in default (clears it); every
+            # other category's option 2 is the custom entry — `deep` gets one,
+            # the rest keep current via Enter.
+            answers = ["", "y"]
+            for category in MODEL_CATEGORIES:
+                if category == "ultrabrain":
+                    answers.append("2")
+                elif category == "deep":
+                    answers.extend(["2", "gpt-5.6-sol:xhigh, gpt-5.6-terra"])
+                else:
+                    answers.append("")
+            responses = iter(answers)
+            with (
+                patch("omh.commands.coding._stdin_is_tty", return_value=True),
+                patch("builtins.input", side_effect=lambda *_: next(responses)),
+            ):
+                status, stdout, stderr = run_cli(
+                    ["--omh-home", str(home), "coding", "category-maestro", "interview"],
+                    output_json=False,
+                )
+            self.assertEqual((status, stderr), (0, ""), stdout)
+            self.assertIn("Saved 2 chains", stdout)
+            config = read_category_maestro_config(home)
+            self.assertEqual(list(config["profiles"]), ["codex"])
+            self.assertEqual(
+                config["profiles"]["codex"],
+                {
+                    "deep": (
+                        {"model_id": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
+                        {"model_id": "gpt-5.6-terra", "reasoning_effort": ""},
+                    )
+                },
+            )
+
     def test_run_exposes_the_category_flag(self) -> None:
         from contextlib import redirect_stdout
         from io import StringIO
@@ -444,6 +499,92 @@ class CategoryMaestroCliTests(unittest.TestCase):
             main(["coding", "run", "--help"])
         self.assertEqual(caught.exception.code, 0)
         self.assertIn("--category", buffer.getvalue())
+
+
+class CategoryMaestroSetupIntegrationTests(unittest.TestCase):
+    def test_setup_maestro_step_offers_and_runs_the_category_interview(self) -> None:
+        import argparse
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from omh.commands import coding as coding_module
+        from omh.commands import setup as setup_module
+
+        with TemporaryDirectory() as tmp:
+            paths = SimpleNamespace(omh_home=Path(tmp) / ".omh")
+            args = argparse.Namespace()
+            detected = {
+                profile: {"binary_present": profile == "codex", "login_marker": "unknown"}
+                for profile in setup_module.EXTERNAL_CLI_PROFILES
+            }
+            calls: list[object] = []
+            with (
+                patch.object(setup_module, "_detect_external_cli_profiles", return_value=detected),
+                # First yes: set up the maestro lane; second yes: walk the
+                # category table now.
+                patch.object(setup_module, "_ask_yes_no", side_effect=[True, True]),
+                patch.object(
+                    coding_module,
+                    "category_maestro_interview",
+                    side_effect=lambda received: calls.append(received) or 0,
+                ),
+            ):
+                from contextlib import redirect_stdout
+                from io import StringIO
+
+                with redirect_stdout(StringIO()):
+                    setup_module._ask_maestro_delegation_choice(args, paths, "en")
+            self.assertEqual(calls, [paths])
+
+    def test_setup_maestro_step_declining_the_interview_changes_nothing(self) -> None:
+        import argparse
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from omh.commands import coding as coding_module
+        from omh.commands import setup as setup_module
+
+        with TemporaryDirectory() as tmp:
+            paths = SimpleNamespace(omh_home=Path(tmp) / ".omh")
+            args = argparse.Namespace()
+            detected = {
+                profile: {"binary_present": profile == "codex", "login_marker": "unknown"}
+                for profile in setup_module.EXTERNAL_CLI_PROFILES
+            }
+            calls: list[object] = []
+            with (
+                patch.object(setup_module, "_detect_external_cli_profiles", return_value=detected),
+                patch.object(setup_module, "_ask_yes_no", side_effect=[True, False]),
+                patch.object(
+                    coding_module,
+                    "category_maestro_interview",
+                    side_effect=lambda received: calls.append(received) or 0,
+                ),
+            ):
+                from contextlib import redirect_stdout
+                from io import StringIO
+
+                with redirect_stdout(StringIO()):
+                    setup_module._ask_maestro_delegation_choice(args, paths, "en")
+            self.assertEqual(calls, [])
+            self.assertIsNone(read_category_maestro_config(Path(tmp) / ".omh"))
+
+    def test_onboarding_language_keys_exist_in_every_locale(self) -> None:
+        from omh.commands.language import MESSAGES
+
+        for code, table in MESSAGES.items():
+            for key in (
+                "maestro_delegation_pointers",
+                "maestro_category_prompt",
+                "maestro_category_note",
+                "model_setup_maestro_hint",
+            ):
+                with self.subTest(locale=code, key=key):
+                    self.assertIn(key, table)
+        for key in ("maestro_delegation_pointers", "model_setup_maestro_hint"):
+            for code, table in MESSAGES.items():
+                with self.subTest(locale=code, key=key):
+                    self.assertIn("category-maestro", table[key])
 
 
 if __name__ == "__main__":
