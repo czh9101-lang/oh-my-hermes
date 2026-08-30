@@ -450,6 +450,27 @@ Rules:
   deliberately not configurable here — the local-inventory catalog remains
   their single override source, so "which basis resolved this route" always
   has one answer.
+- **Request complexity (advisory).** `omh coding complexity "<request>"`
+  scores a request deterministically — no model, no network — and returns a
+  tier (`light` / `standard` / `deep`) with every contributing signal named,
+  weighted, and carrying its own evidence. The score is exactly the sum of the
+  listed signals, so a tier is always explainable from the payload alone.
+  Signals: `architecture_keywords` (+3), `impact_system_wide` (+3),
+  `subtasks_many` (+4), `risk_keywords` (+2), `debugging_keywords` (+2),
+  `fanout_intent` (+2), `cross_file` (+2), `message_length` (+1/+2),
+  `routed_skill_class` (+1/+2), and `simple_request` (−2, the only signal that
+  subtracts). The tier names a model *class* — a `MODEL_CATEGORIES` member —
+  which resolves through the user's own
+  `<omh-home>/routing/model-chains.json` chains, so no model id is ever
+  hardcoded; a class the user's chains do not cover is named as
+  `class_not_in_chains` rather than substituted. `--model` / `--effort` record
+  an explicit choice, which supersedes the recommendation (still printed, so
+  what was set aside stays visible). The same two blocks
+  (`request_complexity/v1` and `complexity_model_recommendation/v1`) ride every
+  prepared handoff from `omh coding delegate`. This is a recommendation, never
+  a route: the declared `role` / `depth` / `category` / `scale` dials that
+  `resolve_model_route` reads stay declared by the caller, never inferred from
+  phrasing.
 - **Model inventory (reporting-only).** `omh coding model-inventory` reports
   which coding models the user has locally activated before any split or
   delegation is proposed: agent CLIs on PATH (codex, claude, opencode,
@@ -684,6 +705,7 @@ omh coding category-maestro set <profile> <category> <model[:effort]>...
 omh coding category-maestro clear <profile> <category>
 omh coding category-maestro interview          # guided per-profile walk (terminal only)
 omh coding model-inventory [--json]
+omh coding complexity <request> [--skill <workflow>] [--model <id>] [--effort <level>] [--json]
 omh coding composition-guide [--model <id>] [--json]
 ```
 

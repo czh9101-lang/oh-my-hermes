@@ -76,6 +76,9 @@ def build_external_handoff(request: ExternalHandoffRequest) -> PreparedExternalH
         live_safety_profile_revision=request.live_safety_profile_revision,
         requested_authority_actions=request.requested_authority_actions,
         model_recommendation=request.model_recommendation,
+        model_chains=request.model_chains,
+        requested_model=request.requested_model,
+        requested_effort=request.requested_effort,
     )
     selected_profile = payload.get("selected_executor_profile")
     if selected_profile == "hermes" or payload.get("work_owner_mode") == "retained_hermes":
