@@ -358,6 +358,354 @@ class EfficiencyTests(unittest.TestCase):
             self.assertNotIn(marker, serialized)
 
 
+def _verdicts(receipt: object) -> dict[str, str]:
+    return {item["fixture_id"]: item["verdict"] for item in receipt["verdicts"]}  # type: ignore[index]
+
+
+def _reasons(receipt: object) -> dict[str, object]:
+    return {item["fixture_id"]: item["reason_code"] for item in receipt["verdicts"]}  # type: ignore[index]
+
+
+def _probe(**overrides: object) -> dict[str, object]:
+    """Run probe mode with a stubbed command observation, patched per test."""
+    observation = overrides.pop("observation", _fake_command_observation())
+    with patch.object(controller, "execute_command_binding", return_value=observation):
+        return _run(mode="probe", **overrides)
+
+
+def _dispatch(**overrides: object) -> dict[str, object]:
+    command = overrides.pop("command_observation", _fake_command_observation())
+    child = overrides.pop("dispatch_observation", _fake_dispatch_observation())
+    with (
+        patch.object(controller, "execute_command_binding", return_value=command),
+        patch.object(controller, "execute_child_dispatch", return_value=child),
+    ):
+        return _run(mode="dispatch", model="m", provider="p", allow_paid_live=True, max_paid_calls=1, **overrides)
+
+
+class _BaselineFile:
+    """Write a receipt to disk so the controller reads it the way an operator would."""
+
+    def __init__(self, receipt: object) -> None:
+        self._directory = TemporaryDirectory()
+        self.path = Path(self._directory.name) / "baseline-receipt.json"
+        self.path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+
+    def __enter__(self) -> Path:
+        return self.path
+
+    def __exit__(self, *_: object) -> None:
+        self._directory.cleanup()
+
+
+class VerdictTests(unittest.TestCase):
+    def test_fake_mode_grades_nothing_and_rates_nothing(self) -> None:
+        receipt = _run()["receipt"]
+        summary = receipt["verdict_summary"]  # type: ignore[index]
+        self.assertEqual(summary["units_total"], 15)
+        self.assertEqual(summary["inconclusive_count"], 15)
+        self.assertEqual(summary["graded_total"], 0)
+        self.assertIsNone(summary["pass_rate"])
+        self.assertEqual(set(_verdicts(receipt).values()), {"INCONCLUSIVE"})
+        self.assertEqual(set(_reasons(receipt).values()), {"no_controller_observation"})
+
+    def test_observed_run_grades_only_the_units_it_observed(self) -> None:
+        receipt = _dispatch()["receipt"]
+        verdicts = _verdicts(receipt)
+        observable = (*controller.COMMAND_FIXTURES, *controller.DISPATCH_FIXTURES)
+        for fixture_id in observable:
+            self.assertEqual(verdicts[fixture_id], "PASS")
+        summary = receipt["verdict_summary"]  # type: ignore[index]
+        self.assertEqual(summary["pass_count"], len(observable))
+        self.assertEqual(summary["graded_total"], len(observable))
+        self.assertEqual(summary["inconclusive_count"], 15 - len(observable))
+        self.assertEqual(summary["pass_rate"], 1.0)
+
+    def test_a_graded_failure_is_fail_and_never_inconclusive(self) -> None:
+        failed = _fake_dispatch_observation(
+            status="failed", observed_exit=1, observed_semantic_result=None, failure_code="nonzero_exit"
+        )
+        receipt = _dispatch(dispatch_observation=failed)["receipt"]
+        verdicts = _verdicts(receipt)
+        for fixture_id in controller.DISPATCH_FIXTURES:
+            self.assertEqual(verdicts[fixture_id], "FAIL")
+        self.assertEqual(verdicts["evidence-command-binding"], "PASS")
+        summary = receipt["verdict_summary"]  # type: ignore[index]
+        self.assertEqual(summary["fail_count"], 3)
+        self.assertEqual(summary["graded_total"], 4)
+        self.assertEqual(summary["pass_rate"], 0.25)
+
+    def test_launch_failure_is_inconclusive(self) -> None:
+        observation = _fake_command_observation(
+            status="failed", observed_exit=None, observed_semantic_result=None, failure_code="command_launch_failed"
+        )
+        receipt = _probe(observation=observation)["receipt"]
+        self.assertEqual(_verdicts(receipt)["evidence-command-binding"], "INCONCLUSIVE")
+        self.assertEqual(_reasons(receipt)["evidence-command-binding"], "execution_launch_failed")
+
+    def test_timeout_before_output_is_inconclusive(self) -> None:
+        observation = _fake_command_observation(
+            status="timed_out", observed_exit=None, observed_semantic_result=None, failure_code="timeout"
+        )
+        receipt = _probe(observation=observation)["receipt"]
+        self.assertEqual(_verdicts(receipt)["evidence-command-binding"], "INCONCLUSIVE")
+        self.assertEqual(_reasons(receipt)["evidence-command-binding"], "timed_out_before_output")
+
+    def test_unreadable_observation_artifact_is_inconclusive(self) -> None:
+        unreadable = _fake_dispatch_observation(
+            status="failed", observed_semantic_result=None, failure_code="observation_invalid"
+        )
+        receipt = _dispatch(dispatch_observation=unreadable)["receipt"]
+        for fixture_id in controller.DISPATCH_FIXTURES:
+            self.assertEqual(_verdicts(receipt)[fixture_id], "INCONCLUSIVE")
+            self.assertEqual(_reasons(receipt)[fixture_id], "artifact_unreadable")
+
+    def test_a_crashed_validator_is_inconclusive_not_a_pass(self) -> None:
+        observation = _fake_command_observation(observed_semantic_result="unvalidated")
+        receipt = _probe(observation=observation)["receipt"]
+        self.assertEqual(_verdicts(receipt)["evidence-command-binding"], "INCONCLUSIVE")
+        self.assertEqual(_reasons(receipt)["evidence-command-binding"], "artifact_unreadable")
+
+    def test_absent_telemetry_channel_is_inconclusive(self) -> None:
+        observation = _fake_command_observation(observed_semantic_result=None)
+        receipt = _probe(observation=observation)["receipt"]
+        self.assertEqual(_verdicts(receipt)["evidence-command-binding"], "INCONCLUSIVE")
+        self.assertEqual(_reasons(receipt)["evidence-command-binding"], "telemetry_channel_absent")
+
+    def test_inconclusive_units_stay_out_of_the_pass_rate_denominator(self) -> None:
+        summary = _probe()["receipt"]["verdict_summary"]  # type: ignore[index]
+        self.assertEqual(summary["pass_count"], 1)
+        self.assertEqual(summary["inconclusive_count"], 14)
+        self.assertEqual(summary["graded_total"], 1)
+        self.assertEqual(summary["pass_rate"], 1.0)
+        self.assertEqual(summary["pass_rate_denominator"], "graded_units_only")
+        self.assertIs(summary["inconclusive_excluded_from_pass_rate"], True)
+
+    def test_verdicts_cover_the_whole_task_set_not_only_the_submission(self) -> None:
+        receipt = _probe()["receipt"]
+        coverage = {
+            item
+            for field in (
+                "controller_observed_fixture_ids",
+                "carried_fixture_ids",
+                "simulated_fixture_ids",
+                "unsupported_fixture_ids",
+            )
+            for item in receipt[field]  # type: ignore[index]
+        }
+        self.assertEqual(set(_verdicts(receipt)), coverage)
+
+
+class BaselineComparisonTests(unittest.TestCase):
+    def test_unchanged_verdicts_are_stable(self) -> None:
+        with _BaselineFile(_probe()["receipt"]) as path:
+            comparison = _probe(baseline_path=path)["receipt"]["baseline_comparison"]  # type: ignore[index]
+        self.assertEqual(comparison["schema_version"], "cross_harness_live_baseline_comparison/v1")
+        self.assertEqual(comparison["summary"]["label"], "STABLE")
+        self.assertEqual(comparison["summary"]["stable_count"], 15)
+        self.assertEqual(comparison["summary"]["regressed_count"], 0)
+
+    def test_a_recovered_unit_is_improved(self) -> None:
+        failing = _fake_command_observation(
+            status="failed", observed_exit=1, observed_semantic_result="unvalidated", failure_code="nonzero_exit"
+        )
+        with _BaselineFile(_probe(observation=failing)["receipt"]) as path:
+            comparison = _probe(baseline_path=path)["receipt"]["baseline_comparison"]  # type: ignore[index]
+        unit = next(item for item in comparison["units"] if item["fixture_id"] == "evidence-command-binding")
+        self.assertEqual(unit["baseline_verdict"], "FAIL")
+        self.assertEqual(unit["current_verdict"], "PASS")
+        self.assertEqual(unit["label"], "IMPROVED")
+        self.assertEqual(comparison["summary"]["label"], "IMPROVED")
+        self.assertEqual(comparison["summary"]["baseline_pass_rate"], 0.0)
+        self.assertEqual(comparison["summary"]["current_pass_rate"], 1.0)
+
+    def test_a_broken_unit_is_regressed(self) -> None:
+        failing = _fake_command_observation(
+            status="failed", observed_exit=1, observed_semantic_result="unvalidated", failure_code="nonzero_exit"
+        )
+        with _BaselineFile(_probe()["receipt"]) as path:
+            comparison = _probe(observation=failing, baseline_path=path)["receipt"]["baseline_comparison"]  # type: ignore[index]
+        unit = next(item for item in comparison["units"] if item["fixture_id"] == "evidence-command-binding")
+        self.assertEqual(unit["label"], "REGRESSED")
+        self.assertEqual(comparison["summary"]["label"], "REGRESSED")
+        self.assertEqual(comparison["summary"]["regressed_count"], 1)
+
+    def test_an_ungraded_side_is_not_comparable_rather_than_a_direction(self) -> None:
+        with _BaselineFile(_probe()["receipt"]) as path:
+            comparison = _run(baseline_path=path)["receipt"]["baseline_comparison"]  # type: ignore[index]
+        unit = next(item for item in comparison["units"] if item["fixture_id"] == "evidence-command-binding")
+        self.assertEqual(unit["baseline_verdict"], "PASS")
+        self.assertEqual(unit["current_verdict"], "INCONCLUSIVE")
+        self.assertEqual(unit["label"], "not_comparable")
+        self.assertEqual(comparison["summary"]["not_comparable_count"], 1)
+        self.assertIsNone(comparison["summary"]["current_pass_rate"])
+
+    def test_observed_telemetry_on_both_sides_yields_a_delta(self) -> None:
+        with _BaselineFile(_dispatch()["receipt"]) as path:
+            richer = _fake_dispatch_observation(tokens=1524, cost_usd=0.0051)
+            comparison = _dispatch(dispatch_observation=richer, baseline_path=path)["receipt"][  # type: ignore[index]
+                "baseline_comparison"
+            ]
+        tokens = comparison["efficiency_delta"]["tokens"]
+        self.assertEqual(tokens["label"], "comparable")
+        self.assertEqual(tokens["baseline"], 1024)
+        self.assertEqual(tokens["delta"], 500)
+        self.assertEqual(comparison["efficiency_delta"]["cost_usd"]["delta"], 0.002)
+
+    def test_a_null_telemetry_side_yields_no_delta(self) -> None:
+        silent = _fake_dispatch_observation(tokens=None, cost_usd=None)
+        with _BaselineFile(_dispatch(dispatch_observation=silent)["receipt"]) as path:
+            comparison = _dispatch(baseline_path=path)["receipt"]["baseline_comparison"]  # type: ignore[index]
+        for field in ("tokens", "cost_usd"):
+            delta = comparison["efficiency_delta"][field]
+            self.assertIsNone(delta["baseline"])
+            self.assertIsNone(delta["delta"])
+            self.assertEqual(delta["label"], "not_comparable")
+
+    def test_a_different_task_set_is_a_hard_error_listing_the_mismatch(self) -> None:
+        receipt = dict(_probe()["receipt"])  # type: ignore[arg-type]
+        receipt["verdicts"] = [
+            {**item, "fixture_id": "renamed-unit"} if item["fixture_id"] == "model-neutral-fallback" else item
+            for item in receipt["verdicts"]
+        ]
+        receipt["unsupported_fixture_ids"] = [
+            "renamed-unit" if item == "model-neutral-fallback" else item
+            for item in receipt["unsupported_fixture_ids"]
+        ]
+        self.assertEqual(receipt_module.validate_receipt(receipt), ())
+        with _BaselineFile(receipt) as path:
+            with self.assertRaises(controller.ControllerError) as caught:
+                _probe(baseline_path=path)
+        message = str(caught.exception)
+        self.assertTrue(message.startswith("baseline_task_set_mismatch:"))
+        self.assertIn("only_in_current=model-neutral-fallback", message)
+        self.assertIn("only_in_baseline=renamed-unit", message)
+
+    def test_mismatched_task_sets_are_never_silently_intersected(self) -> None:
+        current = {
+            "schema_version": receipt_module.RECEIPT_SCHEMA,
+            "corpus_digest": "a" * 64,
+            "verdicts": [{"fixture_id": "kept", "verdict": "PASS", "reason_code": None}],
+            "verdict_summary": {"pass_rate": 1.0},
+            "efficiency": {},
+        }
+        baseline = {
+            **current,
+            "verdicts": [
+                {"fixture_id": "kept", "verdict": "PASS", "reason_code": None},
+                {"fixture_id": "extra", "verdict": "FAIL", "reason_code": None},
+            ],
+        }
+        with self.assertRaises(receipt_module.BaselineComparisonError) as caught:
+            receipt_module.compare_to_baseline(current, baseline)
+        self.assertEqual(
+            str(caught.exception),
+            "baseline_task_set_mismatch:only_in_current=;only_in_baseline=extra",
+        )
+
+    def test_a_foreign_corpus_baseline_is_refused(self) -> None:
+        receipt = dict(_probe()["receipt"])  # type: ignore[arg-type]
+        receipt["corpus_digest"] = "f" * 64
+        with _BaselineFile(receipt) as path:
+            with self.assertRaises(controller.ControllerError) as caught:
+                _probe(baseline_path=path)
+        self.assertEqual(str(caught.exception), "baseline_corpus_mismatch")
+
+    def test_a_v1_baseline_receipt_is_refused_rather_than_half_compared(self) -> None:
+        receipt = dict(_probe()["receipt"])  # type: ignore[arg-type]
+        receipt["schema_version"] = "cross_harness_live_receipt/v1"
+        with _BaselineFile(receipt) as path:
+            with self.assertRaises(controller.ControllerError) as caught:
+                _probe(baseline_path=path)
+        self.assertEqual(str(caught.exception), "baseline_receipt_invalid:unknown_receipt_schema")
+
+    def test_an_unreadable_baseline_is_refused_before_comparison(self) -> None:
+        with TemporaryDirectory() as root:
+            path = Path(root) / "baseline.json"
+            path.write_text("{not json", encoding="utf-8")
+            with self.assertRaises(controller.ControllerError) as caught:
+                _probe(baseline_path=path)
+        self.assertEqual(str(caught.exception), "baseline_invalid_json")
+
+    def test_a_receipt_with_a_comparison_round_trips_through_json(self) -> None:
+        with _BaselineFile(_probe()["receipt"]) as path:
+            receipt = _probe(baseline_path=path)["receipt"]
+            reloaded = json.loads(json.dumps(receipt, sort_keys=True))
+        self.assertEqual(reloaded, receipt)
+        self.assertEqual(receipt_module.validate_receipt(reloaded), ())
+
+
+class VerdictSchemaTests(unittest.TestCase):
+    @staticmethod
+    def _receipt() -> dict[str, object]:
+        return dict(_probe()["receipt"])  # type: ignore[arg-type]
+
+    def test_a_graded_verdict_may_not_carry_an_inconclusive_reason(self) -> None:
+        payload = self._receipt()
+        payload["verdicts"] = [
+            {**item, "reason_code": "artifact_unreadable"} if item["verdict"] == "PASS" else item
+            for item in payload["verdicts"]  # type: ignore[attr-defined]
+        ]
+        self.assertIn(
+            "graded_verdict_claims_inconclusive_reason", receipt_module.validate_receipt(payload)
+        )
+
+    def test_an_inconclusive_verdict_requires_a_known_reason(self) -> None:
+        payload = self._receipt()
+        payload["verdicts"] = [
+            {**item, "reason_code": None} if item["verdict"] == "INCONCLUSIVE" else item
+            for item in payload["verdicts"]  # type: ignore[attr-defined]
+        ]
+        self.assertIn("invalid_inconclusive_reason", receipt_module.validate_receipt(payload))
+
+    def test_a_summary_that_contradicts_the_verdicts_is_rejected(self) -> None:
+        payload = self._receipt()
+        summary = dict(payload["verdict_summary"])  # type: ignore[arg-type]
+        summary["pass_count"] = 2
+        summary["graded_total"] = 2
+        summary["units_total"] = 16
+        payload["verdict_summary"] = summary
+        self.assertIn("verdict_summary_mismatch", receipt_module.validate_receipt(payload))
+
+    def test_a_pass_rate_over_zero_graded_units_is_rejected(self) -> None:
+        payload = dict(_run()["receipt"])  # type: ignore[arg-type]
+        summary = dict(payload["verdict_summary"])  # type: ignore[arg-type]
+        summary["pass_rate"] = 1.0
+        payload["verdict_summary"] = summary
+        self.assertIn("pass_rate_without_graded_units", receipt_module.validate_receipt(payload))
+
+    def test_a_summary_may_not_fold_inconclusive_units_into_the_denominator(self) -> None:
+        payload = self._receipt()
+        summary = dict(payload["verdict_summary"])  # type: ignore[arg-type]
+        summary["graded_total"] = 15
+        payload["verdict_summary"] = summary
+        self.assertIn("invalid_graded_total", receipt_module.validate_receipt(payload))
+
+    def test_a_delta_without_both_sides_observed_is_rejected(self) -> None:
+        silent = _fake_dispatch_observation(tokens=None, cost_usd=None)
+        with _BaselineFile(_dispatch(dispatch_observation=silent)["receipt"]) as path:
+            payload = dict(_dispatch(baseline_path=path)["receipt"])  # type: ignore[arg-type]
+        comparison = dict(payload["baseline_comparison"])  # type: ignore[arg-type]
+        delta = dict(comparison["efficiency_delta"])  # type: ignore[index]
+        delta["tokens"] = {**delta["tokens"], "delta": 1024}
+        comparison["efficiency_delta"] = delta
+        payload["baseline_comparison"] = comparison
+        self.assertIn("estimated_delta", receipt_module.validate_receipt(payload))
+
+    def test_a_comparison_over_foreign_units_is_rejected(self) -> None:
+        with _BaselineFile(_probe()["receipt"]) as path:
+            payload = dict(_probe(baseline_path=path)["receipt"])  # type: ignore[arg-type]
+        comparison = dict(payload["baseline_comparison"])  # type: ignore[arg-type]
+        comparison["units"] = [{**item, "fixture_id": "foreign-unit"} for item in comparison["units"]]  # type: ignore[index]
+        payload["baseline_comparison"] = comparison
+        self.assertIn("comparison_task_set_mismatch", receipt_module.validate_receipt(payload))
+
+    def test_verdict_vocabulary_is_ternary_and_ordered(self) -> None:
+        self.assertEqual(receipt_module.VERDICTS, ("PASS", "FAIL", "INCONCLUSIVE"))
+        self.assertIn("not_comparable", receipt_module.COMPARISON_LABELS)
+        self.assertEqual(receipt_module.RECEIPT_SCHEMA, "cross_harness_live_receipt/v2")
+
+
 class BenchEntryPointTests(unittest.TestCase):
     @staticmethod
     def _bench() -> object:
