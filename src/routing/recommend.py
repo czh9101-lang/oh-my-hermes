@@ -1784,13 +1784,13 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     # inside a complete trigger phrase, which the phrase match and the
     # `direct:llm_app_dev` boost cover.
     #
-    # English only, deliberately. `routing_tokens` decomposes Hangul, so a
-    # Korean entry written here in composed form never matches the decomposed
-    # token and is a silent no-op -- the same already-shipped shape as
-    # `adversarial-consensus`'s Korean entries. The Korean triggers do not need
-    # the hold-back: measured on "앱 개발 시작하자", "기능 개발 계획 세워줘",
-    # "버전 관리 어떻게 해?", "출력 형식 바꿔줘", and "프롬프트 좀 고쳐줘", their
-    # token credit tops out at 6, which stays in clarify and never dispatches.
+    # English only -- not because a composed Korean entry here would be a
+    # no-op (entries are normalized through `routing_tokens` before use, same
+    # as `adversarial-consensus`'s Korean entries below), but because the
+    # Korean triggers do not need the hold-back at all: measured on "앱 개발
+    # 시작하자", "기능 개발 계획 세워줘", "버전 관리 어떻게 해?", "출력 형식
+    # 바꿔줘", and "프롬프트 좀 고쳐줘", their token credit tops out at 6, which
+    # stays in clarify and never dispatches.
     "llm-app-dev": frozenset(
         {
             "app",
@@ -1819,6 +1819,32 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
 }
 
 
+def _normalized_trigger_token_holdback(entries: frozenset[str]) -> frozenset[str]:
+    # `trigger_tokens` below is built from `_tokens(...)`, which folds every
+    # token through `routing_tokens` -- NFKD normalization that decomposes
+    # precomposed Hangul syllables into their component jamo. Subtracting the
+    # *raw* `_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS` entries would compare an
+    # as-written composed Korean word against decomposed tokens it can never
+    # equal, so the hold-back would silently remove nothing for Korean
+    # entries (see `tests/test_trigger_holdback_reachability.py`). Running
+    # each entry through the same `_tokens` pipeline before subtracting keeps
+    # this a set difference over a shared representation, so authors can
+    # write entries -- Korean or English -- in ordinary composed form.
+    # `_tokens` itself is defined later in this module (it is only a thin
+    # `routing_tokens(value, stopwords=_STOPWORDS)` wrapper), and this table
+    # is built at import time, so call `routing_tokens` directly here rather
+    # than forward-reference `_tokens`.
+    normalized: set[str] = set()
+    for entry in entries:
+        normalized.update(routing_tokens(entry, stopwords=_STOPWORDS))
+    return frozenset(normalized)
+
+
+_NORMALIZED_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
+    name: _normalized_trigger_token_holdback(entries) for name, entries in _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS.items()
+}
+
+
 def _prepare_definition(definition: SkillDefinition) -> _PreparedDefinition:
     trigger_phrases = tuple(normalized_phrase(trigger) for trigger in definition.triggers)
     metadata_tokens = frozenset(
@@ -1831,7 +1857,7 @@ def _prepare_definition(definition: SkillDefinition) -> _PreparedDefinition:
         command_trigger_phrases=tuple(trigger for trigger in trigger_phrases if trigger in _COMMAND_TRIGGER_PHRASES),
         plain_trigger_phrases=tuple(trigger for trigger in trigger_phrases if trigger and trigger not in _COMMAND_TRIGGER_PHRASES),
         trigger_tokens=frozenset(_tokens(" ".join(definition.triggers)))
-        - _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS.get(definition.name, frozenset()),
+        - _NORMALIZED_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS.get(definition.name, frozenset()),
         name_phrase=normalized_phrase(definition.name),
         description_phrase=normalized_phrase(definition.description),
         use_when_phrase=normalized_phrase(definition.use_when),
