@@ -51,6 +51,7 @@ from .context import _add_context_commands, cmd_context_brief
 from .model_chains import _add_model_chains_commands
 from .conformance import _add_conformance_commands, cmd_conformance_check
 from .demo import _add_demo_commands, cmd_demo_orchestration
+from .design import _add_design_commands, cmd_design_data
 from .docs import (
     _add_docs_commands,
     _add_harness_commands,
@@ -217,6 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  omh cases artifact --all --write\n"
             "  omh cases replay\n"
             "  omh context brief \"make an image card for this PR\"\n"
+            "  omh design data --kind palette --context fintech\n"
             "  omh playbook recommend \"turn this issue into a PR\"\n"
             "  omh chat interact \"turn this issue into a PR-ready plan\"\n"
             "  omh hud\n"
@@ -269,6 +271,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_playbook_commands(sub)
     _add_release_commands(sub)
     _add_demo_commands(sub)
+    _add_design_commands(sub)
     _add_chat_commands(sub)
     _add_achievements_commands(sub)
     _add_capabilities_commands(sub)

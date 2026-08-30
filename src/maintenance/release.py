@@ -388,7 +388,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # Re-measured on the merged tree after #1181, #1183, and #1182 rather than
 # carried over from this branch's pre-merge base; warranted growth for three
 # workflows closing two zero-coverage technical domains.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 795266
+# 795266 -> 795558: the `frontend` quality bar gained the design-reference-data
+# lookup line (+292 chars: `omh design data --kind palette|font|ux --context`
+# with the rows-inform-DESIGN.md-but-the-contract-gates-the-code boundary);
+# warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 795558
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
