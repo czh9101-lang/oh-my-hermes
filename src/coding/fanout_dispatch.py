@@ -20,7 +20,9 @@ import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from ..runtime.artifacts import append_journal_observation, create_run, show_run
+from ..system.approval_tier import TIER_AUTO_ALLOWED, resolve_approval_tier
 from ..system.local_store import atomic_write_json, ensure_dir, locked_json_update, read_json_object_result, utc_now
+from ..system.security_posture import resolve_security_posture
 from ..system.metadata_safety import redact_metadata_text
 from ..system.output_truncation import spill_evidence_ref, truncate_output, truncation_notice
 from ..system.paths import OmhPaths
@@ -1196,14 +1198,18 @@ def dispatch_fanout(
     effective_max_depth = FANOUT_MAX_DEPTH_DEFAULT if max_depth is None else max(1, int(max_depth))
     current_depth = read_fanout_depth(guard_env)
     if current_depth >= effective_max_depth:
-        return _depth_refusal_summary(
-            contract,
-            dry_run=dry_run,
-            base_sha=base_sha,
-            depth=current_depth,
-            max_depth=effective_max_depth,
-            lineage=str(guard_env.get(FANOUT_LINEAGE_ENV_VAR, "") or ""),
+        depth_decision = resolve_approval_tier(
+            "fanout_recursion_depth", posture=resolve_security_posture(guard_env)
         )
+        if depth_decision.tier != TIER_AUTO_ALLOWED:
+            return _depth_refusal_summary(
+                contract,
+                dry_run=dry_run,
+                base_sha=base_sha,
+                depth=current_depth,
+                max_depth=effective_max_depth,
+                lineage=str(guard_env.get(FANOUT_LINEAGE_ENV_VAR, "") or ""),
+            )
     spawn_ledger = _SpawnLedger(
         FANOUT_RUN_SPAWN_CEILING_DEFAULT if spawn_ceiling is None else spawn_ceiling
     )

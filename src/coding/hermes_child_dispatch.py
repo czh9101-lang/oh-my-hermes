@@ -25,6 +25,8 @@ from threading import Event, Lock, Thread
 import time
 from typing import Final
 
+from ..system.approval_tier import TIER_AUTO_ALLOWED, resolve_approval_tier
+from ..system.security_posture import resolve_security_posture
 from .hermes_child_evaluation import (
     HermesChildEvaluationContext,
     seal_evaluation_binding,
@@ -221,13 +223,27 @@ class CancellationToken:
 def require_hermes_child_dispatch_boundary(
     *, dispatch_policy: str, confirmed: bool, depth: int = 0
 ) -> None:
-    """Enforce the shared confirmation and depth-one child boundary."""
-    if dispatch_policy != "ask_before_dispatch" or not confirmed:
+    """Enforce the shared confirmation and depth-one child boundary.
+
+    Both checks ask `resolve_approval_tier` for the DECISION and keep the
+    enforcement (which error, which message) here: the confirmation check
+    folds `dispatch_policy`/`confirmed` into the single `hermes_child_dispatch`
+    operation class the resolver's table already documents as
+    non-tightenable-by-posture; the depth check consults the structurally
+    `refused` `hermes_child_recursion_depth` class only once the site's own
+    trigger (`depth >= MAX_CHILD_DEPTH or` a child environment) fires.
+    """
+    posture = resolve_security_posture()
+    is_confirmed = dispatch_policy == "ask_before_dispatch" and confirmed
+    decision = resolve_approval_tier("hermes_child_dispatch", confirmed=is_confirmed, posture=posture)
+    if decision.tier != TIER_AUTO_ALLOWED:
         raise DispatchConfirmationError(
             "isolated Hermes dispatch requires ask_before_dispatch and explicit confirmation"
         )
     if depth >= MAX_CHILD_DEPTH or _environment_is_child():
-        raise DispatchRecursionError("isolated Hermes child dispatch depth is limited to one")
+        depth_decision = resolve_approval_tier("hermes_child_recursion_depth", posture=posture)
+        if depth_decision.tier != TIER_AUTO_ALLOWED:
+            raise DispatchRecursionError("isolated Hermes child dispatch depth is limited to one")
 
 
 def dispatch_hermes_child(

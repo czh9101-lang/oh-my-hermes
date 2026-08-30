@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 import re
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .local_store import atomic_write_text
 
@@ -37,12 +37,17 @@ OUTPUT_SPILL_REF_SCHEMA_VERSION = "omh_output_spill_ref/v1"
 
 # Closed vocabulary. `not_truncated` is a real member, not a filler: recording
 # it is what lets a reader distinguish "nothing more to show" from "capped".
+# `fabricated_boundary` is `truncate_at_fabricated_boundary`'s reason: a caller-
+# named authority marker turned up inside content a dispatched unit does not
+# get to author, so everything from the marker onward was cut rather than
+# trusted.
 TRUNCATION_REASON_CODES: tuple[str, ...] = (
     "not_truncated",
     "output_cap",
     "capture_cap",
     "match_limit",
     "redacted",
+    "fabricated_boundary",
 )
 # `kept_ranges` is a list rather than a single range so a head+tail keep can be
 # added later without a schema bump. Only the two single-range keeps are
@@ -194,6 +199,79 @@ def truncate_output(
             spill_status=spill_status,
         ),
     )
+
+
+def truncate_at_fabricated_boundary(
+    value: object,
+    *,
+    markers: Sequence[str],
+    source: str,
+    spill_dir: Path | None = None,
+) -> TruncatedOutput:
+    """Cap `value` at the first occurrence of any string in `markers`.
+
+    OMH's analogue of `tools.abortOnFabricatedResult`
+    (`docs/toolconv/xml.md:188` in oh-my-pi; OMH absorption, P3 item Q): a
+    dispatched unit's own captured output is not a trusted source for the
+    markers named here -- only OMH's own dispatcher legitimately writes them.
+    The first occurrence of any marker, wherever it falls, is a hard boundary:
+    everything before it is kept as this capture's real content; everything
+    from the marker onward is cut under the `fabricated_boundary` reason code
+    and never parsed as if it were genuine, mirroring "content before the
+    fabricated block is preserved, generation stops".
+
+    `markers` is caller-supplied rather than a fixed OMH vocabulary: which
+    strings count as an unforgeable authority marker is a property of the
+    call site (what only ITS OWN dispatcher ever legitimately writes), not of
+    this generic contract. No marker found is not truncation -- `value`
+    passes through unchanged with the `not_truncated` reason, exactly like
+    `truncate_output` at or under its limit.
+    """
+    text = value if isinstance(value, str) else str(value or "")
+    original_bytes = len(text.encode("utf-8"))
+    boundary = _first_marker_offset(text, markers)
+    if boundary is None:
+        return TruncatedOutput(
+            text,
+            truncation_record(
+                source=source,
+                reason_code="not_truncated",
+                limit_bytes=original_bytes,
+                kept_bytes=original_bytes,
+                original_bytes=original_bytes,
+                keep="head",
+            ),
+        )
+
+    kept = text[:boundary]
+    kept_bytes = len(kept.encode("utf-8"))
+    spill: Mapping[str, Any] | None = None
+    spill_status = "not_attempted"
+    if spill_dir is not None:
+        # The full, unredacted text spills -- including the fabricated
+        # portion -- so a reviewer can inspect exactly what was cut, the same
+        # discipline `truncate_output` already applies to a length cap.
+        spill = write_output_spill(spill_dir, text)
+        spill_status = "written" if spill else "store_unavailable"
+
+    return TruncatedOutput(
+        kept,
+        truncation_record(
+            source=source,
+            reason_code="fabricated_boundary",
+            limit_bytes=kept_bytes,
+            kept_bytes=kept_bytes,
+            original_bytes=original_bytes,
+            keep="head",
+            spill=spill,
+            spill_status=spill_status,
+        ),
+    )
+
+
+def _first_marker_offset(text: str, markers: Sequence[str]) -> int | None:
+    offsets = [text.index(marker) for marker in markers if marker and marker in text]
+    return min(offsets) if offsets else None
 
 
 def write_output_spill(spill_dir: Path, text: str) -> dict[str, Any]:

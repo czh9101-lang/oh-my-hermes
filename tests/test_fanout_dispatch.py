@@ -3573,6 +3573,29 @@ class FanoutSpawnGuardTests(unittest.TestCase):
             # never going to start.
             self.assertEqual(runner.spawned, [])
             self.assertEqual(sorted(p.name for p in Path(tmp).glob("*core*")), [])
+
+    def test_the_depth_refusal_traces_to_the_approval_tier_resolver_and_is_posture_invariant(self) -> None:
+        # `dispatch_fanout`'s depth guard now asks
+        # `resolve_approval_tier("fanout_recursion_depth", ...)` instead of
+        # refusing unconditionally; that operation class carries no
+        # `posture_key` (`system.approval_tier.APPROVAL_RULE_TABLE`), so the
+        # same refusal must fire in strict posture too.
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            runner = _agent_runner()
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                runner=runner,
+                readiness=_ready,
+                env={FANOUT_DEPTH_ENV_VAR: "1", "OMH_SECURITY": "strict"},
+            )
+            self.assertTrue(summary["refused"])
+            self.assertEqual(summary["refusal_reason"], "fanout_depth_exceeded")
+            self.assertEqual(runner.spawned, [])
             # And nothing was persisted: a refusal must not overwrite the
             # stored summary of the run that is actually in flight.
             self.assertFalse(fanout_dispatch_summary_path(paths, contract["fanout_id"]).exists())
