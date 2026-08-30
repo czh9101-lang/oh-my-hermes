@@ -9,6 +9,7 @@ from .context_brief_coverage import build_context_brief_coverage_demo
 from .grounded_score import build_grounded_score_demo
 from .localized_chat_copy import build_localized_chat_copy_demo, localized_chat_copy_errors
 from .native_skill_competition import build_native_skill_competition_report, native_skill_competition_errors
+from .reported_rate import reported_rate
 from .route_hint_alignment import build_route_hint_alignment_demo
 from .router_fast_path import build_router_fast_path_demo, router_fast_path_errors
 from .routing_precision import build_routing_precision_demo, routing_precision_errors
@@ -176,6 +177,13 @@ def build_hermes_ux_quality_demo(
     ]
     passing_count = sum(1 for gate in gates if gate["status"] == "passed")
     total = len(gates)
+    score_rate = reported_rate(
+        numerator=passing_count,
+        denominator=total,
+        numerator_of=("passed_gate",),
+        denominator_of="UX quality gates",
+        digits=0,
+    )
     status = "passed" if passing_count == total else "needs_attention"
     grounded_summary = _nested(grounded, "summary")
     chat_summary = _nested(chat_cards, "summary")
@@ -189,7 +197,8 @@ def build_hermes_ux_quality_demo(
         "schema_version": HERMES_UX_QUALITY_SCHEMA_VERSION,
         "source": source,
         "status": status,
-        "score": round((passing_count / max(1, total)) * 100),
+        "score": None if score_rate.percent is None else int(score_rate.percent),
+        "score_rate": score_rate.to_payload(),
         "summary": {
             "gate_count": total,
             "passing_gate_count": passing_count,

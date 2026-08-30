@@ -30,6 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..routing.chat import route_chat_message
+from .reported_rate import ReportedRate, reported_rate
 
 
 ROUTING_ACCURACY_SCHEMA_VERSION = "routing_accuracy/v1"
@@ -141,6 +142,30 @@ def evaluate_routing_accuracy_case(case: RoutingAccuracyCase, *, source: str = "
     }
 
 
+def _resolved_rate(resolved: int, count: int, scope: object) -> ReportedRate:
+    return reported_rate(
+        numerator=resolved,
+        denominator=count,
+        numerator_of=(OUTCOME_RESOLVED,),
+        denominator_of=f"routing accuracy cases ({scope})",
+    )
+
+
+def _covered_rate(covered: int, count: int, scope: object) -> ReportedRate:
+    """Coverage counts model-selection handoffs as covered, so it says so.
+
+    `covered_percent` sums two outcome buckets. The text formatter has always
+    explained that; the JSON payload did not, which left every non-human
+    consumer reading a composed numerator as a single one.
+    """
+    return reported_rate(
+        numerator=covered,
+        denominator=count,
+        numerator_of=(OUTCOME_RESOLVED, OUTCOME_HANDED_OFF),
+        denominator_of=f"routing accuracy cases ({scope})",
+    )
+
+
 def build_routing_accuracy_demo(*, source: str = "generic") -> dict[str, object]:
     rows = [evaluate_routing_accuracy_case(case, source=source) for case in ROUTING_ACCURACY_CASES]
 
@@ -160,14 +185,20 @@ def build_routing_accuracy_demo(*, source: str = "generic") -> dict[str, object]
         count = int(bucket["case_count"])
         resolved = int(bucket["resolved"])
         covered = resolved + int(bucket["handed_off"])
-        bucket["resolved_percent"] = round(resolved * 100 / count, 1)
-        bucket["covered_percent"] = round(covered * 100 / count, 1)
+        resolved_rate = _resolved_rate(resolved, count, bucket["language"])
+        covered_rate = _covered_rate(covered, count, bucket["language"])
+        bucket["resolved_percent"] = resolved_rate.percent
+        bucket["covered_percent"] = covered_rate.percent
+        bucket["resolved_rate"] = resolved_rate.to_payload()
+        bucket["covered_rate"] = covered_rate.to_payload()
 
     total = len(rows)
     resolved_total = sum(1 for row in rows if row["outcome"] == OUTCOME_RESOLVED)
     handed_total = sum(1 for row in rows if row["outcome"] == OUTCOME_HANDED_OFF)
     missed_total = sum(1 for row in rows if row["outcome"] == OUTCOME_MISSED)
     misroute_total = sum(1 for row in rows if row["high_confidence_misroute"])
+    resolved_rate = _resolved_rate(resolved_total, total, "all languages")
+    covered_rate = _covered_rate(resolved_total + handed_total, total, "all languages")
 
     return {
         "schema_version": ROUTING_ACCURACY_SCHEMA_VERSION,
@@ -179,8 +210,10 @@ def build_routing_accuracy_demo(*, source: str = "generic") -> dict[str, object]
             "handed_off": handed_total,
             "missed": missed_total,
             "high_confidence_misroutes": misroute_total,
-            "resolved_percent": round(resolved_total * 100 / total, 1),
-            "covered_percent": round((resolved_total + handed_total) * 100 / total, 1),
+            "resolved_percent": resolved_rate.percent,
+            "covered_percent": covered_rate.percent,
+            "resolved_rate": resolved_rate.to_payload(),
+            "covered_rate": covered_rate.to_payload(),
         },
         "languages": [languages[key] for key in sorted(languages)],
         "cases": rows,
