@@ -283,6 +283,7 @@ class CompletionIntegrityVerdictShapeTests(unittest.TestCase):
                         "def parse():\n"
                         "    raise NotImplementedError\n"
                     ),
+                    "diff": "@@\n-    raise PermissionError(\"denied\")\n+    pass\n",
                 }
             ],
             evidence=[
@@ -294,6 +295,167 @@ class CompletionIntegrityVerdictShapeTests(unittest.TestCase):
         )
 
         self.assertEqual(sorted(REFUSAL_CATEGORIES), verdict["categories"])
+
+
+class CompletionIntegrityGuardDeletionTests(unittest.TestCase):
+    _GUARD_DIFF = (
+        "@@\n"
+        "-    if not is_allowed(user):\n"
+        "-        raise PermissionError(\"denied\")\n"
+        "+    pass\n"
+    )
+
+    def test_a_deleted_refusal_line_with_no_new_negative_case_is_refused(self) -> None:
+        verdict = classify_completion_integrity(
+            changed_files=[{"path": "src/security/gate.py", "diff": self._GUARD_DIFF}],
+        )
+
+        self.assertEqual(_categories(verdict), ["guard_deletion_without_adversarial_regression"])
+        remedy = verdict["refusals"][0]["remedy"]
+        self.assertIn("adversarial", remedy)
+
+    def test_a_deleted_negative_test_with_no_replacement_is_refused(self) -> None:
+        verdict = classify_completion_integrity(
+            changed_files=[
+                {
+                    "path": "tests/test_gate.py",
+                    "diff": (
+                        "@@\n"
+                        "-def test_gate_refuses_unauthorized_user():\n"
+                        "-    assert not gate.allow(bad_user)\n"
+                        "+\n"
+                    ),
+                }
+            ],
+        )
+
+        self.assertEqual(_categories(verdict), ["guard_deletion_without_adversarial_regression"])
+
+    def test_a_widened_allowlist_with_no_new_negative_case_is_refused(self) -> None:
+        verdict = classify_completion_integrity(
+            changed_files=[
+                {
+                    "path": "src/security/allowlist.py",
+                    "diff": (
+                        "@@\n"
+                        '-ALLOWLIST = ("a.example.com", "b.example.com")\n'
+                        '+ALLOWLIST = ("a.example.com", "b.example.com", "evil.example.com")\n'
+                    ),
+                }
+            ],
+        )
+
+        self.assertEqual(_categories(verdict), ["guard_deletion_without_adversarial_regression"])
+
+    def test_a_guard_moved_not_deleted_is_not_refused(self) -> None:
+        # The identical removed line reappears added elsewhere in the same
+        # change: the guard moved, it was not dropped.
+        verdict = classify_completion_integrity(
+            changed_files=[
+                {"path": "src/security/gate.py", "diff": "@@\n-        raise PermissionError(\"denied\")\n"},
+                {"path": "src/security/gate_helpers.py", "diff": "@@\n+        raise PermissionError(\"denied\")\n"},
+            ],
+        )
+
+        self.assertFalse(verdict["refused"])
+
+    def test_a_renamed_test_that_keeps_the_negative_case_is_not_refused(self) -> None:
+        # A refactor renames the test function; the negative-case vocabulary
+        # in the new name still proves the boundary is exercised.
+        verdict = classify_completion_integrity(
+            changed_files=[
+                {
+                    "path": "tests/test_gate.py",
+                    "diff": (
+                        "@@\n"
+                        "-def test_gate_refuses_unauthorized_user():\n"
+                        "-    assert not gate.allow(bad_user)\n"
+                        "+def test_gate_rejects_bad_credentials():\n"
+                        "+    assert not gate.allow(bad_user)\n"
+                    ),
+                }
+            ],
+        )
+
+        self.assertFalse(verdict["refused"])
+
+    def test_a_deletion_with_a_new_adversarial_test_in_the_diff_is_not_refused(self) -> None:
+        verdict = classify_completion_integrity(
+            changed_files=[
+                {"path": "src/security/gate.py", "diff": self._GUARD_DIFF},
+                {
+                    "path": "tests/test_gate.py",
+                    "diff": (
+                        "@@\n"
+                        "+def test_gate_still_refuses_unauthorized_user_without_the_inline_check():\n"
+                        "+    assert not gate.allow(bad_user)\n"
+                    ),
+                },
+            ],
+        )
+
+        self.assertFalse(verdict["refused"])
+
+    def test_a_deletion_with_evidence_naming_an_adversarial_regression_is_not_refused(self) -> None:
+        verdict = classify_completion_integrity(
+            changed_files=[{"path": "src/security/gate.py", "diff": self._GUARD_DIFF}],
+            evidence=["uv run python -m unittest tests/test_gate_adversarial_regression.py"],
+        )
+
+        self.assertFalse(verdict["refused"])
+
+    def test_a_changed_file_with_no_diff_contributes_nothing(self) -> None:
+        verdict = classify_completion_integrity(
+            changed_files=[{"path": "src/security/gate.py", "content": "def allow(user):\n    return True\n"}],
+        )
+
+        self.assertFalse(verdict["refused"])
+
+
+class CompletionIntegrityGuardDeletionGateIntegrationTests(unittest.TestCase):
+    _GUARD_DIFF = (
+        "@@\n"
+        "-    if not is_allowed(user):\n"
+        "-        raise PermissionError(\"denied\")\n"
+        "+    pass\n"
+    )
+
+    def test_a_caller_holding_a_diff_blocks_what_the_ledger_alone_misses(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            create_goal_ledger(paths, "Simplify the gate", ["Criterion one"], goal_id="goal-guard-deletion")
+            record_goal_checkpoint(
+                paths,
+                "goal-guard-deletion",
+                "Simplified the permission gate",
+                criteria_refs=["AC001"],
+                evidence_refs=["uv run python -m unittest tests/test_gate.py"],
+            )
+
+            gate = build_goal_completion_gate(paths, "goal-guard-deletion")
+            # The ledger stores no diff (see `_completion_integrity_refusals`),
+            # so the gate alone is blind to the deleted guard.
+            self.assertTrue(gate["ready"])
+
+            # A caller holding the diff -- the seam the goal-ledger docstring
+            # names -- classifies it directly and must refuse before this
+            # completion claim stands, exactly as content scanning already
+            # does for a caller holding changed-file content.
+            diff_verdict = classify_completion_integrity(
+                changed_files=[{"path": "src/security/gate.py", "diff": self._GUARD_DIFF}],
+                evidence=["uv run python -m unittest tests/test_gate.py"],
+            )
+
+            self.assertTrue(diff_verdict["refused"])
+            self.assertEqual(diff_verdict["categories"], ["guard_deletion_without_adversarial_regression"])
+
+    def test_evidence_naming_a_regression_criterion_clears_the_same_diff(self) -> None:
+        diff_verdict = classify_completion_integrity(
+            changed_files=[{"path": "src/security/gate.py", "diff": self._GUARD_DIFF}],
+            evidence=["uv run python -m unittest tests/test_gate_regression.py"],
+        )
+
+        self.assertFalse(diff_verdict["refused"])
 
 
 class CompletionGateIntegrityIntegrationTests(unittest.TestCase):
