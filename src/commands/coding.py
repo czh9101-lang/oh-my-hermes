@@ -1903,6 +1903,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
         read_fanout_contract_provenance,
     )
     from ..coding.fanout_dispatch import dispatch_fanout, fanout_dispatch_preflight
+    from ..coding.fanout_journal import FanoutJournalError, read_fanout_run_journal
     from ..coding.parallelism_policy import read_parallelism_policy, resolve_fanout_concurrency
 
     paths = _paths(args)
@@ -1920,6 +1921,18 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
         )
     except (OSError, ValueError) as exc:
         raise OmhError(f"fanout contract not found: {exc}") from exc
+    resume_journal = None
+    if args.resume_journal:
+        # Refused loudly rather than treated as an empty prior run: reading an
+        # unusable journal as "nothing happened" would re-dispatch every unit,
+        # including the ones a replay would destroy.
+        try:
+            resume_journal = read_fanout_run_journal(
+                Path(args.resume_journal).expanduser(),
+                expected_fanout_id=str(args.fanout_id),
+            )
+        except FanoutJournalError as exc:
+            raise OmhError(f"{exc} ({exc.reason_code})") from exc
     goal_text = sys.stdin.read() if args.goal_file == "-" else Path(args.goal_file).expanduser().read_text(encoding="utf-8")
     repo_root = Path(args.repo_root).expanduser().resolve()
     try:
@@ -1948,6 +1961,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             only_units=args.unit,
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
+            resume_journal=resume_journal,
         )
         _print_json(summary)
         return _fanout_dispatch_exit_code(summary)
@@ -1981,6 +1995,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             only_units=args.unit,
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
+            resume_journal=resume_journal,
         )
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
@@ -2429,6 +2444,15 @@ def _add_coding_commands(sub) -> None:
         "--run-verification",
         action="store_true",
         help="Run each unit's contract verification_commands in its worktree after its sidecar validates.",
+    )
+    fanout_dispatch.add_argument(
+        "--resume-journal",
+        default="",
+        help=(
+            "Resume from a prior run's run_journal.json: re-dispatch only units that "
+            "failed with no observed side effect, un-skip their dependents, and never "
+            "re-run a unit that already succeeded."
+        ),
     )
     fanout_dispatch.set_defaults(func=cmd_coding_fanout_dispatch)
 
