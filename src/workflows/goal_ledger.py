@@ -31,7 +31,24 @@ GOAL_CONTINUATION_SCHEMA = "goal_continuation/v1"
 GOAL_STATUS_CARD_SCHEMA = "goal_status_card/v1"
 
 GOAL_STATUSES = {"active", "blocked", "failed", "complete", "cancelled"}
-GOAL_TERMINAL_STATUSES = ("complete", "cancelled")
+# `failed` is terminal alongside `complete` and `cancelled`: it is a negative
+# but CONCLUSIVE verdict on the objective itself (the target does not exist,
+# the request is refused by policy, the acceptance criteria are infeasible as
+# specified), reached via `fail_goal_ledger`, and a retry cannot answer the
+# same question differently. It is distinct from `blocked`, which stays
+# non-terminal on purpose: a blocker is recoverable, and clearing it is
+# exactly what further checkpoints on the goal are for.
+GOAL_TERMINAL_STATUSES = ("complete", "cancelled", "failed")
+# Closed reasons a failure verdict may cite. Required on every call to
+# `fail_goal_ledger`, mirroring how `record_goal_blocker` requires a summary --
+# a negative-conclusive verdict earns no less structure than a recoverable one.
+GOAL_FAILURE_REASON_CODES = (
+    "target_not_found",
+    "infeasible_as_specified",
+    "refused_by_policy",
+    "superseded_by_existing_work",
+    "other_declared",
+)
 CRITERION_STATUSES = {"pending", "satisfied"}
 CHECKPOINT_STATUSES = {"pending", "in_progress", "done", "blocked", "failed"}
 BLOCKER_STATUSES = {"active", "resolved"}
@@ -623,6 +640,64 @@ def cancel_goal_ledger(
     return goal
 
 
+def fail_goal_ledger(
+    paths: OmhPaths,
+    goal_id: str,
+    summary: str,
+    *,
+    reason_code: str,
+    evidence_refs: Iterable[str] | None = None,
+    expected_revision: int | None = None,
+    mutation_id: str | None = None,
+    outcome: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Terminally fail a goal: the objective was evaluated and cannot be met.
+
+    Distinct from `cancel_goal_ledger` (an operator decided to stop, for any
+    reason or none) and from `record_goal_blocker` (a recoverable obstacle
+    that further checkpoints can clear): a failure is a negative but
+    CONCLUSIVE verdict on the objective itself, reached because the target
+    does not exist, the request is refused by policy, or the acceptance
+    criteria are infeasible as specified. It is never a claim that the goal
+    ran out of budget or attempts -- `record_goal_blocker` or a loop's own
+    `wait_reason` cover that case, and stay recoverable.
+
+    Terminal like `cancel_goal_ledger`: later checkpoints, blockers, and gates
+    refuse via `require_not_terminal`, and a linked loop's stop ladder must
+    not schedule further ticks against this goal (`_stop_rung_explicit_cancel`
+    in `goal_loop` fires on `failed` for the same reason it fires on
+    `cancelled`).
+    """
+    if reason_code not in GOAL_FAILURE_REASON_CODES:
+        raise ValueError(f"unsupported goal failure reason_code: {reason_code}")
+    if not summary.strip():
+        raise ValueError("failure summary is required")
+    evidence = _evidence_refs(evidence_refs)
+
+    def mutate(goal: dict[str, Any]) -> dict[str, Any]:
+        require_not_terminal(goal, "status", GOAL_TERMINAL_STATUSES, "fail this goal")
+        goal["status"] = "failed"
+        goal["failure_reason_code"] = reason_code
+        goal["failure_summary"] = _safe_summary(summary)
+        goal["failure_evidence_refs"] = evidence
+        return goal
+
+    goal, replayed = _guarded_goal_update(
+        paths,
+        goal_id,
+        mutate,
+        operation="fail_goal_ledger",
+        expected_revision=expected_revision,
+        mutation_id=mutation_id,
+        mutation_digest=_mutation_digest("fail_goal_ledger", reason_code, summary, evidence),
+    )
+    # Re-derived from the persisted status, the same rule `cancel_goal_ledger`
+    # follows: a mutation replayed away leaves an unfailed goal, and reporting
+    # that as success is how a discarded failure verdict looks like a real one.
+    _record_goal_outcome(outcome, goal, replayed=replayed, applied=goal.get("status") == "failed")
+    return goal
+
+
 def validate_goal_ledger(goal: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
     if goal.get("schema_version") != GOAL_LEDGER_SCHEMA:
@@ -640,6 +715,7 @@ def validate_goal_ledger(goal: dict[str, Any]) -> dict[str, Any]:
         errors.append("status must be active, blocked, failed, complete, or cancelled")
     if "cancel_reason" in goal and not isinstance(goal.get("cancel_reason"), str):
         errors.append("cancel_reason must be a string")
+    errors.extend(_failure_fields_errors(goal))
     objective_hash = str(goal.get("objective_hash", ""))
     if len(objective_hash) != 64 or not re.fullmatch(r"[0-9a-f]+", objective_hash):
         errors.append("objective_hash must be a sha256 hex digest")
@@ -703,9 +779,12 @@ def build_goal_completion_gate(paths: OmhPaths, goal_id: str) -> dict[str, Any]:
         status_gaps=status_gaps,
         integrity_refusals=integrity_refusals,
     )
-    if goal["status"] == "cancelled":
-        # A cancelled goal is terminal: recording blockers or checkpoints is
-        # refused, so the only safe next action is showing status.
+    if goal["status"] in ("cancelled", "failed"):
+        # Both are terminal: recording blockers or checkpoints on either is
+        # refused (`require_not_terminal`), so the only safe next action is
+        # showing status. Without this a `failed` goal fell through to
+        # `_completion_next_action`'s `status_gaps` branch and suggested
+        # `record_blocker`, which the goal would then refuse.
         next_action = "show_status"
     return {
         "schema_version": GOAL_COMPLETION_GATE_SCHEMA,
@@ -889,7 +968,7 @@ def build_goal_status_card(paths: OmhPaths, goal_id: str) -> dict[str, Any]:
     goal = read_goal_ledger(paths, goal_id)
     gate = build_goal_completion_gate(paths, goal_id)
     progress = _goal_progress(goal)
-    return {
+    card: dict[str, Any] = {
         "schema_version": GOAL_STATUS_CARD_SCHEMA,
         "goal_id": goal_id,
         "goal_status": goal["status"],
@@ -908,6 +987,13 @@ def build_goal_status_card(paths: OmhPaths, goal_id: str) -> dict[str, Any]:
             "Never render a markdown table: messenger surfaces (Slack, Telegram) drop tables."
         ),
     }
+    # Additive, and only on a failed goal: a negative-conclusive verdict
+    # carries its own structured reason, distinct from `active_blockers`
+    # (recoverable) or a bare `goal_status` string a caller might miss.
+    if goal["status"] == "failed":
+        card["failure_reason_code"] = str(goal.get("failure_reason_code", ""))
+        card["failure_summary"] = str(goal.get("failure_summary", ""))
+    return card
 
 
 GOAL_STATUS_CLAIM_BOUNDARY: Final[str] = (
@@ -1084,8 +1170,10 @@ def _goal_progress(goal: dict[str, Any]) -> dict[str, Any]:
 
 
 def _allowed_goal_actions(gate: dict[str, Any]) -> list[str]:
-    if gate.get("goal_status") == "cancelled":
-        # Terminal cancellation: checkpoints, blockers, and completion refuse.
+    if gate.get("goal_status") in ("cancelled", "failed"):
+        # Both terminal: checkpoints, blockers, and completion all refuse via
+        # `require_not_terminal`. A `failed` goal offered `record_blocker`
+        # here would advertise an action the ledger is about to raise on.
         return ["show_status"]
     actions = ["continue_goal", "show_status"]
     if gate["missing_required_criteria"]:
@@ -1101,6 +1189,13 @@ def _goal_safe_copy(goal: dict[str, Any], gate: dict[str, Any], progress: dict[s
         next_step = "Record completion with the final verification evidence."
     elif gate["active_blockers"] or goal["status"] == "blocked":
         next_step = "Resolve or update the active blocker before claiming completion."
+    elif goal["status"] == "failed":
+        # Terminal and negative-conclusive: unlike a blocker, there is nothing
+        # left on this goal to clear. The reason lives on the record.
+        reason = str(goal.get("failure_reason_code", "") or "unspecified")
+        next_step = f"This goal failed conclusively ({reason}); no further checkpoint or blocker applies."
+    elif goal["status"] == "cancelled":
+        next_step = "This goal was cancelled; no further checkpoint or blocker applies."
     elif gate["missing_required_criteria"]:
         ids = ", ".join(item["id"] for item in gate["missing_required_criteria"])
         next_step = f"Record a checkpoint for the missing acceptance criteria: {ids}."
@@ -1220,6 +1315,25 @@ def _validate_blockers(blockers: Any, errors: list[str]) -> None:
             errors.append(f"blockers[{index}].summary is required")
         if not isinstance(blocker.get("evidence_refs"), list):
             errors.append(f"blockers[{index}].evidence_refs must be a list")
+
+
+def _failure_fields_errors(goal: dict[str, Any]) -> list[str]:
+    """The `fail_goal_ledger` fields, checked the way `cancel_reason` is: loosely
+    typed when present, and required together once the status they explain is on
+    the record -- a `failed` goal with no reason is the exact gap #H exists to close.
+    """
+    errors: list[str] = []
+    if "failure_reason_code" in goal and goal.get("failure_reason_code") not in GOAL_FAILURE_REASON_CODES:
+        errors.append("failure_reason_code is unsupported")
+    if "failure_summary" in goal and not isinstance(goal.get("failure_summary"), str):
+        errors.append("failure_summary must be a string")
+    if "failure_evidence_refs" in goal and not isinstance(goal.get("failure_evidence_refs"), list):
+        errors.append("failure_evidence_refs must be a list")
+    if goal.get("status") == "failed" and (
+        "failure_reason_code" not in goal or not str(goal.get("failure_summary", "")).strip()
+    ):
+        errors.append("a failed goal must carry failure_reason_code and a non-empty failure_summary")
+    return errors
 
 
 def _validate_quality_gates(quality_gates: Any, errors: list[str]) -> None:

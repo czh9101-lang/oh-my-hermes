@@ -68,6 +68,7 @@ from .fanout_retry import (
 from .unit_prompt_protocol import shared_unit_preamble_lines, unit_protocol_lines
 from .fanout_unit_results import (
     FANOUT_UNIT_RESULT_CHECK_STATUSES,
+    FANOUT_UNIT_RESULT_DECLINE_REASONS,
     FANOUT_UNIT_RESULT_PROCESS_STATUSES,
     validate_check_rows,
     validate_unit_result,
@@ -662,17 +663,24 @@ def _unit_result_prompt_lines(contract: Mapping[str, Any]) -> list[str]:
     had succeeded (#1190).
     """
     process_values = " or ".join(f'"{value}"' for value in FANOUT_UNIT_RESULT_PROCESS_STATUSES)
+    decline_values = ", ".join(f'"{value}"' for value in FANOUT_UNIT_RESULT_DECLINE_REASONS)
     check_values = ", ".join(f'"{value}"' for value in FANOUT_UNIT_RESULT_CHECK_STATUSES)
     return [
         "Before exiting, write one fanout_unit_result/v1 JSON sidecar to exactly "
         f"{contract.get('path', '')}.",
         "Top-level fields: schema_version, unit_id, run_id, fanout_id, base_sha, head_sha, "
-        "process_status, changed_paths, checks, findings, schema_error (optional).",
+        "process_status, decline_reason (required only with process_status process_declined), "
+        "changed_paths, checks, findings, schema_error (optional).",
         "Use these dispatch-bound values: "
         f"schema_version=fanout_unit_result/v1, unit_id={contract.get('unit_id', '')}, "
         f"run_id={contract.get('run_id', '')}, fanout_id={contract.get('fanout_id', '')}, "
         f"base_sha={contract.get('base_sha', '')}; head_sha is the git HEAD you leave behind.",
         f"process_status must be exactly {process_values} — no other value validates.",
+        "process_declined is a conclusive negative answer (the target does not exist, the request "
+        "is refused by policy, or the acceptance criteria are infeasible as specified), never a "
+        "retry candidate — do not report process_failed for it. When you report process_declined, "
+        f"decline_reason is required and must be exactly {decline_values} — omit decline_reason for "
+        "every other process_status.",
         "Each checks row fields: command, status, evidence_ref, reported_by, observed_by, "
         "observation_source.",
         f"Each checks row status must be exactly one of {check_values} — no other value validates.",
@@ -2603,6 +2611,7 @@ _UNIT_RESULT_TOP_LEVEL_KEYS = (
     "base_sha",
     "head_sha",
     "process_status",
+    "decline_reason",
 )
 _UNIT_RESULT_CHECK_KEYS = (
     "command",

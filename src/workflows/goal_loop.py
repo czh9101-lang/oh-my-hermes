@@ -58,10 +58,15 @@ LOOP_STOP_LADDER_SCHEMA = "loop_stop_ladder/v1"
 # that fires stops the tick, and every rung below it is recorded
 # `not_evaluated` rather than `clear` - a lower rung that was never consulted
 # must never read as a rung that passed. Per-rung rationale:
-# - Rung 1, explicit_cancel: a human already said stop. Nothing below it can
-#   outrank an explicit decision, and a cancelled linked goal refuses every
-#   ledger mutation anyway, so any work the loop prepared under it is
-#   unrecordable by construction.
+# - Rung 1, explicit_cancel: a human already said stop, OR the linked goal
+#   reached its own negative-conclusive verdict (`fail_goal_ledger`: the
+#   target does not exist, the request is refused by policy, the criteria
+#   are infeasible as specified). Both share the rung because both leave a
+#   goal ledger that refuses every checkpoint, blocker, and gate
+#   (`GOAL_TERMINAL_STATUSES` covers `cancelled` and `failed` alike), so any
+#   work the loop prepared under either is unrecordable by construction --
+#   the `detail` text still names which of the two actually fired. Nothing
+#   below this rung can outrank either kind of terminal verdict.
 # - Rung 2, rate_limit_signal: an observed limit-shaped dispatch failure for
 #   the active executor profile. Above auth because a rate limit is the
 #   cheaper, more common, and self-clearing of the two, and because a loop
@@ -1086,6 +1091,18 @@ def _stop_rung_explicit_cancel(goal_linked: bool, goal_status: str) -> tuple[str
         return (
             "fired",
             "The linked goal ledger is cancelled; it refuses every checkpoint, blocker, and gate.",
+        )
+    if goal_status == "failed":
+        # A negative but CONCLUSIVE verdict on the objective itself, reached
+        # through `fail_goal_ledger` -- not an operator's explicit cancel, but
+        # the same downstream fact: the ledger refuses every mutation, so a
+        # tick that proceeded would only fail loudly on its first write.
+        # Named distinctly from `cancelled` in `detail` on purpose: an
+        # operator reading this stop should not mistake a conclusive failure
+        # for someone having stopped the loop by hand.
+        return (
+            "fired",
+            "The linked goal ledger failed conclusively; it refuses every checkpoint, blocker, and gate.",
         )
     return ("clear", f"The linked goal ledger status is `{goal_status or 'unknown'}`.")
 

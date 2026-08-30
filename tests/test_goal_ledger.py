@@ -11,14 +11,17 @@ load_local_package()
 from omh.goal_ledger import (
     GOAL_COMPLETION_GATE_SCHEMA,
     GOAL_CONTINUATION_SCHEMA,
+    GOAL_FAILURE_REASON_CODES,
     GOAL_LEDGER_SCHEMA,
     GOAL_STATUS_CARD_SCHEMA,
+    GOAL_TERMINAL_STATUSES,
     build_goal_completion_gate,
     build_goal_continuation,
     build_goal_status_card,
     cancel_goal_ledger,
     complete_goal_ledger,
     create_goal_ledger,
+    fail_goal_ledger,
     goal_ledger_path,
     read_goal_ledger,
     record_goal_blocker,
@@ -316,6 +319,83 @@ class GoalLedgerTests(unittest.TestCase):
             self.assertEqual(blocked["blockers"][0]["status"], "active")
             self.assertEqual(gated["quality_gates"][0]["status"], "passed")
             self.assertTrue(validate_goal_ledger(gated)["ok"])
+
+    def test_fail_goal_ledger_records_a_negative_conclusive_terminal_status(self) -> None:
+        # #H: a goal that cannot be met at all (the target does not exist, the
+        # request is refused by policy) gets its own terminal status, distinct
+        # from `blocked` (recoverable) and `cancelled` (an operator decision).
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            create_goal_ledger(paths, "Migrate a table that turns out not to exist", ["Table migrated"], goal_id="goal-fail")
+
+            failed = fail_goal_ledger(
+                paths,
+                "goal-fail",
+                "The target table was never created in this environment.",
+                reason_code="target_not_found",
+                evidence_refs=["psql -c dt"],
+            )
+
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["failure_reason_code"], "target_not_found")
+            self.assertIn("target table", failed["failure_summary"])
+            self.assertEqual(failed["failure_evidence_refs"], ["psql -c dt"])
+            self.assertIn("failed", GOAL_TERMINAL_STATUSES)
+            self.assertTrue(validate_goal_ledger(failed)["ok"])
+
+    def test_fail_goal_ledger_requires_a_closed_reason_code(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            create_goal_ledger(paths, "Goal with an unsupported failure reason", ["AC"], goal_id="goal-bad-reason")
+
+            with self.assertRaises(ValueError):
+                fail_goal_ledger(paths, "goal-bad-reason", "because", reason_code="not_a_real_code")
+
+    def test_a_failed_goal_is_terminal_and_refuses_further_mutations(self) -> None:
+        # Requirement (a): terminal means retry/resume-shaped paths must not
+        # select it -- here, no further checkpoint, blocker, or gate applies.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            create_goal_ledger(paths, "Goal that will conclusively fail", ["AC"], goal_id="goal-terminal")
+            fail_goal_ledger(paths, "goal-terminal", "Refused by policy.", reason_code="refused_by_policy")
+
+            with self.assertRaises(ValueError):
+                record_goal_checkpoint(paths, "goal-terminal", "Trying anyway")
+            with self.assertRaises(ValueError):
+                record_goal_blocker(paths, "goal-terminal", "Some blocker")
+            with self.assertRaises(ValueError):
+                fail_goal_ledger(paths, "goal-terminal", "Again", reason_code="refused_by_policy")
+
+    def test_a_failed_goals_completion_gate_and_status_card_render_distinctly(self) -> None:
+        # Requirement (c): reporting surfaces render the outcome distinctly
+        # from an ordinary in-progress or blocked goal.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            create_goal_ledger(paths, "Goal that cannot be met as specified", ["AC"], goal_id="goal-render")
+            fail_goal_ledger(
+                paths, "goal-render", "Criteria are infeasible as specified.",
+                reason_code="infeasible_as_specified",
+            )
+
+            gate = build_goal_completion_gate(paths, "goal-render")
+            self.assertFalse(gate["ready"])
+            self.assertEqual(gate["next_action"], "show_status")
+            self.assertIn("goal status is failed", gate["summary"])
+
+            card = build_goal_status_card(paths, "goal-render")
+            self.assertEqual(card["goal_status"], "failed")
+            self.assertEqual(card["failure_reason_code"], "infeasible_as_specified")
+            self.assertIn("failed conclusively", card["safe_copy"]["next_step"])
+            self.assertIn("infeasible_as_specified", card["safe_copy"]["next_step"])
+            self.assertEqual(card["allowed_actions"], ["show_status"])
+
+    def test_reason_codes_are_closed_and_exhaustively_round_trip(self) -> None:
+        for reason in GOAL_FAILURE_REASON_CODES:
+            with self.subTest(reason=reason), TemporaryDirectory() as tmp:
+                paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+                create_goal_ledger(paths, f"Goal for {reason}", ["AC"], goal_id="goal-reason")
+                failed = fail_goal_ledger(paths, "goal-reason", "because", reason_code=reason)
+                self.assertEqual(failed["failure_reason_code"], reason)
 
     def test_validation_flags_raw_objective_and_bad_shape(self) -> None:
         validation = validate_goal_ledger(
