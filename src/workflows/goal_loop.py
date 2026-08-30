@@ -19,6 +19,7 @@ from ..local_store import ensure_dir, read_json_object, utc_now
 from ..system.record_revision import DuplicateMutationReplay, guarded_record_update, revision_field_errors
 from ..loopability import LOOPABILITY_ASSESSMENT_SCHEMA, assess_loopability, validate_loopability_assessment
 from ..paths import OmhPaths
+from ..system.security_posture import resolve_security_posture, strict_override
 from .goal_quality_coaching import UPSTREAM_GOAL_DEFAULT_MAX_TURNS
 from .loop_phase_transitions import (
     LOOP_GOAL_DRIVER_OBSERVATION_SCHEMA,
@@ -1010,13 +1011,17 @@ def assess_loop_stop_ladder(
     ledger_entry_count: int = 0,
     limit_signal: Mapping[str, Any] | None = None,
     auth_signal: Mapping[str, Any] | None = None,
+    no_progress_cap: int = LOOP_NO_PROGRESS_TICK_CAP,
 ) -> dict[str, Any]:
     """Walk LOOP_STOP_REASONS in order and name the first rung that stops the tick.
 
     Pure policy over signals the caller already read, in the idiom
     `build_account_authorization` uses: the ladder never probes, so the same
     verdict is reproducible from a recorded snapshot. `read_loop_stop_ladder`
-    is the reading half.
+    is the reading half -- it also resolves `no_progress_cap` from the active
+    security posture (`system.security_posture`, key `loop_no_progress_cap`)
+    before calling in; the default here stays the unposture-adjusted
+    constant so a direct caller sees the same behavior as before.
     """
     runtime = _runtime_state(cycle.get("runtime"))
     executor_profile = _preferred_executor(_dict_value(cycle, "authority_envelope"))
@@ -1032,7 +1037,7 @@ def assess_loop_stop_ladder(
         _stop_rung_explicit_cancel(goal_linked, goal_status),
         _stop_rung_rate_limit(executor_profile, limit_signal),
         _stop_rung_auth_failure(executor_profile, planned_action, auth_signal),
-        _stop_rung_no_progress(goal_linked, no_progress_ticks),
+        _stop_rung_no_progress(goal_linked, no_progress_ticks, no_progress_cap),
     ]
 
     rungs: list[dict[str, Any]] = []
@@ -1068,7 +1073,7 @@ def assess_loop_stop_ladder(
         "next_action": _LOOP_STOP_NEXT_ACTIONS.get(stop_reason, ""),
         "ledger_entry_count": ledger_entry_count if goal_linked else previous_count,
         "no_progress_ticks": no_progress_ticks,
-        "no_progress_cap": LOOP_NO_PROGRESS_TICK_CAP,
+        "no_progress_cap": no_progress_cap,
         "rungs": rungs,
         "claim_boundary": LOOP_STOP_LADDER_CLAIM_BOUNDARY,
     }
@@ -1124,19 +1129,21 @@ def _stop_rung_auth_failure(
     return ("clear", f"The `{executor_profile}` login marker reads `{marker}`.")
 
 
-def _stop_rung_no_progress(goal_linked: bool, no_progress_ticks: int) -> tuple[str, str]:
+def _stop_rung_no_progress(
+    goal_linked: bool, no_progress_ticks: int, no_progress_cap: int = LOOP_NO_PROGRESS_TICK_CAP
+) -> tuple[str, str]:
     if not goal_linked:
         return ("not_applicable", "Without a linked goal ledger there are no records to key progress to.")
-    if no_progress_ticks >= LOOP_NO_PROGRESS_TICK_CAP:
+    if no_progress_ticks >= no_progress_cap:
         return (
             "fired",
             f"{no_progress_ticks} consecutive ticks wrote no new goal-ledger record "
-            f"(cap {LOOP_NO_PROGRESS_TICK_CAP}).",
+            f"(cap {no_progress_cap}).",
         )
     return (
         "clear",
         f"{no_progress_ticks} consecutive ticks without a new goal-ledger record, under the "
-        f"{LOOP_NO_PROGRESS_TICK_CAP} cap.",
+        f"{no_progress_cap} cap.",
     )
 
 
@@ -1146,13 +1153,24 @@ def read_loop_stop_ladder(
     *,
     planned_action: str = "",
     home: Path | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Read the ladder's inputs, then hand them to the pure assessment.
 
     The auth marker is read only when the tick plans `executor_dispatch`: the
     marker file is the potentially large `~/.claude.json`, and a research or
     planning tick has no executor CLI to confirm.
+
+    `no_progress_cap` is resolved from the active security posture here, not
+    inside the pure assessment: `strict` fires the no-progress rung after one
+    stalled tick instead of two (`security_posture.POSTURE_MAPPING`, key
+    `loop_no_progress_cap`). `default` posture resolves to the unchanged
+    `LOOP_NO_PROGRESS_TICK_CAP`. `resolve_security_posture` raises
+    `ValueError` for an unrecognized `OMH_SECURITY`; the CLI tick/run-once
+    commands already convert that to a clean error.
     """
+    posture = resolve_security_posture(env)
+    no_progress_cap = strict_override("loop_no_progress_cap", posture, LOOP_NO_PROGRESS_TICK_CAP)
     linked_goal_id = str(cycle.get("linked_goal_id", ""))
     goal_linked = False
     goal_status = ""
@@ -1184,6 +1202,7 @@ def read_loop_stop_ladder(
         ledger_entry_count=ledger_entry_count,
         limit_signal=limit_signal,
         auth_signal=auth_signal,
+        no_progress_cap=no_progress_cap,
     )
 
 

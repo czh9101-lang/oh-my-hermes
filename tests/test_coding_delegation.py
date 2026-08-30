@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import unittest
+from unittest.mock import patch
 
 from _local_package import load_local_package
 
@@ -293,6 +295,61 @@ class VerificationPathEscalationTests(unittest.TestCase):
         self.assertEqual(delegation["action"], "delegate")
         verification = delegation["verification"]
         self.assertFalse(any("thorough verification lane" in line for line in verification), verification)
+
+
+class StrictSecurityPostureVerificationTests(unittest.TestCase):
+    """`OMH_SECURITY=strict` escalates every request's verification, not only
+    the ones `sensitive_path_escalation` recognizes by path pattern -- the
+    `verification_escalate_always` row in `system.security_posture.POSTURE_MAPPING`.
+    """
+
+    def test_default_posture_leaves_an_ordinary_path_unescalated(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OMH_SECURITY", None)
+            payload = build_coding_delegation_payload(
+                "fix src/foo.py to log the response body",
+                executor_target="claude-code",
+                explicit_owner_choice=True,
+            )
+        verification = payload["delegation"]["verification"]
+        self.assertFalse(any("thorough verification lane" in line for line in verification), verification)
+
+    def test_strict_posture_escalates_an_ordinary_path_too(self) -> None:
+        with patch.dict(os.environ, {"OMH_SECURITY": "strict"}):
+            payload = build_coding_delegation_payload(
+                "fix src/foo.py to log the response body",
+                executor_target="claude-code",
+                explicit_owner_choice=True,
+            )
+        verification = payload["delegation"]["verification"]
+        self.assertTrue(
+            any("thorough verification lane" in line for line in verification),
+            verification,
+        )
+
+    def test_strict_posture_does_not_duplicate_an_already_escalated_path(self) -> None:
+        with patch.dict(os.environ, {"OMH_SECURITY": "strict"}):
+            payload = build_coding_delegation_payload(
+                "fix src/auth/login.py to validate tokens correctly",
+                executor_target="claude-code",
+                explicit_owner_choice=True,
+            )
+        verification = payload["delegation"]["verification"]
+        escalations = [line for line in verification if "thorough verification lane" in line]
+        self.assertEqual(len(escalations), 1, verification)
+        self.assertIn("src/auth/login.py", escalations[0])
+
+    def test_an_unrecognized_posture_value_is_rejected_loudly(self) -> None:
+        with patch.dict(os.environ, {"OMH_SECURITY": "paranoid"}):
+            with self.assertRaises(ValueError) as ctx:
+                build_coding_delegation_payload(
+                    "fix src/foo.py to log the response body",
+                    executor_target="claude-code",
+                    explicit_owner_choice=True,
+                )
+        self.assertIn("OMH_SECURITY", str(ctx.exception))
+        self.assertIn("default", str(ctx.exception))
+        self.assertIn("strict", str(ctx.exception))
 
 
 class CategoryPropagationTests(unittest.TestCase):

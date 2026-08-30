@@ -74,6 +74,7 @@ from .context_safety import (
 from ..harness_quality import with_wrapper_actions
 from ..quality.specialist_work import build_specialist_work_quality_contract
 from ..quality.verification_tiering import sensitive_path_escalation
+from ..system.security_posture import STRICT_POSTURE, resolve_security_posture
 from ..ingress import CHAT_SOURCES, extract_message_text, extract_source_metadata
 from ..isolation import build_isolation_plan
 from ..memory import validate_handoff_context_blocked, validate_handoff_context_pack, validate_project_memory_recall_pack
@@ -1683,6 +1684,15 @@ def _verification(intent: str, action: str, workflow: str, target_paths: Sequenc
     escalation = sensitive_path_escalation(target_paths)
     if escalation is not None:
         checks = (*checks, f"Escalate to the thorough verification lane: {escalation['reason']}")
+    elif resolve_security_posture() == STRICT_POSTURE:
+        # Strict posture (`security_posture.POSTURE_MAPPING`, key
+        # `verification_escalate_always`): every request escalates, not only
+        # the ones the sensitive-path classifier recognizes by pattern.
+        checks = (
+            *checks,
+            "Escalate to the thorough verification lane: OMH_SECURITY=strict escalates every "
+            "request regardless of touched path.",
+        )
     return checks
 
 
