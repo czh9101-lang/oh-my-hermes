@@ -61,6 +61,22 @@ SESSION_SUMMARY_SHAPE_POLICY = (
     "across successive summaries. A summary in this shape remains a report; it is never "
     "execution, verification, review, CI, or merge evidence."
 )
+# The layout half of the same problem. SESSION_SUMMARY_SHAPE_POLICY says which
+# sections a summary carries; it says nothing about what survives when the
+# history does not fit the budget. Foveation answers that with arithmetic
+# rather than taste: both temporal edges verbatim, the middle degraded,
+# oldest-middle dropped first, the drop stated, and every summary re-planned
+# from the original source so lossy layers never stack.
+HISTORY_FOVEATION_POLICY = (
+    "History foveation: when the history does not fit the budget of a summary, prepared-handoff "
+    "brief, or continuation re-brief, keep both temporal edges verbatim -- the oldest turns that "
+    "set the goal, constraints, and decisions, and the newest turns that hold current working "
+    "state -- and compress the middle instead. When the compressed middle still exceeds the "
+    "budget, drop the oldest part of the middle first and state what was dropped, naming the "
+    "dropped span and how much of it was dropped. Re-plan every summary from the original "
+    "source, never from an earlier summary, so successive re-briefs do not stack lossy layers. "
+    "An unstated drop is missing evidence, not a shorter summary."
+)
 
 
 def build_executor_prompting_contract(
@@ -103,6 +119,7 @@ def build_executor_prompting_contract(
             "Report progress, changed files, tests, blockers, evidence refs, local_capabilities_used, local_capability_evidence_refs, and local_capability_fallback_reason; distinguish prepared guidance from observed executor results."
         ),
         "session_summary_policy": SESSION_SUMMARY_SHAPE_POLICY,
+        "history_foveation_policy": HISTORY_FOVEATION_POLICY,
         "structural_search_discipline": {
             "schema_version": STRUCTURAL_SEARCH_DISCIPLINE_CONTRACT_SCHEMA_VERSION,
             "status": "prepared_not_observed",
@@ -232,6 +249,7 @@ def render_executor_prompt_sections(
                 (
                     str(contract.get("reporting_policy", "")),
                     str(contract.get("session_summary_policy", SESSION_SUMMARY_SHAPE_POLICY)),
+                    str(contract.get("history_foveation_policy", HISTORY_FOVEATION_POLICY)),
                 ),
             ),
             _section("Evidence boundary", (str(contract.get("claim_boundary", "")),)),
@@ -294,6 +312,7 @@ def _section(title: str, items: Iterable[str]) -> str:
 
 __all__ = [
     "DOCS_CONSULTED_ARTIFACT_POLICY",
+    "HISTORY_FOVEATION_POLICY",
     "SESSION_SUMMARY_SHAPE_POLICY",
     "STRUCTURAL_SEARCH_DISCIPLINE_CLAIM_BOUNDARY",
     "build_executor_prompting_contract",
