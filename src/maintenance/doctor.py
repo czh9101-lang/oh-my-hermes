@@ -36,6 +36,7 @@ from ..plugin_observations import (
 from ..plugin_pack import PLUGIN_NAME, inspect_plugin_bundle
 from ..runtime.artifacts import read_state, read_state_error
 from ..skill_pack import CORE_SKILLS, builtin_skill_templates
+from ..system.security_posture import SECURITY_POSTURE_ENV_VAR, STRICT_POSTURE, resolve_security_posture
 from ..version import __version__
 from ..targets import read_target_registry_result, summarize_target_registry
 from ..workflow_state import list_workflow_states
@@ -347,7 +348,40 @@ def run_doctor(paths: OmhPaths) -> list[Check]:
         )
     checks.append(_structural_search_check())
     checks.append(_trigger_language_pack_check(paths))
+    checks.append(_security_posture_check())
     return checks
+
+
+def _security_posture_check() -> Check:
+    """Surface the active `OMH_SECURITY` posture (`P3 -- named strict security posture`).
+
+    Same shape as `_structural_search_check`: this is informational, not a
+    health gate, so both branches stay `ok=True`/`severity="ok"` -- `strict`
+    is opt-in, not a recommended state, and `default` is not a warning. An
+    unrecognized `OMH_SECURITY` value is the one case doctor reports as a
+    failing check, since a security knob that fails open on a typo must be
+    loud, and a health check is the surface an operator reads for exactly
+    that kind of misconfiguration.
+    """
+    try:
+        posture = resolve_security_posture()
+    except ValueError as exc:
+        return Check(
+            "security_posture",
+            False,
+            str(exc),
+            severity="warning",
+            next_action=f"Set {SECURITY_POSTURE_ENV_VAR} to `default` or `strict`, or unset it.",
+        )
+    if posture == STRICT_POSTURE:
+        message = f"active security posture: {posture} ({SECURITY_POSTURE_ENV_VAR}=strict)"
+    else:
+        message = (
+            f"active security posture: {posture} "
+            f"(set {SECURITY_POSTURE_ENV_VAR}=strict to tighten fanout concurrency, retries, "
+            "verification escalation, and the loop stop ladder together)"
+        )
+    return Check("security_posture", True, message, severity="ok", next_action="")
 
 
 def _trigger_language_pack_check(paths: OmhPaths) -> Check:

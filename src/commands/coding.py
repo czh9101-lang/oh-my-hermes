@@ -1906,7 +1906,10 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
     from ..coding.parallelism_policy import read_parallelism_policy, resolve_fanout_concurrency
 
     paths = _paths(args)
-    parallelism = read_parallelism_policy(paths)
+    try:
+        parallelism = read_parallelism_policy(paths)
+    except ValueError as exc:
+        raise OmhError(str(exc)) from exc
     concurrency = resolve_fanout_concurrency(parallelism, args.concurrency)
     try:
         contract = read_fanout_contract(paths, args.fanout_id)
@@ -1940,6 +1943,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             concurrency_policy=concurrency,
             max_depth=parallelism["max_depth"],
             spawn_ceiling=parallelism["run_spawn_ceiling"],
+            max_retries=parallelism["max_retries"],
             timeout=args.timeout,
             only_units=args.unit,
             dry_run=bool(args.dry_run),
@@ -1972,6 +1976,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             concurrency_policy=concurrency,
             max_depth=parallelism["max_depth"],
             spawn_ceiling=parallelism["run_spawn_ceiling"],
+            max_retries=parallelism["max_retries"],
             timeout=args.timeout,
             only_units=args.unit,
             dry_run=bool(args.dry_run),
@@ -2087,7 +2092,10 @@ def cmd_coding_run(args: argparse.Namespace) -> int:
     )
     if resolved.returncode != 0:
         raise OmhError(f"could not resolve --base-ref {args.base_ref!r} in {repo_root}: {resolved.stderr.strip()}")
-    parallelism = read_parallelism_policy(paths)
+    try:
+        parallelism = read_parallelism_policy(paths)
+    except ValueError as exc:
+        raise OmhError(str(exc)) from exc
     concurrency = resolve_fanout_concurrency(parallelism, None)
     try:
         summary = dispatch_fanout(
@@ -2102,6 +2110,7 @@ def cmd_coding_run(args: argparse.Namespace) -> int:
             concurrency_policy=concurrency,
             max_depth=parallelism["max_depth"],
             spawn_ceiling=parallelism["run_spawn_ceiling"],
+            max_retries=parallelism["max_retries"],
             timeout=args.timeout,
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),

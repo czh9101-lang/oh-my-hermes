@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from _local_package import load_local_package
 
@@ -212,6 +214,51 @@ class StopLadderRungTests(unittest.TestCase):
         self.assertEqual(resumed["runtime"]["last_stop_reason"], "none")
         self.assertNotIn("stuck_marker", resumed["runtime"])
         self.assertEqual(len(resumed["runtime"]["queue"]), 2)
+
+
+class StrictSecurityPostureStopLadderTests(unittest.TestCase):
+    """`OMH_SECURITY=strict` fires the no-progress rung after one stalled
+    tick instead of two (`security_posture.POSTURE_MAPPING`, key
+    `loop_no_progress_cap`); `default` (unset) is unchanged.
+    """
+
+    def test_strict_posture_stops_on_the_first_stalled_tick(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            goal = create_goal_ledger(paths, "Objective with no recorded progress", ["Criterion"])
+            cycle = _cycle(paths, linked_goal_id=goal["goal_id"])
+
+            with patch.dict(os.environ, {"OMH_SECURITY": "strict"}):
+                first = tick_loop_runtime(paths, cycle["loop_id"])
+
+        ladder = first["runtime"]["stop_ladder"]
+        self.assertEqual(ladder["stop_reason"], "no_progress_cap")
+        self.assertEqual(ladder["no_progress_cap"], 1)
+        self.assertEqual(ladder["no_progress_ticks"], 1)
+
+    def test_default_posture_still_needs_two_stalled_ticks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            goal = create_goal_ledger(paths, "Objective with no recorded progress", ["Criterion"])
+            cycle = _cycle(paths, linked_goal_id=goal["goal_id"])
+
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("OMH_SECURITY", None)
+                first = tick_loop_runtime(paths, cycle["loop_id"])
+                second = tick_loop_runtime(paths, cycle["loop_id"])
+
+        self.assertFalse(first["runtime"]["stop_ladder"]["stop"])
+        self.assertEqual(first["runtime"]["stop_ladder"]["no_progress_cap"], LOOP_NO_PROGRESS_TICK_CAP)
+        self.assertEqual(second["runtime"]["stop_ladder"]["stop_reason"], "no_progress_cap")
+
+    def test_an_unrecognized_posture_value_is_rejected_loudly(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            cycle = _cycle(paths)
+            with patch.dict(os.environ, {"OMH_SECURITY": "paranoid"}):
+                with self.assertRaises(ValueError) as ctx:
+                    tick_loop_runtime(paths, cycle["loop_id"])
+        self.assertIn("OMH_SECURITY", str(ctx.exception))
 
 
 class StopLadderNegativeTests(unittest.TestCase):

@@ -14,12 +14,19 @@ The same block also carries the spawn guard — `max_depth` and
 `run_spawn_ceiling` — because both bound the same one subprocess exception
 from a different direction: the pool width bounds how many units run at once,
 the ceiling bounds how many are ever started, and the depth cap bounds whether
-a dispatched agent CLI may dispatch again at all.
+a dispatched agent CLI may dispatch again at all. `max_retries` rides along
+for the same reason, sized by `fanout_retry.FANOUT_MAX_RETRIES`.
+
+`read_parallelism_policy` applies the active `OMH_SECURITY` posture last, on
+top of the stored profile: `default` changes nothing, `strict` clamps every
+tunable here (and `max_retries`) to the ceiling named in
+`system.security_posture.POSTURE_MAPPING`, disclosed the same
+clamp-and-name way an out-of-range profile value already is.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from ..profiles.setup import (
     PARALLELISM_DEFAULTS,
@@ -27,6 +34,13 @@ from ..profiles.setup import (
     read_setup_profile,
 )
 from ..system.paths import OmhPaths
+from ..system.security_posture import (
+    DEFAULT_POSTURE,
+    STRICT_POSTURE,
+    resolve_security_posture,
+    strict_override,
+)
+from .fanout_retry import FANOUT_MAX_RETRIES
 
 # One config typo must not turn the fanout pool into a fork bomb: 32 is far
 # above any real local agent-CLI fleet while still catching a stray 500.
@@ -89,13 +103,25 @@ def build_parallelism_policy() -> dict[str, Any]:
     }
 
 
-def read_parallelism_policy(paths: OmhPaths) -> dict[str, Any]:
-    """The effective policy: stored `parallelism` overrides on the defaults."""
+def read_parallelism_policy(paths: OmhPaths, *, env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """The effective policy: stored `parallelism` overrides on the defaults,
+    then the active security posture's ceilings.
+
+    `env` is injected the same way `dispatch_fanout`'s own spawn-guard read
+    is, so the posture resolution is exercised without mutating process
+    environment in a test. Posture resolution can raise `ValueError` for an
+    unrecognized `OMH_SECURITY` value; unlike an invalid stored profile value
+    (which falls back and is named in `ignored_keys`), an invalid posture is
+    a loud refusal, not a silent fallback -- callers that reach this from a
+    CLI command must catch it and convert it to a clean CLI error.
+    """
     policy = build_parallelism_policy()
+    policy["max_retries"] = FANOUT_MAX_RETRIES
+    posture = resolve_security_posture(env)
     setup = read_setup_profile(paths)
     stored = setup.get("parallelism") if isinstance(setup, dict) else None
     if not isinstance(stored, dict):
-        return policy
+        return _apply_security_posture(policy, posture)
     ignored: list[str] = []
     for key in _BOUNDED_KEYS:
         if key not in stored:
@@ -133,6 +159,39 @@ def read_parallelism_policy(paths: OmhPaths) -> dict[str, Any]:
         policy["default_concurrency_clamped_from"] = policy["default_concurrency"]
         policy["default_concurrency"] = policy["global_concurrency"]
     policy["ignored_keys"] = ignored
+    return _apply_security_posture(policy, posture)
+
+
+# Every numeric tunable the strict posture ceilings apply to, paired with its
+# `security_posture` mapping-table key. Order matches the cascade above so a
+# clamp report reads in the same "width, then guard, then retries" order an
+# operator already sees the rest of this policy in.
+_SECURITY_CLAMPED_KEYS: tuple[tuple[str, str], ...] = (
+    ("default_concurrency", "fanout_default_concurrency"),
+    ("global_concurrency", "fanout_global_concurrency"),
+    ("lane_budget_default", "fanout_lane_budget_default"),
+    ("max_depth", "fanout_max_depth"),
+    ("run_spawn_ceiling", "fanout_run_spawn_ceiling"),
+    ("max_retries", "fanout_max_retries"),
+)
+
+
+def _apply_security_posture(policy: dict[str, Any], posture: str) -> dict[str, Any]:
+    """Tighten `policy` to the active posture's ceilings, in place.
+
+    `default` posture returns `policy` completely unchanged beyond recording
+    the label -- every strict ceiling in `_SECURITY_CLAMPED_KEYS` is defined
+    to be at or below its surface's own default, so the clamp is a no-op
+    against a default-posture read and only ever lowers a strict one.
+    """
+    policy["security_posture"] = posture
+    if posture != STRICT_POSTURE:
+        return policy
+    for key, mapping_key in _SECURITY_CLAMPED_KEYS:
+        ceiling = strict_override(mapping_key, posture, policy[key])
+        if policy[key] > ceiling:
+            policy[f"{key}_security_clamped_from"] = policy[key]
+            policy[key] = ceiling
     return policy
 
 
@@ -166,6 +225,8 @@ def resolve_fanout_concurrency(policy: dict[str, Any], requested: int | None) ->
         # "how wide", "how deep", and "how many in total" together.
         "max_depth": int(policy.get("max_depth", FANOUT_MAX_DEPTH_DEFAULT)),
         "run_spawn_ceiling": int(policy.get("run_spawn_ceiling", FANOUT_RUN_SPAWN_CEILING_DEFAULT)),
+        "max_retries": int(policy.get("max_retries", FANOUT_MAX_RETRIES)),
+        "security_posture": str(policy.get("security_posture", DEFAULT_POSTURE)),
     }
     global_clamped_from = policy.get("global_concurrency_clamped_from")
     if global_clamped_from is not None:

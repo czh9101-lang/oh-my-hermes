@@ -13,6 +13,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+from omh.coding.fanout_retry import FANOUT_MAX_RETRIES
 from omh.coding.parallelism_policy import (
     FANOUT_MAX_DEPTH_DEFAULT,
     FANOUT_RUN_SPAWN_CEILING_DEFAULT,
@@ -237,6 +238,70 @@ class SpawnGuardPolicyTests(unittest.TestCase):
         self.assertEqual(resolution["global_concurrency_clamped_from"], 8)
 
 
+class SecurityPostureTests(unittest.TestCase):
+    """`OMH_SECURITY=strict` tightens the fanout pool, spawn guard, and retry
+    ceiling together (`security_posture.POSTURE_MAPPING`); `default` (unset)
+    reads byte-for-byte the same numbers this module's own constants name.
+    """
+
+    def test_default_posture_matches_todays_constants_exactly(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            policy = read_parallelism_policy(paths, env={})
+            self.assertEqual(policy["default_concurrency"], PARALLELISM_DEFAULTS["default_concurrency"])
+            self.assertEqual(policy["global_concurrency"], PARALLELISM_DEFAULTS["global_concurrency"])
+            self.assertEqual(policy["lane_budget_default"], PARALLELISM_DEFAULTS["lane_budget_default"])
+            self.assertEqual(policy["max_depth"], FANOUT_MAX_DEPTH_DEFAULT)
+            self.assertEqual(policy["run_spawn_ceiling"], FANOUT_RUN_SPAWN_CEILING_DEFAULT)
+            self.assertEqual(policy["max_retries"], FANOUT_MAX_RETRIES)
+            self.assertEqual(policy["security_posture"], "default")
+            self.assertNotIn("default_concurrency_security_clamped_from", policy)
+
+    def test_strict_posture_tightens_every_bundled_tunable(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            policy = read_parallelism_policy(paths, env={"OMH_SECURITY": "strict"})
+            self.assertEqual(policy["security_posture"], "strict")
+            self.assertLess(policy["default_concurrency"], PARALLELISM_DEFAULTS["default_concurrency"])
+            self.assertLess(policy["global_concurrency"], PARALLELISM_DEFAULTS["global_concurrency"])
+            self.assertLess(policy["lane_budget_default"], PARALLELISM_DEFAULTS["lane_budget_default"])
+            self.assertLess(policy["run_spawn_ceiling"], FANOUT_RUN_SPAWN_CEILING_DEFAULT)
+            self.assertEqual(policy["max_retries"], 0)
+            self.assertEqual(policy["max_depth"], FANOUT_MAX_DEPTH_DEFAULT)
+
+    def test_strict_posture_clamps_a_setup_profile_override_and_discloses_it(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            profile = build_setup_profile()
+            profile["parallelism"] = {"default_concurrency": 5, "global_concurrency": 8, "max_depth": 3}
+            paths.setup_profile_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(paths.setup_profile_path, profile, private=True)
+            policy = read_parallelism_policy(paths, env={"OMH_SECURITY": "strict"})
+            self.assertLess(policy["default_concurrency"], 5)
+            self.assertEqual(policy["default_concurrency_security_clamped_from"], 5)
+            self.assertLess(policy["global_concurrency"], 8)
+            self.assertEqual(policy["global_concurrency_security_clamped_from"], 8)
+            # A profile that asked for deeper nesting is pinned back to the
+            # floor strict pins as a hard ceiling.
+            self.assertEqual(policy["max_depth"], FANOUT_MAX_DEPTH_DEFAULT)
+            self.assertEqual(policy["max_depth_security_clamped_from"], 3)
+
+    def test_an_unrecognized_posture_value_is_rejected_loudly(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            with self.assertRaises(ValueError) as ctx:
+                read_parallelism_policy(paths, env={"OMH_SECURITY": "paranoid"})
+            self.assertIn("OMH_SECURITY", str(ctx.exception))
+
+    def test_the_resolution_carries_max_retries_and_posture(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            policy = read_parallelism_policy(paths, env={"OMH_SECURITY": "strict"})
+            resolution = resolve_fanout_concurrency(policy, None)
+            self.assertEqual(resolution["max_retries"], 0)
+            self.assertEqual(resolution["security_posture"], "strict")
+
+
 class CliWiringTests(unittest.TestCase):
     def test_parser_default_is_none_and_dispatch_receives_the_policy_width(self) -> None:
         # The headline behavior of this change is the CLI moving from a
@@ -301,6 +366,88 @@ class CliWiringTests(unittest.TestCase):
             self.assertEqual(captured["concurrency"], 5)
             self.assertEqual(captured["per_owner_lanes"], {})
             self.assertEqual(captured["concurrency_policy"]["source"], "policy_default")
+
+    def _fanout_dispatch_args(self, paths, repo, contract, goal):
+        import subprocess
+
+        from omh.commands.main import build_parser
+
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+        (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+        subprocess.run(["git", "add", "seed.txt"], cwd=str(repo), check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"],
+            cwd=str(repo),
+            check=True,
+        )
+        return build_parser().parse_args(
+            [
+                "--omh-home",
+                str(paths.omh_home),
+                "--hermes-home",
+                str(paths.hermes_home),
+                "coding",
+                "fanout",
+                "dispatch",
+                contract["fanout_id"],
+                "--goal-file",
+                str(goal),
+                "--repo-root",
+                str(repo),
+            ]
+        )
+
+    def test_strict_posture_passes_the_tightened_max_retries_to_dispatch(self) -> None:
+        import contextlib
+        import io
+        import os
+        from unittest.mock import patch
+
+        from omh.coding.fanout import build_fanout_contract
+        from omh.coding.fanout_artifacts import write_fanout_contract
+
+        goal_text = "split the sample feature across agents"
+        units = [{"unit_id": "core", "title": "Core work", "owner": "codex", "file_scope": ["src/core/"]}]
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            contract = write_fanout_contract(paths, build_fanout_contract(goal_text, units))
+            goal = Path(tmp) / "goal.txt"
+            goal.write_text(goal_text, encoding="utf-8")
+            args = self._fanout_dispatch_args(paths, Path(tmp) / "repo", contract, goal)
+            captured: dict[str, object] = {}
+
+            def _capture(*call_args, **kwargs):
+                captured.update(kwargs)
+                return {"schema_version": "fanout_dispatch_summary/v1", "units": []}
+
+            with patch.dict(os.environ, {"OMH_SECURITY": "strict"}):
+                with patch("omh.coding.fanout_dispatch.dispatch_fanout", new=_capture):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        args.func(args)
+            self.assertEqual(captured["max_retries"], 0)
+            self.assertLess(captured["concurrency"], 5)
+
+    def test_an_unrecognized_posture_value_is_a_clean_cli_error(self) -> None:
+        import os
+        from unittest.mock import patch
+
+        from omh.coding.fanout import build_fanout_contract
+        from omh.coding.fanout_artifacts import write_fanout_contract
+        from omh.installer import OmhError
+
+        goal_text = "split the sample feature across agents"
+        units = [{"unit_id": "core", "title": "Core work", "owner": "codex", "file_scope": ["src/core/"]}]
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            contract = write_fanout_contract(paths, build_fanout_contract(goal_text, units))
+            goal = Path(tmp) / "goal.txt"
+            goal.write_text(goal_text, encoding="utf-8")
+            args = self._fanout_dispatch_args(paths, Path(tmp) / "repo", contract, goal)
+            with patch.dict(os.environ, {"OMH_SECURITY": "paranoid"}):
+                with self.assertRaises(OmhError) as ctx:
+                    args.func(args)
+            self.assertIn("OMH_SECURITY", str(ctx.exception))
 
 
 if __name__ == "__main__":
