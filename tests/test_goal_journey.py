@@ -158,6 +158,11 @@ class GoalJourneyProjectionTests(unittest.TestCase):
         # Acceptance criterion 2. The ledger's own gate accepts a criterion that
         # merely *says* satisfied and carries refs; the journey refuses it,
         # because no done checkpoint ever accepted evidence for it.
+        #
+        # The forged ref has to be one the completion-integrity classifier
+        # admits, or the ledger gate would refuse it for the wrong reason and
+        # the "journey is stricter than the ledger" contract under test would
+        # stop being exercised at all.
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = _paths(root)
@@ -165,7 +170,7 @@ class GoalJourneyProjectionTests(unittest.TestCase):
             path = goal_ledger_path(paths, "goal-forged")
             stored = json.loads(path.read_text(encoding="utf-8"))
             stored["acceptance_criteria"][0]["status"] = "satisfied"
-            stored["acceptance_criteria"][0]["evidence_refs"] = ["trust me"]
+            stored["acceptance_criteria"][0]["evidence_refs"] = ["observed:suite-green"]
             path.write_text(json.dumps(stored, sort_keys=True), encoding="utf-8")
 
             journey = build_goal_journey(paths, "goal-forged", now=PINNED_NOW)

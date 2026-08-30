@@ -1294,9 +1294,13 @@ class GoalLedgerRevisionGuardTests(unittest.TestCase):
                 "goal-guard",
                 "Guard verified",
                 criteria_refs=["AC-guard"],
-                evidence_refs=["tests:green"],
+                # "verified" is a proof word, so the completion gate now wants
+                # one evidence entry naming the command that proves it.
+                evidence_refs=["pytest tests/test_record_revision.py"],
             )
-            completed = complete_goal_ledger(paths, "goal-guard", evidence_refs=["tests:green"])
+            completed = complete_goal_ledger(
+                paths, "goal-guard", evidence_refs=["pytest tests/test_record_revision.py"]
+            )
             self.assertTrue(completed["completed"])
 
             with self.assertRaises(ValueError) as caught:
