@@ -51,6 +51,8 @@ EXECUTOR_LOOP_CAPABILITY_SCHEMA = "executor_loop_capability/v1"
 LOOP_CYCLE_NARRATION_SCHEMA = "loop_cycle_narration/v1"
 LOOP_INVOCATION_SCHEMA = "loop_invocation/v1"
 LOOP_CONSTRAINT_ASSESSMENT_SCHEMA = "loop_constraint_assessment/v1"
+LOOP_STICKY_RULE_SCHEMA = "loop_sticky_rule/v1"
+LOOP_STICKY_RULE_ATTACHMENT_SCHEMA = "loop_sticky_rule_attachment/v1"
 LOOP_STOP_LADDER_SCHEMA = "loop_stop_ladder/v1"
 
 # The ordered stop ladder evaluated before a tick advances. The tuple order IS
@@ -386,6 +388,37 @@ _LOOP_CONSTRAINT_GUIDANCE: Final[dict[str, dict[str, str]]] = {
         ),
     },
 }
+# Sticky-rule re-attachment: a standing rule (e.g. "never claim completion
+# without observed evidence") that must stay in an executor's attention
+# across a long loop without becoming payload bloat. Modeled on oh-my-pi's
+# TTSR repeat policy (docs/ttsr-injection-lifecycle.md): a rule is declared
+# once with a bounded repeat policy, and the loop re-attaches it at tick
+# boundaries under that policy rather than every tick or never again.
+#
+# - "once": attach the rule exactly one time, at the first tick after it is
+#   declared. `repeat_gap` is not consulted in this mode.
+# - "after_gap": attach the rule again once `heartbeat_count -
+#   last_injected_heartbeat >= repeat_gap` completed ticks have passed since
+#   its last attachment. The gap is measured in `runtime.heartbeat_count`
+#   (completed loop ticks), never in reads of the status card - a card can be
+#   read any number of times between ticks without moving the gap, matching
+#   the oh-my-pi contract that re-attachment is gated on completed turns, not
+#   stream chunks.
+#
+# Every mode is bounded by `max_repeats`, so a long-running loop can never
+# accumulate unbounded repeats of the same reminder; `injected_count >=
+# max_repeats` retires the rule from further attachment regardless of mode
+# or gap. Rules are deduplicated by `rule_id`: declaring an existing id again
+# updates its text and policy in place rather than creating a second entry.
+LOOP_STICKY_RULE_REPEAT_MODES: Final[tuple[str, ...]] = ("once", "after_gap")
+LOOP_STICKY_RULE_DEFAULT_GAP: Final[int] = 10
+LOOP_STICKY_RULE_DEFAULT_MAX_REPEATS: Final[int] = 5
+LOOP_STICKY_RULE_ONCE_MAX_REPEATS: Final[int] = 1
+LOOP_STICKY_RULE_MAX_REPEATS_CEILING: Final[int] = 100
+LOOP_STICKY_RULE_CLAIM_BOUNDARY: Final[str] = (
+    "A sticky-rule attachment restates an already-declared rule at a bounded interval. It is not new "
+    "guidance, it decides no route, and it is not execution, review, CI, merge, or goal completion evidence."
+)
 LOOP_PIPELINE_STEPS = (
     "task_discovery",
     "distribution",
@@ -560,6 +593,8 @@ def create_loop_cycle(
         "goal_driver_observations": [],
         "runtime": _runtime_state(),
         "loop_engineering": _loop_engineering_template(),
+        "sticky_rules": [],
+        "sticky_rule_attachment": _empty_sticky_rule_attachment(),
         "next_action": "continue_loop",
         "completion_claim_allowed": False,
         "claim_boundary": _claim_boundary(),
@@ -1337,6 +1372,15 @@ def tick_loop_runtime(
         runtime.pop("stuck_marker", None)
         runtime.setdefault("queue", []).append(queue_item)
         cycle["runtime"] = runtime
+        # Sticky-rule re-attachment advances only on a tick that actually
+        # incremented heartbeat_count (this branch), never on a stopped tick
+        # (the early `ladder["stop"]` return above) and never on a mere
+        # status-card read. That keeps the repeat gap keyed to completed
+        # loop turns, matching LOOP_STICKY_RULE_REPEAT_MODES's contract.
+        cycle["sticky_rules"] = _sticky_rules_list(cycle.get("sticky_rules"))
+        cycle["sticky_rule_attachment"] = _advance_sticky_rule_attachment(
+            cycle["sticky_rules"], int(runtime["heartbeat_count"])
+        )
         if queue_item["status"] == "prepared_not_observed":
             cycle["wait_reason"] = "none"
             cycle["next_action"] = "observe_runtime_queue"
@@ -2200,6 +2244,7 @@ def build_loop_status_card(paths: OmhPaths, loop_id: str) -> dict[str, Any]:
         "next_action": _next_action(cycle),
         "safe_copy": _safe_status_copy(cycle, envelope),
         "completion_claim_allowed": _completion_claim_allowed(linked_gate),
+        "sticky_rule_attachment": cycle.get("sticky_rule_attachment") or _empty_sticky_rule_attachment(),
         "claim_boundary": _claim_boundary(),
     }
     card["constraint_assessment"] = assess_loop_constraint(card)
@@ -2289,6 +2334,23 @@ def validate_loop_cycle(cycle: dict[str, Any]) -> dict[str, Any]:
     runtime = cycle.get("runtime")
     if runtime is not None:
         errors.extend(_validate_runtime(runtime))
+    sticky_rules = cycle.get("sticky_rules")
+    if sticky_rules is not None:
+        if not isinstance(sticky_rules, list):
+            errors.append("sticky_rules must be a list")
+        else:
+            seen_rule_ids: set[str] = set()
+            for index, rule in enumerate(sticky_rules):
+                for error in validate_loop_sticky_rule(rule):
+                    errors.append(f"sticky_rules[{index}]: {error}")
+                if isinstance(rule, dict):
+                    rule_id = str(rule.get("rule_id", ""))
+                    if rule_id in seen_rule_ids:
+                        errors.append(f"sticky_rules[{index}].rule_id duplicates an earlier entry")
+                    seen_rule_ids.add(rule_id)
+    attachment = cycle.get("sticky_rule_attachment")
+    if attachment is not None:
+        errors.extend(validate_loop_sticky_rule_attachment(attachment))
     errors.extend(validate_loop_phase_history(cycle))
     if cycle.get("completion_claim_allowed") is not False:
         errors.append("loop_cycle cannot directly allow goal completion claims")
@@ -3536,6 +3598,241 @@ def validate_loop_constraint_assessment(value: object) -> list[str]:
     for key in ("claim_boundary", "repeat_note", "next_action_relationship"):
         if not isinstance(value.get(key), str) or not str(value.get(key, "")).strip():
             errors.append(f"constraint_assessment.{key} must be a non-empty string")
+    return errors
+
+
+def declare_sticky_rule(
+    paths: OmhPaths,
+    loop_id: str,
+    *,
+    rule_id: str,
+    text: str,
+    repeat_mode: str = "after_gap",
+    repeat_gap: int = LOOP_STICKY_RULE_DEFAULT_GAP,
+    max_repeats: int = LOOP_STICKY_RULE_DEFAULT_MAX_REPEATS,
+    expected_revision: int | None = None,
+    mutation_id: str | None = None,
+) -> dict[str, Any]:
+    """Declare (or re-declare) a sticky rule for re-attachment on this loop.
+
+    Declaring an existing `rule_id` again updates its text and policy in
+    place - `sticky_rules` is deduplicated by rule id, never a growing list
+    of near-duplicate reminders - and preserves its injected_count and
+    last_injected_heartbeat, so re-declaring the same rule does not reset its
+    bounded repeat budget.
+    """
+    safe_rule_id = _storage_id(rule_id, "rule_id")
+    safe_text = _safe_summary(text, limit=500)
+    if not safe_text:
+        raise ValueError("sticky rule text is required")
+    if repeat_mode not in LOOP_STICKY_RULE_REPEAT_MODES:
+        raise ValueError(f"repeat_mode must be one of {LOOP_STICKY_RULE_REPEAT_MODES}")
+    if isinstance(repeat_gap, bool) or not isinstance(repeat_gap, int) or repeat_gap < 1:
+        raise ValueError("repeat_gap must be a positive integer")
+    if isinstance(max_repeats, bool) or not isinstance(max_repeats, int) or max_repeats < 1:
+        raise ValueError("max_repeats must be a positive integer")
+    if max_repeats > LOOP_STICKY_RULE_MAX_REPEATS_CEILING:
+        raise ValueError(f"max_repeats must not exceed {LOOP_STICKY_RULE_MAX_REPEATS_CEILING}")
+    # "once" is a repeat budget of exactly one by definition; a caller-supplied
+    # max_repeats never widens it, so the mode's own name stays true.
+    effective_max_repeats = LOOP_STICKY_RULE_ONCE_MAX_REPEATS if repeat_mode == "once" else max_repeats
+
+    def mutate(cycle: dict[str, Any]) -> dict[str, Any]:
+        rules = _sticky_rules_list(cycle.get("sticky_rules"))
+        heartbeat_count = int(_runtime_state(cycle.get("runtime")).get("heartbeat_count", 0) or 0)
+        existing = next((rule for rule in rules if rule["rule_id"] == safe_rule_id), None)
+        if existing is not None:
+            existing["text"] = safe_text
+            existing["repeat_mode"] = repeat_mode
+            existing["repeat_gap"] = repeat_gap
+            existing["max_repeats"] = effective_max_repeats
+        else:
+            rules.append(
+                {
+                    "schema_version": LOOP_STICKY_RULE_SCHEMA,
+                    "rule_id": safe_rule_id,
+                    "text": safe_text,
+                    "repeat_mode": repeat_mode,
+                    "repeat_gap": repeat_gap,
+                    "max_repeats": effective_max_repeats,
+                    "declared_at_heartbeat": heartbeat_count,
+                    "injected_count": 0,
+                    "last_injected_heartbeat": None,
+                }
+            )
+        cycle["sticky_rules"] = rules
+        cycle["updated_at"] = utc_now()
+        return cycle
+
+    return _guarded_cycle_update(
+        paths,
+        loop_id,
+        mutate,
+        operation="declare_sticky_rule",
+        expected_revision=expected_revision,
+        mutation_id=mutation_id,
+        mutation_digest=_mutation_digest(
+            "declare_sticky_rule", safe_rule_id, safe_text, repeat_mode, repeat_gap, effective_max_repeats
+        ),
+    )
+
+
+def _sticky_rules_list(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(rule) for rule in value if isinstance(rule, dict)]
+
+
+def _sticky_rule_due(rule: dict[str, Any], heartbeat_count: int) -> bool:
+    """Whether `rule` is due for attachment at `heartbeat_count` ticks.
+
+    Bounded by max_repeats regardless of mode. "once" fires only before its
+    first injection. "after_gap" fires on the first tick after declaration
+    (no prior injection to measure a gap from), then again only once
+    `heartbeat_count - last_injected_heartbeat >= repeat_gap`.
+    """
+    injected_count = int(rule.get("injected_count", 0) or 0)
+    max_repeats = int(rule.get("max_repeats", LOOP_STICKY_RULE_DEFAULT_MAX_REPEATS) or 0)
+    if injected_count >= max_repeats:
+        return False
+    if rule.get("repeat_mode") == "once":
+        return injected_count == 0
+    last_injected = rule.get("last_injected_heartbeat")
+    if last_injected is None:
+        return True
+    gap = int(rule.get("repeat_gap", LOOP_STICKY_RULE_DEFAULT_GAP) or LOOP_STICKY_RULE_DEFAULT_GAP)
+    return heartbeat_count - int(last_injected) >= gap
+
+
+def _advance_sticky_rule_attachment(rules: list[dict[str, Any]], heartbeat_count: int) -> dict[str, Any]:
+    """Mark every due rule injected at `heartbeat_count` and build this tick's attachment.
+
+    Mutates each due rule in `rules` in place (injected_count, last_injected_heartbeat)
+    so the caller's own `cycle["sticky_rules"]` write carries the advanced state. Rule
+    `text` is copied verbatim from its declaration - never reformatted - so the
+    re-attached block stays byte-identical across repeats and is cache-friendly.
+    """
+    due: list[dict[str, Any]] = []
+    for rule in rules:
+        if not _sticky_rule_due(rule, heartbeat_count):
+            continue
+        rule["injected_count"] = int(rule.get("injected_count", 0) or 0) + 1
+        rule["last_injected_heartbeat"] = heartbeat_count
+        due.append(rule)
+    due.sort(key=lambda rule: str(rule["rule_id"]))
+    return {
+        "schema_version": LOOP_STICKY_RULE_ATTACHMENT_SCHEMA,
+        "heartbeat_count": heartbeat_count,
+        "rules": [
+            {
+                "rule_id": str(rule["rule_id"]),
+                "text": str(rule["text"]),
+                "repeat_mode": str(rule["repeat_mode"]),
+                "injected_count": int(rule["injected_count"]),
+                "max_repeats": int(rule["max_repeats"]),
+            }
+            for rule in due
+        ],
+        "claim_boundary": LOOP_STICKY_RULE_CLAIM_BOUNDARY,
+    }
+
+
+def _empty_sticky_rule_attachment() -> dict[str, Any]:
+    return {
+        "schema_version": LOOP_STICKY_RULE_ATTACHMENT_SCHEMA,
+        "heartbeat_count": 0,
+        "rules": [],
+        "claim_boundary": LOOP_STICKY_RULE_CLAIM_BOUNDARY,
+    }
+
+
+def validate_loop_sticky_rule(value: object) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(value, dict):
+        return ["sticky_rule must be an object"]
+    if value.get("schema_version") != LOOP_STICKY_RULE_SCHEMA:
+        errors.append(f"sticky_rule.schema_version must be {LOOP_STICKY_RULE_SCHEMA}")
+    rule_id = value.get("rule_id")
+    if not isinstance(rule_id, str) or not STORAGE_ID_RE.fullmatch(rule_id):
+        errors.append("sticky_rule.rule_id must be a storage id")
+    if not isinstance(value.get("text"), str) or not str(value.get("text", "")).strip():
+        errors.append("sticky_rule.text must be a non-empty string")
+    if value.get("repeat_mode") not in LOOP_STICKY_RULE_REPEAT_MODES:
+        errors.append("sticky_rule.repeat_mode is unsupported")
+    for key in ("repeat_gap", "max_repeats", "injected_count"):
+        count = value.get(key)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            errors.append(f"sticky_rule.{key} must be a non-negative integer")
+    max_repeats = value.get("max_repeats")
+    if value.get("repeat_mode") == "once" and max_repeats != LOOP_STICKY_RULE_ONCE_MAX_REPEATS:
+        errors.append(f"sticky_rule.max_repeats must be {LOOP_STICKY_RULE_ONCE_MAX_REPEATS} when repeat_mode is once")
+    injected_count = value.get("injected_count")
+    if (
+        isinstance(injected_count, int)
+        and not isinstance(injected_count, bool)
+        and isinstance(max_repeats, int)
+        and not isinstance(max_repeats, bool)
+        and injected_count > max_repeats
+    ):
+        errors.append("sticky_rule.injected_count must not exceed max_repeats")
+    declared_at = value.get("declared_at_heartbeat")
+    if isinstance(declared_at, bool) or not isinstance(declared_at, int) or declared_at < 0:
+        errors.append("sticky_rule.declared_at_heartbeat must be a non-negative integer")
+    last_injected = value.get("last_injected_heartbeat")
+    if last_injected is not None and (isinstance(last_injected, bool) or not isinstance(last_injected, int) or last_injected < 0):
+        errors.append("sticky_rule.last_injected_heartbeat must be null or a non-negative integer")
+    return errors
+
+
+def validate_loop_sticky_rule_attachment(value: object) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(value, dict):
+        return ["sticky_rule_attachment must be an object"]
+    if value.get("schema_version") != LOOP_STICKY_RULE_ATTACHMENT_SCHEMA:
+        errors.append(f"sticky_rule_attachment.schema_version must be {LOOP_STICKY_RULE_ATTACHMENT_SCHEMA}")
+    heartbeat_count = value.get("heartbeat_count")
+    if isinstance(heartbeat_count, bool) or not isinstance(heartbeat_count, int) or heartbeat_count < 0:
+        errors.append("sticky_rule_attachment.heartbeat_count must be a non-negative integer")
+    rules = value.get("rules")
+    if not isinstance(rules, list):
+        errors.append("sticky_rule_attachment.rules must be a list")
+        rules = []
+    seen_ids: set[str] = set()
+    previous_id = ""
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            errors.append(f"sticky_rule_attachment.rules[{index}] must be an object")
+            continue
+        rule_id = str(rule.get("rule_id", ""))
+        if not rule_id:
+            errors.append(f"sticky_rule_attachment.rules[{index}].rule_id must be a non-empty string")
+        elif rule_id in seen_ids:
+            errors.append(f"sticky_rule_attachment.rules[{index}].rule_id duplicates an earlier entry")
+        else:
+            seen_ids.add(rule_id)
+        if rule_id < previous_id:
+            errors.append(f"sticky_rule_attachment.rules[{index}] is out of rule_id order")
+        previous_id = rule_id
+        if not isinstance(rule.get("text"), str) or not str(rule.get("text", "")).strip():
+            errors.append(f"sticky_rule_attachment.rules[{index}].text must be a non-empty string")
+        if rule.get("repeat_mode") not in LOOP_STICKY_RULE_REPEAT_MODES:
+            errors.append(f"sticky_rule_attachment.rules[{index}].repeat_mode is unsupported")
+        for key in ("injected_count", "max_repeats"):
+            count = rule.get(key)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+                errors.append(f"sticky_rule_attachment.rules[{index}].{key} must be a positive integer")
+        injected_count = rule.get("injected_count")
+        max_repeats = rule.get("max_repeats")
+        if (
+            isinstance(injected_count, int)
+            and not isinstance(injected_count, bool)
+            and isinstance(max_repeats, int)
+            and not isinstance(max_repeats, bool)
+            and injected_count > max_repeats
+        ):
+            errors.append(f"sticky_rule_attachment.rules[{index}].injected_count must not exceed max_repeats")
+    if not isinstance(value.get("claim_boundary"), str) or not str(value.get("claim_boundary", "")).strip():
+        errors.append("sticky_rule_attachment.claim_boundary must be a non-empty string")
     return errors
 
 

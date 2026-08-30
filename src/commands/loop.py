@@ -5,6 +5,9 @@ import argparse
 from ..goal_loop import (
     LOOP_ACTIONS,
     LOOP_EXECUTOR_OPTION_IDS,
+    LOOP_STICKY_RULE_DEFAULT_GAP,
+    LOOP_STICKY_RULE_DEFAULT_MAX_REPEATS,
+    LOOP_STICKY_RULE_REPEAT_MODES,
     LOOP_WORKFLOW_PATTERNS,
     PERMISSION_PROFILES,
     assess_loopability,
@@ -15,6 +18,7 @@ from ..goal_loop import (
     build_loop_start_card,
     build_loop_status_card,
     create_loop_cycle,
+    declare_sticky_rule,
     dispatch_loop_queue_item,
     inspect_loop_queue_item,
     list_loop_queue,
@@ -180,6 +184,25 @@ def cmd_loop_tick(args: argparse.Namespace) -> int:
             connector_action=args.connector_action or "",
             workflow_pattern=args.workflow_pattern,
             note=args.note or "",
+        )
+        _print_json({"loop": cycle, "status_card": build_loop_status_card(_paths(args), args.loop_id)})
+    except (FileNotFoundError, ValueError) as exc:
+        raise OmhError(str(exc)) from exc
+    return 0
+
+
+def cmd_loop_sticky_rule_declare(args: argparse.Namespace) -> int:
+    try:
+        cycle = declare_sticky_rule(
+            _paths(args),
+            args.loop_id,
+            rule_id=args.rule_id,
+            text=args.text,
+            repeat_mode=args.repeat_mode,
+            repeat_gap=args.repeat_gap,
+            max_repeats=args.max_repeats,
+            expected_revision=args.expected_revision,
+            mutation_id=args.mutation_id or None,
         )
         _print_json({"loop": cycle, "status_card": build_loop_status_card(_paths(args), args.loop_id)})
     except (FileNotFoundError, ValueError) as exc:
@@ -424,6 +447,19 @@ def _add_loop_commands(sub) -> None:
     tick.add_argument("--workflow-pattern", choices=LOOP_WORKFLOW_PATTERNS, default="single_step")
     tick.add_argument("--note", default="")
     tick.set_defaults(func=cmd_loop_tick)
+
+    sticky_rule = loop_sub.add_parser("sticky-rule")
+    sticky_rule_sub = sticky_rule.add_subparsers(dest="sticky_rule_command", required=True)
+
+    sticky_rule_declare = sticky_rule_sub.add_parser("declare")
+    sticky_rule_declare.add_argument("--loop", dest="loop_id", required=True)
+    sticky_rule_declare.add_argument("--rule-id", required=True)
+    sticky_rule_declare.add_argument("--text", required=True)
+    sticky_rule_declare.add_argument("--repeat-mode", choices=LOOP_STICKY_RULE_REPEAT_MODES, default="after_gap")
+    sticky_rule_declare.add_argument("--repeat-gap", type=int, default=LOOP_STICKY_RULE_DEFAULT_GAP)
+    sticky_rule_declare.add_argument("--max-repeats", type=int, default=LOOP_STICKY_RULE_DEFAULT_MAX_REPEATS)
+    add_revision_guard_arguments(sticky_rule_declare)
+    sticky_rule_declare.set_defaults(func=cmd_loop_sticky_rule_declare)
 
     run_once = loop_sub.add_parser("run-once")
     run_once.add_argument("--loop", dest="loop_id", required=True)
