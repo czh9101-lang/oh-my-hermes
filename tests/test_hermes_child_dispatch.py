@@ -24,6 +24,7 @@ from omh.coding.hermes_child_dispatch import (  # noqa: E402
     DispatchRecursionError,
     HermesChildEvaluationContext,
     HermesChildRequest,
+    SpawnPreflightError,
     dispatch_hermes_child,
 )
 from omh.coding.hermes_child_receipts import (  # noqa: E402
@@ -336,6 +337,24 @@ class HermesChildDispatchTests(unittest.TestCase):
         self.assertIsNone(child_env["AWS_SECRET_ACCESS_KEY"])
         self.assertNotIn("UNRELATED_CREDENTIAL", child_env)
 
+    def test_missing_working_directory_is_blocked_by_preflight_before_any_spawn(self) -> None:
+        # Provider auth is deliberately NOT preflighted (see
+        # `_spawn_preflight`'s docstring): only prerequisites unconditional on
+        # every provider -- the executable and the working directory -- are
+        # checked before the spawn.
+        missing_cwd = self.root / "does-not-exist"
+        with patch("omh.coding.hermes_child_dispatch.subprocess.Popen") as popen:
+            with self.assertRaises(SpawnPreflightError) as ctx:
+                dispatch_hermes_child(
+                    self.request(cwd=missing_cwd),
+                    dispatch_policy="ask_before_dispatch",
+                    confirmed=True,
+                )
+        popen.assert_not_called()
+        failed = {item["check"] for item in ctx.exception.verdict["failed_checks"]}
+        self.assertIn("working_directory", failed)
+        self.assertFalse((self.root / "started").exists())
+
     def test_unknown_provider_cannot_project_dynamic_token(self) -> None:
         credential = "github-token-must-not-project"
         result = dispatch_hermes_child(
@@ -399,14 +418,27 @@ class HermesChildDispatchTests(unittest.TestCase):
         self.assertNotIn("SECRET_OUTPUT", result.stdout)
         self.assertNotIn("authorization", result.stderr.lower())
 
-        missing = dispatch_hermes_child(
-            self.request(hermes="/private/SECRET_EXECUTABLE_991/not-there"),
-            dispatch_policy="ask_before_dispatch",
-            confirmed=True,
-        )
-        self.assertEqual(missing.status, "failed")
-        self.assertNotIn("SECRET_EXECUTABLE", missing.stderr)
-        self.assertIn("FileNotFoundError", missing.stderr)
+    def test_missing_hermes_executable_is_blocked_by_preflight_before_any_spawn(self) -> None:
+        # Backlog G: a missing executable is resolved before the spawn is ever
+        # attempted, not discovered by catching the OSError a doomed Popen
+        # call would raise. Popen must never be called.
+        with patch("omh.coding.hermes_child_dispatch.subprocess.Popen") as popen:
+            with self.assertRaises(SpawnPreflightError) as ctx:
+                dispatch_hermes_child(
+                    self.request(hermes="/private/SECRET_EXECUTABLE_991/not-there"),
+                    dispatch_policy="ask_before_dispatch",
+                    confirmed=True,
+                )
+        popen.assert_not_called()
+        verdict = ctx.exception.verdict
+        self.assertEqual(verdict["schema_version"], "omh_spawn_preflight_verdict/v1")
+        self.assertFalse(verdict["ready"])
+        self.assertEqual(verdict["status"], "blocked")
+        failed = {item["check"]: item for item in verdict["failed_checks"]}
+        self.assertIn("executable_presence", failed)
+        self.assertIn("SECRET_EXECUTABLE_991", failed["executable_presence"]["detail"])
+        self.assertTrue(failed["executable_presence"]["remedy"])
+        self.assertFalse((self.root / "started").exists())
 
     def test_exact_100mb_on_both_streams_is_hard_capped_without_deadlock_or_leaks(self) -> None:
         prior_drainers = {

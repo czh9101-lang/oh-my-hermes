@@ -44,6 +44,11 @@ from ._hermes_child_process import (
     terminate_process_group as _terminate_process_group,
     write_stdin_and_close as _write_stdin_and_close,
 )
+from .spawn_preflight import (
+    check_executable_present,
+    check_working_directory,
+    run_spawn_preflight,
+)
 
 MAX_CHILD_DEPTH: Final = 1
 _PARENT_MARKER_ENV: Final = "OMH_ISOLATED_HERMES_PARENT"
@@ -92,6 +97,27 @@ class DispatchConfirmationError(HermesChildDispatchError):
 
 class DispatchRecursionError(HermesChildDispatchError):
     """Raised when an isolated Hermes child attempts another dispatch."""
+
+
+class SpawnPreflightError(HermesChildDispatchError):
+    """Raised when a preflight check blocks the child spawn before anything starts.
+
+    Nothing is spawned to produce this: no scratch directory, no dispatch
+    guard, no subprocess. `verdict` is the full structured payload from
+    `spawn_preflight.run_spawn_preflight`, so a caller that wants more than
+    the rendered message can inspect the failed checks and their remedies
+    directly instead of re-parsing the exception text.
+    """
+
+    def __init__(self, verdict: Mapping[str, object]) -> None:
+        self.verdict = dict(verdict)
+        failed = verdict.get("failed_checks", ())
+        remedies = "; ".join(
+            f"{item.get('check')}: {item.get('detail')} -- {item.get('remedy')}"
+            for item in failed
+            if isinstance(item, Mapping)
+        )
+        super().__init__(f"Hermes child spawn preflight failed: {remedies}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +237,9 @@ def dispatch_hermes_child(
     )
     if not request.prompt or not request.model or request.timeout_seconds <= 0:
         raise ValueError("prompt, model, and a positive timeout are required")
+    verdict = _spawn_preflight(request)
+    if not verdict["ready"]:
+        raise SpawnPreflightError(verdict)
     if request.evaluation_context is not None:
         seal_evaluation_binding(
             request.evaluation_context,
@@ -391,6 +420,31 @@ def _dispatch_guarded(
         request, depth, status, process.returncode if process is not None else None,
         stdout, stderr, usage, cleanup, signals,
         stdout_capture.truncated, stderr_capture.truncated, usage_file_exists,
+    )
+
+
+def _spawn_preflight(request: HermesChildRequest) -> dict[str, object]:
+    """Everything about this request that can be checked before any spawn.
+
+    Executable presence covers `request.hermes` exactly as the eventual spawn
+    would resolve it; working directory covers an explicit `request.cwd`
+    override. Both are unconditional prerequisites of a successful spawn on
+    every provider, so blocking on them changes no passing case.
+
+    Provider auth is deliberately NOT preflighted here even though
+    `_PROVIDER_ENV` documents which variables a real provider needs: this
+    dispatch's actual auth contract is "whatever the spawned Hermes CLI
+    itself accepts", which prepare-time cannot fully know (a test double, a
+    provider Hermes resolves outside these variables, a future auth channel).
+    Refusing early on a documented-but-not-actually-required variable would
+    be a behavior change for a spawn that would otherwise have succeeded, so
+    that gap is left for the Hermes CLI itself to report.
+    """
+    return run_spawn_preflight(
+        [
+            check_executable_present(request.hermes),
+            check_working_directory(request.cwd),
+        ]
     )
 
 
