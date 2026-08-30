@@ -16,6 +16,7 @@ from .render import (
     context_skill,
     deep_interview_skill,
     design_reference_templates,
+    domain_engineering_reference_templates,
     idea_to_deploy_reference_templates,
     jit_learn_skill,
     loop_reference_templates,
@@ -61,6 +62,7 @@ def builtin_skill_reference_templates() -> list[SkillReferenceTemplate]:
             if definition.procedure_steps
         ],
         *design_reference_templates(),
+        *domain_engineering_reference_templates(),
     ]
 
 

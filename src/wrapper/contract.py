@@ -234,6 +234,9 @@ VISIBLE_ACTIONS = (
     "prepare_sales_development",
     "prepare_product_brief",
     "prepare_frontend_handoff",
+    "prepare_backend_handoff",
+    "prepare_rust_handoff",
+    "prepare_native_debug_plan",
     "show_frontend_handoff",
     "record_browser_capture",
     "record_accessibility_check",
@@ -952,6 +955,9 @@ _ACK_PRIMARY_ACTIONS_BY_NEXT_ACTION = {
     "prepare_sales_development": ("prepare_sales_development", "Prepare sales brief"),
     "prepare_product_brief": ("prepare_product_brief", "Prepare product brief"),
     "prepare_frontend_handoff": ("prepare_frontend_handoff", "Prepare frontend"),
+    "prepare_backend_handoff": ("prepare_backend_handoff", "Prepare backend contract"),
+    "prepare_rust_handoff": ("prepare_rust_handoff", "Prepare Rust contract"),
+    "prepare_native_debug_plan": ("prepare_native_debug_plan", "Prepare debug plan"),
     "prepare_accessibility_audit": ("prepare_accessibility_audit", "Audit accessibility"),
     "prepare_visual_qa": ("prepare_visual_qa", "Prepare visual QA"),
     "prepare_deliverable_package": ("prepare_deliverable_package", "Prepare deliverable"),
@@ -1847,6 +1853,105 @@ _WORKFLOW_OPERATIONS_CHAT_CARDS: dict[str, dict[str, object]] = {
             "screenshot capture",
             "accessibility pass",
             "deployment",
+        ],
+    },
+    "backend": {
+        "kind": "backend_contract",
+        "headline": "I can prepare the backend service contract before any endpoint is written.",
+        "body": (
+            "I will prepare the service contract: callers and their trust level, the auth boundary, the error-path table, "
+            "one response envelope for the surface, and the expand/backfill/switch/contract migration order when storage moves. "
+            "Implementation, applied migrations, and integration runs remain observed-only."
+        ),
+        "phase": "backend_contract_prepared",
+        "next_action": "prepare_backend_handoff",
+        "artifact_schema": "backend_service_contract/v1",
+        "claim_boundary_suffix": "It is not implementation, a running service, an applied migration, integration evidence, load evidence, or deployment evidence.",
+        "actions": [
+            {"id": "prepare_backend_handoff", "label": "Prepare backend contract", "style": "primary"},
+            {"id": "prepare_security_safety_review", "label": "Review safety", "style": "secondary"},
+            {"id": "prepare_verification_gate", "label": "Prepare gate", "style": "secondary"},
+            {"id": "show_status", "label": "Show status", "style": "secondary"},
+        ],
+        "recommended_flow": [
+            "name_callers_and_trust_level",
+            "map_the_auth_boundary",
+            "fill_the_error_path_table",
+            "order_the_migration_steps",
+        ],
+        "evidence_not_observed": [
+            "implementation",
+            "running service",
+            "applied migration",
+            "integration run",
+            "load evidence",
+            "deployment",
+        ],
+    },
+    "rust": {
+        "kind": "rust_contract",
+        "headline": "I can prepare the Rust change contract, starting with the UB escalation check.",
+        "body": (
+            "I will run the escalation check first — unsafe, raw pointers, FFI, MaybeUninit, or lock-free primitives escalate — "
+            "then prepare the ownership shape, the error and API contract, and the exact gate commands. "
+            "Compilation, clippy, tests, Miri, and sanitizers remain observed-only."
+        ),
+        "phase": "rust_contract_prepared",
+        "next_action": "prepare_rust_handoff",
+        "artifact_schema": "rust_change_contract/v1",
+        "claim_boundary_suffix": "It is not compilation, clippy cleanliness, a passing test, a Miri run, a sanitizer run, or a loom-style concurrency run.",
+        "actions": [
+            {"id": "prepare_rust_handoff", "label": "Prepare Rust contract", "style": "primary"},
+            {"id": "prepare_native_debug_plan", "label": "Prepare debug plan", "style": "secondary"},
+            {"id": "prepare_verification_gate", "label": "Prepare gate", "style": "secondary"},
+            {"id": "show_status", "label": "Show status", "style": "secondary"},
+        ],
+        "recommended_flow": [
+            "run_the_ub_escalation_check",
+            "name_the_ownership_shape",
+            "name_the_error_and_api_contract",
+            "list_the_gate_commands",
+        ],
+        "evidence_not_observed": [
+            "compilation",
+            "clippy run",
+            "test run",
+            "miri run",
+            "sanitizer run",
+            "concurrency model check",
+        ],
+    },
+    "native-debugging": {
+        "kind": "native_debug_plan",
+        "headline": "I can prepare the native debugging plan before anyone guesses at the cause.",
+        "body": (
+            "I will state the fault as an observed symptom, write at least three hypotheses on distinct axes with the observation "
+            "that refutes each, and plan the debugger session — adapter, breakpoints, watchpoints, threads, frames, and the values "
+            "read at each stop. The executor drives the debugger; OMH executes nothing."
+        ),
+        "phase": "native_debug_plan_prepared",
+        "next_action": "prepare_native_debug_plan",
+        "artifact_schema": "native_fault_statement/v1",
+        "claim_boundary_suffix": "It is not a reproduction, a breakpoint hit, a read value, a backtrace, a root cause, or a fix.",
+        "actions": [
+            {"id": "prepare_native_debug_plan", "label": "Prepare debug plan", "style": "primary"},
+            {"id": "prepare_rust_handoff", "label": "Prepare Rust contract", "style": "secondary"},
+            {"id": "prepare_verification_gate", "label": "Prepare gate", "style": "secondary"},
+            {"id": "show_status", "label": "Show status", "style": "secondary"},
+        ],
+        "recommended_flow": [
+            "state_the_symptom_and_reproduction",
+            "write_three_hypotheses_on_distinct_axes",
+            "pair_each_with_its_refuting_observation",
+            "plan_the_dap_debugger_session",
+        ],
+        "evidence_not_observed": [
+            "reproduction",
+            "breakpoint hit",
+            "memory or register read",
+            "backtrace",
+            "root cause",
+            "fix",
         ],
     },
     "visual-qa": {

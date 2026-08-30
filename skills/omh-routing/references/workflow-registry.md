@@ -26,9 +26,9 @@ These surfaces are generated command references, not installed Hermes workflow s
 - `handoff-guide`: `ultrawork`, `maestro`, `ai-slop-cleaner`, `executor-runtime-readiness`
 - `memory-keeper`: `rules-distill`, `wiki`, `memory-new`, `memory-sync`, `decision-recall`
 - `operator`: `strategy-brief`, `meeting-brief`, `feedback-triage`, `finance-analysis`, `people-ops`, `support-operations`, `sales-development`, `ops-review`, `operating-rhythm`, `report-package`, `materials-package`, `img-summary`, `design-orchestration`, `design-quality-gate`, `frontend`, `visual-qa`, `workspace-audit`, `agent-evaluation`, `automation-blueprint`, `reliability-review`, `idea-to-deploy`, `cto-loop`, `deploy-and-monitor`, `github-event-ops`, `deliverable-package`, `physical-device-readiness`, `agent-debug`, `skill-scout`, `skill-health`, `provider-profile-posture`
-- `planner`: `loop`, `context`, `deep-interview`, `curriculum-design`, `product-brief`, `codebase-onboarding`, `codegraph-refresh`, `plan`, `ralplan`, `adversarial-consensus`
+- `planner`: `loop`, `context`, `deep-interview`, `curriculum-design`, `product-brief`, `backend`, `rust`, `codebase-onboarding`, `codegraph-refresh`, `plan`, `ralplan`, `adversarial-consensus`
 - `researcher`: `jit-learn`, `research`, `source-finder`, `research-brief`, `research-department`, `paper-learning`, `best-practice-research`, `autoresearch-goal`
-- `reviewer`: `legal-compliance-review`, `localization-review`, `accessibility-audit`, `build-failure-triage`, `production-audit`, `verification-gate`, `security-safety-review`, `ultraqa`, `code-review`, `ask`, `failure-signal-audit`
+- `reviewer`: `legal-compliance-review`, `localization-review`, `native-debugging`, `accessibility-audit`, `build-failure-triage`, `production-audit`, `verification-gate`, `security-safety-review`, `ultraqa`, `code-review`, `ask`, `failure-signal-audit`
 - `tracker`: `context-budget-review`, `performance-goal`, `ultraperf`, `cancel`, `skill`, `doctor`, `capability-toggle`, `running-work-board`, `buzz`, `agent-board`, `toolbelt-readiness`, `harness-session-inventory`, `ops-observability-card`, `achievements`, `agent-ops-review`, `instinct-ledger`, `workflow-learning`, `run-efficiency`
 - Installed workflow skill policies live in generated workflow skills; compatibility/reference-only surface policies live in `docs/WORKFLOWS.md` and are not guaranteed to have `skills/<name>/SKILL.md` files.
 
@@ -67,6 +67,9 @@ When Hermes exposes installed skill descriptions to the model, use this registry
 - `design-orchestration`: `design-orchestration`, `design orchestration`, `design ownership`, `handle this product design`, `take on the design`, `디자인 맡겨`, `디자인 맡겨줘`, `디자인 전체 맡겨`, `프로덕트 디자인 맡겨`
 - `design-quality-gate`: `design-quality-gate`, `design quality gate`, `ui ux pro max`, `design pro max`, `frontend pro max`, `visual qa pro`, `premium design`, `high quality design`, `beautiful website`
 - `frontend`: `frontend`, `front-end`, `front end`, `frontend skill`, `web ui`, `ui ux`, `ui/ux`, `landing page`, `web app layout`
+- `backend`: `backend`, `back-end`, `back end`, `backend skill`, `server side`, `server-side`, `api design`, `api contract`, `rest api`
+- `rust`: `rust`, `rust code`, `rust skill`, `rustlang`, `borrow checker`, `lifetime error`, `ownership error`, `trait bound`, `cargo build`
+- `native-debugging`: `native-debugging`, `native debugging`, `native binary`, `segfault`, `segmentation fault`, `core dump`, `stack corruption`, `memory corruption`, `heap corruption`
 - `accessibility-audit`: `accessibility-audit`, `accessibility audit`, `a11y audit`, `a11y architect`, `wcag audit`, `wcag 2.2`, `wcag 2.2 aa`, `accessibility pass`, `accessibility check`
 - `visual-qa`: `visual-qa`, `visual qa`, `visual QA`, `visual quality assurance`, `visual check`, `web qa`, `web visual qa`, `screenshot qa`, `screenshot check`
 - `build-failure-triage`: `build-failure-triage`, `build failure triage`, `build failure`, `빌드 실패`, `배포 파이프라인`, `파이프라인 깨짐`, `파이프라인 실패`, `배포 실패`, `CI 실패`

@@ -107,9 +107,15 @@ AWARENESS_PRIMER_CONTEXT_CHAR_LIMIT = 900
 AWARENESS_PRIMER_MARKDOWN_CHAR_LIMIT = 3210
 AWARENESS_WORKFLOW_CONTEXT_CHAR_LIMIT = 1500
 ROLE_CONTEXT_CHAR_LIMIT = 2600
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 340000
+# 340000 -> 344689: three capability-skill sections were added by the domain
+# skill pack (`backend`, `rust`, `native-debugging`). Each section is well
+# under the per-item ceiling below; the growth is one section per new
+# workflow, not per-section padding.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 344689
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
-STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 100000
+# 100000 -> 101141: the same three domain workflows each add one standalone
+# capability row; warranted growth for three new workflows.
+STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 101141
 STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ULW fold context ceiling (issue #954, PR D). The limit is the pre-D measured
 # value of the full profile's `skill_body` chars on `main` @ acb9a060, in the
@@ -332,7 +338,19 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # mandatory planner handoff -- the rules that are wrong to discover late. The
 # remainder of the delta is the `+N more` lane line regenerating across the
 # eleven other `intent_to_plan` skills; warranted growth for a new workflow.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 756725
+# 756725 -> 781936: the domain skill pack added `backend` (8520 chars), `rust`
+# (8430), and `native-debugging` (8235) -- OMH's first technical-domain
+# workflows, each smaller than `frontend` (10698) and `adversarial-consensus`
+# (10355). The per-stack pointer table, the migration order, the UB category
+# table, and the debugger session recipes live in five on-demand references
+# (25685 chars total), outside this budget; what is always loaded is only what
+# is wrong to discover late -- the auth boundary before endpoints, the
+# deterministic unsafe/FFI/lock-free escalation trigger, and the
+# three-hypotheses-on-distinct-axes floor. The remainder of the delta is the
+# `+N more` lane line regenerating across the twelve other `coding_handoff`
+# skills; warranted growth for three workflows closing two zero-coverage
+# technical domains.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 781936
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

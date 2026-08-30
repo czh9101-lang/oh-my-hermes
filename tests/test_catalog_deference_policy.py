@@ -89,6 +89,9 @@ NON_SKILL_BACKTICKS = frozenset(
         "single_owner_persistence",
         "durable_checkpoint",
         "delivery_boundary",
+        # A Rust language keyword, backticked as code in `backend` and
+        # `native-debugging`'s do_not_use_when, never a skill name.
+        "unsafe",
     }
 )
 
@@ -105,9 +108,14 @@ NON_SKILL_BACKTICKS = frozenset(
 # at `ralplan` (the plan itself), `deep-interview` (a proposal too vague to
 # attack), `code-review` (finished code, not a proposal), and `ultraqa`
 # (hostile runtime scenarios) -- four cases, four new pairs.
-EXPECTED_DEFERENCE_CASES = 139
-EXPECTED_DEFERENCE_PAIRS = 148
-EXPECTED_DEFERRING_OWNERS = 48
+# The domain skill pack adds three deferring owners and eleven cases: `backend`
+# points at `frontend`, `security-safety-review`, `verification-gate`, and
+# `rust`; `rust` points at `backend`, `native-debugging`, and `code-review`;
+# `native-debugging` points at `build-failure-triage`, `agent-debug`, `rust`,
+# and `verification-gate`. Eleven cases, eleven new pairs.
+EXPECTED_DEFERENCE_CASES = 150
+EXPECTED_DEFERENCE_PAIRS = 159
+EXPECTED_DEFERRING_OWNERS = 51
 
 # The ratchet. Recording a new inversion must be a visible edit to this number,
 # not one more dict line with a plausible sentence attached.

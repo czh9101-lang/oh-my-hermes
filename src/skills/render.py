@@ -2635,6 +2635,384 @@ The round structure, the no-self-defense rule, and the distill-only discipline a
 """
 
 
+def domain_engineering_reference_templates() -> list[SkillReferenceTemplate]:
+    return list(_domain_engineering_reference_templates_cached())
+
+
+@lru_cache(maxsize=1)
+def _domain_engineering_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
+    """On-demand references for the three technical-domain workflows.
+
+    Each skill's always-loaded body carries only the rules that are wrong to
+    discover late -- the auth boundary, the UB escalation trigger, the
+    three-hypothesis floor. The per-stack tables, the UB taxonomy, and the
+    debugger session recipes live here and load only when the workflow runs.
+    """
+    return (
+        SkillReferenceTemplate("backend", "references/service-contract.md", _backend_service_contract_reference()),
+        SkillReferenceTemplate("backend", "references/schema-migration.md", _backend_schema_migration_reference()),
+        SkillReferenceTemplate("rust", "references/rust-discipline.md", _rust_discipline_reference()),
+        SkillReferenceTemplate("rust", "references/ub-escalation.md", _rust_ub_escalation_reference()),
+        SkillReferenceTemplate(
+            "native-debugging", "references/native-debug-loop.md", _native_debug_loop_reference()
+        ),
+    )
+
+
+_DOMAIN_ENGINEERING_ATTRIBUTION = """## Attribution
+
+Concept lineage only. The idea of a mandatory per-language reference gate that
+escalates on `unsafe`/FFI contact, and of a hypothesis-first native debugging
+loop, is adapted from the `programming` and `debugging` skills of the
+`omo-ai` plugin; the DAP-over-printf preference is adapted from `can1357/oh-my-pi`'s
+first-class debug adapter tooling. No upstream text is reproduced -- the
+wording, the artifact vocabulary, and the `prepared_not_observed` claim
+boundary are OMH's own, and OMH keeps its no-execution boundary: every command
+below is something the executor runs, never OMH."""
+
+
+def _backend_service_contract_reference() -> str:
+    return f"""# Backend Service Contract
+
+Load this when preparing a server, API, or job surface. The always-loaded skill body states the rules; this is the filling order, the per-stack pointer table, and the failure modes that make a contract look complete while leaving the boundary undefined.
+
+Everything here is prepared guidance. OMH starts no server, calls no endpoint, and runs no test. A written contract is not a running service.
+
+## 1. Fill order
+
+Fill in this order, because each step invalidates a guess made earlier out of order.
+
+1. **Callers and trust.** List every caller class and mark it public, partner, internal, or machine. An endpoint whose caller class is unnamed cannot have a correct auth check.
+2. **Auth boundary.** Say exactly where an untrusted request becomes a trusted one -- the middleware, the guard, the token exchange -- and which check runs on each path. Authentication (who) and authorization (may they) are two rows, never one.
+3. **Resource and operation shape.** Name each endpoint or job, its operation, and whether it is safe, idempotent, or neither. A non-idempotent operation reachable by a retrying client needs an idempotency key, and that key is part of the contract, not an implementation detail.
+4. **Response shape.** One success envelope and one error envelope for the whole surface. Per-endpoint improvisation is the most common source of client-side special-casing.
+5. **Error paths.** Every failure mode gets a row before the happy path is called done.
+6. **Storage.** Only now design tables and indexes; the access patterns are known by this point. Migration order goes in `references/schema-migration.md`.
+
+## 2. The auth boundary map
+
+| Path | Caller class | Authentication | Authorization | Failure mode when it is missing |
+| --- | --- | --- | --- | --- |
+| (one row per endpoint or job) | public / partner / internal / machine | how identity is established | what the identity is allowed to do | what an unauthenticated caller reaches |
+
+Two rules the table exists to force:
+
+- **No implicit internal trust.** "Internal" is a network claim, not an identity. If an internal path has no check, that is a decision to write down, not a default to inherit.
+- **Object-level checks are per object, not per route.** A route guard that proves the caller is signed in does not prove the caller owns the row it asked for. List that check separately or it will not be written.
+
+## 3. The error-path table
+
+| Failure mode | Status / code | Body shape | Retryable? | Logged / redacted |
+| --- | --- | --- | --- | --- |
+| bad input | 4xx validation | error envelope with field paths | no | log shape, never values |
+| unauthenticated | 401 | error envelope, no detail | no | log attempt, never the token |
+| unauthorized | 403 | error envelope, no resource hint | no | log subject and object |
+| not found vs not permitted | pick one deliberately | must not leak existence | no | log the real reason |
+| conflict / version mismatch | 409 | current version, expected version | after refetch | log both versions |
+| upstream dependency failure | 5xx or 503 | error envelope, retry hint | yes, with backoff | log upstream identity |
+| timeout | 504 or 408 | error envelope | yes, bounded | log duration and budget |
+
+The two rows that are always argued about and always matter: **not-found versus not-permitted** must be chosen on purpose, because returning 404 for a forbidden object hides existence and returning 403 confirms it; and **retryable** is a contract promise, because a client that retries a non-idempotent write you marked retryable will double-charge someone.
+
+## 4. Response consistency
+
+- One envelope shape for success, one for errors, across the surface.
+- Errors carry a stable machine code alongside the human message. Clients branch on the code; the message is for humans and may be localized.
+- Pagination is one style for the whole surface -- cursor or offset, not both -- and the contract names the ordering key. An unstable sort key makes pagination silently lossy.
+- Time is one representation. Nullability is explicit. An optional field that is sometimes absent and sometimes `null` is two shapes.
+- Versioning: name how a breaking change reaches clients before the first breaking change, not during it.
+
+## 5. Per-stack reference pointers
+
+The stack is a routing input. Name it in the contract and tell the executor which material to read first; do not restate framework documentation here.
+
+| Stack signal | What the executor should load first |
+| --- | --- |
+| Python service | the framework's own routing, dependency-injection, and validation docs; the project's typed-settings and migration tooling |
+| Node / TypeScript service | the framework's routing and middleware docs; the project's schema-validation library and its query builder or ORM |
+| Go service | the router and middleware docs in use; the project's query-generation and migration tooling |
+| Rust service | the framework's extractor and error-handling docs, plus the `rust` workflow for the ownership and error contract |
+| Any stack | this repository's existing handlers -- the nearest sibling endpoint is a stronger convention source than any framework guide |
+
+If the stack is unknown, prepare the contract stack-neutral and name the stack as the one blocking input. A stack-neutral contract is useful; a contract written for the wrong stack is not.
+
+## 6. Failure modes
+
+| Symptom | What actually went wrong | Correction |
+| --- | --- | --- |
+| Endpoints designed, auth "handled by middleware" | The boundary was assumed, never mapped | Fill the auth boundary map before endpoint rows |
+| Only the happy path specified | The error table was treated as documentation | The error table is the contract; write it before handoff |
+| Every endpoint has its own error body | No response-shape contract existed | One envelope for the surface |
+| Tables designed before access patterns | Storage was step one instead of step six | Re-derive the schema from the finished operation list |
+| "It works" from a local run | A local run is not integration evidence | Keep integration, load, and deployment as separate observed states |
+
+{_DOMAIN_ENGINEERING_ATTRIBUTION}
+"""
+
+
+def _backend_schema_migration_reference() -> str:
+    return f"""# Schema and Migration Discipline
+
+Load this when the prepared backend change touches storage. OMH writes no migration and applies none; this is the order the plan has to have before an executor runs anything.
+
+## 1. Expand, backfill, switch, contract
+
+A schema change that is deployed as one step is a schema change that cannot be rolled back once traffic has touched it. Split every storage change into four:
+
+1. **Expand.** Add the new column, table, or index. Nothing reads it. Old code keeps working unchanged. This step is reversible by dropping what was added.
+2. **Backfill.** Populate the new shape from the old one in bounded batches. Reversible by ignoring the new shape. Name the batch size and the pause between batches; an unbounded backfill on a live table is an outage.
+3. **Switch.** Move reads, then writes, to the new shape. This is the step where a rollback means reverting code, not reverting data.
+4. **Contract.** Drop the old column, table, or index -- only after the switch has been observed stable for a named period. This step is irreversible.
+
+Each step names its own rollback point. If a step's rollback is "restore from backup", that step is a blocker until it is split further.
+
+## 2. The blocker list
+
+Any of these is a blocker until the plan resolves it explicitly:
+
+- A `DROP` or destructive `ALTER` in the same deployment as the code that stops using it.
+- A backfill with no batch bound, no progress measure, and no resume point.
+- A rename presented as one step. A rename is expand plus backfill plus switch plus contract, always.
+- A new `NOT NULL` column with no default on a populated table.
+- An index creation on a large table without naming whether the engine builds it concurrently.
+- A migration that must run inside the same transaction as a long backfill.
+- Two deployments that must land in a specific order with nothing enforcing the order.
+
+## 3. Compatibility window
+
+Between expand and contract, both shapes exist and both must work. The plan states:
+
+- Which application versions are expected to be live at the same time.
+- What the old code does when it encounters a row written by the new code, and the reverse.
+- How long the window stays open, and what closes it.
+
+A migration plan with no stated compatibility window is a plan that assumes atomic deployment, which no multi-instance service has.
+
+## 4. What counts as evidence
+
+| Claim | Evidence that supports it |
+| --- | --- |
+| The migration is written | the migration file exists in the diff |
+| The migration applies | an observed run against a database, with its output |
+| The backfill completed | observed row counts before and after, not the script's exit code alone |
+| The switch is safe | observed reads and writes on the new shape under real traffic shape |
+| The contract step is safe | an observed stable period after the switch, with the duration named |
+
+A prepared plan supports none of these. Every row above stays `not_observed` until the executor reports the observation.
+
+{_DOMAIN_ENGINEERING_ATTRIBUTION}
+"""
+
+
+def _rust_discipline_reference() -> str:
+    return f"""# Rust Change Discipline
+
+Load this when preparing a Rust change. The escalation check in `references/ub-escalation.md` runs first and is not optional; this reference covers the ordinary-Rust half of the contract.
+
+OMH runs no toolchain. Every command below is one the executor runs and reports.
+
+## 1. Ownership shape
+
+The borrow checker is not an obstacle to route around; it is the design surfacing early. Before code, name:
+
+- **Who owns each value**, and for how long.
+- **Which borrows cross a boundary** -- a function return, a struct field, an `await` point, a thread spawn. Borrows that cross an `await` are the usual reason a future is not `Send`.
+- **Every deliberate clone**, with the reason. A clone is a legitimate decision when the alternative is a lifetime that infects a public API; it is a surrender when it exists because an error message would not go away.
+- **Every interior-mutability wrapper.** `Rc<RefCell<_>>` and `Arc<Mutex<_>>` move a compile-time check to runtime. That trade is sometimes right and is always a decision to write down, because the failure mode changes from a build error to a panic or a deadlock.
+
+Escalation ladder when the checker refuses: restructure ownership, then narrow the borrow's scope, then split the type, then clone deliberately, then interior mutability. `unsafe` is not on this ladder -- reaching for it moves the change into the UB escalation.
+
+## 2. Errors and the API surface
+
+- Name the error type and where conversion happens. Library crates define their own error enum; binaries may collapse to a single boxed error at the top. Mixing the two conventions inside one crate is the thing to avoid.
+- Every surviving `unwrap`, `expect`, or `panic!` is listed with its justification. "The invariant is guaranteed by the constructor" is a justification. Silence is not.
+- Panicking in a library is an API decision. Say whether the function's contract allows it.
+- Make illegal states unrepresentable where the type system can: newtypes for distinct semantic primitives, enums over stringly-typed states, exhaustive `match` so a new variant is a build error rather than a silent fallthrough.
+- Public API changes name their semver impact before the change, not at release.
+
+## 3. Async and concurrency
+
+- Say which runtime, and whether the change adds a blocking call inside an async context. Blocking inside an async task starves the executor and is invisible until load.
+- Any shared mutable state names its synchronization primitive and its lock order. Two locks with no stated order is a deadlock waiting for scheduling.
+- Cancellation is part of the contract: state what happens when a future is dropped mid-operation.
+- A hand-written lock-free structure is not ordinary Rust. It escalates.
+
+## 4. The gate list
+
+Name the exact commands, in this order, and treat each as its own observed state:
+
+| Gate | What it proves | What it does not prove |
+| --- | --- | --- |
+| `cargo fmt --check` | formatting | nothing about behavior |
+| `cargo clippy -- -D warnings` | lint cleanliness at the crate's configured level | nothing about runtime behavior |
+| `cargo test` | the tests that exist pass | nothing about paths without tests |
+| `cargo test --release` | behavior under optimization | debug-only assertions no longer run |
+| `cargo doc` | doc links resolve, doc tests compile | nothing about API quality |
+
+Add the repository's own gates rather than assuming this list is complete. When the change is escalated, the Miri and sanitizer gates from `references/ub-escalation.md` are appended and are blocking.
+
+## 5. Failure modes
+
+| Symptom | What actually went wrong | Correction |
+| --- | --- | --- |
+| Clones added until it compiled | Ownership was never designed | Name the owner, then re-derive the borrows |
+| `Rc<RefCell<_>>` everywhere | A compile-time problem was moved to runtime | State the decision, or restructure |
+| `unwrap` in a library path | A contract was assumed rather than encoded | Encode it in the type or return the error |
+| "It compiles" reported as done | Compilation is one gate of five | Report each gate separately |
+| `unsafe` used to end a borrow argument | The change silently became a UB-risk change | Escalate; the compiler stopped checking |
+
+{_DOMAIN_ENGINEERING_ATTRIBUTION}
+"""
+
+
+def _rust_ub_escalation_reference() -> str:
+    return f"""# Rust UB Escalation
+
+This is a routing rule, not a judgment call. Run the trigger check on every Rust change before anything else, and state the verdict on the contract's first line.
+
+OMH runs neither Miri nor a sanitizer. Every command below is one the executor runs and reports.
+
+## 1. The trigger check
+
+The change is **escalated** if it adds, moves, or modifies any of:
+
+- an `unsafe` block or an `unsafe fn`
+- a raw pointer -- `*mut T`, `*const T` -- or any pointer arithmetic
+- `MaybeUninit`, `mem::transmute`, `mem::zeroed`, `mem::uninitialized`, or `ptr::read`/`ptr::write` family calls
+- an FFI boundary: `extern "C"`, `#[no_mangle]`, a `-sys` crate binding, or a callback handed to foreign code
+- `unsafe impl Send` or `unsafe impl Sync`
+- a hand-written lock-free primitive, or any direct use of `core::sync::atomic` ordering weaker than `SeqCst`
+- `Pin` projection written by hand rather than through a derive
+- a `#[repr(...)]` change on a type that crosses an FFI or transmute boundary
+
+If the change cannot be inspected well enough to answer, the verdict is **escalated**. A conservative verdict is correct and is labelled conservative; an unmeasured "not escalated" is a false clean.
+
+Ordinary Rust that touches none of the above is **not escalated**, and `references/rust-discipline.md` is the whole bar.
+
+## 2. What escalation adds
+
+An escalated change is not ready for handoff until all four are named as blocking items:
+
+1. **The invariant.** Every `unsafe` block states, in a comment the change ships with, what it asserts and why the assertion holds. An `unsafe` block with no stated invariant is an unreviewable one -- the compiler stopped checking, so the comment is the only remaining specification.
+2. **Miri.** The affected tests run under Miri. Miri is the oracle for aliasing, use-after-free, uninitialized reads, invalid values, misalignment, out-of-bounds access, provenance, and double free.
+3. **A sanitizer**, where Miri cannot reach -- anything crossing FFI or doing real I/O. Address, leak, thread, and memory sanitizers each cover a different class; name which one and why.
+4. **Concurrency testing** for anything lock-free or atomic-ordering-sensitive: a loom-style exhaustive interleaving check, not a stress loop. A stress test that passes ten thousand times has sampled the interleaving space, not covered it.
+
+## 3. Categories and where each is caught
+
+| Category | Caught by |
+| --- | --- |
+| aliasing violation (stacked/tree borrows) | Miri |
+| data race | Miri; thread sanitizer under FFI |
+| use after free / dangling pointer | Miri; address sanitizer |
+| uninitialized memory read | Miri; memory sanitizer |
+| invalid value for its type | Miri |
+| misaligned pointer access | Miri |
+| out-of-bounds access | Miri; address sanitizer |
+| provenance violation | Miri, strict-provenance mode |
+| double free / invalid free | Miri; address sanitizer |
+| incorrect `Send`/`Sync` | Miri, via the race it enables |
+| `Pin` invariant violation | partially -- reasoning plus Miri |
+| FFI boundary UB | sanitizers; Miri cannot cross the boundary |
+| unwinding across `extern "C"` | reasoning plus a targeted panic test |
+| unsafe-contract violation in a dependency | reasoning; read the safety comment the callee documents |
+
+The last three rows are why escalation is not "run Miri and move on". Name which category the change risks, then name the tool that actually reaches it.
+
+## 4. What each proves
+
+| Observation | Proves | Does not prove |
+| --- | --- | --- |
+| `cargo build` succeeds | the type checker accepted it | nothing about `unsafe` invariants |
+| `cargo test` passes | the tested paths ran without a detected fault | nothing about untested `unsafe` paths |
+| Miri passes on a test | that execution path has no Miri-detectable UB | nothing about paths that test does not reach |
+| A sanitizer passes | that run had no detected fault | nothing about a different interleaving or input |
+| A loom-style check passes | the modelled interleavings are sound | nothing about interleavings outside the model |
+
+Coverage is the limit on all of them: Miri proves things about the code paths a test executes. If the `unsafe` path is untested, escalation is not satisfied by a green Miri run -- it is satisfied by a test that reaches the path, then Miri on that test.
+
+## 5. When the toolchain cannot run it
+
+If the executor cannot run Miri or the needed sanitizer, the change stays blocked. Name the smallest substitute proof -- a narrower test that Miri can run, a safe wrapper that shrinks the `unsafe` surface, or a review of the invariant comment by a second reader -- and keep the verdict escalated. Downgrading the verdict because the tool is unavailable is the failure this reference exists to prevent.
+
+{_DOMAIN_ENGINEERING_ATTRIBUTION}
+"""
+
+
+def _native_debug_loop_reference() -> str:
+    return f"""# Native Debugging Loop
+
+Load this when preparing a debugging plan for a native binary, crash, or memory fault. OMH executes nothing: every command, breakpoint, and read below is something the executor performs and reports back.
+
+## 1. State the fault, not the cause
+
+Write three lines before anything else:
+
+- **Symptom.** What was observed, in the words of the observation -- exit signal, message, wrong output, hang.
+- **Reproduction.** The exact command, inputs, and environment. If reproduction is unreliable, say the rate.
+- **Assumed cause.** Written down explicitly so it can be attacked rather than smuggled in as a premise.
+
+If reproduction is not established, that is the first hypothesis and the first observation. Debugging a fault nobody can trigger produces a story, not a cause.
+
+## 2. Three hypotheses on distinct axes
+
+One hypothesis makes every reading confirmatory. Three force observations that *distinguish*. Span the axes rather than rephrasing one guess:
+
+| Axis | Example framing |
+| --- | --- |
+| Caller-side misuse | the caller passes a size, index, or lifetime the callee does not accept |
+| Callee invariant | the function's own precondition is violated on this path |
+| Memory lifetime | the object is freed, moved, or reallocated while a pointer to it is live |
+| Concurrency | two threads reach the state in an order the code does not handle |
+| Build vs runtime | the running binary is not the source being read -- stale build, wrong library, cached artifact |
+| Environment | a limit, permission, or configuration differs from the assumed one |
+
+For each hypothesis write: the claim in one sentence; the single observation that would **refute** it and where to read it; and, if it is true, the fix in two words. Two hypotheses with the same distinguishing observation are one hypothesis -- collapse them and find a real third.
+
+## 3. Plan the debugger session, do not print
+
+Prefer a DAP debug adapter -- `lldb-dap`, `codelldb`, or a gdb adapter -- driven by the executor's own debugging surface. It reads state without rebuilding, and it reads state the source never printed.
+
+Print-and-rebuild is the fallback, for when no adapter is available or the fault only appears in an environment that cannot host one. It is slower per iteration, it perturbs timing (which can hide a race), and it can only show values someone already guessed were interesting.
+
+The plan names, concretely:
+
+| Element | What to specify |
+| --- | --- |
+| Adapter and target | which adapter, which binary, launch or attach |
+| Breakpoints | file:line or symbol, plus any condition that skips uninteresting hits |
+| Watchpoints | the address or expression whose change is the event, for corruption faults |
+| Threads and frames | which thread, how far up the stack, what to read in each frame |
+| Values to read | named variables, registers, or memory ranges -- decided in advance, per stop |
+| Stop criterion | what result ends the session, for each hypothesis |
+
+A plan that says "set a breakpoint and look around" hands the thinking back to the executor. Name the reads.
+
+## 4. When symbols are missing
+
+A stripped binary changes the evidence available, not the method. The hypotheses and the distinguishing observations still come first. What changes:
+
+- Identify the file format, architecture, and linkage before anything else; the answer decides which tools apply at all.
+- Recover coarse structure from imported symbols and embedded strings, and treat both as hints rather than as a map.
+- Prefer syscall- and library-level tracing for a first pass -- it shows what the binary actually does without needing to know where.
+- Note when platform protections block a technique, and say the technique was blocked rather than reporting an empty result as a finding.
+- Only attach to, trace, or modify a binary the user owns or operates. If provenance is unclear, that is a blocker, not a detail.
+
+## 5. Evidence boundary
+
+| Claim | Evidence |
+| --- | --- |
+| The fault reproduces | an observed run showing the symptom, with the rate if intermittent |
+| The hypothesis is refuted | the observed value that contradicts it, quoted |
+| The root cause is known | an observation that explains every part of the symptom, including its timing |
+| The fix works | the reproduction no longer produces the symptom **and** the mechanism explains why |
+
+The last row is the one that gets skipped. A symptom that stopped appearing after an edit, with no mechanism, is an open fault with a changed schedule -- record it as unresolved.
+
+{_DOMAIN_ENGINEERING_ATTRIBUTION}
+"""
+
+
 def context_skill() -> SkillTemplate:
     """Render the canonical project-terminology workflow with progressive references."""
     template = workflow_skill("context")
