@@ -133,6 +133,12 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
     "src/coding/worktree_creator.py": (
         "`git worktree add` for isolated executor workspaces; local, non-remote (see INVARIANT 3)."
     ),
+    "src/coding/fanout_artifact_sharing.py": (
+        "reached only from `_dispatch_unit` inside the `omh coding fanout dispatch` bridge above, "
+        "right after `ensure_fanout_unit_worktree`; runs `git check-ignore` to decide whether a "
+        "parent-checkout directory may be symlinked into the fresh unit worktree, and spawns no "
+        "executor of its own."
+    ),
     "src/coding/executor_readiness.py": (
         "probes `<executor> --version` on PATH to report which agent CLIs are installed; "
         "reads a version line, dispatches no work."
@@ -518,6 +524,12 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
         "recorded against, so assessment can later tell evidence about the current tracked content "
         "from evidence about older content; read-only local object lookup, names no remote, and it "
         "resolves no ref the caller supplied"
+    ),
+    ("src/coding/fanout_artifact_sharing.py", ("check-ignore",)): (
+        "`git check-ignore -q --` against the parent checkout, then again inside the fresh unit "
+        "worktree after a symlink is created, to decide whether an allowlisted artifact directory "
+        "may be shared; read-only, names no remote, and never runs against anything but the "
+        "dispatching repo or the unit worktree it just created"
     ),
 }
 
