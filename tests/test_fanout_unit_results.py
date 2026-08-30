@@ -74,6 +74,38 @@ def _payload_with_check(**check_overrides: object) -> dict[str, object]:
 
 
 class FanoutUnitResultTests(unittest.TestCase):
+    def test_prompt_names_every_enum_literal_the_validator_demands(self) -> None:
+        # #1190: the validator never infers ("success" is rejected, correctly),
+        # so the executor-facing prompt is the ONLY channel that communicates
+        # the closed vocabularies. Every literal must appear verbatim, sourced
+        # from the validator's own tuples so the two can never drift.
+        from omh.coding.fanout_dispatch import _unit_result_prompt_lines
+        from omh.coding.fanout_unit_results import (
+            FANOUT_UNIT_RESULT_CHECK_STATUSES,
+            FANOUT_UNIT_RESULT_PROCESS_STATUSES,
+        )
+
+        prompt = "\n".join(
+            _unit_result_prompt_lines(
+                {
+                    "path": "/tmp/unit-result.json",
+                    "unit_id": "core",
+                    "run_id": "run-1",
+                    "fanout_id": "fanout-0123456789ab",
+                    "base_sha": "0" * 40,
+                }
+            )
+        )
+        for literal in FANOUT_UNIT_RESULT_PROCESS_STATUSES + FANOUT_UNIT_RESULT_CHECK_STATUSES:
+            self.assertIn(f'"{literal}"', prompt)
+
+    def test_natural_language_process_status_is_rejected_with_the_enum_named(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            validate_unit_result({**VALID_PAYLOAD, "process_status": "success"})
+        message = str(caught.exception)
+        self.assertIn("process_succeeded", message)
+        self.assertIn("'success'", message)
+
     def test_valid_payload_normalizes(self) -> None:
         result = validate_unit_result(VALID_PAYLOAD)
 
