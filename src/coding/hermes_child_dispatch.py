@@ -9,7 +9,7 @@ provider call; the spawned local Hermes CLI owns that call.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -23,7 +23,6 @@ import sys
 import tempfile
 from threading import Event, Lock, Thread
 import time
-from types import MappingProxyType
 from typing import Final
 
 from .hermes_child_evaluation import (
@@ -157,8 +156,8 @@ class HermesChildResult:
     # counts, kept ranges, and why no spill pointer exists for a cap the
     # drainer applied while reading. Empty only for a result built before any
     # capture happened.
-    stdout_truncation: Mapping[str, object] = MappingProxyType({})
-    stderr_truncation: Mapping[str, object] = MappingProxyType({})
+    stdout_truncation: Mapping[str, object] = field(default_factory=dict)
+    stderr_truncation: Mapping[str, object] = field(default_factory=dict)
 
 
 class CancellationToken:
@@ -527,6 +526,6 @@ def _result(
         status, request.parent_run_id, request.run_id, depth, request.model, exit_code,
         stdout, stderr, usage, cleanup, usage_file_exists, signals,
         stdout_truncated, stderr_truncated,
-        MappingProxyType(dict(stdout_truncation or {})),
-        MappingProxyType(dict(stderr_truncation or {})),
+        dict(stdout_truncation or {}),
+        dict(stderr_truncation or {}),
     )
