@@ -318,12 +318,23 @@ preferences, not benchmark results. See
 setup, fallback, provider, and ownership rules.
 
 Coding delegation dispatch (`omh coding run` / `omh coding fanout dispatch`)
-reads a separate, operator-set preference, not this file: for the strongest
-Claude Code tier, set `"claude-code": "opus"` in
-`~/.omh/routing/dispatch-models.json`, or pass `--model opus` on one `omh
-coding run` invocation; set an equivalent `codex` entry once you have
-confirmed the model id your account is entitled to. See `docs/FANOUT.md`
-(Dispatch-model preference) for the schema and the full precedence order.
+— the Maestro lane that spawns Claude Code or Codex directly — has the same
+category dial as its own sibling file. Route it per work category with
+
+```sh
+$ omh coding category-maestro set codex ultrabrain gpt-5.6-sol:xhigh
+$ omh coding category-maestro interview   # guided walk, Enter keeps each chain
+$ omh coding run --owner codex --category ultrabrain --goal ...
+```
+
+which edits `~/.omh/routing/category-maestro.json`
+(`omh_category_maestro/v1`); `omh coding category-maestro show` prints the
+effective table with operator overrides marked, and the interactive
+`omh setup` offers the same walk. An explicit `--model` on a run always wins,
+and `~/.omh/routing/dispatch-models.json` remains the per-owner default used
+only when no route resolves at all (for the strongest Claude Code tier, set
+`"claude-code": "opus"` there). See `docs/FANOUT.md` (Category-maestro and
+Dispatch-model preference) for schemas and the full precedence order.
 
 <details>
 <summary><strong>Or paste this into Hermes or another coding agent</strong></summary>

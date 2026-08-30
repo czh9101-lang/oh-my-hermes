@@ -288,14 +288,33 @@ evidence), and is safe to delete — an absent or invalid file only means HUD
 rows fall back to plain category projection.
 
 A fourth sibling, `~/.omh/routing/dispatch-models.json`
-(`omh_dispatch_model_preferences/v1`), is operator-edited only — nothing
-seeds or writes it automatically — and applies to a different surface:
+(`omh_dispatch_model_preferences/v1`), applies to a different surface:
 `omh coding fanout dispatch`'s `--model` fallback for a spawned agent CLI,
-used only when a unit's prepared handoff routed no model at all. See
-`docs/FANOUT.md` (Dispatch-model preference) for the schema and the
-`claude-code`/`codex` behavior it fills the gap for; on `omh coding run` it
-sits below that command's own `--model` flag and any routed handoff model,
-above only the executor CLI's own default.
+used only when a unit's prepared handoff routed no model at all. It is
+operator-edited (the interactive `omh setup` maestro question seeds it empty
+on an explicit "yes"; nothing else writes it). See `docs/FANOUT.md`
+(Dispatch-model preference) for the schema and the `claude-code`/`codex`
+behavior it fills the gap for; on `omh coding run` it sits below that
+command's own `--model` flag and any routed handoff model, above only the
+executor CLI's own default.
+
+A fifth sibling, `~/.omh/routing/category-maestro.json`
+(`omh_category_maestro/v1`), is the Maestro lane's own category dial — the
+same category vocabulary as the mixture above, applied to the dispatched
+`codex`/`claude-code` CLIs. `omh coding category-maestro show` prints the
+effective category → model table (operator overrides marked, invalid pieces
+named), `omh coding category-maestro set <profile> <category>
+<model[:effort]>...` is the scriptable write,
+`omh coding category-maestro clear` restores a built-in chain, and
+`omh coding category-maestro interview` walks it guided — the interactive
+`omh setup` offers that walk right after the maestro question. The file's
+presence is the opt-in: machines without it keep byte-identical routes, and
+routes resolved against it record `catalog_kind: "operator_category_config"`
+plus the config fingerprint in the frozen contract. Catalogless profiles
+(for example `omo-runtime`, host CLI `pi`/`senpi`) are deliberately not
+configured here — their categories resolve from the locally-derived model
+catalog (omo config). See `docs/FANOUT.md` (Category-maestro) for the full
+rules.
 
 ### Reaching models through a provider
 
@@ -435,11 +454,22 @@ implicit default.
    `prepared`, not `observed` — the probe actually invokes the CLI (a
    `--version` or no-op call) and reads its configured model before calling it
    ready. Treat a `prepared`-only result as not yet ready.
-3. **Optional: set a dispatch-model preference.** `omh coding fanout
+3. **Optional: route per work category.** The Maestro lane resolves each
+   unit's model from a category → model table (`ultrabrain`, `deep`, `quick`,
+   `writing`, ...). Override it per profile with
+   `omh coding category-maestro set codex ultrabrain gpt-5.6-sol:xhigh`, walk
+   it guided with `omh coding category-maestro interview` (the interactive
+   `omh setup` offers this walk too), and inspect the effective table with
+   `omh coding category-maestro show`. A unit declares its category
+   (`omh coding run --category <c>`, or a `category` field on a fanout unit);
+   an explicit `--model` always wins. See `docs/FANOUT.md`
+   (Category-maestro).
+4. **Optional: set a dispatch-model preference.** `omh coding fanout
    dispatch` spawns each CLI headlessly and falls back to a `--model` value
    only when a unit's prepared handoff routed no model at all. That fallback
-   is operator-edited only — nothing seeds or writes it automatically — at
-   `~/.omh/routing/dispatch-models.json`
+   lives at `~/.omh/routing/dispatch-models.json` — seeded empty only by an
+   explicit "yes" to the interactive setup's maestro question, otherwise
+   operator-edited —
    (`omh_dispatch_model_preferences/v1`, a `profiles` map from owner to model
    string, e.g. `{"schema_version": "omh_dispatch_model_preferences/v1",
    "profiles": {"claude-code": "opus"}}`). Neither profile ships a shipped
@@ -448,7 +478,7 @@ implicit default.
    run can skip this file entirely with `omh coding run --model <id>`, which
    always outranks it. See `docs/FANOUT.md` (Dispatch-model preference) for
    the full schema.
-4. **Check what the CLI's own skills contribute to a handoff prompt.**
+5. **Check what the CLI's own skills contribute to a handoff prompt.**
    ```sh
    omh coding executor-skills --profile claude-code
    omh coding executor-skills --profile codex
@@ -457,7 +487,7 @@ implicit default.
    skills (name, invocation string, role) that the Maestro lane arranges into
    a composed prompt — a discovered `SKILL.md` is evidence the file exists,
    never evidence the receiving agent loads or honors it.
-5. **Know where routing sends the delegation intent.** Once a coding-owner
+6. **Know where routing sends the delegation intent.** Once a coding-owner
    choice for a run is explicit, the handoff is composed by the `ulw-maestro`
    skill — the skill-facing surface of the Maestro lane
    (`src/coding/maestro/`) described under "Hermes-native and Maestro
