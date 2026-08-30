@@ -29,13 +29,25 @@ _REGISTER = _REPO_ROOT / "src" / "plugin_bundle" / "omh" / "__init__.py"
 
 
 class ToolSurfaceCoverageTests(unittest.TestCase):
-    """The probe is only honest if it walks every registered tool."""
+    """The probe is only honest if it walks every registered tool.
+
+    Both checks below read committed repository sources, which is why every
+    read here passes `encoding="utf-8"` explicitly. `Path.read_text()` with no
+    encoding uses `locale.getencoding()` -- cp1252 on Windows -- and the tool
+    sources carry non-ASCII on purpose (`run_summary_tool.py` documents its
+    localized output in Korean), so the default would decode-error there and
+    nowhere else.
+    """
 
     def test_collector_covers_every_schema_defined_under_tools(self) -> None:
         declared = {
             match.group(1)
             for path in sorted(_TOOLS_DIR.glob("*.py"))
-            for match in re.finditer(r"^(OMH_[A-Z_]+_SCHEMA)\s*=\s*\{", path.read_text(), re.MULTILINE)
+            for match in re.finditer(
+                r"^(OMH_[A-Z_]+_SCHEMA)\s*=\s*\{",
+                path.read_text(encoding="utf-8"),
+                re.MULTILINE,
+            )
         }
         collected = {
             f"OMH_{str(schema['name']).removeprefix('omh_').upper()}_SCHEMA"
@@ -46,7 +58,12 @@ class ToolSurfaceCoverageTests(unittest.TestCase):
         self.assertEqual(len(builtin_tool_schemas()), len(declared), sorted(declared - collected))
 
     def test_collector_and_name_list_match_the_registered_tools(self) -> None:
-        registered = set(re.findall(r'ctx\.register_tool\(\s*"([a-z_]+)"', _REGISTER.read_text()))
+        registered = set(
+            re.findall(
+                r'ctx\.register_tool\(\s*"([a-z_]+)"',
+                _REGISTER.read_text(encoding="utf-8"),
+            )
+        )
         self.assertEqual(set(BUILTIN_TOOL_NAMES), registered)
         self.assertEqual(
             [str(schema["name"]) for schema in builtin_tool_schemas()],
