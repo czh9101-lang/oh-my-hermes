@@ -4056,6 +4056,7 @@ _DEFINITIONS = [
             "Do not treat a planned command, stale output, green local check, or prepared handoff as fresh verification evidence.",
             "Do not collapse build, lint, tests, security, generated docs, review, CI, DCO, merge-readiness, or merge into one claim.",
             "Failed or unavailable checks must produce HOLD/BLOCK with a rerun or remediation path.",
+            "A change touching an authentication, secrets/config, schema/migration, or payment/crypto path escalates to the thorough verification lane regardless of diff size.",
         ),
         quality_tier="verification-gated",
         quality_bar=(

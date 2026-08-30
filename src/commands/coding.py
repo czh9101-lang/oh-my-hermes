@@ -706,6 +706,120 @@ def _payload_choice_required(payload: dict[str, object]) -> bool:
     return isinstance(selection, dict) and bool(selection.get("choice_required"))
 
 
+def _parsed_chain_entry(raw: str) -> dict[str, str]:
+    """Split one `model[:effort]` CLI token, only when the tail IS an effort.
+
+    Model ids legitimately carry colon tags (`qwen2.5-coder:7b`,
+    `openai/gpt-4o:2024-08-06`), so an unconditional last-colon split would
+    silently tear the tag off into a bogus reasoning effort. The tail is
+    treated as an effort only when it names a known effort level; anything
+    else keeps the whole token as the model id.
+    """
+    from ..coding.model_routing import REASONING_EFFORT_LADDER
+
+    text = str(raw or "").strip()
+    if ":" in text:
+        model_id, tail = text.rsplit(":", 1)
+        effort = tail.strip().casefold()
+        if model_id.strip() and effort in (*REASONING_EFFORT_LADDER, "auto"):
+            return {"model_id": model_id.strip(), "reasoning_effort": effort}
+    return {"model_id": text, "reasoning_effort": ""}
+
+
+def cmd_coding_category_maestro(args: argparse.Namespace) -> int:
+    from ..coding.category_maestro import (
+        CATEGORY_MAESTRO_PROFILES,
+        category_maestro_path,
+        clear_category_maestro_chain,
+        read_category_maestro_config,
+        set_category_maestro_chain,
+    )
+    from ..coding.model_routing import BUILTIN_CATEGORY_MODELS, MODEL_CATEGORIES
+
+    paths = _paths(args)
+    command = args.category_maestro_command
+    if command == "set":
+        try:
+            result = set_category_maestro_chain(
+                paths.omh_home,
+                args.profile,
+                args.category,
+                [_parsed_chain_entry(entry) for entry in args.chain],
+            )
+        except ValueError as exc:
+            raise OmhError(str(exc)) from exc
+        if _wants_json(args):
+            _print_json(result)
+            return 0
+        chain_text = " > ".join(
+            str(entry["model_id"]) + (f" {entry['reasoning_effort']}" if entry.get("reasoning_effort") else "")
+            for entry in result["chain"]
+        )
+        print(
+            f"category-maestro: {result['profile']} {result['category']} -> {chain_text}\n"
+            f"written to {result['path']}"
+        )
+        return 0
+    if command == "clear":
+        try:
+            result = clear_category_maestro_chain(paths.omh_home, args.profile, args.category)
+        except ValueError as exc:
+            raise OmhError(str(exc)) from exc
+        if _wants_json(args):
+            _print_json(result)
+            return 0
+        state = "cleared (built-in chain applies)" if result["removed"] else "was not set (built-in chain already applies)"
+        print(f"category-maestro: {result['profile']} {result['category']} {state}")
+        return 0
+    # show (the default subcommand): the effective merged table per profile,
+    # each category labeled with which basis supplies its chain.
+    config = read_category_maestro_config(paths.omh_home)
+    operator_profiles = config.get("profiles", {}) if isinstance(config, dict) else {}
+    report_profiles: dict[str, object] = {}
+    lines = [f"Category-maestro table ({category_maestro_path(paths.omh_home)}):"]
+    for profile in CATEGORY_MAESTRO_PROFILES:
+        operator_categories = operator_profiles.get(profile, {})
+        categories: dict[str, object] = {}
+        lines.append(f"- {profile}:")
+        for category in MODEL_CATEGORIES:
+            operator_chain = operator_categories.get(category) if isinstance(operator_categories, dict) else None
+            chain = operator_chain if operator_chain else BUILTIN_CATEGORY_MODELS[profile].get(category, ())
+            source = "operator" if operator_chain else "built_in"
+            entries = [
+                {"model_id": str(entry.get("model_id", "")), "reasoning_effort": str(entry.get("reasoning_effort", ""))}
+                for entry in chain
+            ]
+            categories[category] = {"chain": entries, "source": source}
+            chain_text = " > ".join(
+                entry["model_id"] + (f" {entry['reasoning_effort']}" if entry["reasoning_effort"] else "")
+                for entry in entries
+            )
+            marker = "*" if source == "operator" else " "
+            lines.append(f"  {marker} {category:18s} {chain_text or '-'}")
+        report_profiles[profile] = categories
+    rejected = list(config.get("rejected", [])) if isinstance(config, dict) else []
+    payload = {
+        "schema_version": "omh_category_maestro_report/v1",
+        "path": str(category_maestro_path(paths.omh_home)),
+        "configured": config is not None,
+        "profiles": report_profiles,
+        "rejected": rejected,
+        "claim_boundary": (
+            "This table is prepared routing metadata only; it is not dispatch, execution, "
+            "entitlement, or provider availability evidence."
+        ),
+    }
+    if _wants_json(args):
+        _print_json(payload)
+        return 0
+    if rejected:
+        lines.append("rejected config pieces:")
+        lines.extend(f"  ! {note}" for note in rejected)
+    lines.append("* = operator override from category-maestro.json; others are built-in defaults.")
+    print("\n".join(lines))
+    return 0
+
+
 def cmd_coding_model_route(args: argparse.Namespace) -> int:
     from ..coding.executors import EXECUTOR_PROFILES
     from ..coding.model_routing import (
@@ -715,6 +829,7 @@ def cmd_coding_model_route(args: argparse.Namespace) -> int:
         route_provenance,
     )
 
+    category_config = _operator_category_config(_paths(args))
     if getattr(args, "explain", False):
         profiles = [args.executor] if args.executor else list(EXECUTOR_MODEL_OPTIONS)
         unknown = [profile for profile in profiles if profile not in EXECUTOR_MODEL_OPTIONS]
@@ -724,7 +839,7 @@ def cmd_coding_model_route(args: argparse.Namespace) -> int:
         cell_lines = []
         for profile in profiles:
             for role in MODEL_ROLES:
-                route = resolve_model_route(profile, role=role)
+                route = resolve_model_route(profile, role=role, category_config=category_config)
                 provenance, _vocabulary = route_provenance(route)
                 chain = route.get("chain", [])
                 cells.append(
@@ -805,6 +920,7 @@ def cmd_coding_model_route(args: argparse.Namespace) -> int:
         requested_domain=getattr(args, "domain", None) or "",
         requested_depth=getattr(args, "depth", None) or "",
         requested_category=getattr(args, "category", None) or "",
+        category_config=category_config,
         local_catalog=local_catalog,
         active_models=active_models,
         recommendation_overrides=recommendation_overrides,
@@ -978,6 +1094,23 @@ def cmd_coding_model_inventory(args: argparse.Namespace) -> int:
     return 0
 
 
+def _operator_category_config(paths) -> dict[str, object] | None:
+    """Read the category-maestro override table; the file's presence is the opt-in.
+
+    Dropped config pieces are surfaced on stderr here — the loader names them
+    precisely so a typo'd category is visible during the prepare/route/run
+    that ignored it, not only in `category-maestro show`. stdout stays clean
+    for the JSON contracts these commands print.
+    """
+    from ..coding.category_maestro import read_category_maestro_config
+
+    config = read_category_maestro_config(paths.omh_home)
+    if isinstance(config, dict):
+        for note in config.get("rejected", []):
+            print(f"omh: category-maestro: ignored {note}", file=sys.stderr)
+    return config
+
+
 def _local_model_catalogs() -> dict[str, dict[str, object]]:
     """Observe the local inventory once and key its derived catalog by profile.
 
@@ -1129,6 +1262,7 @@ def cmd_coding_fanout_prepare(args: argparse.Namespace) -> int:
             source=args.source,
             source_metadata=_explicit_source_metadata(args),
             local_catalogs=_local_model_catalogs() if needs_inventory else {},
+            category_config=_operator_category_config(paths),
             capability_snapshots=capability_snapshots,
             spawn_plan=spawn_plan,
         )
@@ -1805,6 +1939,10 @@ def cmd_coding_run(args: argparse.Namespace) -> int:
         # --model`.
         "model": args.model or "",
         "reasoning_effort": args.effort or "",
+        # A declared work category routes through the category-maestro merged
+        # table exactly like a fanout unit's `category` field; `--model` still
+        # wins (requested > category chain head).
+        "category": getattr(args, "category", None) or "",
     }
     needs_inventory = args.owner not in EXECUTOR_MODEL_OPTIONS
     try:
@@ -1820,6 +1958,7 @@ def cmd_coding_run(args: argparse.Namespace) -> int:
             source=args.source,
             source_metadata=_explicit_source_metadata(args),
             local_catalogs=_local_model_catalogs() if needs_inventory else {},
+            category_config=_operator_category_config(paths),
             capability_snapshots=capability_snapshots,
         )
     except (FanoutContractError, ExecutorCapabilitySnapshotError) as exc:
@@ -2271,6 +2410,15 @@ def _add_coding_commands(sub) -> None:
         ),
     )
     run_cmd.add_argument("--effort", default=None, help="Reasoning effort for profiles that support one.")
+    run_cmd.add_argument(
+        "--category",
+        default=None,
+        help=(
+            "OMO/ULW model category for this run (ultrabrain, deep, architect, quick, writing, "
+            "visual-engineering, artistry, unspecified-high, unspecified-low); resolved through the "
+            "category-maestro table when one is configured. --model still wins."
+        ),
+    )
     run_cmd.set_defaults(func=cmd_coding_run)
 
     model_route = coding_sub.add_parser(
@@ -2327,6 +2475,49 @@ def _add_coding_commands(sub) -> None:
     )
     model_route.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
     model_route.set_defaults(func=cmd_coding_model_route)
+
+    category_maestro = coding_sub.add_parser(
+        "category-maestro",
+        help=(
+            "Operator category->model chains for the Maestro dispatch lane "
+            "(the same category mixture the Hermes-native delegation lane routes by)."
+        ),
+    )
+    category_maestro_sub = category_maestro.add_subparsers(dest="category_maestro_command", required=True)
+    category_maestro_show = category_maestro_sub.add_parser(
+        "show",
+        help="Render the effective category table per dispatchable profile, operator overrides marked.",
+    )
+    category_maestro_show.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
+    category_maestro_show.set_defaults(func=cmd_coding_category_maestro)
+    category_maestro_set = category_maestro_sub.add_parser(
+        "set",
+        help="Override one category's model chain for one profile (written to ~/.omh/routing/category-maestro.json).",
+    )
+    category_maestro_set.add_argument("profile", help="Dispatchable profile: codex or claude-code.")
+    category_maestro_set.add_argument(
+        "category",
+        help="Model category (ultrabrain, deep, architect, quick, writing, visual-engineering, artistry, unspecified-high, unspecified-low).",
+    )
+    category_maestro_set.add_argument(
+        "chain",
+        nargs="+",
+        help=(
+            "Chain entries in order, each `model[:effort]`, e.g. gpt-5.6-sol:xhigh. The tail after the "
+            "last colon is taken as the effort only when it is a known level (off, minimal, low, medium, "
+            "high, xhigh, max, auto); other colon tags stay part of the model id."
+        ),
+    )
+    category_maestro_set.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
+    category_maestro_set.set_defaults(func=cmd_coding_category_maestro)
+    category_maestro_clear = category_maestro_sub.add_parser(
+        "clear",
+        help="Remove one category override so the built-in chain applies again.",
+    )
+    category_maestro_clear.add_argument("profile", help="Dispatchable profile: codex or claude-code.")
+    category_maestro_clear.add_argument("category", help="Model category to clear.")
+    category_maestro_clear.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
+    category_maestro_clear.set_defaults(func=cmd_coding_category_maestro)
 
     model_routing = coding_sub.add_parser(
         "model-routing",

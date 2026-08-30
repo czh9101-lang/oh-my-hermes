@@ -332,7 +332,13 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # mandatory planner handoff -- the rules that are wrong to discover late. The
 # remainder of the delta is the `+N more` lane line regenerating across the
 # eleven other `intent_to_plan` skills; warranted growth for a new workflow.
-# 756725 -> 768326: the new `llm-app-dev` (`omh-llm-app-dev`) skill was added --
+# 756725 -> 756890: `verification-gate`'s safety_rules gained one rule stating
+# that a change touching an authentication, secrets/config, schema/migration,
+# or payment/crypto path escalates to the thorough verification lane
+# regardless of diff size (+165 chars); warranted growth documenting the new
+# deterministic sensitive-path escalation (`quality/verification_tiering.py`)
+# absorbed into `_verification` in `coding_delegation.py`.
+# 756890 -> 768491: the new `llm-app-dev` (`omh-llm-app-dev`) skill was added --
 # the build-discipline contract for an LLM-powered feature, whose always-loaded
 # body is 11577 chars, between `adversarial-consensus`'s 10355 and
 # `ultrawork`'s 23881. The per-rail decisions and the eval-harness procedure
@@ -343,8 +349,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # retrieval-before-generation order, and the eval deliverables -- the rules that
 # are expensive to discover after the call sites exist. The remainder of the
 # delta is the `+N more` lane line regenerating across the twelve other
-# `coding_handoff` skills; warranted growth for a new workflow.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 768326
+# `coding_handoff` skills. Value re-measured on the merge of origin/main after
+# #1181: the +11601 delta is identical either side of that merge, so the two
+# ratchet moves are additive rather than overlapping; warranted growth for a new
+# workflow.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 768491
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
