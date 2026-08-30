@@ -424,7 +424,15 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # integrity rule above does: it changes the verdict the skill issues, and a
 # gate that reports a lost guard instead of refusing the claim is the failure
 # this rule exists to stop; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 798042
+# 798042 -> 798440: `codebase-onboarding` and `codegraph-refresh` each gained
+# one sentence (+199 chars x2) in their spliced Structural Code Search section
+# prescribing a capped search budget -- a few bounded, targeted queries before
+# a full-file read, escalate only when a bounded pass finds nothing or stays
+# ambiguous, and stop once the target is found. It belongs in the always-
+# loaded body for the same reason the tool-preference sentence beside it does:
+# it is search discipline the skill states up front, not a fact worth an
+# on-demand reference lookup; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 798440
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

@@ -1,6 +1,6 @@
 """Verification discipline for prepared fanout unit prompts.
 
-Five deterministic text blocks ride every dispatched unit prompt:
+Six deterministic text blocks ride every dispatched unit prompt:
 
 1. **Goal echo-back** — before any tool use the subagent restates the goal,
    its own deliverable, and the completion criteria, and stops to report (not
@@ -22,10 +22,17 @@ Five deterministic text blocks ride every dispatched unit prompt:
    sidecar is missing the collector parses this block from captured stdout
    and validates it the same way, so collection is parse-then-validate on
    either path and never prose-scraping.
+6. **Capped structural search** — code exploration is bounded the same way
+   verification is: a few targeted structural-search-or-grep passes before a
+   full-file read, escalating only when a bounded pass finds nothing or stays
+   ambiguous, and stopping the moment the target is found. Shared verbatim
+   with the `executor_prompting_contract/v1` payload's
+   `structural_search_discipline` field (`.coding_contracts.
+   STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE`) so the two cannot drift.
 
 The blocks split across two placement zones for prompt-cache hygiene: the
-goal echo-back, verification-stop, failure-kind, and structured-return
-blocks are unit-invariant,
+goal echo-back, verification-stop, failure-kind, structured-return, and
+capped-search blocks are unit-invariant,
 so `shared_unit_preamble_lines()` places them (with the overall goal) at the
 byte-identical head every sibling prompt of one fanout shares, and
 `unit_protocol_lines()` carries only the unit-varying remainder — numbered
@@ -49,6 +56,8 @@ prompts (subprocess argv), so the total prompt size is policy-gated by
 from __future__ import annotations
 
 from typing import Any, Final, Mapping
+
+from .coding_contracts import STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE
 
 # Policy ceiling for a fully-assembled unit prompt (bytes of UTF-8). The
 # worst-case combination across roles, owners, and calibration blocks is
@@ -402,6 +411,7 @@ def shared_unit_preamble_lines(goal_text: str) -> list[str]:
         VERIFICATION_STOP_PROTOCOL,
         FAILURE_KIND_PROTOCOL,
         UNIT_RESULT_RETURN_PROTOCOL,
+        STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE,
     ]
 
 

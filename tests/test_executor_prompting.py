@@ -425,6 +425,34 @@ class ExecutorPromptingTests(unittest.TestCase):
                     contract["steering_delta_contract"]["action_rule"],
                 )
 
+    def test_structural_search_discipline_is_a_versioned_capped_block_across_handoff_paths(self) -> None:
+        # Given: every prepared-handoff lane that carries the prompting contract.
+        cases = (
+            ("codex", "executor_handoff"),
+            ("claude-code", "prompt_handoff"),
+            ("hermes", "runtime_handoff"),
+        )
+
+        for executor, key in cases:
+            with self.subTest(executor=executor):
+                # When: the handoff is prepared.
+                handoff = build_coding_delegation_payload(
+                    "Implement the exporter flag in src/example.py.",
+                    executor_target=executor,
+                )[key]
+                contract = handoff["executor_prompting_contract"]
+
+                # Then: the payload carries a versioned, prepared-only search-discipline block.
+                discipline = contract["structural_search_discipline"]
+                self.assertEqual(discipline["schema_version"], "structural_search_discipline/v1")
+                self.assertEqual(discipline["status"], "prepared_not_observed")
+                guidance = discipline["guidance"].lower()
+                self.assertIn("capped", guidance)
+                self.assertIn("stop", guidance)
+                self.assertIn("not dispatch", discipline["claim_boundary"].lower())
+                # And the rendered prompt carries the same guidance on every lane.
+                self.assertIn(discipline["guidance"], handoff["prompt_template"])
+
     def test_contract_rejects_missing_or_weakened_session_summary_policy(self) -> None:
         payload = build_coding_delegation_payload(
             "Implement the exporter flag in src/example.py.",
@@ -446,6 +474,38 @@ class ExecutorPromptingTests(unittest.TestCase):
                 for error in errors
             )
         )
+
+    def test_contract_rejects_missing_or_uncapped_structural_search_discipline(self) -> None:
+        payload = build_coding_delegation_payload(
+            "Implement the exporter flag in src/example.py.",
+            executor_target="codex",
+        )
+        contract = dict(payload["executor_handoff"]["executor_prompting_contract"])
+
+        missing = dict(contract)
+        del missing["structural_search_discipline"]
+        errors = validate_executor_prompting_contract(missing, "prompting", expected_profile="codex")
+        self.assertTrue(
+            any("missing keys" in error and "structural_search_discipline" in error for error in errors)
+        )
+
+        uncapped = dict(contract)
+        uncapped["structural_search_discipline"] = dict(contract["structural_search_discipline"])
+        uncapped["structural_search_discipline"]["guidance"] = "Prefer structural search when it is available."
+        errors = validate_executor_prompting_contract(uncapped, "prompting", expected_profile="codex")
+        self.assertTrue(
+            any(
+                "structural_search_discipline guidance must prescribe a capped search budget and a stop condition"
+                in error
+                for error in errors
+            )
+        )
+
+        wrong_version = dict(contract)
+        wrong_version["structural_search_discipline"] = dict(contract["structural_search_discipline"])
+        wrong_version["structural_search_discipline"]["schema_version"] = "structural_search_discipline/v0"
+        errors = validate_executor_prompting_contract(wrong_version, "prompting", expected_profile="codex")
+        self.assertTrue(any("structural_search_discipline schema_version is invalid" in error for error in errors))
 
     def test_contract_rejects_missing_or_advisory_docs_consulted_policy(self) -> None:
         payload = build_coding_delegation_payload(

@@ -22,6 +22,7 @@ from ..coding_contracts import (
     LOCAL_CAPABILITY_REPORT_REQUIRED_FIELDS,
     PROMPT_HANDOFF_SCHEMA_VERSION,
     RUNTIME_HANDOFF_SCHEMA_VERSION,
+    STRUCTURAL_SEARCH_DISCIPLINE_CONTRACT_SCHEMA_VERSION,
     TASK_PROMPT_CONTRACT_SCHEMA_VERSION,
     TASK_PROMPT_REQUIRED_SECTIONS,
 )
@@ -473,11 +474,18 @@ CODING_EXECUTOR_PROMPTING_CONTRACT_KEYS = (
     "verification_policy",
     "reporting_policy",
     "session_summary_policy",
+    "structural_search_discipline",
     "steering_delta_contract",
     "steering_delta_template",
     "claim_boundary",
 )
 CODING_EXECUTOR_PROMPTING_CONTRACT_OPTIONAL_KEYS = ("throughput_overlay",)
+CODING_EXECUTOR_STRUCTURAL_SEARCH_DISCIPLINE_KEYS = (
+    "schema_version",
+    "status",
+    "guidance",
+    "claim_boundary",
+)
 CODING_EXECUTOR_THROUGHPUT_OVERLAY_KEYS = (
     "schema_version",
     "status",
@@ -1690,6 +1698,9 @@ def _compact_executor_prompting_contract(value: Any) -> dict[str, Any]:
         "verification_policy": str(value.get("verification_policy", "")),
         "reporting_policy": str(value.get("reporting_policy", "")),
         "session_summary_policy": str(value.get("session_summary_policy", "")),
+        "structural_search_discipline": _compact_structural_search_discipline(
+            value.get("structural_search_discipline")
+        ),
         "steering_delta_contract": _compact_executor_steering_delta_contract(
             value.get("steering_delta_contract")
         ),
@@ -1710,6 +1721,17 @@ def _compact_executor_prompting_contract(value: Any) -> dict[str, Any]:
         if "eval_strategy" in overlay:
             compacted["throughput_overlay"]["eval_strategy"] = str(overlay.get("eval_strategy", ""))
     return compacted
+
+
+def _compact_structural_search_discipline(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "schema_version": str(value.get("schema_version", "")),
+        "status": str(value.get("status", "")),
+        "guidance": str(value.get("guidance", "")),
+        "claim_boundary": str(value.get("claim_boundary", "")),
+    }
 
 
 def _compact_executor_steering_delta_contract(value: Any) -> dict[str, Any]:
@@ -2939,6 +2961,43 @@ def validate_executor_prompting_contract(contract: Any, label: str, *, expected_
         errors,
         f"{label} session_summary_policy must name the structured summary sections and the read-files/modified-files lists",
     )
+    discipline = contract.get("structural_search_discipline")
+    _require(isinstance(discipline, dict), errors, f"{label} structural_search_discipline must be an object")
+    if isinstance(discipline, dict):
+        extra_discipline_keys = sorted(set(discipline) - set(CODING_EXECUTOR_STRUCTURAL_SEARCH_DISCIPLINE_KEYS))
+        missing_discipline_keys = sorted(set(CODING_EXECUTOR_STRUCTURAL_SEARCH_DISCIPLINE_KEYS) - set(discipline))
+        _require(
+            not extra_discipline_keys,
+            errors,
+            f"{label} structural_search_discipline has unsupported keys: {extra_discipline_keys}",
+        )
+        _require(
+            not missing_discipline_keys,
+            errors,
+            f"{label} structural_search_discipline is missing keys: {missing_discipline_keys}",
+        )
+        _require(
+            discipline.get("schema_version") == STRUCTURAL_SEARCH_DISCIPLINE_CONTRACT_SCHEMA_VERSION,
+            errors,
+            f"{label} structural_search_discipline schema_version is invalid",
+        )
+        _require(
+            discipline.get("status") == "prepared_not_observed",
+            errors,
+            f"{label} structural_search_discipline status must be prepared_not_observed",
+        )
+        for key in ("guidance", "claim_boundary"):
+            _require(
+                isinstance(discipline.get(key), str) and bool(str(discipline.get(key))),
+                errors,
+                f"{label} structural_search_discipline {key} must be a non-empty string",
+            )
+        guidance = str(discipline.get("guidance", "")).lower()
+        _require(
+            "capped" in guidance and "stop" in guidance,
+            errors,
+            f"{label} structural_search_discipline guidance must prescribe a capped search budget and a stop condition",
+        )
     template = str(contract.get("steering_delta_template", ""))
     for field in ("changed_constraint", "new_evidence", "required_action", "verification_target_changed"):
         _require("{" + field + "}" in template, errors, f"{label} steering_delta_template must include {{{field}}}")
