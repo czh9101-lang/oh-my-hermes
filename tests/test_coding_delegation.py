@@ -261,6 +261,40 @@ class ExplicitOwnerChoiceOverrideTests(unittest.TestCase):
         self.assertEqual(delegation["action"], "clarify")
 
 
+class VerificationPathEscalationTests(unittest.TestCase):
+    """Integration coverage for `verification_tiering.sensitive_path_escalation`
+    wired into `_verification` (`coding_delegation.py`): a change that names a
+    security-sensitive target path escalates to the thorough verification lane
+    regardless of change size, and an ordinary path does not.
+    """
+
+    def test_a_named_auth_path_escalates_verification(self) -> None:
+        payload = build_coding_delegation_payload(
+            "fix src/auth/login.py to validate tokens correctly",
+            executor_target="claude-code",
+            explicit_owner_choice=True,
+        )
+        delegation = payload["delegation"]
+        self.assertEqual(delegation["action"], "delegate")
+        verification = delegation["verification"]
+        self.assertTrue(
+            any("thorough verification lane" in line for line in verification),
+            verification,
+        )
+        self.assertTrue(any("src/auth/login.py" in line for line in verification), verification)
+
+    def test_an_ordinary_path_does_not_escalate_verification(self) -> None:
+        payload = build_coding_delegation_payload(
+            "fix src/foo.py to log the response body",
+            executor_target="claude-code",
+            explicit_owner_choice=True,
+        )
+        delegation = payload["delegation"]
+        self.assertEqual(delegation["action"], "delegate")
+        verification = delegation["verification"]
+        self.assertFalse(any("thorough verification lane" in line for line in verification), verification)
+
+
 class CategoryPropagationTests(unittest.TestCase):
     def test_natural_ulw_category_reaches_root_and_hermes_handoff(self) -> None:
         payload = build_coding_delegation_payload(
