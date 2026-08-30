@@ -10,6 +10,8 @@ import secrets
 import signal
 
 from ..coding.hermes_child_dispatch import DispatchConfirmationError, DispatchRecursionError, HermesChildDispatchError, HermesChildObservation, HermesChildRequest, dispatch_hermes_child
+from ..system.approval_tier import TIER_AUTO_ALLOWED, resolve_approval_tier
+from ..system.security_posture import resolve_security_posture
 from ..coding.hermes_child_receipts import ReceiptVerificationError, hermes_child_run_dir, observation_key_open_flags, observation_signature_valid, read_hermes_child_observation, write_signed_observation
 from ..coding.routing_observation import JsonValue, authenticate_child_observation, build_routing_observation, render_routing_status_rows, validate_routing_observation
 from ..core.errors import OmhError
@@ -43,7 +45,10 @@ def cmd_hermes_child_prepare(args: argparse.Namespace) -> int:
 
 
 def cmd_hermes_child_dispatch(args: argparse.Namespace) -> int:
-    if not args.confirm_dispatch:
+    decision = resolve_approval_tier(
+        "hermes_child_dispatch", confirmed=bool(args.confirm_dispatch), posture=resolve_security_posture()
+    )
+    if decision.tier != TIER_AUTO_ALLOWED:
         raise OmhError("Hermes child dispatch requires --confirm-dispatch; prepare is the safe default")
     _validate_metadata_args(args)
     prompt = _read_prompt(args.prompt_file)

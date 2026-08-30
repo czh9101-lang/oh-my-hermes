@@ -23,7 +23,9 @@ from ..coding.skill_load_observation import (
     validate_skill_load_observation,
 )
 from ..core.errors import OmhError
+from ..system.approval_tier import TIER_AUTO_ALLOWED, resolve_approval_tier
 from ..system.local_store import atomic_write_json, read_json_object
+from ..system.security_posture import resolve_security_posture
 from .common import _paths, _print_json, _wants_json
 
 _AUDIENCE = "agent/maintainer"
@@ -31,7 +33,10 @@ _ObservationValue = TypeVar("_ObservationValue")
 
 
 def cmd_hermes_child_skill_load_probe(args: argparse.Namespace) -> int:
-    if not args.confirm_dispatch:
+    decision = resolve_approval_tier(
+        "hermes_child_dispatch", confirmed=bool(args.confirm_dispatch), posture=resolve_security_posture()
+    )
+    if decision.tier != TIER_AUTO_ALLOWED:
         raise OmhError("Hermes skill-load probe requires --confirm-dispatch")
     run_dir = _run_dir(args)
     run_dir.mkdir(mode=0o700, exist_ok=True)

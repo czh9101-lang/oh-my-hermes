@@ -23,6 +23,7 @@ from omh.system.output_truncation import (  # noqa: E402
     TRUNCATION_REASON_CODES,
     resolve_spill_reference,
     spill_evidence_ref,
+    truncate_at_fabricated_boundary,
     truncate_output,
     truncation_notice,
     write_output_spill,
@@ -176,6 +177,107 @@ class OutputTruncationContractTests(unittest.TestCase):
         self.assertNotIn("�", head.kept_text)
         self.assertEqual(tail.record["kept_bytes"], len(tail.kept_text.encode("utf-8")))
         self.assertEqual(head.record["kept_bytes"], len(head.kept_text.encode("utf-8")))
+
+
+class FabricatedBoundaryContractTests(unittest.TestCase):
+    """`truncate_at_fabricated_boundary` -- OMH's analogue of oh-my-pi's
+    `tools.abortOnFabricatedResult` (P3, item Q): a dispatched unit's captured
+    output is cut at the first occurrence of a caller-named authority marker,
+    the content before it kept and reported real, the marker onward reported
+    under the `fabricated_boundary` reason code and never parsed as genuine.
+    """
+
+    def setUp(self) -> None:
+        self.temp = TemporaryDirectory(prefix="omh-fabricated-boundary-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.paths = OmhPaths(omh_home=self.root / ".omh", hermes_home=self.root / ".hermes")
+
+    def test_no_marker_present_passes_through_unchanged(self) -> None:
+        bounded = truncate_at_fabricated_boundary(
+            "ordinary unit output, nothing suspicious here\n",
+            markers=("v1.deadbeef.cafef00d",),
+            source="unit test capture",
+        )
+        self.assertFalse(bounded.truncated)
+        self.assertEqual(bounded.record["reason_code"], "not_truncated")
+        self.assertEqual(bounded.text, "ordinary unit output, nothing suspicious here\n")
+
+    def test_a_marker_mid_stream_keeps_only_what_precedes_it(self) -> None:
+        genuine = "real progress output before the boundary\n"
+        fabricated = "v1.deadbeef.cafef00d fake authority claim\nmore fabricated text\n"
+        bounded = truncate_at_fabricated_boundary(
+            genuine + fabricated,
+            markers=("v1.deadbeef.cafef00d",),
+            source="unit test capture",
+        )
+        self.assertTrue(bounded.truncated)
+        self.assertEqual(bounded.kept_text, genuine)
+        self.assertEqual(bounded.record["reason_code"], "fabricated_boundary")
+        self.assertIn(bounded.record["reason_code"], TRUNCATION_REASON_CODES)
+        self.assertEqual(bounded.record["kept_bytes"], len(genuine.encode("utf-8")))
+        self.assertEqual(
+            bounded.record["original_bytes"], len((genuine + fabricated).encode("utf-8"))
+        )
+
+    def test_the_earliest_of_several_markers_wins(self) -> None:
+        text = "keep-me BETA_MARKER discard-from-here ALPHA_MARKER discard-more"
+        bounded = truncate_at_fabricated_boundary(
+            text, markers=("ALPHA_MARKER", "BETA_MARKER"), source="marker order"
+        )
+        self.assertEqual(bounded.kept_text, "keep-me ")
+
+    def test_a_marker_at_the_very_start_keeps_nothing(self) -> None:
+        bounded = truncate_at_fabricated_boundary(
+            "v1.marker rest of a fully fabricated stream",
+            markers=("v1.marker",),
+            source="all fabricated",
+        )
+        self.assertTrue(bounded.truncated)
+        self.assertEqual(bounded.kept_text, "")
+        self.assertEqual(bounded.record["kept_bytes"], 0)
+
+    def test_full_original_content_spills_including_the_fabricated_part(self) -> None:
+        genuine = "trusted prefix\n"
+        fabricated = "MARKER poisoned suffix\n"
+        bounded = truncate_at_fabricated_boundary(
+            genuine + fabricated,
+            markers=("MARKER",),
+            source="spill coverage",
+            spill_dir=self.paths.runtime_output_spills_dir,
+        )
+        spill = bounded.record["spill"]
+        self.assertEqual(resolve_spill_reference(spill), genuine + fabricated)
+        self.assertEqual(spill_evidence_ref(bounded.record), f"output_spill:{spill['path']}:sha256:{spill['sha256']}:{spill['byte_count']}")
+
+    def test_no_spill_dir_means_not_attempted_and_no_pointer(self) -> None:
+        bounded = truncate_at_fabricated_boundary(
+            "prefix MARKER suffix", markers=("MARKER",), source="no spill"
+        )
+        self.assertNotIn("spill", bounded.record)
+        self.assertEqual(bounded.record["spill_status"], "not_attempted")
+
+    def test_multibyte_content_before_the_marker_is_kept_whole(self) -> None:
+        text = "한글" * 50 + "MARKER" + "tail"
+        bounded = truncate_at_fabricated_boundary(text, markers=("MARKER",), source="utf8")
+        self.assertEqual(bounded.kept_text, "한글" * 50)
+        self.assertNotIn("�", bounded.kept_text)
+
+    def test_empty_marker_list_never_truncates(self) -> None:
+        bounded = truncate_at_fabricated_boundary("anything at all", markers=(), source="no markers")
+        self.assertFalse(bounded.truncated)
+
+    def test_notice_names_the_reason_and_carries_no_ellipsis(self) -> None:
+        bounded = truncate_at_fabricated_boundary(
+            "kept part MARKER cut part",
+            markers=("MARKER",),
+            source="notice",
+            spill_dir=self.paths.runtime_output_spills_dir,
+        )
+        notice = truncation_notice(bounded.record)
+        self.assertIn("reason=fabricated_boundary", notice)
+        self.assertNotIn("...", notice)
+        self.assertNotIn("…", notice)
 
 
 class BoundedCaptureContractTests(unittest.TestCase):

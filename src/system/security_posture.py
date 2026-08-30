@@ -117,6 +117,14 @@ POSTURE_MAPPING: tuple[PostureRow, ...] = (
         "Explicit `ask_before_dispatch` confirmation is already required in both postures "
         "(`require_hermes_child_dispatch_boundary`); the row documents the invariant.",
     ),
+    PostureRow(
+        "installer_confirmation_override_available",
+        "src/install/installer.py",
+        False,
+        "A strict operator gets no `--force` override path at all for overwriting a "
+        "locally-modified managed file or reclaiming an unowned plugin directory; only "
+        "default posture honors the flag (`approval_tier.resolve_approval_tier`).",
+    ),
 )
 
 _POSTURE_MAPPING_BY_KEY: dict[str, PostureRow] = {row.key: row for row in POSTURE_MAPPING}

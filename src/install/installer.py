@@ -24,6 +24,8 @@ from ..skill_pack import (
     builtin_skill_reference_templates,
     builtin_skill_templates,
 )
+from ..system.approval_tier import TIER_AUTO_ALLOWED, resolve_approval_tier
+from ..system.security_posture import resolve_security_posture
 
 SKILL_PROFILES = ("core", "full")
 # The full catalog is the default: installing OMH means getting OMH, ULW
@@ -86,9 +88,9 @@ def skill_install_relative_dir(canonical: str) -> Path:
 def _write_skill(skills_dir: Path, template: SkillTemplate, force: bool = False, managed: bool = False) -> None:
     target_dir = skills_dir / skill_install_relative_dir(template.name)
     target_file = target_dir / "SKILL.md"
-    if target_file.exists() and not force and not managed:
+    if target_file.exists() and not managed:
         existing = target_file.read_text(encoding="utf-8")
-        if existing != template.content:
+        if existing != template.content and not _overwrite_allowed(force):
             raise OmhError(f"local skill differs, refusing to overwrite without --force: {target_file}")
     atomic_write_text(target_file, template.content)
 
@@ -100,11 +102,25 @@ def _write_skill_reference(
     managed: bool = False,
 ) -> None:
     target_file = skills_dir / skill_install_relative_dir(template.skill_name) / template.relative_path
-    if target_file.exists() and not force and not managed:
+    if target_file.exists() and not managed:
         existing = target_file.read_text(encoding="utf-8")
-        if existing != template.content:
+        if existing != template.content and not _overwrite_allowed(force):
             raise OmhError(f"local skill reference differs, refusing to overwrite without --force: {target_file}")
     atomic_write_text(target_file, template.content)
+
+
+def _overwrite_allowed(force: bool) -> bool:
+    """The DECISION for every installer overwrite/removal guard in this module.
+
+    `force` is the caller's confirmation; `resolve_approval_tier` also folds
+    in the active security posture, so `--force` stops overriding a local
+    modification at all once `OMH_SECURITY=strict` is set
+    (`installer_confirmation_override_available` in security_posture.py).
+    """
+    decision = resolve_approval_tier(
+        "installer_overwrite_local_modification", confirmed=force, posture=resolve_security_posture()
+    )
+    return decision.tier == TIER_AUTO_ALLOWED
 
 
 def install_skill_pack(
@@ -164,7 +180,7 @@ def install_skill_pack(
         ]
     manifest = read_manifest(paths.manifest_path)
     modified = local_modifications(manifest, paths.skills_dir)
-    if modified and not force:
+    if modified and not _overwrite_allowed(force):
         raise OmhError("local modifications detected; rerun with --force or resolve: " + ", ".join(modified))
     context_cost_warning = (
         _context_cost_warning(core_count=len(CORE_PROFILE_SKILLS), full_count=len(builtin_skill_templates()))
@@ -849,9 +865,13 @@ def _collect_removal(
 ) -> None:
     if not path.exists() and not path.is_symlink():
         return
-    if managed_plugin and not force and not _looks_like_managed_plugin(path):
-        kept.append({"path": str(path), "reason": "plugin dir is not an OMH-managed bundle; rerun with --force to remove it"})
-        return
+    if managed_plugin and not _looks_like_managed_plugin(path):
+        decision = resolve_approval_tier(
+            "installer_remove_unowned_plugin_dir", confirmed=force, posture=resolve_security_posture()
+        )
+        if decision.tier != TIER_AUTO_ALLOWED:
+            kept.append({"path": str(path), "reason": "plugin dir is not an OMH-managed bundle; rerun with --force to remove it"})
+            return
     if dry_run:
         would_remove.append(str(path))
         return
