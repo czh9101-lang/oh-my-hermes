@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Mapping, Protocol, TypeAlias
+from typing import Literal, Mapping, Protocol, Sequence, TypeAlias
 
 
 ExternalProfile: TypeAlias = Literal[
@@ -57,6 +57,13 @@ class ExternalHandoffRequest:
     live_safety_profile_revision: str | None = None
     requested_authority_actions: tuple[str, ...] | list[str] | None = None
     model_recommendation: dict[str, object] | None = None
+    # The user's effective category -> chain mapping, already read by the
+    # caller so this contract stays I/O-free, plus the explicit per-request
+    # model/effort. All three feed the advisory complexity recommendation
+    # only; none of them route.
+    model_chains: dict[str, Sequence[tuple[str, str]]] | None = None
+    requested_model: str = ""
+    requested_effort: str = ""
 
 
 @dataclass(frozen=True)

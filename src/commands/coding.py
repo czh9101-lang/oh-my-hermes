@@ -33,6 +33,8 @@ from ..memory import memory_recall_pack_for_handoff, read_handoff_context_pack_f
 from ..coding.product_family_templates import PRODUCT_FAMILIES, product_family_template
 from ..coding.product_quality_harnesses import product_quality_harness
 from ..coding.project_governance import discover_project_governance
+from ..coding.request_complexity import recommend_model_for_complexity, score_request_complexity
+from ..plugin_bundle.omh.hermes_delegation import effective_mixture_category_chains
 from ..routing.intent import META_OR_FEEDBACK_INTENTS, classify_workflow_intent
 from ..routing.localization import normalized_phrase, routing_tokens
 from ..runtime.artifacts import append_journal_observation, create_prepared_coding_delegation_run, write_coding_delegation
@@ -123,6 +125,12 @@ def cmd_coding_delegate(args: argparse.Namespace) -> int:
             project_root=args.project_root or None,
             governance_default=args.governance_default,
             product_family=args.product_family or None,
+            # The user's own chains, so the advisory complexity recommendation
+            # resolves to models they configured rather than to a name this
+            # repo hardcoded. Reading stays here; the builder stays pure.
+            model_chains=effective_mixture_category_chains(paths.omh_home),
+            requested_model=getattr(args, "model", None) or "",
+            requested_effort=getattr(args, "effort", None) or "",
         )
         record_attached_recall_usage(paths, payload)
         if plan_artifact:
@@ -1267,6 +1275,45 @@ def _confirmed_active_models(inventory: dict[str, object]) -> list[dict[str, obj
             }
         )
     return active
+
+
+def cmd_coding_complexity(args: argparse.Namespace) -> int:
+    """Score one request and print the advisory model-class recommendation."""
+    message = " ".join(args.message).strip() if args.message else (sys.stdin.read().strip() if args.stdin else "")
+    if not message:
+        raise OmhError("coding complexity requires a request description or --stdin")
+    paths = _paths(args)
+    complexity = score_request_complexity(message, routed_skill=args.skill or "")
+    recommendation = recommend_model_for_complexity(
+        complexity,
+        chains=effective_mixture_category_chains(paths.omh_home),
+        requested_model=args.model or "",
+        requested_effort=args.effort or "",
+    )
+    payload = {
+        "schema_version": "coding_complexity_report/v1",
+        "complexity": complexity,
+        "recommendation": recommendation,
+    }
+    if _wants_json(args):
+        _print_json(payload)
+        return 0
+    print(f"Complexity: {complexity['tier']} (score {complexity['score']})")
+    print("Signals (score is their sum; no other input moves the tier):")
+    for signal in complexity["signals"]:
+        print(f"  {signal['weight']:+d}  {signal['name']}: {', '.join(signal['evidence'])}")
+    if not complexity["signals"]:
+        print("  (none fired; the score is 0)")
+    resolved = recommendation["resolved"]
+    print(f"Recommended model class: {recommendation['model_class']} at effort {recommendation['reasoning_effort']}")
+    if resolved:
+        print(f"  Your chain head for that class: {resolved['model']} [{recommendation['chain_status']}]")
+    else:
+        print(f"  No model resolved from your chains [{recommendation['chain_status']}]")
+    if recommendation["status"] == "superseded_by_user_override":
+        override = recommendation["user_override"]
+        print(f"Your explicit choice wins: model={override['model'] or '-'} effort={override['reasoning_effort'] or '-'}")
+    return 0
 
 
 def cmd_coding_composition_guide(args: argparse.Namespace) -> int:
@@ -2698,6 +2745,26 @@ def _add_coding_commands(sub) -> None:
     model_inventory.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
     model_inventory.set_defaults(func=cmd_coding_model_inventory)
 
+    complexity = coding_sub.add_parser(
+        "complexity",
+        help="Score a request's complexity and show the advisory model-class recommendation.",
+    )
+    complexity.add_argument("message", nargs="*", help="Request text to score.")
+    complexity.add_argument("--stdin", action="store_true", help="Read the request text from standard input.")
+    complexity.add_argument("--skill", default=None, help="Routed workflow name, so its capability family can weigh in.")
+    complexity.add_argument(
+        "--model",
+        default=None,
+        help="Explicit model id; supersedes the recommendation, which is still printed for disclosure.",
+    )
+    complexity.add_argument(
+        "--effort",
+        default=None,
+        help="Explicit reasoning effort; supersedes the recommended effort.",
+    )
+    complexity.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
+    complexity.set_defaults(func=cmd_coding_complexity)
+
     composition_guide = coding_sub.add_parser(
         "composition-guide",
         help="Composition calibration for the MAIN agent's own model family (how to compose splits and unit prompts).",
@@ -2786,6 +2853,21 @@ def _add_coding_commands(sub) -> None:
         help="Explicit advisory-default decision for a project without discovered governance.",
     )
     delegate.add_argument("--product-family", choices=PRODUCT_FAMILIES, default="", help="Optional prepared product-family template.")
+    # These two annotate the prepared handoff's advisory complexity
+    # recommendation and nothing else: they record that the caller already
+    # chose, so the recommendation is reported as superseded rather than
+    # silently dropped. They do not route -- `omh coding run --model/--effort`
+    # is the flag pair that reaches a dispatch argv.
+    delegate.add_argument(
+        "--model",
+        default=None,
+        help="Model already chosen for this request; supersedes the prepared complexity recommendation.",
+    )
+    delegate.add_argument(
+        "--effort",
+        default=None,
+        help="Reasoning effort already chosen for this request; supersedes the recommended effort.",
+    )
     delegate.set_defaults(func=cmd_coding_delegate)
 
     governance = coding_sub.add_parser("governance", help="Discover explicit-root project governance for prepared handoffs.")

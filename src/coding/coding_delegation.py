@@ -6,7 +6,7 @@ from functools import lru_cache
 import hashlib
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Mapping
 
 from ..coding_contracts import (
     CLAUDE_CODE_SESSION_OBSERVATION_CONTRACT_SCHEMA_VERSION,
@@ -363,6 +363,9 @@ def build_coding_delegation_payload(
     live_safety_profile_revision: str | None = None,
     requested_authority_actions: tuple[str, ...] | list[str] | None = None,
     model_recommendation: dict[str, object] | None = None,
+    model_chains: Mapping[str, Sequence[tuple[str, str]]] | None = None,
+    requested_model: str = "",
+    requested_effort: str = "",
 ) -> dict[str, object]:
     """Prepare coding work through Maestro for external owners and natively for Hermes."""
 
@@ -407,6 +410,9 @@ def build_coding_delegation_payload(
                 live_safety_profile_revision=live_safety_profile_revision,
                 requested_authority_actions=requested_authority_actions,
                 model_recommendation=model_recommendation,
+                model_chains=dict(model_chains) if model_chains is not None else None,
+                requested_model=requested_model,
+                requested_effort=requested_effort,
             )
         try:
             return maestro_facade.build_external_handoff(request).payload
@@ -445,6 +451,9 @@ def build_coding_delegation_payload(
         live_safety_profile_revision=live_safety_profile_revision,
         requested_authority_actions=requested_authority_actions,
         model_recommendation=model_recommendation,
+        model_chains=model_chains,
+        requested_model=requested_model,
+        requested_effort=requested_effort,
     )
 
 
@@ -476,6 +485,9 @@ def _build_coding_delegation_payload_native(
     live_safety_profile_revision: str | None = None,
     requested_authority_actions: tuple[str, ...] | list[str] | None = None,
     model_recommendation: dict[str, object] | None = None,
+    model_chains: Mapping[str, Sequence[tuple[str, str]]] | None = None,
+    requested_model: str = "",
+    requested_effort: str = "",
 ) -> dict[str, object]:
     message = message.strip()
     if not message:
@@ -807,6 +819,14 @@ def _build_coding_delegation_payload_native(
         category=model_route_category,
         recommendation=model_recommendation,
     )
+    _attach_request_complexity(
+        payload,
+        message,
+        routed_skill=delegation.recommended_workflow,
+        chains=model_chains,
+        requested_model=requested_model,
+        requested_effort=requested_effort,
+    )
     specialist_work_quality = build_specialist_work_quality_contract(
         delegation.recommended_workflow,
         phase="implementation" if delegation.action == "delegate" else "planning",
@@ -838,6 +858,35 @@ def _build_coding_delegation_payload_native(
     if agentic_playbook:
         payload["agentic_playbook"] = agentic_playbook
     return payload
+
+
+def _attach_request_complexity(
+    payload: dict[str, object],
+    message: str,
+    *,
+    routed_skill: str,
+    chains: Mapping[str, Sequence[tuple[str, str]]] | None,
+    requested_model: str,
+    requested_effort: str,
+) -> None:
+    """Attach the deterministic complexity read and the model-class recommendation.
+
+    Both blocks are advisory: nothing here changes `model_route_category`, the
+    resolved recommendation, or any handoff field. The complexity block carries
+    only derived values — signal names from this repo's own closed vocabulary
+    plus counts — so no user request text crosses into the payload through it,
+    which keeps `include_message` the single gate on raw content.
+    """
+    from .request_complexity import recommend_model_for_complexity, score_request_complexity
+
+    complexity = score_request_complexity(message, routed_skill=routed_skill)
+    payload["request_complexity"] = complexity
+    payload["complexity_model_recommendation"] = recommend_model_for_complexity(
+        complexity,
+        chains=chains,
+        requested_model=requested_model,
+        requested_effort=requested_effort,
+    )
 
 
 def _attach_model_routing_metadata(
