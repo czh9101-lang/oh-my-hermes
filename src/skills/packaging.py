@@ -18,6 +18,7 @@ from .render import (
     design_reference_templates,
     idea_to_deploy_reference_templates,
     jit_learn_skill,
+    llm_app_dev_reference_templates,
     loop_reference_templates,
     loop_skill,
     maestro_reference_templates,
@@ -51,6 +52,7 @@ def builtin_skill_reference_templates() -> list[SkillReferenceTemplate]:
         *adversarial_consensus_reference_templates(),
         *ultrawork_reference_templates(),
         *idea_to_deploy_reference_templates(),
+        *llm_app_dev_reference_templates(),
         *[
             SkillReferenceTemplate(
                 definition.name,

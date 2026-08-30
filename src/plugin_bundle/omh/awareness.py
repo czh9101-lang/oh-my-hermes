@@ -1293,6 +1293,7 @@ _WORKFLOW_CONTEXT_CARD_BY_WORKFLOW = {
     "github-event-ops": "automation_and_status",
     "buzz": "automation_and_status",
     "idea-to-deploy": "coding_handoff",
+    "llm-app-dev": "coding_handoff",
     "team": "coding_handoff",
     "ultraqa": "coding_handoff",
     "ultrawork": "coding_handoff",
@@ -5720,6 +5721,7 @@ def awareness_primer_payload() -> dict[str, object]:
             "label": "Coding handoff",
             "skills": [
                 "idea-to-deploy",
+                "llm-app-dev",
                 "cto-loop",
                 "deploy-and-monitor",
                 "code-review",
