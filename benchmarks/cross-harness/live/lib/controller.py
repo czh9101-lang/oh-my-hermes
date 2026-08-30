@@ -44,13 +44,21 @@ from omh.quality.cross_harness_benchmark_values import JsonValue, corpus_digest
 
 from receipt import (
     CLAIM_BOUNDARY,
+    COMPARISON_LABELS,
+    COMPARISON_SCHEMA,
     DOCTOR_SCHEMA,
+    INCONCLUSIVE_REASONS,
     RECEIPT_SCHEMA,
     RUN_SCHEMA,
+    VERDICTS,
+    BaselineComparisonError,
     aggregate_efficiency,
     authenticity_tier,
+    compare_to_baseline,
     envelope_digest,
+    unit_verdicts,
     validate_receipt,
+    verdict_summary,
 )
 
 
@@ -130,7 +138,11 @@ def doctor(corpus_path: Path) -> dict[str, JsonValue]:
         "dispatch_boundary": "omh coding hermes-child dispatch --confirm-dispatch",
         "observation_schema": "routing_observation/v1",
         "receipt_schema": RECEIPT_SCHEMA,
+        "comparison_schema": COMPARISON_SCHEMA,
         "envelope_schema": INPUT_SCHEMA,
+        "verdict_values": list(VERDICTS),
+        "inconclusive_reason_codes": list(INCONCLUSIVE_REASONS),
+        "comparison_labels": list(COMPARISON_LABELS),
         "v1_corpus_mutated": False,
         "claim_boundary": CLAIM_BOUNDARY,
     }
@@ -175,12 +187,29 @@ def load_base_results(path: Path, corpus: Corpus) -> dict[str, JsonValue]:
     return carried
 
 
+def load_baseline_receipt(path: Path) -> dict[str, JsonValue]:
+    """Read a prior receipt to compare against; refuse anything not valid."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise ControllerError("baseline_unavailable") from error
+    except json.JSONDecodeError as error:
+        raise ControllerError("baseline_invalid_json") from error
+    if not isinstance(raw, dict):
+        raise ControllerError("baseline_must_be_object")
+    reasons = validate_receipt(raw)
+    if reasons:
+        raise ControllerError("baseline_receipt_invalid:" + ",".join(reasons))
+    return raw
+
+
 def run(
     *,
     corpus_path: Path,
     mode: str = "fake",
     repository_root: Path,
     base_path: Path | None = None,
+    baseline_path: Path | None = None,
     omh_executable: str = "omh",
     hermes_executable: str = "hermes",
     model: str | None = None,
@@ -209,6 +238,7 @@ def run(
     corpus, corpus_raw = load_corpus(corpus_path)
     command = _single_command(corpus)
     carried = load_base_results(base_path, corpus) if base_path is not None else {}
+    baseline = load_baseline_receipt(baseline_path) if baseline_path is not None else None
     observations: list[Observation] = []
 
     if mode != "fake":
@@ -252,6 +282,11 @@ def run(
         observations=observations,
         bindings=bindings,
     )
+    if baseline is not None:
+        try:
+            receipt["baseline_comparison"] = compare_to_baseline(receipt, baseline)
+        except BaselineComparisonError as error:
+            raise ControllerError(str(error)) from error
     reasons = validate_receipt(receipt)
     if reasons:
         raise ControllerError("invalid_receipt:" + ",".join(reasons))
@@ -637,6 +672,7 @@ def _receipt(
     submitted = {str(item["fixture_id"]) for item in bindings}
     unsupported = [item.id for item in corpus.fixtures if item.id not in submitted]
     payloads = [item.payload() for item in observations]
+    verdicts = unit_verdicts([item.id for item in corpus.fixtures], bindings, payloads)
     return {
         "schema_version": RECEIPT_SCHEMA,
         "mode": mode,
@@ -653,6 +689,9 @@ def _receipt(
         "fixture_bindings": [dict(item) for item in bindings],
         "observations": payloads,
         "efficiency": aggregate_efficiency(payloads),
+        "verdicts": verdicts,
+        "verdict_summary": verdict_summary(verdicts),
+        "baseline_comparison": None,
         "claim_boundary": CLAIM_BOUNDARY,
     }
 

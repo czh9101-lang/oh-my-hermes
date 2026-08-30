@@ -49,6 +49,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Existing cross_harness_benchmark_cli_input/v1 envelope supplying unobserved fixture results.",
     )
+    run_parser.add_argument(
+        "--baseline",
+        type=Path,
+        help=(
+            "Prior cross_harness_live_receipt/v2 receipt of the same task set; the "
+            "emitted receipt then carries the verdict transitions against it."
+        ),
+    )
     run_parser.add_argument("--envelope-output", type=Path)
     run_parser.add_argument("--receipt-output", type=Path)
     run_parser.add_argument("--omh-executable", default="omh")
@@ -74,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
                 mode=args.mode,
                 repository_root=args.repository_root,
                 base_path=args.base,
+                baseline_path=args.baseline,
                 omh_executable=args.omh_executable,
                 hermes_executable=args.hermes_executable,
                 model=args.model,
