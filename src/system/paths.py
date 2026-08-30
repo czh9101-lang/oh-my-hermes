@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .local_store import atomic_write_text
+from .output_truncation import OUTPUT_SPILL_DIR_NAME
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,16 @@ class OmhPaths:
     @property
     def runtime_efficiency_reports_dir(self) -> Path:
         return self.runtime_dir / "efficiency-reports"
+
+    @property
+    def runtime_output_spills_dir(self) -> Path:
+        """Where a capped output spills its full content, content-addressed.
+
+        Flat and keyed by sha256 rather than by run: the same output spilled
+        twice is one file, and a resumed or re-reaped dispatch can never write
+        over an earlier run's spill.
+        """
+        return self.runtime_dir / OUTPUT_SPILL_DIR_NAME
 
     @property
     def runtime_wrapper_sessions_dir(self) -> Path:

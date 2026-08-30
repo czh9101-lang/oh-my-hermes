@@ -428,11 +428,25 @@ class HermesChildDispatchTests(unittest.TestCase):
         self.assertEqual((result.status, result.exit_code), ("failed", 9))
         self.assertTrue(result.stdout_truncated)
         self.assertTrue(result.stderr_truncated)
-        marker = "[output truncated at 16384-byte capture limit]"
+        marker = "[output truncated:"
         self.assertEqual(result.stdout.count(marker), 1)
         self.assertEqual(result.stderr.count(marker), 1)
-        self.assertLessEqual(len(result.stdout.encode("utf-8")), 16_500)
-        self.assertLessEqual(len(result.stderr.encode("utf-8")), 16_500)
+        # The notice replaced a bare marker, so the payload says which cap fired
+        # and how much it dropped -- and, because the drainer counts what it
+        # discards, the real original size rather than "unknown".
+        for stream, record in (
+            (result.stdout, result.stdout_truncation),
+            (result.stderr, result.stderr_truncation),
+        ):
+            self.assertEqual(record["reason_code"], "capture_cap")
+            self.assertEqual(record["kept_bytes"], 16_384)
+            self.assertGreaterEqual(record["original_bytes"], 100 * 1024 * 1024)
+            self.assertEqual(record["spill_status"], "content_not_retained")
+            self.assertNotIn("spill", record)
+            self.assertIn(f"original_bytes={record['original_bytes']}", stream)
+            self.assertNotIn("...", stream)
+        self.assertLessEqual(len(result.stdout.encode("utf-8")), 17_000)
+        self.assertLessEqual(len(result.stderr.encode("utf-8")), 17_000)
         self.assertTrue(result.cleanup_verified)
         pid = int((self.root / "flood.pid").read_text(encoding="utf-8"))
         self.assertTrue(process_absent(pid))

@@ -16,12 +16,12 @@ import time
 from typing import BinaryIO, Final
 
 from ..system.metadata_safety import is_sensitive_metadata_text
+from ..system.output_truncation import truncation_notice, truncation_record
 
 _MAX_USAGE_BYTES: Final = 65_536
 _FORCE_KILL_SIGNAL: Final = getattr(signal, "SIGKILL", signal.SIGTERM)
 MAX_CAPTURE_BYTES: Final = 16_384
 _READ_CHUNK_BYTES: Final = 64 * 1024
-_OUTPUT_TRUNCATED_MARKER: Final = "\n[output truncated at 16384-byte capture limit]\n"
 _USAGE_KEYS: Final = frozenset(
     {
         "estimated_cost_usd", "cost_status", "cost_source", "input_tokens",
@@ -38,6 +38,11 @@ class BoundedStreamCapture:
 
     data: bytes
     truncated: bool
+    # Total bytes the drainer read before discarding, counted rather than
+    # retained, so a truncation record can state the real original size instead
+    # of reporting it as unknown. Zero means "not counted by this producer",
+    # which the record renders as unknown rather than as an empty stream.
+    seen_bytes: int = 0
 
 
 class PipeDrainer:
@@ -47,6 +52,7 @@ class PipeDrainer:
         self._pipe = pipe
         self._parts: list[bytes] = []
         self._retained = 0
+        self._seen = 0
         self._truncated = False
         self._error = False
         self.done = Event()
@@ -56,7 +62,9 @@ class PipeDrainer:
         self.thread.start()
 
     def capture(self) -> BoundedStreamCapture:
-        return BoundedStreamCapture(b"".join(self._parts), self._truncated or self._error)
+        return BoundedStreamCapture(
+            b"".join(self._parts), self._truncated or self._error, self._seen
+        )
 
     def close(self) -> None:
         try:
@@ -70,6 +78,9 @@ class PipeDrainer:
                 chunk = self._pipe.read(_READ_CHUNK_BYTES)
                 if not chunk:
                     break
+                # Counted, never retained: this is what lets the truncation
+                # record name the real original size at zero memory cost.
+                self._seen += len(chunk)
                 remaining = MAX_CAPTURE_BYTES - self._retained
                 if remaining > 0:
                     kept = chunk[:remaining]
@@ -281,19 +292,38 @@ def read_usage(path: Path) -> Mapping[str, object]:
     return usage
 
 
+def capture_truncation_record(
+    captured: BoundedStreamCapture | bytes | str | object,
+    *,
+    source: str,
+) -> dict[str, object]:
+    """The `omh_output_truncation/v1` record for one bounded stream capture.
+
+    Nothing spills here, and that is not an omission: the drainer enforces the
+    cap while reading, so the discarded bytes never existed in this process to
+    write anywhere. The record says exactly that (`content_not_retained`)
+    rather than implying a pointer that could never be produced.
+    """
+    raw, truncated, seen = _capture_parts(captured)
+    return truncation_record(
+        source=source,
+        reason_code="capture_cap" if truncated else "not_truncated",
+        limit_bytes=MAX_CAPTURE_BYTES,
+        kept_bytes=len(raw),
+        original_bytes=seen if seen >= len(raw) else None,
+        keep="head",
+        spill_status="content_not_retained" if truncated else "not_attempted",
+    )
+
+
 def bounded_redacted_output(
     captured: BoundedStreamCapture | bytes | str | object,
     *,
     secrets: Iterable[str],
+    source: str = "hermes child stream capture",
 ) -> str:
-    """Redact a byte-bounded diagnostic and attach a content-free truncation marker."""
-    if isinstance(captured, BoundedStreamCapture):
-        raw, truncated = captured.data, captured.truncated
-    elif isinstance(captured, bytes):
-        raw, truncated = captured[:MAX_CAPTURE_BYTES], len(captured) > MAX_CAPTURE_BYTES
-    else:
-        raw_value = str(captured or "").encode("utf-8", errors="replace")
-        raw, truncated = raw_value[:MAX_CAPTURE_BYTES], len(raw_value) > MAX_CAPTURE_BYTES
+    """Redact a byte-bounded diagnostic and attach a content-free continuation notice."""
+    raw, truncated, _seen = _capture_parts(captured)
     value = raw.decode("utf-8", errors="replace")
     known_secrets = sorted({item for item in secrets if len(item) >= 4}, key=len, reverse=True)
     for secret in known_secrets:
@@ -308,7 +338,22 @@ def bounded_redacted_output(
         "[redacted]\n" if is_sensitive_metadata_text(line) else line
         for line in value.splitlines(keepends=True)
     )
-    return value + (_OUTPUT_TRUNCATED_MARKER if truncated else "")
+    if not truncated:
+        return value
+    notice = truncation_notice(capture_truncation_record(captured, source=source))
+    return f"{value}\n{notice}\n"
+
+
+def _capture_parts(
+    captured: BoundedStreamCapture | bytes | str | object,
+) -> tuple[bytes, bool, int]:
+    """Normalize the three capture shapes to (retained bytes, truncated, bytes seen)."""
+    if isinstance(captured, BoundedStreamCapture):
+        return captured.data, captured.truncated, captured.seen_bytes
+    if isinstance(captured, bytes):
+        return captured[:MAX_CAPTURE_BYTES], len(captured) > MAX_CAPTURE_BYTES, len(captured)
+    raw_value = str(captured or "").encode("utf-8", errors="replace")
+    return raw_value[:MAX_CAPTURE_BYTES], len(raw_value) > MAX_CAPTURE_BYTES, len(raw_value)
 
 
 def _suffix_prefix_overlap(value: str, secret: str) -> int:

@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 from typing import Callable, Mapping, Sequence
 
+from ..system.output_truncation import truncate_output
+
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -59,10 +61,16 @@ def _run_subprocess(command: Sequence[str], timeout_seconds: int, run_env: Mappi
     return CommandResult(command, completed.returncode, completed.stdout, completed.stderr)
 
 
-def bounded_text(value: str, limit: int = 1200) -> str:
-    if len(value) <= limit:
-        return value
-    return value[: limit - 15].rstrip() + "\n...[truncated]"
+def bounded_text(value: str, limit: int = 1200, *, source: str = "release smoke command output") -> str:
+    """Bound one smoke-step excerpt and say what was cut, not just that something was.
+
+    The old marker was a bare `"...[truncated]"`, which is indistinguishable
+    from an ellipsis the command printed itself and names no way back to the
+    rest. No spill store is offered here: the smoke runner holds the full
+    `CommandResult` in memory for the life of the report, so the record says
+    the cap was not spilled rather than pointing at a file that does not exist.
+    """
+    return truncate_output(value, limit_bytes=limit, source=source, keep="head").text
 
 
 def expand_home(value: str | Path | None, env_key: str, default: str) -> str:

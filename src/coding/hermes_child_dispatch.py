@@ -23,6 +23,7 @@ import sys
 import tempfile
 from threading import Event, Lock, Thread
 import time
+from types import MappingProxyType
 from typing import Final
 
 from .hermes_child_evaluation import (
@@ -35,6 +36,7 @@ from ._hermes_child_process import (
     await_pipe_threads as _await_pipe_threads,
     block_relay_signals as _block_relay_signals,
     bounded_redacted_output as _bounded_redacted_output,
+    capture_truncation_record as _capture_truncation_record,
     install_signal_relays as _install_signal_relays,
     merge_signals as _merge_signals,
     read_usage as _read_usage,
@@ -151,6 +153,12 @@ class HermesChildResult:
     termination_signals: tuple[int, ...]
     stdout_truncated: bool
     stderr_truncated: bool
+    # The machine-readable form of the two booleans above: reason code, byte
+    # counts, kept ranges, and why no spill pointer exists for a cap the
+    # drainer applied while reading. Empty only for a result built before any
+    # capture happened.
+    stdout_truncation: Mapping[str, object] = MappingProxyType({})
+    stderr_truncation: Mapping[str, object] = MappingProxyType({})
 
 
 class CancellationToken:
@@ -372,8 +380,18 @@ def _dispatch_guarded(
             cancellation._remove(cancel_child)
         _restore_signal_mask(old_mask)
         _restore_signal_handlers(handlers)
-        stdout = _bounded_redacted_output(stdout_capture, secrets=redaction_values)
-        stderr = _bounded_redacted_output(stderr_capture, secrets=redaction_values)
+        stdout = _bounded_redacted_output(
+            stdout_capture, secrets=redaction_values, source="hermes child stdout capture"
+        )
+        stderr = _bounded_redacted_output(
+            stderr_capture, secrets=redaction_values, source="hermes child stderr capture"
+        )
+        stdout_truncation = _capture_truncation_record(
+            stdout_capture, source="hermes child stdout capture"
+        )
+        stderr_truncation = _capture_truncation_record(
+            stderr_capture, source="hermes child stderr capture"
+        )
         try:
             scratch.cleanup()
         except OSError:
@@ -391,6 +409,7 @@ def _dispatch_guarded(
         request, depth, status, process.returncode if process is not None else None,
         stdout, stderr, usage, cleanup, signals,
         stdout_capture.truncated, stderr_capture.truncated, usage_file_exists,
+        stdout_truncation, stderr_truncation,
     )
 
 
@@ -501,9 +520,13 @@ def _result(
     signals: tuple[int, ...], stdout_truncated: bool = False,
     stderr_truncated: bool = False,
     usage_file_exists: bool = False,
+    stdout_truncation: Mapping[str, object] | None = None,
+    stderr_truncation: Mapping[str, object] | None = None,
 ) -> HermesChildResult:
     return HermesChildResult(
         status, request.parent_run_id, request.run_id, depth, request.model, exit_code,
         stdout, stderr, usage, cleanup, usage_file_exists, signals,
         stdout_truncated, stderr_truncated,
+        MappingProxyType(dict(stdout_truncation or {})),
+        MappingProxyType(dict(stderr_truncation or {})),
     )
