@@ -48,6 +48,14 @@ from .fanout_contracts import (
     FanoutContractError,
     verification_command_argv,
 )
+from .fanout_journal import (
+    RESUME_HOLD_ACTIONS,
+    RESUME_HOLD_SUCCEEDED,
+    build_fanout_run_journal,
+    plan_fanout_resume,
+    resume_counts,
+    write_fanout_run_journal,
+)
 from .inflight import InflightMarkerError, clear_inflight_marker, write_inflight_marker
 from .parallelism_policy import FANOUT_MAX_DEPTH_DEFAULT, FANOUT_RUN_SPAWN_CEILING_DEFAULT
 from .fanout_retry import (
@@ -1102,6 +1110,10 @@ def dispatch_fanout(
     max_depth: int | None = None,
     spawn_ceiling: int | None = None,
     env: Mapping[str, str] | None = None,
+    # A prior run's terminal-state journal. Present, it decides per unit
+    # whether this dispatch attempts it again; absent, every selected unit is
+    # attempted exactly as before.
+    resume_journal: Mapping[str, Any] | None = None,
     # The retry policy's two impure inputs, injected so the whole ladder is
     # assertable without a clock and without a single sleep in a test.
     max_retries: int = FANOUT_MAX_RETRIES,
@@ -1169,6 +1181,26 @@ def dispatch_fanout(
         else _owner_skill_discoveries(capability_valid_units, project_root=repo_root)
     )
     results: dict[str, dict[str, Any]] = {}
+    # Read once, before any unit is considered: the plan is a pure function of
+    # the prior journal and the contract's own dependency edges, so it is the
+    # same plan on every machine and can be printed before anything spawns.
+    resume_plan = (
+        None
+        if resume_journal is None
+        else plan_fanout_resume(
+            resume_journal,
+            order=order,
+            depends_on={
+                unit_id: [str(dep) for dep in (unit.get("depends_on") or [])]
+                for unit_id, unit in units.items()
+            },
+        )
+    )
+    resume_decisions: dict[str, Mapping[str, Any]] = (
+        {}
+        if resume_plan is None
+        else {str(decision["unit_id"]): decision for decision in resume_plan["decisions"]}
+    )
 
     if selected_capability_invalid:
         invalid_reason = (
@@ -1177,6 +1209,10 @@ def dispatch_fanout(
         )
         for unit_id in order:
             unit = units[unit_id]
+            held = _resume_hold(paths, unit, resume_decisions.get(unit_id))
+            if held is not None:
+                results[unit_id] = held
+                continue
             if _already_completed(paths, unit):
                 results[unit_id] = _skipped(
                     unit,
@@ -1217,7 +1253,13 @@ def dispatch_fanout(
 
     for unit_id in order if not selected_capability_invalid else ():
         unit = units[unit_id]
-        if _already_completed(paths, unit):
+        # The resume verdict is read BEFORE the completion probe on purpose: a
+        # unit the journal held as replay-unsafe must stay held even where the
+        # run journal it would be probed against has since been pruned.
+        held = _resume_hold(paths, unit, resume_decisions.get(unit_id))
+        if held is not None:
+            results[unit_id] = held
+        elif _already_completed(paths, unit):
             # Completed units satisfy dependencies whether or not they are in
             # the current selection, so partial re-dispatch of downstream
             # units works after an earlier run (or manual recovery) finished
@@ -1405,6 +1447,13 @@ def dispatch_fanout(
             signal.signal(signal.SIGTERM, previous_term)
 
     summary_units = [results[unit_id] for unit_id in order]
+    for entry in summary_units:
+        decision = resume_decisions.get(str(entry.get("unit_id", "")))
+        if decision is not None and "resume" not in entry:
+            # A re-dispatched unit says which resume rule admitted it, so the
+            # summary answers "why did this run again" without the reader
+            # having to join it back against the plan.
+            entry["resume"] = _resume_note(decision)
     _apply_integration_readiness(summary_units)
     summary = {
         "schema_version": FANOUT_DISPATCH_SCHEMA_VERSION,
@@ -1441,13 +1490,15 @@ def dispatch_fanout(
         "spawns_claimed": spawn_ledger.claimed,
         "claim_boundary": FANOUT_SPAWN_GUARD_CLAIM_BOUNDARY,
     }
+    if resume_plan is not None:
+        summary["resume"] = {**resume_plan, "counts": resume_counts(resume_plan["decisions"])}
     if interrupted_by is not None:
         # A cut-short batch says so; units that never started carry the
         # `interrupted` status rather than silently vanishing from the
         # rollup as if they were never planned.
         summary["interrupted"] = True
     if not dry_run and fanout_id:
-        from .fanout_artifacts import fanout_dispatch_summary_path
+        from .fanout_artifacts import fanout_dispatch_summary_path, fanout_run_journal_path
 
         # Metadata-only persistence so `omh coding fanout brief` can join
         # observed telemetry without replaying the journal. The validated
@@ -1467,6 +1518,15 @@ def dispatch_fanout(
         # so `already_completed` still means "I did not re-run this".
         summary["units"] = _with_carried_recovery(summary["units"], stored.get("units", []))
         summary["recovery_available_units"] = _recovery_available(summary["units"])
+        # Written last, from the carried-forward view: the replay-safety
+        # verdict a later resume reads is the recovery record's own answer,
+        # and a unit whose recovery was carried rather than re-captured must
+        # not be journalled as unmeasured. The write is temp-then-rename, so
+        # an interrupted resume still leaves the previous journal intact.
+        journal = build_fanout_run_journal(summary)
+        summary["run_journal_path"] = str(
+            write_fanout_run_journal(fanout_run_journal_path(paths, fanout_id), journal)
+        )
     if isinstance(interrupted_by, SystemExit):
         # The summary is written; now honor the termination that was asked
         # for, so a supervisor still observes the death it requested (OMO's
@@ -3169,6 +3229,54 @@ def _skipped(
             unit_verification_observed=unit_verification_observed,
         ),
     }
+
+
+def _resume_note(decision: Mapping[str, Any]) -> dict[str, Any]:
+    note: dict[str, Any] = {
+        "action": str(decision.get("action", "")),
+        "prior_state": str(decision.get("prior_state", "")),
+        "reason": str(decision.get("reason", "")),
+    }
+    carried = decision.get("carry_forward")
+    if isinstance(carried, Mapping):
+        # A held unit is recorded in THIS run's summary as a skip, which on its
+        # own would journal as "never attempted" and make the next resume
+        # re-dispatch exactly what this one refused to. The prior journal row
+        # rides along so the verdict survives every further resume.
+        note["carry_forward"] = dict(carried)
+    return note
+
+
+def _resume_hold(
+    paths: OmhPaths,
+    unit: Mapping[str, Any],
+    decision: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """The skip entry for a unit a resume plan holds back, or None to dispatch.
+
+    Held units reuse the existing skip vocabulary rather than inventing a
+    status: a succeeded unit reads `already_completed` so it keeps satisfying
+    its dependents, and a refused replay reads `not_selected` so its dependents
+    stay blocked. The `resume` block is what says which of the two it was and
+    why. Nothing else runs for a held unit -- no readiness probe, no worktree,
+    no spawn, and above all no progress binding, so the live telemetry reporter
+    never reports a unit this run did not actually run.
+    """
+    if decision is None or str(decision.get("action", "")) not in RESUME_HOLD_ACTIONS:
+        return None
+    if str(decision.get("action", "")) == RESUME_HOLD_SUCCEEDED:
+        entry = _skipped(
+            unit,
+            "already_completed",
+            process_succeeded=True,
+            unit_verification_observed=_unit_verification_is_observed(
+                paths, str(unit.get("run_ref", unit.get("unit_id", "")))
+            ),
+        )
+    else:
+        entry = _skipped(unit, "not_selected")
+    entry["resume"] = _resume_note(decision)
+    return entry
 
 
 def _worktree_path(repo_root: Path, unit_id: str) -> Path:

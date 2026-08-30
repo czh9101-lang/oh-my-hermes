@@ -524,6 +524,28 @@ Rules:
   and `duration_seconds`, and the full dispatch summary persists to
   `~/.omh/coding/fanout/<id>/dispatch_summary.json` (latest wins,
   metadata only, skipped on `--dry-run`).
+- **Run journal and resume.** Alongside the summary, every non-dry-run
+  dispatch writes `~/.omh/coding/fanout/<id>/run_journal.json`
+  (`fanout_run_journal/v1`): one row per unit holding the terminal state it
+  reached (`succeeded`, `failed`, `skipped_by_dependency`, `not_attempted`),
+  the failure class read off the retry decision, the replay-safety verdict,
+  and what it was blocked on. The write is temp-then-rename, so a dispatch
+  interrupted mid-write leaves the previous journal intact rather than a
+  truncated document. Passing it back as `omh coding fanout dispatch
+  <id> --resume-journal <path>` re-dispatches only what is eligible: a unit
+  that already succeeded is never re-run and still clears its dependents; a
+  failure with no observed side effect is re-run; a failure that left changes
+  in its worktree, wrote a result artifact, or could not be measured is
+  **held**, with the reason named, and continued through the recovery record
+  instead; and a dependent skipped behind a blocker is un-skipped exactly when
+  that blocker is being attempted again. The plan is reported under the
+  summary's `resume` key and per unit under `resume`, and a journal that
+  cannot be read as this schema is refused with a `reason_code`
+  (`journal_corrupt`, `journal_schema_unsupported`, `journal_fanout_mismatch`)
+  rather than treated as an empty prior run. The resume decides eligibility
+  only — it does not remove anything, so a unit whose earlier attempt left its
+  worktree in place still meets the existing `worktree_path_already_exists`
+  refusal until that worktree and branch are cleared by hand.
 - **Failed-unit recovery.** A unit that exits non-zero — including a
   timeout — still owns its worktree, and whatever it wrote is the only
   thing between the operator and redoing the work. Before the summary
@@ -645,7 +667,8 @@ omh coding fanout migrate-legacy <fanout-id> \
   [--confirm-contract-sha256 <digest>]  # operator/maintenance only
 omh coding fanout dispatch <fanout-id> --goal-file goal.txt \
   [--repo-root .] [--base-ref HEAD] [--concurrency N] [--timeout 1800] \
-  [--unit <id> ...] [--dry-run] [--run-verification]
+  [--unit <id> ...] [--dry-run] [--run-verification] \
+  [--resume-journal ~/.omh/coding/fanout/<fanout-id>/run_journal.json]
 omh coding run --owner <profile> (--goal <words...> | --goal-file goal.txt) \
   [--unit-id run] [--file-scope <path> ...] [--repo-root .] [--base-ref HEAD] \
   [--timeout 1800] [--dry-run] [--run-verification] [--source discord] \

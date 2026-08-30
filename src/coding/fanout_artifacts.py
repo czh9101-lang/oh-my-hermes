@@ -55,6 +55,11 @@ def fanout_dispatch_summary_path(paths: OmhPaths, fanout_id: str) -> Path:
     return _managed_fanout_dir(paths, _validated_fanout_id(fanout_id)) / "dispatch_summary.json"
 
 
+def fanout_run_journal_path(paths: OmhPaths, fanout_id: str) -> Path:
+    """Validated run-journal path for one fanout (id pattern + containment)."""
+    return _managed_fanout_dir(paths, _validated_fanout_id(fanout_id)) / "run_journal.json"
+
+
 def fanout_contract_provenance_path(paths: OmhPaths, fanout_id: str) -> Path:
     return _managed_fanout_dir(
         paths,
