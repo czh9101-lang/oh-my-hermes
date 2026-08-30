@@ -338,7 +338,20 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # regardless of diff size (+165 chars); warranted growth documenting the new
 # deterministic sensitive-path escalation (`quality/verification_tiering.py`)
 # absorbed into `_verification` in `coding_delegation.py`.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 756890
+# 756890 -> 758447: design-lane hardening across three existing skills. `visual-qa`
+# gained the scored-verdict stopping rule (integer 0-100 score, 90 pass line, a
+# mandatory edit-and-recapture round under it) plus the pixel-diff demotion, and
+# `frontend` gained the model-default-aesthetic rule (the editorial prior, the
+# briefs it suits and the ones it fails, and the tokens-not-negations override
+# test) with the review-prompt sweep. The verdict JSON shape, the three-state
+# loop exit, the default-prior sections, and the eight review prompts all live in
+# the on-demand references -- the new `omh-visual-qa/references/
+# visual-verdict-contract.md` (4898 chars) and the grown `taste-foundations.md`
+# (+3838) and `design-critique-rubric.md` (+1122) -- outside this budget; what is
+# always loaded is the threshold, the rerun obligation, and the two-line override
+# test, the rules that are wrong to discover after a surface has shipped
+# (+1557 chars); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 758447
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
