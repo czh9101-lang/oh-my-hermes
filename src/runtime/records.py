@@ -474,6 +474,7 @@ CODING_EXECUTOR_PROMPTING_CONTRACT_KEYS = (
     "verification_policy",
     "reporting_policy",
     "session_summary_policy",
+    "history_foveation_policy",
     "structural_search_discipline",
     "steering_delta_contract",
     "steering_delta_template",
@@ -1698,6 +1699,7 @@ def _compact_executor_prompting_contract(value: Any) -> dict[str, Any]:
         "verification_policy": str(value.get("verification_policy", "")),
         "reporting_policy": str(value.get("reporting_policy", "")),
         "session_summary_policy": str(value.get("session_summary_policy", "")),
+        "history_foveation_policy": str(value.get("history_foveation_policy", "")),
         "structural_search_discipline": _compact_structural_search_discipline(
             value.get("structural_search_discipline")
         ),
@@ -2942,6 +2944,7 @@ def validate_executor_prompting_contract(contract: Any, label: str, *, expected_
         "verification_policy",
         "reporting_policy",
         "session_summary_policy",
+        "history_foveation_policy",
         "steering_delta_template",
         "claim_boundary",
     ):
@@ -2960,6 +2963,15 @@ def validate_executor_prompting_contract(contract: Any, label: str, *, expected_
         and "modified-files" in summary_policy,
         errors,
         f"{label} session_summary_policy must name the structured summary sections and the read-files/modified-files lists",
+    )
+    foveation_policy = str(contract.get("history_foveation_policy", "")).lower()
+    _require(
+        "oldest" in foveation_policy
+        and "newest" in foveation_policy
+        and "state what was dropped" in foveation_policy
+        and "never from an earlier summary" in foveation_policy,
+        errors,
+        f"{label} history_foveation_policy must keep both temporal edges, drop the oldest middle first with the drop stated, and re-plan from the original source",
     )
     discipline = contract.get("structural_search_discipline")
     _require(isinstance(discipline, dict), errors, f"{label} structural_search_discipline must be an object")

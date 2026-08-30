@@ -475,6 +475,64 @@ class ExecutorPromptingTests(unittest.TestCase):
             )
         )
 
+    def test_history_foveation_policy_rides_every_handoff_path(self) -> None:
+        # Given: every prepared-handoff lane that carries the prompting contract.
+        cases = (
+            ("codex", "executor_handoff"),
+            ("claude-code", "prompt_handoff"),
+            ("hermes", "runtime_handoff"),
+        )
+
+        for executor, key in cases:
+            with self.subTest(executor=executor):
+                # When: the handoff is prepared.
+                handoff = build_coding_delegation_payload(
+                    "Implement the exporter flag in src/example.py.",
+                    executor_target=executor,
+                )[key]
+                contract = handoff["executor_prompting_contract"]
+
+                # Then: the layout policy states all four rules — both temporal
+                # edges verbatim, the middle degraded, oldest-middle dropped
+                # first with the drop stated, and no summary of a summary.
+                policy = contract["history_foveation_policy"]
+                self.assertIn("keep both temporal edges verbatim", policy)
+                self.assertIn("the oldest turns that set the goal", policy)
+                self.assertIn("the newest turns that hold current working state", policy)
+                self.assertIn("compress the middle", policy)
+                self.assertIn("drop the oldest part of the middle first", policy)
+                self.assertIn("state what was dropped", policy)
+                self.assertIn("never from an earlier summary", policy)
+                self.assertIn("An unstated drop is missing evidence", policy)
+                # And the rendered prompt carries it on every lane.
+                self.assertIn(policy, handoff["prompt_template"])
+
+    def test_contract_rejects_missing_or_weakened_history_foveation_policy(self) -> None:
+        payload = build_coding_delegation_payload(
+            "Implement the exporter flag in src/example.py.",
+            executor_target="codex",
+        )
+        contract = dict(payload["executor_handoff"]["executor_prompting_contract"])
+
+        missing = dict(contract)
+        del missing["history_foveation_policy"]
+        errors = validate_executor_prompting_contract(missing, "prompting", expected_profile="codex")
+        self.assertTrue(
+            any("missing keys" in error and "history_foveation_policy" in error for error in errors)
+        )
+
+        # A policy that keeps the edges but drops the anti-stacking rule is the
+        # regression this gate exists for: summarizing a summary is where long
+        # sessions actually lose their early constraints.
+        weakened = dict(contract)
+        weakened["history_foveation_policy"] = (
+            "Keep the oldest and newest turns and compress the middle; state what was dropped."
+        )
+        errors = validate_executor_prompting_contract(weakened, "prompting", expected_profile="codex")
+        self.assertTrue(
+            any("history_foveation_policy must keep both temporal edges" in error for error in errors)
+        )
+
     def test_contract_rejects_missing_or_uncapped_structural_search_discipline(self) -> None:
         payload = build_coding_delegation_payload(
             "Implement the exporter flag in src/example.py.",
