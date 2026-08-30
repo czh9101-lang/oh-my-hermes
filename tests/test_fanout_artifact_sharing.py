@@ -16,6 +16,7 @@ import unittest
 from unittest import mock
 
 from _local_package import load_local_package
+from _platform_support import requires_symlinks
 
 load_local_package()
 
@@ -105,6 +106,7 @@ class SharedArtifactAllowlistTests(unittest.TestCase):
             self.assertTrue(entry["name"])
             self.assertTrue(entry["rationale"])
 
+    @requires_symlinks
     def test_links_an_allowlisted_gitignored_directory(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -213,6 +215,7 @@ class SharedArtifactAllowlistTests(unittest.TestCase):
         self.assertFalse(shared_artifacts_opted_out({OPT_OUT_ENV_VAR: "1"}))
         self.assertTrue(shared_artifacts_opted_out({OPT_OUT_ENV_VAR: "0"}))
 
+    @requires_symlinks
     def test_dir_only_gitignore_pattern_is_recognized_and_refused_after_linking(self) -> None:
         # The empirically-verified hazard this module's second guard exists
         # for: a trailing-slash, dir-only gitignore pattern (`node_modules/`)
@@ -238,16 +241,28 @@ class SharedArtifactAllowlistTests(unittest.TestCase):
             self.assertFalse((worktree / "node_modules").exists())
 
     def test_platform_unsupported_records_every_entry(self) -> None:
+        # Runnable on every platform, including a real Windows CI host: it
+        # exercises the DECISION only, never an actual symlink syscall, by
+        # monkeypatching `_symlinks_supported` directly rather than gating on
+        # POSIX. Every allowlist directory is real and gitignored here so each
+        # one clears every earlier guard and reaches the platform check --
+        # otherwise an entry with no source would report `source_missing`
+        # instead, the same way it does on a platform that DOES support
+        # symlinks.
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            repo, sha = _make_repo(root, gitignore_lines=["node_modules"])
-            (repo / "node_modules").mkdir()
+            names = [entry["name"] for entry in SHAREABLE_ARTIFACT_ALLOWLIST]
+            repo, sha = _make_repo(root, gitignore_lines=names)
+            for name in names:
+                artifact_dir = repo / name
+                artifact_dir.mkdir()
+                (artifact_dir / "f.txt").write_text("x\n", encoding="utf-8")
             worktree = root / "unit-worktree"
             _add_worktree(repo, "agent/unit-g", sha, worktree)
 
             from omh.coding import fanout_artifact_sharing as sharing_module
 
-            with mock.patch.object(sharing_module.os, "name", "nt"):
+            with mock.patch.object(sharing_module, "_symlinks_supported", return_value=False):
                 result = plan_and_link_shared_artifacts(
                     repo_root=repo, worktree_path=worktree, runner=subprocess.run
                 )
@@ -255,7 +270,8 @@ class SharedArtifactAllowlistTests(unittest.TestCase):
             self.assertEqual(result["linked"], [])
             for entry in result["entries"]:
                 self.assertEqual(entry["reason"], "platform_unsupported")
-            self.assertFalse((worktree / "node_modules").exists())
+            for name in names:
+                self.assertFalse((worktree / name).exists())
 
 
 class FanoutDispatchSharedArtifactsIntegrationTests(unittest.TestCase):
@@ -272,6 +288,7 @@ class FanoutDispatchSharedArtifactsIntegrationTests(unittest.TestCase):
         contract = write_fanout_contract(paths, build_fanout_contract(goal, units))
         return paths, repo, sha, contract, goal
 
+    @requires_symlinks
     def test_completed_unit_result_carries_shared_artifacts(self) -> None:
         with TemporaryDirectory() as tmp:
             paths, repo, sha, contract, goal = self._setup(tmp)
@@ -293,6 +310,7 @@ class FanoutDispatchSharedArtifactsIntegrationTests(unittest.TestCase):
             worktree = Path(core["worktree_path"])
             self.assertTrue((worktree / "node_modules").is_symlink())
 
+    @requires_symlinks
     def test_journal_worker_dispatch_event_notes_shared_artifacts(self) -> None:
         with TemporaryDirectory() as tmp:
             paths, repo, sha, contract, goal = self._setup(tmp)
@@ -338,6 +356,7 @@ class FanoutDispatchSharedArtifactsIntegrationTests(unittest.TestCase):
             worktree = Path(core["worktree_path"])
             self.assertFalse((worktree / "node_modules").exists())
 
+    @requires_symlinks
     def test_replay_safety_is_unaffected_by_a_linked_artifact(self) -> None:
         # The rail this whole task is really about: a unit that fails
         # transiently but touches nothing of its own must still classify as

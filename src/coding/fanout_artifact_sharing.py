@@ -11,20 +11,29 @@ starts warm.
 The MUST NOT is the interesting half of that precedent, and it drives every
 guard here: never symlink a directory that holds tracked sources, because a
 folder-level link would shadow real files a unit is supposed to see and edit.
-Three independent guards enforce that, in order, and any one of them failing
-falls back silently-but-recorded to the cold behavior that already exists:
+Four independent guards enforce that, checked in this order for each
+allowlist entry, and any one of them failing falls back silently-but-recorded
+to the cold behavior that already exists:
 
 1. The name must be on `SHAREABLE_ARTIFACT_ALLOWLIST` -- a small, named set,
    not an open pattern.
 2. The parent checkout must itself report the path `git check-ignore`d.
-3. AFTER the symlink is created, the unit worktree must ALSO report the same
-   path ignored. This second check exists because a directory-only gitignore
-   pattern (`node_modules/`, the common shape) matches a real directory but
-   NOT a symlink of the same name -- git's dir-only match uses the on-disk
-   type, and a symlink is never a directory to it. Skipping this re-check
-   would let a shared artifact masquerade as a unit-authored change and
-   corrupt `fanout_retry`'s worktree-side-effect detection for a unit that
-   never touched it.
+3. The platform must support symlinks (`os.name != "nt"`). This check is
+   deliberately LAST, immediately before the `os.symlink` call, rather than a
+   single up-front skip for every entry: an entry that would have refused
+   anyway (missing source, not gitignored, or a tracked path already in the
+   worktree) reports THAT reason on every platform, including Windows, so the
+   guard order stays exercised and testable without a real symlink syscall.
+   Only an entry that has cleared every other guard reports
+   `platform_unsupported`.
+4. AFTER the symlink is created, the unit worktree must ALSO report the same
+   path ignored. This second gitignore check exists because a directory-only
+   gitignore pattern (`node_modules/`, the common shape) matches a real
+   directory but NOT a symlink of the same name -- git's dir-only match uses
+   the on-disk type, and a symlink is never a directory to it. Skipping this
+   re-check would let a shared artifact masquerade as a unit-authored change
+   and corrupt `fanout_retry`'s worktree-side-effect detection for a unit
+   that never touched it.
 
 Nothing here raises. A unit worktree that cannot be warmed still gets created
 cold, and every allowlist entry's outcome -- linked, or skipped with a named
@@ -117,22 +126,6 @@ def plan_and_link_shared_artifacts(
             "entries": [],
             "linked": [],
         }
-    if os.name == "nt" or not hasattr(os, "symlink"):
-        # Windows CI runs this path. The safest available mechanism here is to
-        # skip and record why, rather than reach for a junction/copy strategy
-        # that would need its own correctness rails this feature has not
-        # earned yet.
-        entries = [
-            {"name": allowed["name"], "rationale": allowed["rationale"], "action": "skipped", "reason": "platform_unsupported"}
-            for allowed in SHAREABLE_ARTIFACT_ALLOWLIST
-        ]
-        return {
-            "schema_version": SHARED_ARTIFACT_SCHEMA_VERSION,
-            "claim_boundary": SHARED_ARTIFACT_CLAIM_BOUNDARY,
-            "opted_out": False,
-            "entries": entries,
-            "linked": [],
-        }
     entries = []
     linked: list[str] = []
     for allowed in SHAREABLE_ARTIFACT_ALLOWLIST:
@@ -176,6 +169,14 @@ def _link_one(
         return {**entry, "action": "skipped", "reason": "source_missing"}
     if not _path_is_gitignored(runner, repo_root, name):
         return {**entry, "action": "skipped", "reason": "source_not_gitignored"}
+    if not _symlinks_supported():
+        # Windows CI runs this path. The safest available mechanism here is to
+        # skip and record why, rather than reach for a junction/copy strategy
+        # that would need its own correctness rails this feature has not
+        # earned yet. Checked last, immediately before the syscall, so every
+        # guard above it stays exercised (and its own reason reported) on
+        # every platform.
+        return {**entry, "action": "skipped", "reason": "platform_unsupported"}
     try:
         os.symlink(source, target, target_is_directory=True)
     except OSError as exc:
@@ -219,3 +220,13 @@ def _exit_code(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 1
+
+
+def _symlinks_supported() -> bool:
+    """Whether this platform can create a directory symlink at all.
+
+    A plain function, not an inlined condition, so a test can monkeypatch it
+    directly to exercise the `platform_unsupported` branch on any host
+    without needing an actual Windows runner.
+    """
+    return os.name != "nt" and hasattr(os, "symlink")
