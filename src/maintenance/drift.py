@@ -186,7 +186,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="routing_precision_case_count",
             describe="Routing precision cases",
             live=_routing_precision_case_count,
-            expected=133,
+            expected=135,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -198,7 +198,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="routing_precision_intervention_case_count",
             describe="Routing precision intervention cases",
             live=_routing_precision_intervention_case_count,
-            expected=257,
+            expected=265,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
