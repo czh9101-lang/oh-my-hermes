@@ -897,12 +897,21 @@ def cmd_coding_category_maestro(args: argparse.Namespace) -> int:
             lines.append(f"  {marker} {category:18s} {chain_text or '-'}")
         report_profiles[profile] = categories
     rejected = list(config.get("rejected", [])) if isinstance(config, dict) else []
+    # Catalogless profiles are deliberately absent from this table (#1180's
+    # one-basis rule); naming where THEIR categories come from keeps a pi/omo
+    # operator from reading this as "pi has no category routing".
+    catalogless_note = (
+        "omo-runtime (host CLI: pi/senpi) and other catalogless profiles are not configured here: "
+        "their categories resolve from the locally-derived model catalog (omo config) — see "
+        "`omh coding model-route --executor omo-runtime --from-inventory`."
+    )
     payload = {
         "schema_version": "omh_category_maestro_report/v1",
         "path": str(category_maestro_path(paths.omh_home)),
         "configured": config is not None,
         "profiles": report_profiles,
         "rejected": rejected,
+        "catalogless_note": catalogless_note,
         "claim_boundary": (
             "This table is prepared routing metadata only; it is not dispatch, execution, "
             "entitlement, or provider availability evidence."
@@ -915,6 +924,7 @@ def cmd_coding_category_maestro(args: argparse.Namespace) -> int:
         lines.append("rejected config pieces:")
         lines.extend(f"  ! {note}" for note in rejected)
     lines.append("* = operator override from category-maestro.json; others are built-in defaults.")
+    lines.append(catalogless_note)
     print("\n".join(lines))
     return 0
 

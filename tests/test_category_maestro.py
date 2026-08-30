@@ -433,6 +433,26 @@ class CategoryMaestroCliTests(unittest.TestCase):
             self.assertNotEqual(status, 0)
             self.assertIn("no-such", stderr)
 
+    def test_show_names_where_catalogless_profiles_route_categories(self) -> None:
+        # pi/omo-runtime is deliberately absent from this table (one-basis
+        # rule); show must say where its categories DO come from instead of
+        # reading as "no category routing there".
+        with TemporaryDirectory() as tmp:
+            base = ["--omh-home", str(Path(tmp) / ".omh")]
+            status, stdout, stderr = run_cli(
+                base + ["coding", "category-maestro", "show"], output_json=False
+            )
+            self.assertEqual((status, stderr), (0, ""))
+            self.assertIn("omo-runtime (host CLI: pi/senpi)", stdout)
+            self.assertIn("--from-inventory", stdout)
+            status, stdout, stderr = run_cli(
+                base + ["coding", "category-maestro", "show", "--json"], output_json=False
+            )
+            self.assertEqual((status, stderr), (0, ""))
+            note = json.loads(stdout)["catalogless_note"]
+            self.assertIn("omo-runtime", note)
+            self.assertIn("omo config", note)
+
     def test_interview_refuses_without_a_terminal_and_names_the_scriptable_path(self) -> None:
         with TemporaryDirectory() as tmp:
             base = ["--omh-home", str(Path(tmp) / ".omh")]
