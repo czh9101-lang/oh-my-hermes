@@ -353,6 +353,15 @@ conversation:
    or edit `~/.omh/routing/model-chains.json` directly — both write the same
    `mixture_chain_overrides/v1` document.
 4. Re-run `omh model-chains show` and report the confirmed state.
+5. When a `codex` or `claude` CLI is detected on PATH, offer the Maestro
+   lane's own category table the same way: `omh coding category-maestro show`
+   presents the effective table per dispatchable profile, and
+   `omh coding category-maestro set <profile> <category> <model[:effort]>...`
+   is the scriptable write (`omh coding category-maestro interview` is the
+   human terminal path and refuses non-TTY sessions). This table routes
+   `omh coding run --category <c>` and fanout units that declare a
+   `category`; an explicit `--model` always outranks it, and skipping this
+   step keeps the built-in defaults.
 
 If a chain alias needs a provider-specific wire model, edit the sibling
 `~/.omh/routing/model-providers.json` document:
