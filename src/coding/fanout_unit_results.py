@@ -35,11 +35,27 @@ from .fanout_contracts import FANOUT_ID_PATTERN
 
 
 FANOUT_UNIT_RESULT_SCHEMA_VERSION = "fanout_unit_result/v1"
-# Exit-code shaped, and deliberately only that. Anything richer (schema
-# validity, observed verification, integration eligibility) is the
-# dispatcher's to decide from its own observations, never the executor's to
-# assert here.
-FANOUT_UNIT_RESULT_PROCESS_STATUSES = ("process_succeeded", "process_failed")
+# Exit-code shaped, and deliberately only that -- with one deliberate
+# exception. `process_declined` is not a shade of `process_failed`: it is the
+# unit's own conclusive negative answer ("the target does not exist", "this
+# is refused by policy", "the criteria are infeasible as specified"), which a
+# retry cannot turn into a different answer. Everything else this schema
+# rejects (schema validity, observed verification, integration eligibility)
+# stays the dispatcher's to decide from its own observations, never the
+# executor's to assert here -- a decline is reportable precisely because it is
+# not a claim of success or of a bug, so there is nothing here for the
+# dispatcher to launder.
+FANOUT_UNIT_RESULT_PROCESS_STATUSES = ("process_succeeded", "process_failed", "process_declined")
+# The closed reasons a decline may cite. `decline_reason` is required exactly
+# when `process_status` is `process_declined` and refused otherwise, enforced
+# by `_validated_process_status_and_decline_reason` below.
+FANOUT_UNIT_RESULT_DECLINE_REASONS = (
+    "target_not_found",
+    "infeasible_as_specified",
+    "refused_by_policy",
+    "superseded_by_existing_work",
+    "other_declared",
+)
 FANOUT_UNIT_RESULT_CHECK_STATUSES = ("passed", "failed", "skipped")
 FANOUT_UNIT_RESULT_REPORTERS = ("executor", "dispatcher")
 # Only the dispatcher observes. An executor claiming to have observed itself
@@ -82,6 +98,7 @@ def validate_unit_result(payload: Mapping[str, object]) -> dict[str, object]:
     result["process_status"] = _validated_choice(
         payload.get("process_status"), "process_status", FANOUT_UNIT_RESULT_PROCESS_STATUSES
     )
+    _validate_decline_reason(payload, result)
     result["changed_paths"] = _validated_changed_paths(payload.get("changed_paths"))
     result["checks"] = _validated_checks(payload.get("checks"))
     result["findings"] = _validated_findings(payload.get("findings"))
@@ -137,6 +154,30 @@ def _validated_choice(value: object, field: str, allowed: Sequence[str]) -> str:
     if not isinstance(value, str) or value not in allowed:
         raise ValueError(f"{field} must be one of {', '.join(allowed)}; got {value!r}")
     return value
+
+
+def _validate_decline_reason(payload: Mapping[str, object], result: dict[str, object]) -> None:
+    """Require a structured reason on a decline, and refuse one everywhere else.
+
+    A `process_declined` result with no reason is exactly as unbacked as the
+    `process_failed` reports this schema already refuses to let mean anything
+    beyond an exit code -- so the reason is mandatory here, not optional. A
+    reason present on a non-declined result is refused too: it would be a
+    stray field an unrelated report never asked for, and a validator that
+    quietly dropped it would let a decline hide behind a status that reads as
+    ordinary failure.
+    """
+    declined = result["process_status"] == "process_declined"
+    reason = payload.get("decline_reason")
+    if declined:
+        result["decline_reason"] = _validated_choice(
+            reason, "decline_reason", FANOUT_UNIT_RESULT_DECLINE_REASONS
+        )
+    elif "decline_reason" in payload:
+        raise ValueError(
+            f"decline_reason is only valid when process_status is process_declined; "
+            f"process_status is {result['process_status']!r}"
+        )
 
 
 def _validated_optional_choice(value: object, field: str, allowed: Sequence[str]) -> str | None:

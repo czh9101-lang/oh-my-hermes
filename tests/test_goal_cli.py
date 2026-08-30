@@ -51,6 +51,7 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             ("blocker", ["--summary", "s"]),
             ("complete", []),
             ("cancel", []),
+            ("fail", ["--summary", "s", "--reason-code", "target_not_found"]),
         ):
             with self.subTest(subcommand=subcommand):
                 args = parser.parse_args(
@@ -88,6 +89,56 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             self.assertIn("cancelled", stderr)
             self.assertIn("terminal", stderr)
             self.assertNotIn("Traceback", stderr)
+
+    def test_fail_reports_the_terminal_state_and_refuses_later_checkpoints(self) -> None:
+        # #H: `goal fail` reaches a negative-conclusive verdict distinct from
+        # `goal cancel` (operator decision) and `goal blocker` (recoverable).
+        with TemporaryDirectory() as tmp:
+            base = _base(Path(tmp))
+            _create(base)
+
+            status, stdout, stderr = run_cli(
+                base
+                + [
+                    "goal", "fail", "--goal", "goal-cli-guard",
+                    "--summary", "The target does not exist in this environment.",
+                    "--reason-code", "target_not_found",
+                ]
+            )
+
+            self.assertEqual(status, 0, stderr)
+            payload = json.loads(stdout)
+            self.assertTrue(payload["failed"])
+            self.assertTrue(payload["applied"])
+            self.assertFalse(payload["replayed"])
+            self.assertEqual(payload["goal"]["status"], "failed")
+            self.assertEqual(payload["goal"]["failure_reason_code"], "target_not_found")
+            self.assertEqual(payload["completion_gate"]["next_action"], "show_status")
+
+            status, stdout, stderr = run_cli(
+                base + ["goal", "checkpoint", "--goal", "goal-cli-guard", "--summary", "After failure"]
+            )
+
+            self.assertEqual(status, 2)
+            self.assertEqual(stdout, "")
+            self.assertTrue(stderr.startswith("omh: "), stderr)
+            self.assertIn("failed", stderr)
+            self.assertIn("terminal", stderr)
+            self.assertNotIn("Traceback", stderr)
+
+    def test_fail_rejects_an_unsupported_reason_code_at_the_parser(self) -> None:
+        with TemporaryDirectory() as tmp:
+            base = _base(Path(tmp))
+            _create(base)
+
+            with self.assertRaises(SystemExit):
+                run_cli(
+                    base
+                    + [
+                        "goal", "fail", "--goal", "goal-cli-guard",
+                        "--summary", "s", "--reason-code", "not_a_real_code",
+                    ]
+                )
 
     def test_stale_expected_revision_exits_non_zero_with_a_readable_message(self) -> None:
         with TemporaryDirectory() as tmp:

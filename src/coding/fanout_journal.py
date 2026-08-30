@@ -9,8 +9,13 @@ rule to every field any of those surfaces later adds.
 The journal is the narrow projection instead: one row per unit, holding only
 the four things a resume decision needs.
 
-1. **What terminally happened** -- succeeded, failed, skipped because a
-   dependency did not clear, or never attempted at all.
+1. **What terminally happened** -- succeeded, failed, declined by the unit's
+   own conclusive negative answer, skipped because a dependency did not
+   clear, or never attempted at all. `declined` is not a shade of `failed`:
+   the unit itself reported (in a validated `fanout_unit_result/v1` sidecar)
+   that the work cannot be done at all -- the target does not exist, the
+   request is refused by policy, or the criteria are infeasible as
+   specified -- which a retry cannot answer differently.
 2. **How it failed**, in the classification vocabulary `fanout_retry` already
    owns, read off the retry decision the dispatcher recorded rather than
    re-derived from tails the summary does not keep.
@@ -28,6 +33,14 @@ re-deriving. What stays refused in both places is a replay that would destroy
 observed work: a unit whose failure left changes in its worktree, wrote a
 result artifact, or could not be measured at all is held, with the reason
 named, and continued by hand through the recovery path.
+
+A declined unit is refused a third way, unconditionally: replay-safety is
+about whether re-dispatching would destroy something, and a decline holds
+regardless of that answer, because re-dispatching would not produce a
+different verdict either way. `RESUME_HOLD_DECLINED` is checked ahead of
+replay-unsafe side effects for exactly that reason -- the unit's own
+conclusive negative answer is why it is held, not what it may have touched
+on the way to reaching it.
 
 Writes go through `atomic_write_json` -- serialize, write a sibling temp,
 rename over -- so an interrupted write leaves the previous journal exactly as
@@ -75,10 +88,19 @@ RESUME_CLAIM_BOUNDARY = (
 # Terminal states. Every unit in a dispatch lands in exactly one of them.
 TERMINAL_SUCCEEDED = "succeeded"
 TERMINAL_FAILED = "failed"
+TERMINAL_DECLINED = "declined"
 TERMINAL_SKIPPED_BY_DEPENDENCY = "skipped_by_dependency"
 TERMINAL_NOT_ATTEMPTED = "not_attempted"
 
-# Resume actions. The three `hold_*` actions mean "not re-dispatched", each for
+# The journal's own name for a decline in `failure_class`, kept apart from
+# every class `fanout_retry` owns: a decline was never classified by the
+# retry ladder's transport-vs-terminal question (`fanout_retry` only asks
+# "is this the unit's own answer", and a decline always is), so it earns its
+# own label rather than borrowing `terminal_failure` and reading as an
+# ordinary bug the retry ladder happened to give up on.
+FAILURE_CLASS_DECLINED_CONCLUSIVE = "declined_conclusive"
+
+# Resume actions. The four `hold_*` actions mean "not re-dispatched", each for
 # a different reason an operator acts on differently.
 RESUME_RERUN_FAILED = "rerun_replay_safe_failure"
 RESUME_RERUN_NOT_ATTEMPTED = "rerun_not_attempted"
@@ -86,9 +108,10 @@ RESUME_UNSKIP_DEPENDENT = "unskip_dependent"
 RESUME_HOLD_SUCCEEDED = "hold_succeeded"
 RESUME_HOLD_REPLAY_UNSAFE = "hold_replay_unsafe"
 RESUME_HOLD_BLOCKED_DEPENDENCY = "hold_blocked_dependency"
+RESUME_HOLD_DECLINED = "hold_declined_conclusive"
 
 RESUME_HOLD_ACTIONS = frozenset(
-    {RESUME_HOLD_SUCCEEDED, RESUME_HOLD_REPLAY_UNSAFE, RESUME_HOLD_BLOCKED_DEPENDENCY}
+    {RESUME_HOLD_SUCCEEDED, RESUME_HOLD_REPLAY_UNSAFE, RESUME_HOLD_BLOCKED_DEPENDENCY, RESUME_HOLD_DECLINED}
 )
 RESUME_RERUN_ACTIONS = frozenset(
     {RESUME_RERUN_FAILED, RESUME_RERUN_NOT_ATTEMPTED, RESUME_UNSKIP_DEPENDENT}
@@ -123,6 +146,7 @@ _JOURNAL_UNIT_KEYS = (
     "status",
     "failure_class",
     "failure_label",
+    "decline_reason",
     "replay_safe",
     "replay_verdict",
     "side_effect",
@@ -157,7 +181,8 @@ def journal_unit_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
         "owner": str(entry.get("owner") or "choose"),
         "terminal_state": state,
         "status": str(entry.get("status", "")),
-        **_failure_classification(entry),
+        **_failure_classification(entry, state=state),
+        "decline_reason": _decline_reason(entry) if state == TERMINAL_DECLINED else "",
         **_entry_replay_safety(entry, succeeded=state == TERMINAL_SUCCEEDED),
         "blocked_on": [str(dep) for dep in entry.get("blocked_on", []) or []],
     }
@@ -307,6 +332,24 @@ def _unit_resume_decision(
             reason="the prior run observed this unit's process succeed; a resume never re-runs it",
             row=row,
         )
+    if prior_state == TERMINAL_DECLINED:
+        # Checked ahead of replay-safety and `unresolved` on purpose: the
+        # unit already answered this question, conclusively and negatively,
+        # and a resume re-asking it would spend a whole agent-CLI run to
+        # relearn what the journal already states -- regardless of whether
+        # replaying it would also be safe, and regardless of whether its
+        # blockers have since cleared.
+        return _decision(
+            unit_id,
+            prior_state=prior_state,
+            action=RESUME_HOLD_DECLINED,
+            reason=(
+                f"the unit reported a negative-conclusive outcome ({row.get('decline_reason') or 'unspecified'}): "
+                "resuming does not re-dispatch it because a retry cannot answer the question differently; "
+                "act on the recorded reason or supersede it by hand"
+            ),
+            row=row,
+        )
     if not bool(row.get("replay_safe")):
         return _decision(
             unit_id,
@@ -401,17 +444,53 @@ def _terminal_state(entry: Mapping[str, Any]) -> str:
         return TERMINAL_SKIPPED_BY_DEPENDENCY
     if "exit_code" not in entry and entry.get("status") in _NEVER_SPAWNED_STATUSES:
         return TERMINAL_NOT_ATTEMPTED
+    if _unit_result_declined(entry):
+        return TERMINAL_DECLINED
     return TERMINAL_FAILED
 
 
-def _failure_classification(entry: Mapping[str, Any]) -> dict[str, str]:
+def _unit_result_declined(entry: Mapping[str, Any]) -> bool:
+    """Whether the dispatcher's own observation validated a decline.
+
+    Gated on `result_schema_valid`, the dispatcher's own record that it
+    validated the sidecar's shape -- not on the executor's claim alone, the
+    same rule `fanout_unit_results` states for every field on this contract.
+    A unit that succeeded is caught by the earlier `TERMINAL_SUCCEEDED` branch
+    regardless of what a stray `process_declined` sidecar might claim: the
+    dispatcher's own exit-code observation always outranks a self-report.
+    """
+    if not bool(entry.get("result_schema_valid")):
+        return False
+    unit_result = entry.get("unit_result")
+    if not isinstance(unit_result, Mapping):
+        return False
+    return str(unit_result.get("process_status", "")) == "process_declined"
+
+
+def _decline_reason(entry: Mapping[str, Any]) -> str:
+    unit_result = entry.get("unit_result")
+    if isinstance(unit_result, Mapping):
+        return str(unit_result.get("decline_reason", ""))
+    return ""
+
+
+def _failure_classification(entry: Mapping[str, Any], *, state: str = "") -> dict[str, str]:
     """The failure class in `fanout_retry`'s vocabulary, read not re-derived.
 
     The dispatcher already classified any failure it considered retrying, from
     the output tails it had in hand; the summary does not keep those tails, so
     re-matching here would be guessing. Only a failure the retry ladder never
     saw falls back to the exit-code-only classification.
+
+    A declined unit skips both: its class is the journal's own
+    `FAILURE_CLASS_DECLINED_CONCLUSIVE`, never `fanout_retry`'s
+    `terminal_failure`, because the retry ladder never asked "is this
+    conclusive" -- only "is this the unit's own answer", which is true of
+    every non-transient failure and would erase the distinction this module
+    exists to keep.
     """
+    if state == TERMINAL_DECLINED:
+        return {"failure_class": FAILURE_CLASS_DECLINED_CONCLUSIVE, "failure_label": ""}
     retry = entry.get("retry")
     if isinstance(retry, Mapping):
         decisions = retry.get("decisions")

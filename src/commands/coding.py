@@ -1540,6 +1540,23 @@ _FANOUT_BRIEF_CLAIM_BOUNDARY = (
 )
 
 
+def _brief_decline_reason(dispatched: dict) -> str:
+    """The unit's own negative-conclusive reason, when it validly reported one.
+
+    Empty for every ordinary failure: an exit code alone reports `failed`
+    already, and that is not this. Set only when the executor's own validated
+    `fanout_unit_result/v1` sidecar named `process_status` `process_declined` --
+    a distinct, structured claim that the work cannot be done at all, never a
+    retry candidate.
+    """
+    unit_result = dispatched.get("unit_result")
+    if not isinstance(unit_result, dict):
+        return ""
+    if str(unit_result.get("process_status", "")) != "process_declined":
+        return ""
+    return str(unit_result.get("decline_reason", ""))
+
+
 def _brief_recovery(dispatched: dict) -> dict[str, object]:
     """The salvage line for one unit: outcome, size, and how to get the patch.
 
@@ -1673,6 +1690,7 @@ def cmd_coding_fanout_brief(args: argparse.Namespace) -> int:
                 # can recreate it, and destroys the work the recovery record
                 # exists to preserve.
                 "recovery": _brief_recovery(dispatched),
+                "decline_reason": _brief_decline_reason(dispatched),
                 "summary": latest_summary,
             }
         )

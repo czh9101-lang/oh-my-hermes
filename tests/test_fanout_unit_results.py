@@ -18,6 +18,7 @@ load_local_package()
 
 from omh.coding.fanout_unit_results import (  # noqa: E402
     FANOUT_UNIT_RESULT_CHECK_STATUSES,
+    FANOUT_UNIT_RESULT_DECLINE_REASONS,
     FANOUT_UNIT_RESULT_PROCESS_STATUSES,
     FANOUT_UNIT_RESULT_SCHEMA_VERSION,
     validate_check_rows,
@@ -82,6 +83,7 @@ class FanoutUnitResultTests(unittest.TestCase):
         from omh.coding.fanout_dispatch import _unit_result_prompt_lines
         from omh.coding.fanout_unit_results import (
             FANOUT_UNIT_RESULT_CHECK_STATUSES,
+            FANOUT_UNIT_RESULT_DECLINE_REASONS,
             FANOUT_UNIT_RESULT_PROCESS_STATUSES,
         )
 
@@ -96,8 +98,17 @@ class FanoutUnitResultTests(unittest.TestCase):
                 }
             )
         )
-        for literal in FANOUT_UNIT_RESULT_PROCESS_STATUSES + FANOUT_UNIT_RESULT_CHECK_STATUSES:
+        for literal in (
+            FANOUT_UNIT_RESULT_PROCESS_STATUSES
+            + FANOUT_UNIT_RESULT_CHECK_STATUSES
+            + FANOUT_UNIT_RESULT_DECLINE_REASONS
+        ):
             self.assertIn(f'"{literal}"', prompt)
+        # #H: the prompt must steer a conclusively-unreachable unit toward
+        # `process_declined` rather than the generic `process_failed`, which
+        # implies a retry might help.
+        self.assertIn("decline_reason", prompt)
+        self.assertIn("process_declined", prompt)
 
     def test_natural_language_process_status_is_rejected_with_the_enum_named(self) -> None:
         with self.assertRaises(ValueError) as caught:
@@ -140,10 +151,50 @@ class FanoutUnitResultTests(unittest.TestCase):
         self.assertIn("process_status", str(caught.exception))
 
     def test_accepts_every_declared_process_status(self) -> None:
-        self.assertEqual(FANOUT_UNIT_RESULT_PROCESS_STATUSES, ("process_succeeded", "process_failed"))
+        self.assertEqual(
+            FANOUT_UNIT_RESULT_PROCESS_STATUSES,
+            ("process_succeeded", "process_failed", "process_declined"),
+        )
         for status in FANOUT_UNIT_RESULT_PROCESS_STATUSES:
             with self.subTest(status=status):
-                self.assertEqual(validate_unit_result(_payload(process_status=status))["process_status"], status)
+                overrides: dict[str, object] = {"process_status": status}
+                if status == "process_declined":
+                    overrides["decline_reason"] = "target_not_found"
+                self.assertEqual(validate_unit_result(_payload(**overrides))["process_status"], status)
+
+    def test_process_declined_requires_a_closed_decline_reason(self) -> None:
+        self.assertEqual(
+            FANOUT_UNIT_RESULT_DECLINE_REASONS,
+            (
+                "target_not_found",
+                "infeasible_as_specified",
+                "refused_by_policy",
+                "superseded_by_existing_work",
+                "other_declared",
+            ),
+        )
+        for reason in FANOUT_UNIT_RESULT_DECLINE_REASONS:
+            with self.subTest(reason=reason):
+                validated = validate_unit_result(
+                    _payload(process_status="process_declined", decline_reason=reason)
+                )
+                self.assertEqual(validated["decline_reason"], reason)
+        with self.assertRaises(ValueError) as missing:
+            validate_unit_result(_payload(process_status="process_declined"))
+        self.assertIn("decline_reason", str(missing.exception))
+        with self.assertRaises(ValueError) as unclosed:
+            validate_unit_result(_payload(process_status="process_declined", decline_reason="because"))
+        self.assertIn("decline_reason", str(unclosed.exception))
+
+    def test_decline_reason_is_refused_outside_a_decline(self) -> None:
+        for status in ("process_succeeded", "process_failed"):
+            with self.subTest(status=status):
+                with self.assertRaises(ValueError) as caught:
+                    validate_unit_result(
+                        _payload(process_status=status, decline_reason="target_not_found")
+                    )
+                self.assertIn("decline_reason", str(caught.exception))
+                self.assertIn("process_declined", str(caught.exception))
 
     def test_rejects_non_dict_payload(self) -> None:
         for payload in ([], "fanout_unit_result/v1", None, 7):

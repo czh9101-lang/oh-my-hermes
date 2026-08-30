@@ -31,6 +31,12 @@ from omh.coding.fanout_artifacts import write_fanout_contract  # noqa: E402
 from omh.coding.fanout_artifacts import fanout_dispatch_summary_path  # noqa: E402
 from omh.coding.fanout_artifacts import fanout_unit_recovery_path  # noqa: E402
 from omh.coding.fanout_artifacts import unit_result_path  # noqa: E402
+from omh.coding.fanout_journal import (  # noqa: E402
+    RESUME_HOLD_DECLINED,
+    TERMINAL_DECLINED,
+    build_fanout_run_journal,
+    plan_fanout_resume,
+)
 from omh.coding.fanout_dispatch import (  # noqa: E402
     FANOUT_DEPTH_ENV_VAR,
     FANOUT_LINEAGE_ENV_VAR,
@@ -276,6 +282,41 @@ class FanoutUnitResultIntakeTests(unittest.TestCase):
             self.assertIn("observation_source", prompt)
             events = [event["event"] for event in show_run(paths, core["run_ref"])["journal_events"]]
             self.assertIn("unit_result_validated", events)
+
+    def test_a_declined_unit_reaches_the_journal_distinctly_and_resume_holds_it(self) -> None:
+        # #H end-to-end: a unit that validly reports `process_declined` must
+        # (a) never be selected by a resume plan and (b) land in the journal
+        # under its own terminal state, not folded into `failed`.
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, sidecar, script = self._setup(tmp)
+            payload = _unit_result_payload(
+                contract, sha, process_status="process_declined", decline_reason="target_not_found"
+            )
+
+            def runner(argv, **kwargs):
+                if argv[0] == "git":
+                    return subprocess.run(argv, **kwargs)
+                sidecar.parent.mkdir(parents=True, exist_ok=True)
+                sidecar.write_text(json.dumps(payload), encoding="utf-8")
+                return _FakeCompleted(3, "cannot be done: target not found")
+
+            summary = self._dispatch(paths, repo, sha, contract, runner)
+
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertFalse(core["process_succeeded"])
+            self.assertTrue(core["result_schema_valid"])
+            self.assertEqual(core["unit_result"]["process_status"], "process_declined")
+            self.assertEqual(core["unit_result"]["decline_reason"], "target_not_found")
+
+            journal = build_fanout_run_journal(summary)
+            row = {entry["unit_id"]: entry for entry in journal["units"]}["core"]
+            self.assertEqual(row["terminal_state"], TERMINAL_DECLINED)
+            self.assertEqual(row["decline_reason"], "target_not_found")
+
+            plan = plan_fanout_resume(journal, order=["core"], depends_on={"core": []})
+            self.assertEqual(plan["decisions"][0]["action"], RESUME_HOLD_DECLINED)
+            self.assertEqual(plan["selected_units"], [])
+            self.assertIn("core", plan["held_units"])
 
     def test_missing_sidecar_is_explicit_without_erasing_process_success(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -2692,6 +2733,60 @@ class FanoutDispatchSkillDiscoveryTests(unittest.TestCase):
 
 
 class FanoutBriefCliTests(unittest.TestCase):
+    def test_brief_surfaces_a_declined_units_reason_distinctly_from_failed(self) -> None:
+        # #H requirement (c): a reporting surface must render a
+        # negative-conclusive outcome distinctly from an ordinary failure.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            units = [
+                {"unit_id": "core", "title": "Core", "owner": "codex", "file_scope": ["src/core/"]},
+            ]
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
+            sidecar = unit_result_path(paths, contract["fanout_id"], "core")
+            payload = _unit_result_payload(
+                contract, sha, process_status="process_declined", decline_reason="refused_by_policy"
+            )
+
+            def runner(argv, **kwargs):
+                if argv[0] == "git":
+                    return subprocess.run(argv, **kwargs)
+                sidecar.parent.mkdir(parents=True, exist_ok=True)
+                sidecar.write_text(json.dumps(payload), encoding="utf-8")
+                return _FakeCompleted(3, "refused")
+
+            dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                runner=runner, readiness=_ready,
+            )
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+            status, stdout, stderr = run_cli(base + ["coding", "fanout", "brief", str(contract["fanout_id"])])
+            self.assertEqual(status, 0, stderr)
+            brief = json.loads(stdout)
+            core = {entry["unit_id"]: entry for entry in brief["units"]}["core"]
+            self.assertEqual(core["status"], "failed")
+            self.assertEqual(core["decline_reason"], "refused_by_policy")
+
+    def test_brief_leaves_decline_reason_empty_for_an_ordinary_failure(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            units = [{"unit_id": "core", "title": "Core", "owner": "codex", "file_scope": ["src/core/"]}]
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
+            dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                runner=_agent_runner(fail_units={"core"}), readiness=_ready,
+            )
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+            status, stdout, stderr = run_cli(base + ["coding", "fanout", "brief", str(contract["fanout_id"])])
+            self.assertEqual(status, 0, stderr)
+            brief = json.loads(stdout)
+            core = {entry["unit_id"]: entry for entry in brief["units"]}["core"]
+            self.assertEqual(core["status"], "failed")
+            self.assertEqual(core["decline_reason"], "")
+
     def test_brief_joins_contract_journal_and_dispatch_summary(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

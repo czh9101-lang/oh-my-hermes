@@ -78,7 +78,10 @@ FAILURE_KIND_PROTOCOL: Final[str] = (
     "not retry it through another tool or route; record the denial and continue with what the boundary "
     "allows, or report it. Report blocked only when the same concrete condition still holds after the "
     "bounded fix-and-verify cycles, and name that condition; difficulty, uncertainty, or useful "
-    "remaining work is not blocked."
+    "remaining work is not blocked. When the unit's whole objective is unreachable for a reason a retry "
+    "cannot change — the target does not exist, the request is refused by policy, or the acceptance "
+    "criteria are infeasible as specified — report process_status process_declined with a decline_reason "
+    "instead of process_failed: a decline is a conclusive negative answer, never a bug to retry."
 )
 
 # The sidecar file is the primary machine-read return

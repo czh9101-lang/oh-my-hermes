@@ -40,16 +40,19 @@ from omh.coding.fanout_dispatch import dispatch_fanout  # noqa: E402
 from omh.coding.fanout_journal import (  # noqa: E402
     FANOUT_RESUME_PLAN_SCHEMA_VERSION,
     FANOUT_RUN_JOURNAL_SCHEMA_VERSION,
+    FAILURE_CLASS_DECLINED_CONCLUSIVE,
     JOURNAL_CORRUPT,
     JOURNAL_FANOUT_MISMATCH,
     JOURNAL_MISSING,
     JOURNAL_SCHEMA_UNSUPPORTED,
     RESUME_HOLD_BLOCKED_DEPENDENCY,
+    RESUME_HOLD_DECLINED,
     RESUME_HOLD_REPLAY_UNSAFE,
     RESUME_HOLD_SUCCEEDED,
     RESUME_RERUN_FAILED,
     RESUME_RERUN_NOT_ATTEMPTED,
     RESUME_UNSKIP_DEPENDENT,
+    TERMINAL_DECLINED,
     TERMINAL_FAILED,
     TERMINAL_NOT_ATTEMPTED,
     TERMINAL_SKIPPED_BY_DEPENDENCY,
@@ -130,6 +133,30 @@ def _blocked(unit_id: str, *, blocked_on: list[str]) -> dict[str, object]:
         "process_succeeded": False,
         "blocked_on": blocked_on,
     }
+
+
+def _declined(
+    unit_id: str, *, reason: str = "target_not_found", recovery: str | None = "no_changes"
+) -> dict[str, object]:
+    """A unit whose validated sidecar reported a conclusive negative answer.
+
+    `result_schema_valid` is set because only the dispatcher's own observation
+    that the sidecar validated -- never the raw claim alone -- may promote a
+    unit to `declined`; see `_unit_result_declined`.
+    """
+    entry: dict[str, object] = {
+        "unit_id": unit_id,
+        "run_ref": f"run-{unit_id}",
+        "owner": "codex",
+        "status": "failed",
+        "exit_code": 3,
+        "process_succeeded": False,
+        "result_schema_valid": True,
+        "unit_result": {"unit_id": unit_id, "process_status": "process_declined", "decline_reason": reason},
+    }
+    if recovery is not None:
+        entry["recovery"] = {"outcome": recovery}
+    return entry
 
 
 def _interrupted(unit_id: str) -> dict[str, object]:
@@ -215,6 +242,37 @@ class JournalProjectionTests(unittest.TestCase):
     def test_an_interrupted_batch_is_recorded_on_the_journal(self) -> None:
         journal = build_fanout_run_journal(_summary(_interrupted("core"), interrupted=True))
         self.assertTrue(journal["interrupted"])
+
+    def test_a_declined_unit_gets_its_own_terminal_state_distinct_from_failed(self) -> None:
+        # #H: a negative but CONCLUSIVE outcome ("the target does not exist")
+        # must not be shoehorned into `failed`, which implies a retry might
+        # help. The journal's own `declined_conclusive` class is used instead
+        # of `fanout_retry`'s `terminal_failure`, because the retry ladder
+        # never asked whether the answer was conclusive -- it only asked
+        # whether it was transient.
+        row = _rows(build_fanout_run_journal(_summary(_declined("core"))))["core"]
+        self.assertEqual(row["terminal_state"], TERMINAL_DECLINED)
+        self.assertNotEqual(row["terminal_state"], TERMINAL_FAILED)
+        self.assertEqual(row["failure_class"], FAILURE_CLASS_DECLINED_CONCLUSIVE)
+        self.assertEqual(row["decline_reason"], "target_not_found")
+
+    def test_a_declined_unit_is_never_promoted_from_an_unvalidated_self_report(self) -> None:
+        # Mirrors `fanout_unit_results`' own rule: only the dispatcher's own
+        # observation that a sidecar validated may promote a claim. A stray
+        # `process_declined` sitting under an entry the dispatcher never
+        # validated must not read as a decline.
+        entry = _failed("core")
+        entry["unit_result"] = {"unit_id": "core", "process_status": "process_declined", "decline_reason": "x"}
+        row = _rows(build_fanout_run_journal(_summary(entry)))["core"]
+        self.assertEqual(row["terminal_state"], TERMINAL_FAILED)
+        self.assertEqual(row["decline_reason"], "")
+
+    def test_a_succeeded_exit_outranks_a_stray_declined_self_report(self) -> None:
+        entry = _succeeded("core")
+        entry["result_schema_valid"] = True
+        entry["unit_result"] = {"unit_id": "core", "process_status": "process_declined", "decline_reason": "x"}
+        row = _rows(build_fanout_run_journal(_summary(entry)))["core"]
+        self.assertEqual(row["terminal_state"], TERMINAL_SUCCEEDED)
 
 
 class JournalRoundTripTests(unittest.TestCase):
@@ -334,6 +392,30 @@ class ResumeMatrixTests(unittest.TestCase):
     def test_an_unmeasured_worktree_is_held_the_same_way(self) -> None:
         plan = self._plan(_failed("core", recovery=None), _succeeded("docs"), _succeeded("tests"))
         self.assertEqual(_actions(plan)["core"], RESUME_HOLD_REPLAY_UNSAFE)
+
+    def test_a_declined_unit_is_held_and_never_selected_for_rerun(self) -> None:
+        # #H requirement (a): retry/resume must not select a negative-
+        # conclusive unit. Held even though it is replay-safe (no side
+        # effect): resuming it would not answer the question any differently.
+        plan = self._plan(
+            _declined("core", reason="refused_by_policy"),
+            _succeeded("docs"),
+            _blocked("tests", blocked_on=["core"]),
+        )
+        actions = _actions(plan)
+        self.assertEqual(actions["core"], RESUME_HOLD_DECLINED)
+        self.assertNotIn("core", plan["selected_units"])
+        self.assertIn("core", plan["held_units"])
+        self.assertIn("refused_by_policy", _reason(plan, "core"))
+        # Its dependent stays blocked, exactly like a replay-unsafe blocker:
+        # a decline never clears the way for downstream work either.
+        self.assertEqual(actions["tests"], RESUME_HOLD_BLOCKED_DEPENDENCY)
+
+    def test_a_declined_unit_is_held_even_when_replay_would_be_unsafe_too(self) -> None:
+        # A decline is unconditional: it is held for its own answer, not for
+        # what it may have touched on the way to reaching it.
+        plan = self._plan(_declined("core", recovery="recovery_available"))
+        self.assertEqual(_actions(plan)["core"], RESUME_HOLD_DECLINED)
 
     def test_units_the_interrupt_never_started_are_re_run(self) -> None:
         plan = self._plan(_succeeded("core"), _interrupted("docs"), _interrupted("tests"))

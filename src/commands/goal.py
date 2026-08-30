@@ -4,12 +4,14 @@ import argparse
 
 from ..goal_ledger import (
     CHECKPOINT_STATUSES,
+    GOAL_FAILURE_REASON_CODES,
     build_goal_completion_gate,
     build_goal_continuation,
     build_goal_status_card,
     cancel_goal_ledger,
     complete_goal_ledger,
     create_goal_ledger,
+    fail_goal_ledger,
     list_goal_ledgers,
     read_goal_ledger,
     render_goal_status_text,
@@ -145,6 +147,36 @@ def cmd_goal_cancel(args: argparse.Namespace) -> int:
         raise OmhError(str(exc)) from exc
     payload = _mutation_payload(paths, args.goal_id, goal, outcome)
     payload["cancelled"] = bool(outcome.get("applied"))
+    _print_json(payload)
+    return 0 if outcome.get("applied") else 1
+
+
+def cmd_goal_fail(args: argparse.Namespace) -> int:
+    """Terminally fail a goal: a negative but CONCLUSIVE verdict on the objective.
+
+    Distinct from `goal cancel` (an operator decision) and `goal blocker`
+    (a recoverable obstacle, resumable once cleared): a failure states that
+    the objective cannot be met at all, with a required, closed
+    `--reason-code`, and is terminal in the same way `goal cancel` is --
+    later checkpoints, blockers, and gates all refuse.
+    """
+    paths = _paths(args)
+    outcome: dict = {}
+    try:
+        goal = fail_goal_ledger(
+            paths,
+            args.goal_id,
+            args.summary,
+            reason_code=args.reason_code,
+            evidence_refs=args.evidence_ref or [],
+            expected_revision=args.expected_revision,
+            mutation_id=args.mutation_id or None,
+            outcome=outcome,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise OmhError(str(exc)) from exc
+    payload = _mutation_payload(paths, args.goal_id, goal, outcome)
+    payload["failed"] = bool(outcome.get("applied"))
     _print_json(payload)
     return 0 if outcome.get("applied") else 1
 
@@ -287,6 +319,17 @@ def _add_goal_commands(sub) -> None:
     goal_cancel.add_argument("--reason", default="")
     add_revision_guard_arguments(goal_cancel)
     goal_cancel.set_defaults(func=cmd_goal_cancel)
+
+    goal_fail = goal_sub.add_parser(
+        "fail",
+        help="Terminally fail a goal: the objective cannot be met at all (distinct from cancel or blocker).",
+    )
+    goal_fail.add_argument("--goal", dest="goal_id", required=True)
+    goal_fail.add_argument("--summary", required=True)
+    goal_fail.add_argument("--reason-code", required=True, choices=sorted(GOAL_FAILURE_REASON_CODES))
+    goal_fail.add_argument("--evidence-ref", action="append")
+    add_revision_guard_arguments(goal_fail)
+    goal_fail.set_defaults(func=cmd_goal_fail)
 
     goal_status = goal_sub.add_parser("status")
     goal_status.add_argument("--goal", dest="goal_id", default="")

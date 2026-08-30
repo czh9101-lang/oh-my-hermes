@@ -14,6 +14,7 @@ load_local_package()
 from omh.goal_ledger import (  # noqa: E402
     cancel_goal_ledger,
     create_goal_ledger,
+    fail_goal_ledger,
     record_goal_blocker,
     record_goal_checkpoint,
 )
@@ -135,6 +136,28 @@ class StopLadderRungTests(unittest.TestCase):
         self.assertEqual(stopped["runtime"]["last_stop_reason"], "explicit_cancel")
         self.assertEqual(stopped["runtime"]["queue"], [])
         self.assertIn("cancelled", stopped["runtime"]["stop_ladder"]["detail"])
+
+    def test_a_conclusively_failed_linked_goal_also_stops_the_tick(self) -> None:
+        # #H: `fail_goal_ledger`'s negative-conclusive verdict makes the ledger
+        # refuse every mutation exactly like `cancelled` does, so the loop must
+        # not proceed into a doomed write -- but the stop `detail` must name
+        # the failure distinctly from an operator's explicit cancel.
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            goal = create_goal_ledger(paths, "Objective that turns out infeasible", ["Criterion"])
+            fail_goal_ledger(
+                paths, goal["goal_id"], "Criteria are infeasible as specified.",
+                reason_code="infeasible_as_specified",
+            )
+            cycle = _cycle(paths, linked_goal_id=goal["goal_id"])
+
+            stopped = tick_loop_runtime(paths, cycle["loop_id"])
+
+        self.assertEqual(stopped["runtime"]["last_stop_reason"], "explicit_cancel")
+        self.assertEqual(stopped["runtime"]["queue"], [])
+        detail = stopped["runtime"]["stop_ladder"]["detail"]
+        self.assertIn("failed conclusively", detail)
+        self.assertNotIn("cancelled", detail)
 
     def test_fresh_rate_limit_signal_stops_the_tick(self) -> None:
         with TemporaryDirectory() as tmp:
