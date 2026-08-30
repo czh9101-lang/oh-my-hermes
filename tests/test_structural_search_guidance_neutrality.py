@@ -6,7 +6,10 @@ from _local_package import load_local_package
 
 load_local_package()
 
-from omh.coding.coding_contracts import STRUCTURAL_SEARCH_GUIDANCE  # noqa: E402
+from omh.coding.coding_contracts import (  # noqa: E402
+    STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE,
+    STRUCTURAL_SEARCH_GUIDANCE,
+)
 from omh.coding.coding_delegation import (  # noqa: E402
     _executor_local_capability_strategy,
     _local_capability_prompt_block,
@@ -63,6 +66,15 @@ def _lane_b_prompt() -> str:
 class StructuralSearchGuidanceNeutralityTests(unittest.TestCase):
     def test_constant_is_neutral(self) -> None:
         self.assertEqual(guidance_leakage_findings(STRUCTURAL_SEARCH_GUIDANCE), ())
+
+    def test_capped_search_discipline_constant_is_neutral(self) -> None:
+        self.assertEqual(guidance_leakage_findings(STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE), ())
+        guidance = STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE.lower()
+        self.assertIn("capped", guidance)
+        self.assertIn("stop", guidance)
+
+    def test_lane_b_carries_capped_search_discipline(self) -> None:
+        self.assertIn(STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE, _lane_b_prompt())
 
     def test_shapes_carry_only_pre_existing_leakage(self) -> None:
         for shape, text in _lane_a_shapes().items():

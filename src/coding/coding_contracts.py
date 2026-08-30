@@ -64,6 +64,24 @@ STRUCTURAL_SEARCH_GUIDANCE = (
     "structural query over line-based grep when the target is a syntactic shape rather than a "
     "string; fall back to grep when it is absent. OMH did not check - verify PATH yourself."
 )
+# Capped-search budget: STRUCTURAL_SEARCH_GUIDANCE says WHICH tool to prefer;
+# this says HOW MUCH to search before escalating or stopping, so an executor's
+# own exploration spend is bounded the same way every other handoff discipline
+# is bounded. Deliberately tool- and flag-neutral (no ast-grep option, count,
+# or byte cap is named) — OMH prescribes search discipline, it does not invent
+# or configure tooling. Shared verbatim everywhere STRUCTURAL_SEARCH_GUIDANCE
+# is shared, plus the `executor_prompting_contract/v1` payload
+# (`structural_search_discipline`, below) so the prose and the versioned
+# payload field can never drift apart.
+STRUCTURAL_SEARCH_DISCIPLINE_CONTRACT_SCHEMA_VERSION = "structural_search_discipline/v1"
+STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE = (
+    "Capped structural search: bound code exploration to a few targeted queries — structural search "
+    "when available, grep otherwise — before reading a full file; start with the narrowest query that "
+    "names the shape or symbol you need. Escalate to a wider query or a full-file read only when a "
+    "bounded pass returns nothing or stays genuinely ambiguous after a second try. Stop searching the "
+    "moment the target is found; a further query for something already located spends tokens without "
+    "adding information."
+)
 PROJECT_GOVERNANCE_PROFILE_SCHEMA_VERSION = "project_governance_profile/v1"
 PROJECT_GOVERNANCE_BLOCKED_SCHEMA_VERSION = "project_governance_blocked/v1"
 PRODUCT_FAMILY_TEMPLATE_SCHEMA_VERSION = "product_family_template/v1"
@@ -90,6 +108,8 @@ __all__ = [
     "LOCAL_CAPABILITY_REPORT_CAPABILITY_FIELDS",
     "LOCAL_CAPABILITY_REPORT_ALLOWED_KINDS",
     "STRUCTURAL_SEARCH_GUIDANCE",
+    "STRUCTURAL_SEARCH_DISCIPLINE_CONTRACT_SCHEMA_VERSION",
+    "STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE",
     "PROJECT_GOVERNANCE_PROFILE_SCHEMA_VERSION",
     "PROJECT_GOVERNANCE_BLOCKED_SCHEMA_VERSION",
     "PRODUCT_FAMILY_TEMPLATE_SCHEMA_VERSION",

@@ -19,6 +19,7 @@ from omh.coding.unit_prompt_protocol import (  # noqa: E402
     MAIN_AGENT_COMPOSITION_CALIBRATIONS,
     PROMPT_CACHE_COMPOSITION_PROTOCOL,
     REVIEW_ROLE_PROTOCOL,
+    STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE,
     UNIT_PROMPT_MAX_BYTES,
     UNIT_RESULT_RETURN_PROTOCOL,
     VERIFICATION_STOP_PROTOCOL,
@@ -59,7 +60,13 @@ class ProtocolContentTests(unittest.TestCase):
         self.assertIn("remaining work is not blocked", prompt)
         # Every unit prompt instructs the parse-then-validate structured return.
         self.assertIn(UNIT_RESULT_RETURN_PROTOCOL, prompt)
+        # Code exploration is bounded the same way verification is: capped,
+        # escalate-on-need, stop-on-found.
+        self.assertIn(STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE, prompt)
         self.assertIn("Commit your work; do not merge or push other branches.", prompt)
+
+    def test_structural_search_discipline_rides_the_shared_invariant_preamble(self) -> None:
+        self.assertIn(STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE, shared_unit_preamble_lines(_GOAL))
 
     def test_structured_return_names_the_shape_and_the_parse_rule(self) -> None:
         """The report must end in a fenced fanout_unit_result/v1 JSON object so

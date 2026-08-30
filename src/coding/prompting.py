@@ -7,6 +7,8 @@ from ..coding_contracts import (
     EXECUTOR_PROMPTING_REQUIRED_SECTIONS,
     EXECUTOR_PROMPTING_STRATEGIES,
     EXECUTOR_STEERING_DELTA_CONTRACT_SCHEMA_VERSION,
+    STRUCTURAL_SEARCH_DISCIPLINE_CONTRACT_SCHEMA_VERSION,
+    STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE,
 )
 from .throughput_prompting import build_throughput_overlay
 
@@ -47,6 +49,10 @@ DOCS_CONSULTED_ARTIFACT_POLICY = (
 # fresh or resumed session rebuilds working state without re-discovering the
 # repository, and so a summary's completeness is checkable by section name
 # instead of read as freeform prose.
+STRUCTURAL_SEARCH_DISCIPLINE_CLAIM_BOUNDARY = (
+    "This is prepared search-discipline guidance only; it is not dispatch, execution, verification, "
+    "review, CI, or merge evidence."
+)
 SESSION_SUMMARY_SHAPE_POLICY = (
     "Session summary shape: when producing a session summary, prepared-handoff brief, or "
     "continuation re-brief, structure it as Goal / Constraints and Preferences / Progress "
@@ -97,6 +103,12 @@ def build_executor_prompting_contract(
             "Report progress, changed files, tests, blockers, evidence refs, local_capabilities_used, local_capability_evidence_refs, and local_capability_fallback_reason; distinguish prepared guidance from observed executor results."
         ),
         "session_summary_policy": SESSION_SUMMARY_SHAPE_POLICY,
+        "structural_search_discipline": {
+            "schema_version": STRUCTURAL_SEARCH_DISCIPLINE_CONTRACT_SCHEMA_VERSION,
+            "status": "prepared_not_observed",
+            "guidance": STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE,
+            "claim_boundary": STRUCTURAL_SEARCH_DISCIPLINE_CLAIM_BOUNDARY,
+        },
         "steering_delta_contract": {
             "schema_version": EXECUTOR_STEERING_DELTA_CONTRACT_SCHEMA_VERSION,
             "status": "prepared_not_observed",
@@ -157,9 +169,16 @@ def render_executor_prompt_sections(
     strategy = str(contract.get("strategy", "direct_change"))
     task_source = str(contract.get("task_source", "original_message_at_dispatch_time"))
     intent = str(contract.get("intent", "unknown"))
+    structural_search_discipline = contract.get("structural_search_discipline")
+    structural_search_guidance = (
+        str(structural_search_discipline.get("guidance", ""))
+        if isinstance(structural_search_discipline, Mapping)
+        else ""
+    ) or STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE
     do_items = [
         str(contract.get("repository_first_policy", "Inspect the repository before editing.")),
         str(contract.get("docs_consulted_policy", DOCS_CONSULTED_ARTIFACT_POLICY)),
+        structural_search_guidance,
         _strategy_instruction(strategy),
         "Implement only the requested scope after repository facts confirm it.",
     ]
@@ -276,6 +295,7 @@ def _section(title: str, items: Iterable[str]) -> str:
 __all__ = [
     "DOCS_CONSULTED_ARTIFACT_POLICY",
     "SESSION_SUMMARY_SHAPE_POLICY",
+    "STRUCTURAL_SEARCH_DISCIPLINE_CLAIM_BOUNDARY",
     "build_executor_prompting_contract",
     "render_executor_prompt_sections",
     "select_executor_prompting_strategy",
