@@ -544,6 +544,32 @@ ADVERSARIAL_CONSENSUS_BUCKETS = (
     "Open Questions",
 )
 
+# llm-app-dev vocabulary. Single source of truth for every surface that names
+# the build rails or the eval deliverables: the catalog quality bar and final
+# checklist, and the rendered `references/build-rails.md` and
+# `references/eval-harness.md`. Interpolate rather than retype, so the
+# always-loaded body and the on-demand references cannot drift into two
+# different disciplines.
+#
+# Ordered by when getting it wrong becomes expensive to undo: a provider
+# boundary chosen late means rewriting every call site, while an eval suite
+# added late only means not knowing whether the last swap helped.
+LLM_APP_DEV_RAILS = (
+    "provider boundary",
+    "structured output",
+    "prompt artifacts",
+    "retrieval grounding",
+    "evaluation",
+)
+# The eval deliverables that make a prompt or model swap reviewable. Named as
+# artifacts, not activities: "we evaluated it" is not a deliverable, a golden
+# set committed next to the code is.
+LLM_APP_DEV_EVAL_DELIVERABLES = (
+    "golden set",
+    "task-level validators",
+    "baseline-vs-candidate comparison",
+)
+
 DECISION_FRONTIER_POLICY_SCHEMA_VERSION = "decision_frontier_policy/v1"
 DECISION_FRONTIER_HARNESS = "decision-frontier"
 DECISION_FRONTIER_BUDGET_SCOPE = "clarification_episode"

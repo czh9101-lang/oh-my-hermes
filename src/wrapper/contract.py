@@ -437,6 +437,7 @@ VISIBLE_ACTIONS = (
     "record_agent_failure_capture",
     "record_agent_recovery_action",
     "escalate_agent_debug",
+    "prepare_llm_app_build",
     "prepare_failure_signal_audit",
     "show_failure_signal_audit",
     "record_failure_signal",
@@ -934,6 +935,7 @@ _ACK_PRIMARY_ACTIONS_BY_NEXT_ACTION = {
     "prepare_codegraph_refresh": ("prepare_codegraph_refresh", "Refresh codegraph"),
     "prepare_agent_debug": ("prepare_agent_debug", "Prepare agent debug"),
     "prepare_failure_signal_audit": ("prepare_failure_signal_audit", "Audit failure signals"),
+    "prepare_llm_app_build": ("prepare_llm_app_build", "Prepare LLM build"),
     "prepare_instinct_ledger": ("prepare_instinct_ledger", "Prepare instincts"),
     "prepare_skill_scout": ("prepare_skill_scout", "Prepare skill scout"),
     "prepare_skill_health": ("prepare_skill_health", "Prepare skill health"),
@@ -1609,6 +1611,47 @@ _DELIVERY_RUNTIME_CHAT_CARDS: dict[str, dict[str, object]] = {
             "rollback readiness",
             "customer impact",
             "CI",
+        ],
+    },
+    "llm-app-dev": {
+        "kind": "llm_app_build",
+        "headline": "I can prepare the build handoff for this LLM feature.",
+        "body": (
+            "I will prepare the rails: one provider boundary with an exact model ID, the output schema and its "
+            "validate-and-repair path, prompts as versioned files with system, task, and untrusted context kept apart, "
+            "retrieval grounding when retrieval is in the path, and the eval suite -- golden set, task-level validators, "
+            "and the paired baseline-vs-candidate comparison -- as a shipped deliverable. Model responses, eval results, "
+            "token counts, and cost stay unobserved until a run reports them."
+        ),
+        "phase": "llm_app_build_prepared",
+        "next_action": "prepare_llm_app_build",
+        "artifact_schema": "llm_app_build_card/v1",
+        "actions": [
+            {"id": "prepare_llm_app_build", "label": "Prepare LLM build", "style": "primary"},
+            {
+                "id": "prepare_coding_handoff",
+                "label": "Prepare implementation handoff",
+                "style": "secondary",
+                "enabled": False,
+                "payload": {"requires": "decided rails and an implementation owner"},
+            },
+            {"id": "show_status", "label": "Show status", "style": "secondary"},
+        ],
+        "recommended_flow": [
+            "pin_provider_and_model_boundary",
+            "declare_output_schema_and_repair_path",
+            "lay_out_versioned_prompt_artifacts",
+            "ground_retrieval_and_evaluate_it_first",
+            "ship_the_eval_suite_as_a_deliverable",
+        ],
+        "evidence_not_observed": [
+            "provider call",
+            "eval run",
+            "token and cost telemetry",
+            "implementation",
+            "review",
+            "CI",
+            "merge",
         ],
     },
     "cto-loop": {

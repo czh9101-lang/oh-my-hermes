@@ -56,6 +56,7 @@ Trigger phrases and the role registry live in `references/workflow-registry.md`;
 - `omh-jit-learn`: [omh] Just-in-time learning workflow: select and confirm an immediate learning target, research credible sources, and prepare an application-first brief without popularity ranking.
 - `omh-legal-compliance-review`: [omh] Surface contract and compliance risks, questions, and escalation points before a legal decision or action.
 - `omh-live-info`: [omh] Policy overlay for live lookups - add provider, freshness, units, and source-quality gates after preferring native live-data tools for ordinary weather, finance, sports, maps, and time-zone requests.
+- `omh-llm-app-dev`: [omh] Hermes LLM App Development workflow: prepare a build handoff for an LLM-powered feature with a pinned provider boundary, schema-first outputs, versioned prompt files, grounded retrieval, and an eval suite as a shipped deliverable.
 - `omh-localization-review`: [omh] Make a product or content release locale-ready with terminology, cultural-fit, and quality-review guidance.
 - `ulw-loop`: [omh] Hermes Loop workflow: agentic interviewer -> planner -> researcher -> builder -> reviewer cycles until a real gate.
 - `ulw-maestro`: [omh] Maestro - prepares the handoff for the coding agent you already chose, composing its prompt from that agent's own installed skills; never selects the owner and never executes the work itself.

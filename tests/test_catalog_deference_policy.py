@@ -105,9 +105,14 @@ NON_SKILL_BACKTICKS = frozenset(
 # at `ralplan` (the plan itself), `deep-interview` (a proposal too vague to
 # attack), `code-review` (finished code, not a proposal), and `ultraqa`
 # (hostile runtime scenarios) -- four cases, four new pairs.
-EXPECTED_DEFERENCE_CASES = 139
-EXPECTED_DEFERENCE_PAIRS = 148
-EXPECTED_DEFERRING_OWNERS = 48
+# `llm-app-dev` is a new deferring owner: its do_not_use_when points at
+# `agent-evaluation` (comparing executors, not the product's own model calls),
+# `agent-debug` (a run already stuck or looping), `context-budget-review` (the
+# harness's own prompt cache, not the application), and `security-safety-review`
+# (a risk gate on work that already exists) -- four cases, four new pairs.
+EXPECTED_DEFERENCE_CASES = 143
+EXPECTED_DEFERENCE_PAIRS = 152
+EXPECTED_DEFERRING_OWNERS = 49
 
 # The ratchet. Recording a new inversion must be a visible edit to this number,
 # not one more dict line with a plausible sentence attached.

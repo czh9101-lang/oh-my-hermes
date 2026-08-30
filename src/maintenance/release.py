@@ -332,7 +332,19 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # mandatory planner handoff -- the rules that are wrong to discover late. The
 # remainder of the delta is the `+N more` lane line regenerating across the
 # eleven other `intent_to_plan` skills; warranted growth for a new workflow.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 756725
+# 756725 -> 768326: the new `llm-app-dev` (`omh-llm-app-dev`) skill was added --
+# the build-discipline contract for an LLM-powered feature, whose always-loaded
+# body is 11577 chars, between `adversarial-consensus`'s 10355 and
+# `ultrawork`'s 23881. The per-rail decisions and the eval-harness procedure
+# live in the two on-demand references (`build-rails.md` 6348 chars,
+# `eval-harness.md` 4744), outside this budget; what is always loaded is the
+# rail order, the one-client-boundary and exact-model-ID rules, the
+# schema-first validate-and-repair rule, the prompt-artifact separation, the
+# retrieval-before-generation order, and the eval deliverables -- the rules that
+# are expensive to discover after the call sites exist. The remainder of the
+# delta is the `+N more` lane line regenerating across the twelve other
+# `coding_handoff` skills; warranted growth for a new workflow.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 768326
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
