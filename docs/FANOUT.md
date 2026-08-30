@@ -420,6 +420,33 @@ Rules:
   recommended value either (no local `codex` CLI in this repo to confirm its
   `--model` value space against). An operator profile entry, including an
   explicit empty string, always overrides an unset default.
+- **Category-maestro (operator category chains).** The Hermes-native
+  delegation lane routes per work category through an editable mixture
+  (`omh model-chains`); `<omh_home>/routing/category-maestro.json`
+  (`omh_category_maestro/v1`) is the same dial for the Maestro lane. It
+  overrides individual categories of the built-in category → model table for
+  the dispatchable profiles (`codex`, `claude-code`); unmentioned categories
+  keep the built-in chain, and the merged table feeds every path that
+  consults categories — a unit's explicit `category` (ulw-\* aliases
+  accepted), role chains, the research `depth` dial, and the task `scale`
+  dial. A route resolved against the merged table records
+  `catalog_kind: "operator_category_config"` plus the config's fingerprint,
+  so a frozen contract names the exact basis it was resolved from; the
+  file's presence is the opt-in, and codex/claude-only contracts stay
+  byte-identical across machines that have not created it. Edit it with
+  `omh coding category-maestro set <profile> <category> <model[:effort]>...`
+  (the tail after the last colon is the effort only when it is a known level
+  — off/minimal/low/medium/high/xhigh/max/auto — so colon-tagged model ids
+  like `qwen2.5-coder:7b` stay intact), inspect the effective table with
+  `omh coding category-maestro show` (operator overrides are marked, invalid
+  config pieces are named, a broken file reads as absent and never blocks a
+  dispatch), and restore a built-in chain with
+  `omh coding category-maestro clear <profile> <category>`. `omh coding run
+  --category <category>` routes one run through the same table; an explicit
+  `--model` still wins (requested > chain head). Catalogless profiles are
+  deliberately not configurable here — the local-inventory catalog remains
+  their single override source, so "which basis resolved this route" always
+  has one answer.
 - **Model inventory (reporting-only).** `omh coding model-inventory` reports
   which coding models the user has locally activated before any split or
   delegation is proposed: agent CLIs on PATH (codex, claude, opencode,
@@ -619,13 +646,16 @@ omh coding fanout dispatch <fanout-id> --goal-file goal.txt \
 omh coding run --owner <profile> (--goal <words...> | --goal-file goal.txt) \
   [--unit-id run] [--file-scope <path> ...] [--repo-root .] [--base-ref HEAD] \
   [--timeout 1800] [--dry-run] [--run-verification] [--source discord] \
-  [--model <id>] [--effort <level>]
+  [--model <id>] [--effort <level>] [--category <category>]
   # single-invocation: builds and dispatches a one-unit fanout_contract/v2 through
   # the same engine as `fanout dispatch`; see "Single-run entry" above
 omh coding fanout reap <fanout-id> [--pid N ...]  # terminate marker-named
   # unit process groups (verify the dispatcher is dead first); refuses any
   # pid the inflight markers do not name — never kills by process name
 omh coding model-route [--executor <profile>] [--role <role>] [--model <id>] [--effort <level>] [--domain <name>] [--explain] [--from-inventory] [--json]
+omh coding category-maestro show [--json]      # effective category table, operator overrides marked
+omh coding category-maestro set <profile> <category> <model[:effort]>...
+omh coding category-maestro clear <profile> <category>
 omh coding model-inventory [--json]
 omh coding composition-guide [--model <id>] [--json]
 ```

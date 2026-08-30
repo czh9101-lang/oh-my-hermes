@@ -111,9 +111,14 @@ def read_json_object(path: Path) -> dict[str, Any] | None:
 
 
 def read_json_object_result(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    # RecursionError: a pathologically nested document (e.g. 60k open
+    # brackets) overflows the JSON decoder's recursion before it can raise
+    # JSONDecodeError. Callers use this reader on never-raise config paths
+    # (dispatch model preferences, category-maestro), so that shape must read
+    # as malformed, not abort a prepare or dispatch with a traceback.
     try:
         return read_json_object(path), None
-    except (OSError, JSONDecodeError, ValueError) as exc:
+    except (OSError, JSONDecodeError, RecursionError, ValueError) as exc:
         return None, str(exc)
 
 
