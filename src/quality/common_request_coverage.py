@@ -8,6 +8,7 @@ from ..routing.action_copy import next_action_label
 from ..wrapper.contract import build_chat_interaction_payload
 from .common_request_cases import COMMON_REQUEST_COVERAGE_CASES, CommonRequestCoverageCase
 from .popular_plugin_coverage import build_popular_plugin_coverage_demo, popular_plugin_coverage_errors
+from .reported_rate import meets_target, reported_rate
 
 
 COMMON_REQUEST_COVERAGE_SCHEMA_VERSION = "common_request_coverage/v1"
@@ -20,7 +21,13 @@ def build_common_request_coverage_demo(*, source: str = "discord") -> dict[str, 
     rows = [_evaluate_case(case, source=source) for case in COMMON_REQUEST_COVERAGE_CASES]
     passing_count = sum(1 for row in rows if bool(row["passed"]))
     case_count = len(rows)
-    coverage_percent = round((passing_count / max(1, case_count)) * 100, 1)
+    coverage_rate = reported_rate(
+        numerator=passing_count,
+        denominator=case_count,
+        numerator_of=("passing_case",),
+        denominator_of="common request cases",
+    )
+    coverage_percent = coverage_rate.percent
     family_rows = _family_summary(rows)
     popular_plugin_coverage = build_popular_plugin_coverage_demo(cases=rows)
     plugin_summary = _nested(popular_plugin_coverage, "summary")
@@ -33,7 +40,8 @@ def build_common_request_coverage_demo(*, source: str = "discord") -> dict[str, 
             "passing_count": passing_count,
             "failing_count": case_count - passing_count,
             "coverage_percent": coverage_percent,
-            "target_met": coverage_percent >= COMMON_REQUEST_TARGET_PERCENT,
+            "coverage_rate": coverage_rate.to_payload(),
+            "target_met": meets_target(coverage_rate, COMMON_REQUEST_TARGET_PERCENT),
             "family_count": len(family_rows),
             "workflow_count": len({str(row["observed"]["workflow"]) for row in rows}),
             "dispatch_count": sum(1 for row in rows if row["observed"]["route_action"] == "dispatch"),
@@ -206,14 +214,20 @@ def _family_summary(rows: Sequence[Mapping[str, object]]) -> list[dict[str, obje
         family_rows = [row for row in rows if row.get("family") == family]
         passing_count = sum(1 for row in family_rows if bool(row.get("passed")))
         total = len(family_rows)
-        coverage = round((passing_count / max(1, total)) * 100, 1)
+        coverage = reported_rate(
+            numerator=passing_count,
+            denominator=total,
+            numerator_of=("passing_case",),
+            denominator_of=f"common request cases in family {family}",
+        )
         summary.append(
             {
                 "family": family,
                 "case_count": total,
                 "passing_count": passing_count,
-                "coverage_percent": coverage,
-                "target_met": coverage >= COMMON_REQUEST_TARGET_PERCENT,
+                "coverage_percent": coverage.percent,
+                "coverage_rate": coverage.to_payload(),
+                "target_met": meets_target(coverage, COMMON_REQUEST_TARGET_PERCENT),
             }
         )
     return summary

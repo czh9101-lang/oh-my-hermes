@@ -7,6 +7,7 @@ from typing import Any
 
 from ..local_store import atomic_write_json, ensure_dir, read_json_object, read_json_object_result, utc_now
 from ..paths import OmhPaths
+from ..quality.reported_rate import reported_rate
 from ..routing.action_copy import next_action_label
 
 
@@ -719,10 +720,23 @@ def use_case_readiness(paths: OmhPaths | None = None) -> dict[str, Any]:
     if any(gate["id"] == "local_artifact_store" and gate["status"] != "passed" for gate in gates):
         next_actions.append("Optional: write local runbook artifacts with `omh cases artifact --all --write`.")
     next_actions.append("Use `omh cases readiness --json` when a wrapper or release check needs the full payload.")
+    # Non-blocking gates are excluded from BOTH sides of this score, so the
+    # denominator is the blocking gates alone -- not `len(gates)`, which is the
+    # number a reader would otherwise assume. Naming it is the whole point.
+    blocking_gate_count = len(gates) - len(warnings)
+    score_rate = reported_rate(
+        numerator=blocking_gate_count - len(blocking_failures),
+        denominator=blocking_gate_count,
+        numerator_of=("passed_blocking_gate",),
+        denominator_of="blocking readiness gates",
+        excluded=("non_blocking_gate",) if warnings else (),
+        digits=0,
+    )
     return {
         "schema_version": USE_CASE_READINESS_SCHEMA_VERSION,
         "status": "ready" if not blocking_failures else "needs_attention",
-        "score": 100 if not blocking_failures else round(((len(gates) - len(warnings) - len(blocking_failures)) / max(1, len(gates) - len(warnings))) * 100),
+        "score": None if score_rate.percent is None else int(score_rate.percent),
+        "score_rate": score_rate.to_payload(),
         "blocking_failures": len(blocking_failures),
         "warning_count": len(warnings),
         "expected_goals": [case.goal for case in USE_CASES],
