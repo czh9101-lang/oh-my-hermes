@@ -57,6 +57,7 @@ from omh.coding.parallelism_policy import (  # noqa: E402
 from omh.coding.executor_progress import read_progress_binding  # noqa: E402
 from omh.runtime.artifacts import append_journal_observation, create_run, show_run  # noqa: E402
 from omh.system.local_store import atomic_write_json  # noqa: E402
+from omh.system.output_truncation import resolve_spill_reference  # noqa: E402
 from omh.system.paths import OmhPaths  # noqa: E402
 
 _GOAL = "split the sample feature across agents"
@@ -3017,6 +3018,9 @@ _PY = shlex.quote(sys.executable)
 _PASSING_COMMAND = f"{_PY} -c pass"
 _FAILING_COMMAND = f"{_PY} -c 'import sys; sys.stdout.write(\"boom\"); sys.exit(3)'"
 _ENV_COMMAND = f"OMH_VERIFY=1 {_PY} -c 'import os,sys; sys.exit(0 if os.environ.get(\"OMH_VERIFY\") else 1)'"
+# Well over the 300-byte verification tail, so the dispatcher has to spill.
+_FLOODING_COMMAND = f"{_PY} -c 'import sys; sys.stdout.write(\"flood\" * 900); sys.exit(4)'"
+_FLOODING_OUTPUT = "flood" * 900
 
 
 def _verification_runner(script: Path, sidecar: Path, payload: dict[str, object], *, mode: str = "valid"):
@@ -3046,6 +3050,66 @@ def _verification_runner(script: Path, sidecar: Path, payload: dict[str, object]
 
     runner.verified = verified
     return runner
+
+
+class FanoutUnitOutputSpillTests(unittest.TestCase):
+    def test_a_flooding_unit_spills_and_the_journal_line_stays_resolvable(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(
+                paths, build_fanout_contract(_GOAL, [dict(unit) for unit in _UNITS])
+            )
+            sidecar = unit_result_path(paths, contract["fanout_id"], "core")
+            payload = _unit_result_payload(contract, sha)
+            flood = "flood-line\n" * 900
+
+            def runner(argv, **kwargs):
+                if argv[0] == "git":
+                    return subprocess.run(argv, **kwargs)
+                sidecar.parent.mkdir(parents=True, exist_ok=True)
+                sidecar.write_text(json.dumps(payload), encoding="utf-8")
+                return subprocess.CompletedProcess(argv, 0, flood, "")
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=runner,
+                readiness=_ready,
+            )
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+
+            record = core["output_truncation"]
+            self.assertTrue(record["truncated"])
+            self.assertEqual(record["reason_code"], "output_cap")
+            self.assertEqual(record["original_bytes"], len(flood))
+            self.assertEqual(record["kept_bytes"], 2000)
+            self.assertEqual(record["spill_status"], "written")
+            self.assertEqual(resolve_spill_reference(record["spill"]), flood)
+            self.assertFalse(core["stderr_truncation"]["truncated"])
+
+            events = show_run(paths, core["run_ref"])["journal_events"]
+            worker = [event for event in events if event["event"] == "executor_result_observed"][-1]
+            # The journal caps `summary` at 500 characters, so the notice it
+            # carries is the compact one and the resolvable pointer rides in
+            # `evidence_refs` where nothing can cut it in half.
+            self.assertIn("[output truncated:", worker["summary"])
+            self.assertIn("continuation=evidence_refs", worker["summary"])
+            self.assertTrue(worker["summary"].endswith("]"))
+            self.assertLess(len(worker["summary"]), 500)
+            self.assertNotIn("...", worker["summary"])
+            self.assertEqual(
+                worker["evidence_refs"],
+                [
+                    f"output_spill:{record['spill']['path']}"
+                    f":sha256:{record['spill']['sha256']}:{record['spill']['byte_count']}"
+                ],
+            )
 
 
 class FanoutDispatchVerificationTests(unittest.TestCase):
@@ -3117,6 +3181,41 @@ class FanoutDispatchVerificationTests(unittest.TestCase):
             # The unit's own process still succeeded; only verification failed.
             self.assertTrue(core["process_succeeded"])
             self.assertTrue(core["result_schema_valid"])
+
+    def test_a_short_failure_records_that_its_output_was_not_truncated(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, runner = self._setup(tmp, [_FAILING_COMMAND])
+
+            core = self._dispatch(paths, repo, sha, contract, runner, run_verification=True)
+
+            records = core["verification_output_truncation"]
+            self.assertEqual(len(records), 1)
+            self.assertFalse(records[0]["truncated"])
+            self.assertEqual(records[0]["reason_code"], "not_truncated")
+            self.assertNotIn("[output truncated:", core["verification_failures"][0])
+
+    def test_a_flooding_failure_spills_and_the_failure_row_names_the_spill(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, runner = self._setup(tmp, [_FLOODING_COMMAND])
+
+            core = self._dispatch(paths, repo, sha, contract, runner, run_verification=True)
+
+            records = core["verification_output_truncation"]
+            self.assertEqual(len(records), 1)
+            record = records[0]
+            self.assertTrue(record["truncated"])
+            self.assertEqual(record["reason_code"], "output_cap")
+            self.assertEqual(record["original_bytes"], len(_FLOODING_OUTPUT))
+            self.assertEqual(record["kept_bytes"], 300)
+            self.assertEqual(record["spill_status"], "written")
+            # The rendered row -- the surface a reader actually sees -- says
+            # truncated, why, and where the rest lives.
+            detail = core["verification_failures"][0]
+            self.assertIn("[output truncated:", detail)
+            self.assertIn("reason=output_cap", detail)
+            self.assertIn(record["spill"]["path"], detail)
+            self.assertNotIn("...", detail)
+            self.assertEqual(resolve_spill_reference(record["spill"]), _FLOODING_OUTPUT)
 
     def test_a_command_that_cannot_start_is_a_failed_check_not_a_failed_dispatch(self) -> None:
         with TemporaryDirectory() as tmp:

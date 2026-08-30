@@ -22,6 +22,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from ..runtime.artifacts import append_journal_observation, create_run, show_run
 from ..system.local_store import atomic_write_json, ensure_dir, locked_json_update, read_json_object_result, utc_now
 from ..system.metadata_safety import redact_metadata_text
+from ..system.output_truncation import spill_evidence_ref, truncate_output, truncation_notice
 from ..system.paths import OmhPaths
 from ._hermes_child_process import terminate_process_group
 from .action_gate import recheck_safety_profile_revision
@@ -432,6 +433,15 @@ UNIT_VERIFICATION_CLAIM_BOUNDARY = (
 # command cannot hold a whole dispatch open.
 _VERIFICATION_COMMAND_TIMEOUT = 600
 _MAX_VERIFICATION_OUTPUT_TAIL = 300
+# What a dispatched unit's stdout/stderr keeps in memory for the summary and
+# the journal. Everything above it spills, so the bound costs context rather
+# than evidence.
+_MAX_UNIT_OUTPUT_TAIL = 2000
+# The journal's own `summary` field is capped at 500 characters upstream, so
+# this second bound over an already-bounded tail leaves room for the rest of
+# the line. The resolvable pointer rides in `evidence_refs`, which has no such
+# ceiling, rather than in prose a bare slice could cut in half.
+_MAX_UNIT_SUMMARY_TAIL = 300
 EXECUTOR_LIMIT_SIGNALS_SCHEMA_VERSION = "executor_limit_signals/v1"
 EXECUTOR_LIMIT_SIGNALS_CLAIM_BOUNDARY = (
     "A limit signal records that one observed local dispatch failure matched a rate/usage-limit shape. "
@@ -1002,17 +1012,24 @@ def _run_verification_command(
     worktree: Path,
     runner: Callable[..., Any],
     child_env: Mapping[str, str] | None = None,
-) -> tuple[str, str]:
-    """Run one command in the unit worktree; return its status and a bounded tail.
+    spill_dir: Path | None = None,
+) -> tuple[str, str, dict[str, Any] | None]:
+    """Run one command in the unit worktree; return status, bounded tail, truncation record.
 
     Never raises: a command that cannot start is a failed check, not a failed
     dispatch. `shell=False`, so the argv comes from the contract's own frozen
     split and nothing in the command string is reinterpreted here.
+
+    The third element is the `omh_output_truncation/v1` record for the captured
+    output, present whenever output was actually captured -- including when it
+    fit, so a reader can tell "this is the whole failure output" from "the tail
+    of a longer one". It is `None` for the paths that never ran a command and
+    so have a constructed message rather than captured output.
     """
     try:
         env_overrides, argv = verification_command_argv(command)
     except FanoutContractError as exc:
-        return "failed", str(exc)
+        return "failed", str(exc), None
     try:
         completed = runner(
             argv,
@@ -1030,17 +1047,28 @@ def _run_verification_command(
             f"{getattr(completed, 'stdout', '') or ''}{getattr(completed, 'stderr', '') or ''}"
         )
     except FileNotFoundError:
-        return "failed", f"{argv[0]} not found on PATH"
+        return "failed", f"{argv[0]} not found on PATH", None
     except subprocess.TimeoutExpired:
-        return "failed", f"timed out after {_VERIFICATION_COMMAND_TIMEOUT}s"
+        return "failed", f"timed out after {_VERIFICATION_COMMAND_TIMEOUT}s", None
     except (OSError, subprocess.SubprocessError, TypeError, ValueError) as exc:
-        return "failed", f"could not run: {exc}"
+        return "failed", f"could not run: {exc}", None
     if exit_code == 0:
-        return "passed", ""
-    tail = redact_metadata_text(
-        combined[-_MAX_VERIFICATION_OUTPUT_TAIL:], limit=_MAX_VERIFICATION_OUTPUT_TAIL
+        return "passed", "", None
+    # The bound is the same 300 it always was; what changed is that the bytes it
+    # drops are now written whole to a content-addressed spill and the row
+    # carries a pointer to them, so a reader chasing a failure is not left with
+    # the last 300 bytes of a build log and no way back to the rest.
+    bounded = truncate_output(
+        combined,
+        limit_bytes=_MAX_VERIFICATION_OUTPUT_TAIL,
+        source=f"fanout unit verification command: {command}",
+        keep="tail",
+        spill_dir=spill_dir,
     )
-    return "failed", f"exit {exit_code}: {tail}"
+    tail = redact_metadata_text(bounded.kept_text, limit=_MAX_VERIFICATION_OUTPUT_TAIL)
+    notice = truncation_notice(bounded.record)
+    detail = f"exit {exit_code}: {tail}"
+    return "failed", f"{detail} {notice}" if notice else detail, bounded.record
 
 
 def _run_unit_verification(
@@ -1068,8 +1096,17 @@ def _run_unit_verification(
         return {}
     rows: list[dict[str, object]] = []
     failures: list[str] = []
+    truncations: list[dict[str, Any]] = []
     for command in commands:
-        status, detail = _run_verification_command(command, worktree, runner, child_env)
+        status, detail, truncation = _run_verification_command(
+            command,
+            worktree,
+            runner,
+            child_env,
+            spill_dir=paths.runtime_output_spills_dir,
+        )
+        if truncation is not None:
+            truncations.append(truncation)
         rows.append(
             {
                 "command": command,
@@ -1110,6 +1147,11 @@ def _run_unit_verification(
     }
     if failures:
         verification["verification_failures"] = failures
+    # Carried whenever a command produced captured output, truncated or not.
+    # The failure strings already read the notice inline; this is the same
+    # thing in a form a consumer can branch on without parsing prose.
+    if truncations:
+        verification["verification_output_truncation"] = truncations
     return verification
 
 
@@ -2397,6 +2439,8 @@ def _dispatch_unit(
             output_tail = ""
             stdout_text = ""
             stderr_tail = ""
+            output_truncation: dict[str, Any] | None = None
+            stderr_truncation: dict[str, Any] | None = None
             exit_code = 1
             # Real spawns only (the same seam as the pid hook): stagger this
             # unit's start so the first dispatch of the fanout writes the
@@ -2420,8 +2464,28 @@ def _dispatch_unit(
                 )
                 exit_code = int(getattr(completed, "returncode", 1))
                 stdout_text = str(getattr(completed, "stdout", "") or "")
-                output_tail = stdout_text[-2000:]
-                stderr_tail = str(getattr(completed, "stderr", "") or "")[-2000:]
+                # The tails are what rides into the summary and the journal; the
+                # bytes above them used to be dropped on the floor. They now go
+                # to a content-addressed spill, and the records below carry a
+                # pointer a later step can resolve.
+                bounded_stdout = truncate_output(
+                    stdout_text,
+                    limit_bytes=_MAX_UNIT_OUTPUT_TAIL,
+                    source=f"fanout unit {unit_id} stdout",
+                    keep="tail",
+                    spill_dir=paths.runtime_output_spills_dir,
+                )
+                bounded_stderr = truncate_output(
+                    str(getattr(completed, "stderr", "") or ""),
+                    limit_bytes=_MAX_UNIT_OUTPUT_TAIL,
+                    source=f"fanout unit {unit_id} stderr",
+                    keep="tail",
+                    spill_dir=paths.runtime_output_spills_dir,
+                )
+                output_tail = bounded_stdout.kept_text
+                stderr_tail = bounded_stderr.kept_text
+                output_truncation = bounded_stdout.record
+                stderr_truncation = bounded_stderr.record
             except FileNotFoundError:
                 exit_code, output_tail = 127, f"{argv[0]} not found on PATH"
             except subprocess.TimeoutExpired:
@@ -2483,12 +2547,43 @@ def _dispatch_unit(
         # down-ranking the executor forever.
         _clear_limit_signal(paths, owner)
     status = "observed" if exit_code == 0 else "failed"
+    # A second cap over an already-bounded tail. It goes through the shared
+    # contract too, so the journal line says which of the two it is: the whole
+    # tail, or a cut of it whose full text the evidence ref below resolves.
+    unit_output_spilled = output_truncation is not None and bool(output_truncation.get("truncated"))
+    summary_bound = truncate_output(
+        output_tail,
+        limit_bytes=_MAX_UNIT_SUMMARY_TAIL,
+        source=f"fanout unit {unit_id} journal summary",
+        keep="tail",
+        # Spilled only when the unit-level cap did not already spill this text.
+        # Otherwise the journal would point at a 2000-byte tail while a pointer
+        # to the whole output already exists.
+        spill_dir=None if unit_output_spilled else paths.runtime_output_spills_dir,
+    )
     summary = (
         f"unit {unit_id} exit {exit_code} after {duration_seconds}s: "
-        f"{redact_metadata_text(output_tail[-300:], limit=300)}"
+        f"{redact_metadata_text(summary_bound.kept_text, limit=_MAX_UNIT_SUMMARY_TAIL)}"
     )
+    # The unit-level record wins when it has one: it is the truncation that
+    # actually holds a spill pointer. The summary's own cap is reported only
+    # when the unit output fit and this second bound was what cut it.
+    journal_truncation = output_truncation if unit_output_spilled else summary_bound.record
+    journal_notice = truncation_notice(journal_truncation, compact=True)
+    if journal_notice:
+        summary = f"{summary} {journal_notice}"
     if limit_label:
         summary = f"limit-shaped failure ({limit_label}); {summary}"
+    # The compact notice above says "continuation=evidence_refs"; these are the
+    # refs it means. Uncapped by the journal, so the pointer arrives whole.
+    spill_refs = [
+        ref
+        for ref in (
+            spill_evidence_ref(journal_truncation or {}),
+            spill_evidence_ref(stderr_truncation or {}),
+        )
+        if ref
+    ]
     append_journal_observation(
         paths,
         {
@@ -2498,6 +2593,7 @@ def _dispatch_unit(
             "event": "worker_result",
             "status": status,
             "summary": summary,
+            "evidence_refs": spill_refs,
             "worker_ref": unit_id,
             "worktree_ref": str(worktree),
             "runtime_profile": owner,
@@ -2552,6 +2648,13 @@ def _dispatch_unit(
     }
     if owner_host:
         result["owner_host"] = owner_host
+    # Present whenever a spawn actually produced captured output, truncated or
+    # not, so the dispatch summary distinguishes "this is the whole tail" from
+    # "the tail of a longer output, spilled to <path>" without parsing prose.
+    if output_truncation is not None:
+        result["output_truncation"] = output_truncation
+    if stderr_truncation is not None:
+        result["stderr_truncation"] = stderr_truncation
     result["executor_capability_snapshot"] = capability_snapshot
     result["executor_capability"] = legacy_executor_capability_projection(capability_snapshot)
     # `tokens_total` and `session_ref` were READ by `omh coding fanout brief`
