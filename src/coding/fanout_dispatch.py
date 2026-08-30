@@ -43,6 +43,7 @@ from .executor_progress import (
     write_progress_binding,
 )
 from .executor_readiness import probe_executor_readiness
+from .fanout_artifact_sharing import plan_and_link_shared_artifacts
 from .fanout_contracts import (
     FANOUT_CLAIM_BOUNDARY,
     FANOUT_CONTRACT_SCHEMA_VERSION,
@@ -2317,6 +2318,16 @@ def _dispatch_unit(
             **_dispatch_status_ladder(),
         }
     worktree = Path(str(worktree_record["worktree_path"]))
+    # After the worktree exists and before anything else touches it: a linked
+    # artifact must be in place before the unit's process spawns to be worth
+    # anything, and re-checking from inside the worktree (see
+    # fanout_artifact_sharing) requires the worktree's own git metadata, which
+    # `git worktree add` has just finished writing.
+    shared_artifacts = plan_and_link_shared_artifacts(
+        repo_root=repo_root,
+        worktree_path=worktree,
+        runner=runner,
+    )
     if fanout_id:
         # Before the spawn, like the in-flight marker below. A record from an
         # earlier attempt describes a worktree that has just been rebuilt from
@@ -2332,6 +2343,12 @@ def _dispatch_unit(
         ensure_dir(sidecar_path.parent, private=True)
         sidecar_path.unlink(missing_ok=True)
     _ensure_unit_run(paths, unit, owner)
+    dispatch_summary = f"local dispatch of unit {unit_id} to {owner}"
+    if shared_artifacts.get("linked"):
+        # Named in the journal, not just the eventual result dict, so a run
+        # stays explainable from the journal alone: the observation schema
+        # carries only fixed fields, so the note rides in free-text summary.
+        dispatch_summary = f"{dispatch_summary} (shared_artifacts: {', '.join(shared_artifacts['linked'])})"
     append_journal_observation(
         paths,
         {
@@ -2340,7 +2357,7 @@ def _dispatch_unit(
             "run_id": run_ref,
             "event": "worker_dispatch",
             "status": "observed",
-            "summary": f"local dispatch of unit {unit_id} to {owner}",
+            "summary": dispatch_summary,
             "worker_ref": unit_id,
             "worktree_ref": str(worktree),
             # The schema has carried this field all along and nothing set it,
@@ -2641,6 +2658,7 @@ def _dispatch_unit(
         "status": "completed" if exit_code == 0 else "failed",
         "exit_code": exit_code,
         "worktree_path": str(worktree),
+        "shared_artifacts": shared_artifacts,
         **_dispatch_status_ladder(
             process_succeeded=exit_code == 0,
             result_schema_valid=bool(unit_result.get("result_schema_valid")),
