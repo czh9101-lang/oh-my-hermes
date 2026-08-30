@@ -29,13 +29,22 @@ RUN_SUMMARY_CLAIM_BOUNDARY = (
     "recorded them; this is not billing-exact provider evidence."
 )
 
-# Labels only — numbers are always rendered with thousands separators.
+# Labels only — numbers are always rendered with thousands separators. The
+# elapsed placeholder carries its own unit suffix (see _ELAPSED_UNITS) so an
+# unmeasured elapsed time can render the bare word "unknown" instead of
+# "unknowns" / "unknown초".
 _SUMMARY_LABELS: dict[str, tuple[str, str, str]] = {
-    "en": ("Elapsed time: {elapsed}s", "Tokens used: {tokens}", "Models used: {models}"),
-    "ko": ("소요 시간: {elapsed}초", "토큰 사용량: {tokens}", "사용 모델: {models}"),
-    "ja": ("所要時間: {elapsed}秒", "トークン使用量: {tokens}", "使用モデル: {models}"),
-    "zh": ("耗时: {elapsed}秒", "Token 使用量: {tokens}", "使用模型: {models}"),
+    "en": ("Elapsed time: {elapsed}", "Tokens used: {tokens}", "Models used: {models}"),
+    "ko": ("소요 시간: {elapsed}", "토큰 사용량: {tokens}", "사용 모델: {models}"),
+    "ja": ("所要時間: {elapsed}", "トークン使用量: {tokens}", "使用モデル: {models}"),
+    "zh": ("耗时: {elapsed}", "Token 使用量: {tokens}", "使用模型: {models}"),
 }
+
+# Unit suffix appended to a *measured* elapsed value only. Left in English
+# ("unknown") when the value is unmeasured, matching the sentinel word used
+# elsewhere in OMH's status renderers (e.g. `src/coding/status_board.py`).
+_ELAPSED_UNITS: dict[str, str] = {"en": "s", "ko": "초", "ja": "秒", "zh": "秒"}
+_ELAPSED_UNKNOWN: str = "unknown"
 
 OMH_RUN_SUMMARY_SCHEMA = {
     "name": "omh_run_summary",
@@ -137,6 +146,20 @@ def _number(value: Any) -> float:
     return float(value)
 
 
+def _optional_number(value: Any) -> float | None:
+    """Like `_number`, but preserves "never recorded" as `None`.
+
+    `started_at` is the one field in this row that can genuinely be absent
+    (a session row without a start time was never observed starting).
+    Collapsing that into `0.0` — as `_number` deliberately does for token and
+    cost columns, which really do default to zero — would make an unmeasured
+    elapsed time indistinguishable from a run that took no time at all.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
 def omh_run_summary_handler(args: dict[str, Any], **kwargs) -> str:
     observation = observe_plugin_tool_call("omh_run_summary", args, kwargs)
     language = str(args.get("language", "") or "en").strip().lower()
@@ -164,9 +187,13 @@ def omh_run_summary_handler(args: dict[str, Any], **kwargs) -> str:
         payload["error"] = f"no session row observed for {session_id!r}"
         return json.dumps(attach_public_observation(payload, observation), sort_keys=True)
 
-    started = _number(session.get("started_at"))
-    ended = _number(session.get("ended_at")) or time.time()
-    elapsed = max(0, int(round(ended - started))) if started else 0
+    started = _optional_number(session.get("started_at"))
+    ended_raw = _optional_number(session.get("ended_at"))
+    ended = ended_raw if ended_raw is not None else time.time()
+    # A session row with no recorded start time never observed starting: an
+    # honest "unknown" beats a fabricated 0s that would read as a run that
+    # took no time at all.
+    elapsed: int | None = max(0, int(round(ended - started))) if started is not None else None
     scope = [session, *children]
     input_tokens = int(sum(_number(row.get("input_tokens")) for row in scope))
     output_tokens = int(sum(_number(row.get("output_tokens")) for row in scope))
@@ -177,9 +204,10 @@ def omh_run_summary_handler(args: dict[str, Any], **kwargs) -> str:
         _number(row.get("actual_cost_usd")) or _number(row.get("estimated_cost_usd"))
         for row in scope
     )
+    elapsed_text = f"{elapsed:,}{_ELAPSED_UNITS[language]}" if elapsed is not None else _ELAPSED_UNKNOWN
     elapsed_line, tokens_line, models_line = _SUMMARY_LABELS[language]
     lines = [
-        elapsed_line.format(elapsed=f"{elapsed:,}"),
+        elapsed_line.format(elapsed=elapsed_text),
         tokens_line.format(tokens=f"{tokens_used:,}"),
     ]
     if models:
