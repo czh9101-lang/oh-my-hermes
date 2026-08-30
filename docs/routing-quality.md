@@ -94,3 +94,62 @@ every language with a shipped `--language` / `OMH_LANG` **output**
 localization also ships a **trigger** pack, so input and output support cannot
 diverge. `tests/test_trigger_holdback_reachability.py` proves no hold-back
 entry, in any language, quietly removes nothing.
+
+## Calibrating the corpus against real recorded decisions
+
+`ROUTING_PRECISION_CASES` and `ROUTING_INTERVENTION_CASES` are hand-written.
+That is right for guarding regressions and useless for answering "does this
+corpus look like what the router actually sees?" Tuning a threshold against a
+corpus nobody has compared to real traffic is tuning against an assumption.
+
+`omh chat route --record` already writes the raw material: one
+`runtime/runs/<run-id>/routing.json` per recorded decision, carrying the
+`route_decision/v1` contract. `omh learning route-calibration` aggregates those
+files — no network, no model.
+
+```sh
+# Record decisions as you use the router. --record is per invocation.
+omh chat route --record "why is the build failing on main"
+
+# Read them back. --json for the full payload.
+omh learning route-calibration
+omh learning route-calibration --since "" --json   # every record, ignoring the window
+```
+
+**What it can and cannot tell you.** A routing record stores `message_sha256`
+and `message_length`, never the message. So the report calibrates *decision
+distributions* — which router stages fire, how often the router is confident,
+how thin its margins run — and never phrasings. A new corpus phrase still has
+to come from an operator's own message; these numbers say whether the corpus's
+shape is wrong, not which sentence to add.
+
+The procedure:
+
+1. **Record a working week's worth of real decisions.** One sample is noise.
+   Anything you would otherwise have typed into Hermes goes through
+   `omh chat route --record` instead.
+2. **Read parse coverage first, before any other number.** The report opens
+   with `parsed / routing records found`, and names every skipped record under
+   a reason (`no_routing_record`, `unreadable_json`, `unexpected_schema`,
+   `missing_recorded_at`, `recorded_before_since`). A format skew that silently
+   dropped a third of the records would bias everything below it, and nothing
+   else in the output would say so. An empty store reports coverage as
+   unmeasured, not as 0%.
+3. **Compare shape, not counts.** Corpus totals and recorded totals are not
+   commensurate. What is comparable: the router-stage mix, the confidence mix,
+   and the margin spread. A corpus whose cases are almost all `explicit` while
+   real decisions are mostly `recommendation` is tuned for a router path the
+   operator rarely takes.
+4. **Read the day-normalized median, not the flat one.** Recorded routing runs
+   carry no session id, so the recording day is the normalization unit and the
+   payload says so. `normalized_median` is the median of per-day medians, so an
+   afternoon of heavy recording cannot dominate. When the two disagree
+   sharply, the flat median is describing one day.
+5. **Mind the window.** `--since` defaults to the modification time of
+   `src/routing/chat.py`, so the default report covers only decisions made by
+   the current router. Widen it with an explicit `--since` when you want a
+   before/after across a router change, and say which window a reported number
+   came from.
+6. **Then change one thing.** Add the cases, move the threshold, or adjust the
+   triggers — and re-run both the corpus gates and this report, quoting the
+   window and the parse coverage alongside any number you report.
