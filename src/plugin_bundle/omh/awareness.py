@@ -1298,6 +1298,9 @@ _WORKFLOW_CONTEXT_CARD_BY_WORKFLOW = {
     "ultraqa": "coding_handoff",
     "ultrawork": "coding_handoff",
     "maestro": "coding_handoff",
+    "backend": "coding_handoff",
+    "rust": "coding_handoff",
+    "native-debugging": "coding_handoff",
     # ULW fold (issue #954, PR D): the four contracts folding into
     # `ulw-work` share its coding-handoff lane so their capability family is
     # lane-derived (`delegate_coding_and_ship`) like their fold target.
@@ -5731,6 +5734,9 @@ def awareness_primer_payload() -> dict[str, object]:
                 "ultrawork",
                 "ultraqa",
                 "maestro",
+                "backend",
+                "rust",
+                "native-debugging",
                 "ai-slop-cleaner",
                 "executor-runtime-readiness",
                 "request-to-handoff",
@@ -6047,6 +6053,9 @@ _DIRECT_WORKFLOW_NEXT_ACTIONS = {
     "failure-signal-audit": "prepare_failure_signal_audit",
     "instinct-ledger": "prepare_instinct_ledger",
     "frontend": "prepare_frontend_handoff",
+    "backend": "prepare_backend_handoff",
+    "rust": "prepare_rust_handoff",
+    "native-debugging": "prepare_native_debug_plan",
     "accessibility-audit": "prepare_accessibility_audit",
     "visual-qa": "prepare_visual_qa",
     "workspace-file-operator": "prepare_workspace_file_operator_card",

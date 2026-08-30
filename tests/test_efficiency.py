@@ -190,11 +190,21 @@ class EfficiencyContractTests(unittest.TestCase):
 
         # Post-#634 ceilings keep shared guidance in references without banning required
         # catalog growth. The eight specialist-domain skills measure 756,994 bytes for the
-        # full profile; 775,000 leaves bounded headroom while retaining the repeated-body
+        # full profile; 775,000 left bounded headroom while retaining the repeated-body
         # share gate. References remain excluded from the body count, so lazily-loaded
         # material is still the pressure valve.
+        # 775,000 -> 815,000: the domain skill pack (`backend`, `rust`,
+        # `native-debugging`) took the full profile to 795,266 bytes, measured on the
+        # tree merged with #1181, #1183, and #1182 rather than on this branch's base.
+        # Each new body is smaller than `frontend`'s and `llm-app-dev`'s, and their
+        # tables live in five on-demand references, so the pressure valve held; the
+        # ceiling is set to restore roughly the ~18k headroom this gate carried at
+        # 775,000 rather than to clear the new value by a hair. The exact measured
+        # value is ratcheted in `FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`
+        # (src/maintenance/release.py) -- this is the coarser standing gate, not the
+        # per-commit ratchet.
         self.assertLess(core["skill_body"]["bytes"], 68_000)
-        self.assertLess(full["skill_body"]["bytes"], 775_000)
+        self.assertLess(full["skill_body"]["bytes"], 815_000)
         self.assertLess(full["repeated"]["share_percent"], 38.0)
 
         # References are progressive disclosure, counted outside the always-loaded body.

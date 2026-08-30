@@ -108,9 +108,20 @@ class CodingLaneTests(unittest.TestCase):
     -token noise -- while the engine that delivers coding work (ultrawork)
     never surfaced. The same session's picker offered
     idea-to-deploy and planning flows for what was an implementation ask.
+
+    The original message now has a real owner: the `backend` workflow claims
+    server-side requests and prepares the service contract whose handoff names
+    the executor, which is the outcome the lane existed to approximate. The
+    fixtures below drop the domain word so they still exercise the case the
+    lane is for -- an implementation-shaped request that reaches no owner --
+    and `test_a_domain_request_reaches_its_domain_workflow` pins the other
+    half, so a `backend` trigger regression cannot look like a pass.
     """
 
     LANE = ["ultrawork", "executor-runtime-readiness"]
+    OWNERLESS_IMPLEMENTATION_ASK = (
+        "document-harness에서 프로젝트 링크만 주면 observer 결과를 자동 조회하게 구현해줘"
+    )
 
     def _handoff(self, message: str) -> dict:
         from omh.routing.chat import route_chat_message
@@ -118,9 +129,7 @@ class CodingLaneTests(unittest.TestCase):
         return route_chat_message(message, source="slack").get("candidate_handoff") or {}
 
     def test_the_observed_failure_now_yields_the_coding_lane(self) -> None:
-        handoff = self._handoff(
-            "document-harness에서 프로젝트 링크만 주면 observer 결과를 자동 조회하게 백엔드 구현해줘"
-        )
+        handoff = self._handoff(self.OWNERLESS_IMPLEMENTATION_ASK)
         self.assertEqual([c["skill"] for c in handoff["candidates"]], self.LANE)
         self.assertEqual(handoff["candidates"][0]["reasoning_demand"], "heavy")
         self.assertIn("implementation_shaped_request", handoff["reasons"])
@@ -133,9 +142,21 @@ class CodingLaneTests(unittest.TestCase):
         # still reach no owner (the Korean case above).
         from omh.routing.chat import route_chat_message
 
-        route = route_chat_message("implement the backend for observer lookup", source="slack")
+        route = route_chat_message("implement the observer lookup for document-harness", source="slack")
         self.assertEqual(route["action"], "dispatch")
         self.assertEqual(route["selected_skill"], "ultrawork")
+        self.assertNotIn("candidate_handoff", route)
+
+    def test_a_domain_request_reaches_its_domain_workflow(self) -> None:
+        # The other half of the lane guard. A server-side request now has an
+        # owner that prepares the auth boundary, error paths, and migration
+        # order before the executor is handed the work, so it must not fall
+        # back into the generic delivery lane.
+        from omh.routing.chat import route_chat_message
+
+        route = route_chat_message("implement the backend for observer lookup", source="slack")
+        self.assertEqual(route["action"], "dispatch")
+        self.assertEqual(route["selected_skill"], "backend")
         self.assertNotIn("candidate_handoff", route)
 
     def test_a_strong_match_keeps_its_own_shortlist(self) -> None:
@@ -154,9 +175,7 @@ class CodingLaneTests(unittest.TestCase):
         self.assertNotIn("implementation_shaped_request", handoff.get("reasons", []))
 
     def test_lane_candidates_carry_the_routing_only_boundary(self) -> None:
-        handoff = self._handoff(
-            "document-harness에서 프로젝트 링크만 주면 observer 결과를 자동 조회하게 백엔드 구현해줘"
-        )
+        handoff = self._handoff(self.OWNERLESS_IMPLEMENTATION_ASK)
         for candidate in handoff["candidates"]:
             self.assertIn("routing input only", candidate["evidence_boundary"])
 
@@ -172,7 +191,11 @@ class WrapperPathParityTests(unittest.TestCase):
     for.
     """
 
-    MESSAGE = "document-harness에서 프로젝트 링크만 주면 observer 결과를 자동 조회하게 백엔드 구현해줘"
+    # The domain word is out for the same reason as `CodingLaneTests`: the
+    # `backend` workflow now owns server-side requests, and this test is about
+    # the wrapper path carrying the handoff, not about which lane claims a
+    # domain ask.
+    MESSAGE = "document-harness에서 프로젝트 링크만 주면 observer 결과를 자동 조회하게 구현해줘"
 
     def test_the_public_payload_carries_the_handoff_and_language(self) -> None:
         from omh.routing.chat import public_chat_route_payload

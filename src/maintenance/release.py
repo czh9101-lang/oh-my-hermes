@@ -107,9 +107,18 @@ AWARENESS_PRIMER_CONTEXT_CHAR_LIMIT = 900
 AWARENESS_PRIMER_MARKDOWN_CHAR_LIMIT = 3210
 AWARENESS_WORKFLOW_CONTEXT_CHAR_LIMIT = 1500
 ROLE_CONTEXT_CHAR_LIMIT = 2600
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 340000
+# 340000 -> 349637: three capability-skill sections were added by the domain
+# skill pack (`backend`, `rust`, `native-debugging`), on top of the
+# `llm-app-dev` section that landed on main under the old ceiling. Each section
+# is well under the per-item ceiling below; the growth is one section per new
+# workflow, not per-section padding. Re-measured on the merged tree after
+# #1181, #1183, and #1182 rather than carried over from this branch's base.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 349637
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
-STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 100000
+# 100000 -> 102070: the same three domain workflows each add one standalone
+# capability row, again measured on the merged tree; warranted growth for three
+# new workflows.
+STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 102070
 STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ULW fold context ceiling (issue #954, PR D). The limit is the pre-D measured
 # value of the full profile's `skill_body` chars on `main` @ acb9a060, in the
@@ -366,7 +375,20 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # branch has taken (#1181, then #1183): the delta is +11601 every time, so this
 # ratchet move is additive to the ones below it rather than overlapping any of
 # them; warranted growth for a new workflow.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 770048
+# 770048 -> 795266: the domain skill pack added `backend`, `rust`, and
+# `native-debugging` -- OMH's first technical-domain workflows, closing its two
+# zero-coverage engineering domains. Each always-loaded body is smaller than
+# `frontend`'s and than `llm-app-dev`'s; the per-stack pointer table, the
+# migration order, the UB category table, and the debugger session recipes live
+# in five on-demand references, outside this budget. What is always loaded is
+# only what is wrong to discover late -- the auth boundary before endpoints, the
+# deterministic unsafe/FFI/lock-free escalation trigger, and the
+# three-hypotheses-on-distinct-axes floor. The remainder of the delta is the
+# `+N more` lane line regenerating across the other `coding_handoff` skills.
+# Re-measured on the merged tree after #1181, #1183, and #1182 rather than
+# carried over from this branch's pre-merge base; warranted growth for three
+# workflows closing two zero-coverage technical domains.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 795266
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

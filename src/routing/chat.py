@@ -2868,6 +2868,9 @@ def _agent_ops_status_freeform_match(value: str) -> bool:
     return has_status and has_context
 
 
+# The technical-domain lanes whose trigger vocabulary doubles as the vocabulary
+# of a question about the term itself.
+_DOMAIN_LANE_FAST_PATH_SKILLS = frozenset({"backend", "rust", "native-debugging"})
 _OPERATOR_SURFACE_FAST_PATH_RULES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     (
         "ralplan",
@@ -3017,6 +3020,71 @@ _OPERATOR_SURFACE_FAST_PATH_RULES: tuple[tuple[str, tuple[str, ...], str, str], 
         ),
         "operator_surface_fast_path:frontend",
         "Clear frontend design or implementation-handoff request; prepare frontend scope, states, breakpoints, and visual-QA follow-up boundaries.",
+    ),
+    (
+        "backend",
+        (
+            # Contract vocabulary only. "implement the backend" is a delivery
+            # request and keeps the coding lane -- this workflow prepares the
+            # contract that precedes implementation, it does not replace the
+            # engine that delivers it.
+            "backend handoff",
+            "backend contract",
+            "design a rest api",
+            "design the rest api",
+            "rest api design",
+            "api contract design",
+            "api endpoint design",
+            "server-side design",
+            "database schema design",
+            "postgres schema and migrations",
+            "백엔드 계약",
+            "백엔드 핸드오프",
+            "서버 api 설계",
+            "디비 스키마 설계",
+            "db 스키마 설계",
+        ),
+        "operator_surface_fast_path:backend",
+        "Clear server, API, or data-layer design request; prepare the auth boundary, error paths, response shape, and migration order before implementation.",
+    ),
+    (
+        "rust",
+        (
+            "borrow checker",
+            "lifetime error",
+            "ownership error",
+            "unsafe rust",
+            "unsafe block",
+            "rust ffi",
+            "rust change contract",
+            "rust handoff",
+            "빌림 검사기",
+            "소유권 에러",
+            "라이프타임 에러",
+            "러스트 핸드오프",
+            "언세이프 러스트",
+        ),
+        "operator_surface_fast_path:rust",
+        "Clear Rust change request; run the unsafe/FFI/lock-free escalation check first, then prepare the ownership, error, and gate contract.",
+    ),
+    (
+        "native-debugging",
+        (
+            "native debugging",
+            "native binary",
+            "segmentation fault",
+            "segfault",
+            "core dump",
+            "memory corruption",
+            "heap corruption",
+            "stripped binary",
+            "네이티브 디버깅",
+            "세그폴트",
+            "코어 덤프",
+            "메모리 손상",
+        ),
+        "operator_surface_fast_path:native_debugging",
+        "Clear native-binary fault or crash-debugging request; prepare competing hypotheses, distinguishing observations, and a DAP-driven debugger session plan.",
     ),
     (
         "accessibility-audit",
@@ -4068,6 +4136,12 @@ def _operator_surface_fast_path_decision(
     if only_skill is not None and selected_skill != only_skill:
         return None
     if selected_skill == "ralplan" and _is_fast_plain_direct_answer_question(routing_message):
+        return None
+    # The three technical-domain lanes fire on domain vocabulary ("borrow
+    # checker", "segfault", "rest api design"), and that vocabulary is also how
+    # people ask what the term means. A definition question is an answer, not a
+    # workflow, so the same guard `ralplan` uses applies here.
+    if selected_skill in _DOMAIN_LANE_FAST_PATH_SKILLS and _is_domain_lane_concept_question(routing_message):
         return None
     if selected_skill in ("research", "toolbelt-readiness") and _hermes_setup_guide_requested(
         normalized_phrase(prepare_routing_text(routing_message).scoring_text)
@@ -6522,6 +6596,20 @@ def _is_plain_direct_answer_question(message: str, *, candidate_score: int) -> b
     if any(direct_text.startswith(starter) for starter in _DIRECT_ANSWER_STARTERS):
         return True
     return any(keyword in direct_text for keyword in _DIRECT_ANSWER_KEYWORDS) and "?" in text
+
+
+def _is_domain_lane_concept_question(message: str) -> bool:
+    """True when a domain-lane trigger is being asked about rather than acted on.
+
+    Narrower on purpose than `_is_fast_plain_direct_answer_question`: that helper
+    also claims error-and-log help, which is exactly the shape of a real request
+    on these lanes ("fix the borrow checker errors"). Only the concept-question
+    branch is safe to subtract from a domain lane.
+    """
+    text = message.strip().lower()
+    if not text:
+        return False
+    return _is_direct_answer_concept_question(text, _strip_direct_answer_soft_prefix(text))
 
 
 def _is_fast_plain_direct_answer_question(message: str) -> bool:

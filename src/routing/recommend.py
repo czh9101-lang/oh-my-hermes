@@ -605,6 +605,42 @@ _SKILL_POLICIES = {
             "accessibility/performance expectations, implementation handoff, and visual_qa_required/v1."
         ),
     ),
+    "backend": RecommendationPolicy(
+        next_action="prepare_backend_handoff",
+        evidence_boundary=(
+            "A backend service contract is not implementation, a running service, an applied migration, an integration "
+            "run, load evidence, or deployment until observed executor or wrapper evidence exists."
+        ),
+        wrapper_guidance=(
+            "Prepare backend_service_contract/v1 with auth_boundary_map/v1, error_path_table/v1, "
+            "response_shape_contract/v1, schema_migration_plan/v1 when storage is touched, and a "
+            "backend_implementation_handoff/v1 naming the stack and its first reference."
+        ),
+    ),
+    "rust": RecommendationPolicy(
+        next_action="prepare_rust_handoff",
+        evidence_boundary=(
+            "A Rust change contract is not compilation, clippy cleanliness, a passing test, a Miri run, a sanitizer "
+            "run, or a loom-style concurrency run until observed executor or wrapper evidence exists."
+        ),
+        wrapper_guidance=(
+            "Prepare rust_change_contract/v1 opening with ub_escalation_verdict/v1, then ownership_shape/v1, "
+            "error_and_api_contract/v1, rust_gate_list/v1, and ub_discipline_checklist/v1 as blocking items whenever "
+            "the change touches unsafe, raw pointers, FFI, MaybeUninit, or a lock-free primitive."
+        ),
+    ),
+    "native-debugging": RecommendationPolicy(
+        next_action="prepare_native_debug_plan",
+        evidence_boundary=(
+            "A native debugging plan is not a reproduction, a breakpoint hit, a read value, a backtrace, a root cause, "
+            "or a fix until observed executor or wrapper evidence exists."
+        ),
+        wrapper_guidance=(
+            "Prepare native_fault_statement/v1, hypothesis_set/v1 with at least three hypotheses on distinct axes, "
+            "distinguishing_observation_plan/v1, and debugger_session_plan/v1 naming the DAP adapter, breakpoints, "
+            "watchpoints, threads, frames, and values the executor reads at each stop."
+        ),
+    ),
     "accessibility-audit": RecommendationPolicy(
         next_action="prepare_accessibility_audit",
         evidence_boundary=(
