@@ -259,7 +259,14 @@ def count_metrics() -> tuple[CountMetric, ...]:
     )
 
 
+def _skill_density_filler_hits() -> int:
+    from ..quality.skill_density import catalog_filler_hit_total
+
+    return catalog_filler_hit_total()
+
+
 def budget_metrics() -> tuple[BudgetMetric, ...]:
+    from ..quality.skill_density import DENSITY_FILLER_HIT_CEILING
     from .release import (
         AWARENESS_PRIMER_MARKDOWN_CHAR_LIMIT,
         FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT,
@@ -297,6 +304,19 @@ def budget_metrics() -> tuple[BudgetMetric, ...]:
             limit=FULL_PROFILE_SKILL_BODY_CHAR_LIMIT,
             limit_site="src/maintenance/release.py",
             reviewed_exception=FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS,
+        ),
+        # The byte budget above says how much the pack costs; this says whether
+        # the characters carry instruction. A hit is a reviewed filler phrase
+        # that an install pays for in every context window without changing
+        # what a reader does, so the ceiling is zero on a corpus measured at
+        # zero. The other two density signals are floats and stay in
+        # `tests/test_skill_density.py`.
+        BudgetMetric(
+            name="skill_density_filler_hits",
+            describe="Reviewed filler phrases across all catalog skill bodies",
+            live=_skill_density_filler_hits,
+            limit=DENSITY_FILLER_HIT_CEILING,
+            limit_site="src/quality/skill_density.py",
         ),
     )
 

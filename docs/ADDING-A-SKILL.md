@@ -82,7 +82,10 @@ repeated section in `workflow_skill`:
 
 ```sh
 uv run python -m omh.cli docs skill-context-cost
+uv run python -m omh.cli release drift
 ```
+
+Density is the other half of that number; see §6.
 
 ```sh
 uv run python -m compileall -q src tests
@@ -92,6 +95,40 @@ uv run python -m omh.cli docs capability-families --check
 git diff --check
 PYTHONPATH=tests uv run python -m unittest discover -s tests
 ```
+
+## 6. Authoring doctrine: the body carries instruction, the trigger carries phrasing
+
+`FULL_PROFILE_SKILL_BODY_CHAR_LIMIT` bounds what the whole pack costs. It cannot
+tell a body that grew a rule from a body that grew adjectives, so
+`tests/test_skill_density.py` measures instruction density per skill from the
+catalog producer. It fails naming the skill, the measured value, the threshold,
+and the offending excerpt. Thresholds and the reviewed lists live in
+`src/quality/skill_density.py`; `omh release drift` reports the filler count
+alongside the byte budgets.
+
+What it measures, and what each one asks of you:
+
+| Signal | Threshold | What passes it |
+| --- | --- | --- |
+| `filler_hits` | 0 | No phrase from the reviewed `FILLER_PHRASES` list. Each is a connective whose deletion leaves the claim intact. |
+| `repeated_share_percent` | < 5.0 | A body does not repeat its own sentences. The margin exists so the one most important rule may be restated at the end of a long body. |
+| `payload_markers_per_1k` | > 9.0 | Prose that instructs: modals, negations and exceptions, conditionals, numeric bounds with units, and exact strings in backticks. |
+
+Two rules the gate cannot check for you:
+
+- **Never compress the trigger.** The frontmatter `description` and the routing
+  signal list are retrieval surface matched against the user's own phrasing by
+  `src/routing/`, so keyword-redundant alternatives are payload there even where
+  a human reader needs one. The density measurement excludes both on purpose;
+  trimming triggers to look tidy costs routing coverage, and
+  `ROUTING_PRECISION_CASES` / `ROUTING_INTERVENTION_CASES` are what notice.
+- **Declare what a rewrite drops.** Before compressing an existing body, run
+  `compression_verdict(skill, before, after)`. It returns `keep_original` when
+  the measured token delta is under 10%, when the retrieval surface moved, or
+  when the draft dropped a never-delete marker — and it names each dropped
+  claim, bound, or exact string rather than counting them. On already-dense
+  text the remaining words are the payload; an undeclared loss is a silent
+  regression, and a single-digit win is not worth re-reading every rule for.
 
 ## Acknowledgements
 
