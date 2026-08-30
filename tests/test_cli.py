@@ -8936,6 +8936,72 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(blocked["loop"]["runtime"]["queue"][0]["blocker_reason"], "Need maintainer approval")
             self.assertEqual(blocked["status_card"]["runtime_summary"]["blocked_queue_count"], 1)
 
+    def test_loop_sticky_rule_declare_and_reattachment_over_cli_ticks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+
+            status, stdout, stderr = run_cli(
+                home
+                + [
+                    "loop",
+                    "start",
+                    "--loop-id",
+                    "loop-sticky",
+                    "--goal-summary",
+                    "Keep a standing rule attached over CLI ticks",
+                    "--goal-reframe",
+                    "Prepare bounded loop slices while a sticky rule stays re-attached under its policy.",
+                    "--criterion",
+                    "The sticky rule re-attaches under its bounded policy",
+                    "--permission-profile",
+                    "handoff_only",
+                ]
+            )
+            self.assertEqual(stderr, "")
+            self.assertEqual(status, 0)
+
+            status, stdout, stderr = run_cli(
+                home
+                + [
+                    "loop",
+                    "sticky-rule",
+                    "declare",
+                    "--loop",
+                    "loop-sticky",
+                    "--rule-id",
+                    "never-claim-without-evidence",
+                    "--text",
+                    "Never claim completion without observed evidence.",
+                    "--repeat-mode",
+                    "after_gap",
+                    "--repeat-gap",
+                    "2",
+                    "--max-repeats",
+                    "3",
+                ]
+            )
+            self.assertEqual(stderr, "")
+            self.assertEqual(status, 0)
+            declared = json.loads(stdout)
+            self.assertEqual(len(declared["loop"]["sticky_rules"]), 1)
+            self.assertEqual(declared["loop"]["sticky_rules"][0]["rule_id"], "never-claim-without-evidence")
+            self.assertEqual(declared["loop"]["sticky_rules"][0]["max_repeats"], 3)
+
+            fired_at: list[int] = []
+            for _ in range(5):
+                status, stdout, stderr = run_cli(home + ["loop", "tick", "--loop", "loop-sticky"])
+                self.assertEqual(stderr, "")
+                self.assertEqual(status, 0)
+                attachment = json.loads(stdout)["status_card"]["sticky_rule_attachment"]
+                self.assertEqual(attachment["schema_version"], "loop_sticky_rule_attachment/v1")
+                if attachment["rules"]:
+                    fired_at.append(attachment["heartbeat_count"])
+
+            # repeat_gap=2 with a bounded max_repeats=3: first tick, then every
+            # second tick, retiring once the repeat budget is spent.
+            self.assertEqual(fired_at, [1, 3, 5])
+
     def test_loop_status_lists_invalid_local_artifacts_without_crashing(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
