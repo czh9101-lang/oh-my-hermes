@@ -44,12 +44,4 @@ OFFICE_FILE_MATERIAL_CATALOG_TRIGGERS = (
     "pdf to csv",
     "spreadsheet analysis brief",
     "clean analysis brief",
-    "첨부한 엑셀",
-    "첨부한 워드",
-    "워드 문서",
-    "PDF 두 개 비교",
-    "PDF 표를 CSV",
-    "PDF 표 추출",
-    "분석 브리프",
-    "엑셀을 월간 보고서",
 )

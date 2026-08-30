@@ -346,7 +346,53 @@ def run_doctor(paths: OmhPaths) -> list[Check]:
             )
         )
     checks.append(_structural_search_check())
+    checks.append(_trigger_language_pack_check(paths))
     return checks
+
+
+def _trigger_language_pack_check(paths: OmhPaths) -> Check:
+    """Report which input languages this install recognises, and refuse bad packs.
+
+    Shipped packs are product data and always present, so they are reported
+    rather than checked. A user pack is the part that can be wrong: it is the
+    one place a person edits routing by hand, and a pack that silently failed
+    to load looks exactly like a pack whose phrases do not work. So an invalid
+    user pack fails this check and the message names the file and the reason
+    the parser gave -- the whole point of validating a pack is that the person
+    who wrote it finds out.
+    """
+    from ..routing.trigger_language_packs import trigger_pack_state
+    from ..skills.catalog import builtin_definitions
+
+    known_skills = frozenset(definition.name for definition in builtin_definitions())
+    state = trigger_pack_state(paths.omh_home, known_skills)
+    shipped = ", ".join(
+        f"{row['language']} ({row['phrase_count']} phrases)" for row in state["shipped"]
+    )
+    invalid = [row for row in state["user"] if str(row["status"]).startswith("invalid")]
+    applied = [row for row in state["user"] if row["status"] == "applied"]
+    if invalid:
+        reasons = "; ".join(f"{row['language']}.json {row['status']}" for row in invalid)
+        return Check(
+            "trigger_language_packs",
+            False,
+            f"invalid trigger language pack(s) under {state['user_pack_dir']}: {reasons}",
+            remediation=f"fix or remove the named file(s) under {state['user_pack_dir']}",
+            next_action="correct the pack and rerun `omh doctor`",
+        )
+    user = (
+        "; user packs: " + ", ".join(f"{row['language']} ({row['phrase_count']} phrases)" for row in applied)
+        if applied
+        else f"; no user packs at {state['user_pack_dir']}"
+    )
+    return Check(
+        "trigger_language_packs",
+        True,
+        f"trigger language packs shipped: {shipped}{user}",
+        severity="ok",
+        next_action="",
+        observed=True,
+    )
 
 
 def _structural_search_check(*, which: Callable[[str], str | None] | None = None) -> Check:

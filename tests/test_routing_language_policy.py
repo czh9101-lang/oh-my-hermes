@@ -1,18 +1,27 @@
 """Global language policy for routing.
 
-OMH targets a global audience with English as the primary language, but its
-deterministic trigger tables only ever grew in Latin and Hangul. These tests
-make that state explicit and hold it still: they re-derive the distribution
-from the catalog so it cannot drift silently, and they freeze each skill's
-Hangul table so growing one becomes a deliberate act with a visible number to
-change rather than an incremental habit. The freeze is per skill rather than a
-global sum because a new skill carrying its own Korean triggers and an existing
-skill's table being padded are different events, and a total cannot tell them
-apart.
+OMH targets a global audience with English as the primary language. Its
+deterministic trigger tables only ever grew in Latin and Hangul, and these
+tests used to hold that state still on the reasoning that per-language trigger
+tables do not scale, so non-English intent resolution belonged to model
+selection rather than to more tokens.
 
-The policy being enforced: per-language trigger tables do not scale to a global
-product, so non-English intent resolution belongs to model selection over
-supplied candidates, not to more tokens. See `src/routing/input_language.py`.
+Trigger language packs (`src/routing/trigger_language_packs.py`) changed the
+premise. A language's phrases are validated data merged into the catalog, so
+adding one is authoring `src/routing/trigger_packs/<lang>.json` rather than
+editing the router, and the cost that made the old policy sensible -- source
+churn per language, paid by whoever owns the catalog -- is not there any more.
+So the tests keep what was actually load-bearing and drop what was a
+consequence of the old storage:
+
+* The per-skill Korean freeze stays, restated: an existing skill's table must
+  not be padded to make a routing miss go away. It reads the merged catalog, so
+  moving Korean into `ko.json` did not weaken it by a single entry, and padding
+  the pack fails exactly the way padding the source did.
+* Which scripts are trigger-backed is measured from the catalog rather than
+  declared in a constant, so shipping a pack is what makes a script supported.
+* Every routable skill must still be reachable in English: English is the base
+  corpus, and a skill that only a pack can reach is a skill most users cannot.
 """
 
 from __future__ import annotations
@@ -27,11 +36,12 @@ from omh.routing.input_language import (
     SCRIPT_LATIN,
     SUPPORT_MODEL_SELECTION_REQUIRED,
     SUPPORT_TRIGGER_BACKED,
-    TRIGGER_BACKED_SCRIPTS,
     detect_input_script,
     routing_input_language,
     routing_language_support,
+    trigger_backed_scripts,
 )
+from omh.routing.trigger_language_packs import shipped_trigger_pack_languages
 from omh.skills.catalog import routable_definitions
 
 
@@ -48,8 +58,12 @@ from omh.skills.catalog import routable_definitions
 # A new skill is exempt here and constrained instead by
 # `test_every_routable_skill_is_reachable_in_english`. Raising an entry below
 # means an existing Korean table grew: do it only with a stated reason, and
-# never to make a routing miss go away -- the fix for that is model selection,
-# not more tokens. See `src/routing/input_language.py`.
+# never to make a routing miss go away.
+#
+# 2026-08-30: these phrases moved from source literals into
+# `src/routing/trigger_packs/ko.json`. The counts below did not move with them
+# -- they are read off the merged catalog, which is where the router reads them
+# too -- so the freeze covers the pack exactly as it covered the source.
 # The specialist-domain set is an explicit task exception to the no-growth policy:
 # every new skill carries exactly its three approved narrow Korean phrases.
 SPECIALIST_DOMAIN_HANGUL_TRIGGER_COUNTS: dict[str, int] = {
@@ -206,17 +220,28 @@ class RoutingLanguagePolicyTests(unittest.TestCase):
             with self.subTest(skill=skill):
                 self.assertGreater(observed[skill], 0)
 
-    def test_only_latin_and_hangul_carry_a_real_trigger_table(self) -> None:
+    def test_trigger_backed_scripts_are_measured_from_the_shipped_packs(self) -> None:
         counts = _trigger_script_counts()
 
-        # Han and Kana entries exist but are incidental (single-digit), which is
-        # exactly why they are not claimed as trigger-backed: a handful of tokens
-        # cannot resolve ordinary Japanese or Chinese requests.
+        # English is the base corpus the catalog is authored in; every other
+        # script is here because a pack put it here. Han and Kana were 5 and 1
+        # entries before `ja.json` and `zh.json` shipped -- a handful of tokens
+        # that could not resolve an ordinary Japanese or Chinese request, which
+        # is why the old constant did not claim them.
         self.assertGreater(counts[SCRIPT_LATIN], 1000)
         self.assertGreater(counts[SCRIPT_HANGUL], 100)
-        self.assertLess(counts[SCRIPT_HAN], 20)
-        self.assertLess(counts[SCRIPT_KANA], 20)
-        self.assertEqual(set(TRIGGER_BACKED_SCRIPTS), {SCRIPT_LATIN, SCRIPT_HANGUL})
+        self.assertGreater(counts[SCRIPT_HAN], 50)
+        self.assertGreater(counts[SCRIPT_KANA], 50)
+        self.assertEqual(
+            set(trigger_backed_scripts()),
+            {SCRIPT_LATIN, SCRIPT_HANGUL, SCRIPT_HAN, SCRIPT_KANA},
+        )
+
+    def test_the_shipped_packs_are_what_makes_a_script_trigger_backed(self) -> None:
+        # The link the old constant hid: Hangul, Han, and Kana are supported
+        # because ko/ja/zh packs ship, not because a tuple in
+        # `input_language.py` says so. Deleting a pack has to remove its script.
+        self.assertEqual(set(shipped_trigger_pack_languages()), {"ko", "ja", "zh"})
 
     def test_every_routable_skill_is_reachable_in_english(self) -> None:
         missing = [
@@ -236,9 +261,13 @@ class RoutingLanguagePolicyTests(unittest.TestCase):
         self.assertEqual(detect_input_script("Claude Code로 바로 열어줘"), SCRIPT_HANGUL)
 
     def test_scripts_without_a_trigger_table_are_marked_model_selection(self) -> None:
+        # Cyrillic and Devanagari ship no pack, so a deterministic trigger score
+        # is not evidence of intent for them and the contract has to say so --
+        # the same statement the Kana and Han rows made before their packs
+        # existed.
         for message, expected_script in (
-            ("ビルドが失敗した理由を教えて", SCRIPT_KANA),
-            ("为什么构建失败了", SCRIPT_HAN),
+            ("почему сборка падает", "cyrillic"),
+            ("बिल्ड क्यों फेल हो रहा है", "devanagari"),
         ):
             with self.subTest(message=message):
                 script = detect_input_script(message)
@@ -246,17 +275,23 @@ class RoutingLanguagePolicyTests(unittest.TestCase):
                 self.assertEqual(routing_language_support(script), SUPPORT_MODEL_SELECTION_REQUIRED)
 
     def test_trigger_backed_scripts_report_trigger_support(self) -> None:
-        for message in ("refactor this module", "빌드 실패 원인 봐줘"):
+        for message in (
+            "refactor this module",
+            "빌드 실패 원인 봐줘",
+            "ビルドが失敗した理由を教えて",
+            "为什么构建失败了",
+        ):
             with self.subTest(message=message):
                 self.assertEqual(routing_language_support(detect_input_script(message)), SUPPORT_TRIGGER_BACKED)
 
     def test_routing_input_language_states_the_boundary(self) -> None:
-        payload = routing_input_language("ビルドが失敗した理由を教えて")
+        payload = routing_input_language("почему сборка падает")
 
         self.assertEqual(payload["schema_version"], "routing_input_language/v1")
-        self.assertEqual(payload["script"], SCRIPT_KANA)
+        self.assertEqual(payload["script"], "cyrillic")
         self.assertEqual(payload["trigger_support"], SUPPORT_MODEL_SELECTION_REQUIRED)
         self.assertIn("not evidence of intent", str(payload["boundary"]))
+        self.assertIn(SCRIPT_KANA, payload["trigger_backed_scripts"])
 
 
 if __name__ == "__main__":

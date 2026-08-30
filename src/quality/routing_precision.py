@@ -924,6 +924,71 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_directly",
         "direct_answer",
     ),
+    # Per-language negative controls for the shipped trigger packs. A pack
+    # widens what the router recognises, which is also the way a pack goes
+    # wrong: a phrase short or generic enough to sit inside an ordinary
+    # sentence turns every such sentence into a dispatch. English and Korean
+    # have carried these controls since the corpus began; a language whose
+    # phrases ship without them is a language nobody has measured.
+    #
+    # The first case in each language deliberately CONTAINS a pack phrase and
+    # is still not a work request. It settles on a clarification rather than a
+    # direct answer -- the concept-question fast path that turns
+    # "what does X mean" into a direct answer is written in English and Korean
+    # markers only, and widening that surface is a different change from
+    # widening trigger tables. What matters here is what it does not do:
+    # no dispatch, no picker, no handoff.
+    RoutingPrecisionCase(
+        "japanese-frontend-concept-question",
+        "A Japanese frontend definition question does not become a frontend handoff",
+        "フロントエンドって何の略ですか？",
+        "answer_clarification",
+        "",
+        "ultrawork",
+    ),
+    RoutingPrecisionCase(
+        "japanese-parallel-processing-concept",
+        "Japanese parallel-processing vocabulary alone does not reach the parallel lane",
+        "並列処理とは何ですか？",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "japanese-ownership-concept-question",
+        "A Japanese ownership concept question stays a direct answer, not a Rust contract",
+        "所有権という考え方を簡単に説明して",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "chinese-frontend-backend-concept-question",
+        "A Chinese frontend-vs-backend question does not become a frontend or backend handoff",
+        "前端和后端有什么区别？",
+        "answer_clarification",
+        "",
+        "ultrawork",
+    ),
+    RoutingPrecisionCase(
+        "chinese-deep-learning-concept",
+        "Chinese deep-learning vocabulary alone does not reach the research lane",
+        "深度学习是什么意思？",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "chinese-rag-concept-question",
+        "A Chinese retrieval-augmented-generation definition question stays a direct answer",
+        "检索增强生成这个词是什么意思？",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "chinese-thanks",
+        "A Chinese thank-you stays a direct answer",
+        "谢谢",
+        "answer_directly",
+        "direct_answer",
+    ),
 )
 
 
@@ -3238,6 +3303,101 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "agent-evaluation",
         "prepare_agent_evaluation",
         "agent_evaluation",
+    ),
+    # The positive half of the shipped trigger packs: a request typed in
+    # Japanese or Chinese reaches the same lane its English and Korean
+    # equivalents already reach. These are the cases that fail if a pack is
+    # dropped from the wheel, if the catalog merge regresses, or if a phrase is
+    # edited into something the normalizer cannot see.
+    RoutingInterventionCase(
+        "japanese-frontend-landing-page",
+        "A Japanese landing-page request reaches the frontend handoff",
+        "フロントエンドのランディングページをレスポンシブ対応で作って",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+    ),
+    RoutingInterventionCase(
+        "japanese-borrow-checker-ownership",
+        "A Japanese borrow-checker request reaches the Rust change contract",
+        "ボローチェッカーの所有権エラーとライフタイムエラーを直して",
+        "dispatch",
+        "rust",
+        "prepare_rust_handoff",
+        "rust_contract",
+    ),
+    RoutingInterventionCase(
+        "japanese-rag-pipeline-build",
+        "A Japanese RAG pipeline request reaches the LLM app build handoff",
+        "RAGパイプライン構築と構造化出力スキーマを設計して",
+        "dispatch",
+        "llm-app-dev",
+        "prepare_llm_app_build",
+        "llm_app_build",
+    ),
+    RoutingInterventionCase(
+        "japanese-segfault-core-dump",
+        "A Japanese segfault and core-dump request reaches the native debugging plan",
+        "セグメンテーション違反とコアダンプを調べて",
+        "dispatch",
+        "native-debugging",
+        "prepare_native_debug_plan",
+        "native_debug_plan",
+    ),
+    RoutingInterventionCase(
+        "japanese-red-team-this-plan",
+        "A Japanese adversarial plan review opens the consensus rounds",
+        "この計画に反論して敵対的レビューをして",
+        "dispatch",
+        "adversarial-consensus",
+        "forward_plan_to_selected_workflow",
+        "plan",
+    ),
+    RoutingInterventionCase(
+        "chinese-frontend-landing-page",
+        "A Chinese landing-page request reaches the frontend handoff",
+        "前端落地页需要响应式布局",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+    ),
+    RoutingInterventionCase(
+        "chinese-borrow-checker-ownership",
+        "A Chinese borrow-checker request reaches the Rust change contract",
+        "借用检查器报所有权错误和生命周期错误",
+        "dispatch",
+        "rust",
+        "prepare_rust_handoff",
+        "rust_contract",
+    ),
+    RoutingInterventionCase(
+        "chinese-rag-pipeline-build",
+        "A Chinese retrieval-augmented-generation request reaches the LLM app build handoff",
+        "大模型应用开发要做检索增强生成",
+        "dispatch",
+        "llm-app-dev",
+        "prepare_llm_app_build",
+        "llm_app_build",
+    ),
+    RoutingInterventionCase(
+        "chinese-segfault-core-dump",
+        "A Chinese segfault and core-dump request reaches the native debugging plan",
+        "段错误和核心转储怎么排查",
+        "dispatch",
+        "native-debugging",
+        "prepare_native_debug_plan",
+        "native_debug_plan",
+    ),
+    RoutingInterventionCase(
+        "chinese-red-team-this-proposal",
+        "A Chinese red-team proposal review opens the consensus rounds",
+        "红队评审这个方案并找出漏洞",
+        "dispatch",
+        "adversarial-consensus",
+        "forward_plan_to_selected_workflow",
+        "plan",
     ),
 )
 

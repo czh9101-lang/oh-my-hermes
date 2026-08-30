@@ -12,6 +12,12 @@ the file and structure to edit.
   empty otherwise; the lane default governs.
 - If the skill needs a recommendation policy, add its `_SKILL_POLICIES` entry
   in `src/routing/recommend.py`.
+- Author `triggers` in English only. Every other language reaches the skill
+  through its trigger language pack in `src/routing/trigger_packs/<lang>.json`,
+  which merges into the catalog before anything reads it — so a non-English
+  phrase in a `SkillDefinition` is a phrase one language got for free and the
+  rest did not. See "Adding a trigger language pack" in
+  `docs/routing-quality.md`.
 - The `SkillDefinition.name` you pick is the canonical identifier (tap
   directory, install manifest, routing key, CLI arguments); the generated
   frontmatter `name` is a separate rendered display identifier that

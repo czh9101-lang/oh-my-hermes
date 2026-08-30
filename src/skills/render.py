@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import json
-import re
 
 from .catalog import (
     DEEP_INTERVIEW_MAX_ROUNDS,
@@ -227,8 +226,28 @@ def _definitions_by_name() -> dict[str, SkillDefinition]:
 # The description therefore carries the top trigger phrases itself. Only
 # plain-scalar-safe phrases are surfaced so the unquoted YAML stays valid;
 # sigil/path aliases (`$ulw`, `./x`, `/x`) duplicate a bare form anyway.
+#
+# The safety test asks what breaks YAML, not what alphabet a phrase is in. It
+# used to allow-list ASCII plus the Hangul syllable block, which silently made
+# "which languages reach a host's picker" a property of one regex: a Japanese
+# or Chinese trigger was reported as `unsafe_for_frontmatter` when the only
+# thing wrong with it was that nobody had added its script. Rejecting the
+# characters that actually end a plain scalar leaves the rule script-agnostic,
+# so a trigger language pack in any script reaches the picker on the same terms
+# as an English one.
 _FRONTMATTER_TRIGGER_LIMIT = 8
-_FRONTMATTER_SAFE_TRIGGER = re.compile(r"^[0-9A-Za-z가-힣][0-9A-Za-z가-힣 _.-]*$")
+# Ends or re-types a plain scalar anywhere in the value.
+_FRONTMATTER_UNSAFE_CHARS = frozenset(":#,[]{}\"'\\|>*&!%@`$/\n\r\t")
+# Only an indicator when it opens the value.
+_FRONTMATTER_UNSAFE_LEADING_CHARS = frozenset("-?~")
+
+
+def _frontmatter_safe_trigger(trigger: str) -> bool:
+    if not trigger or trigger != trigger.strip():
+        return False
+    if _FRONTMATTER_UNSAFE_CHARS & set(trigger):
+        return False
+    return trigger[0] not in _FRONTMATTER_UNSAFE_LEADING_CHARS
 
 
 # Why a trigger defined in the catalog never reaches the picker description.
@@ -256,7 +275,7 @@ def frontmatter_trigger_emission(definition: SkillDefinition) -> tuple[list[str]
     emitted: list[str] = []
     omitted: list[tuple[str, str]] = []
     for trigger in definition.triggers:
-        if not _FRONTMATTER_SAFE_TRIGGER.fullmatch(trigger):
+        if not _frontmatter_safe_trigger(trigger):
             omitted.append((trigger, UNSAFE_FOR_FRONTMATTER))
         elif trigger.casefold() in safe_alias_keys:
             omitted.append((trigger, DUPLICATE_OF_ALIAS))
@@ -271,7 +290,7 @@ def _safe_aliases(definition: SkillDefinition) -> list[str]:
     safe_aliases = [
         alias
         for alias in definition.aliases
-        if _FRONTMATTER_SAFE_TRIGGER.fullmatch(alias)
+        if _frontmatter_safe_trigger(alias)
     ]
     if len(safe_aliases) != len(definition.aliases):
         invalid = sorted(set(definition.aliases) - set(safe_aliases))

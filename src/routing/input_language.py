@@ -1,25 +1,26 @@
 """Explicit input-script detection for the router contract.
 
 OMH targets a global audience with English as the primary language. Its trigger
-tables, however, only ever grew in two scripts: of 2315 catalog triggers, 1543
-are Latin and 764 are Hangul, against 5 Han, 1 Kana, and zero Devanagari,
-Arabic, or Cyrillic entries. `routing/localization.py` meanwhile renders chat
-copy in ko/ja/zh/hi, so OMH answers in four non-English languages while the
-router can only recognise two.
+tables grew in two scripts and stopped there, and for a long time that was
+stated as a policy: per-language trigger tables do not scale, so non-English
+intent resolution belongs to model selection. The measurement behind it was
+real; the conclusion was not, because it treated "a language costs a source
+edit" as a law of nature rather than as a property of where the phrases were
+stored.
 
-That gap was implicit: a Japanese or Hindi request simply scored zero and fell
-through to a picker or fallback, and nothing in the contract said why. This
-module makes it explicit. Detection here classifies the script of an incoming
-message and states whether the deterministic trigger tables can be expected to
-resolve it at all.
+`routing/trigger_language_packs.py` changes that property. Trigger phrases for
+a language are validated data now, shipped as `<lang>.json` and merged into the
+catalog, so adding a language is authoring a file rather than editing the
+router. Which scripts are trigger-backed therefore stops being a constant
+somebody remembered to update and becomes a measurement of the packs actually
+installed -- `TRIGGER_BACKED_SCRIPTS` below re-derives it from the catalog on
+every process.
 
-The policy this encodes: per-language trigger tables do not scale to a global
-product. Adding another 764 entries per language is unbounded work that decays
-as the catalog grows. Non-English intent resolution belongs to model selection
--- Hermes already understands every language OMH would target -- with OMH
-supplying candidates and reasons rather than guessing from a token table. OMH
-itself still makes no LLM call, so `docs/DIRECTION.md`'s "not an LLM router"
-boundary holds.
+What has not changed is the honesty of the boundary. A script with no pack
+entries is not unsupported: it means a deterministic trigger score is not
+evidence of intent for that message, and the decision belongs to model
+selection over supplied candidates. OMH itself still makes no LLM call, so
+`docs/DIRECTION.md`'s "not an LLM router" boundary holds.
 """
 
 from __future__ import annotations
@@ -38,11 +39,14 @@ SCRIPT_ARABIC = "arabic"
 SCRIPT_CYRILLIC = "cyrillic"
 SCRIPT_UNKNOWN = "unknown"
 
-# Scripts the deterministic trigger tables actually carry entries for. Keep this
-# tuple in sync with reality rather than with intent: a script belongs here only
-# when the catalog has enough triggers in it to resolve ordinary requests, which
-# `tests/test_routing_language_policy.py` re-derives from the catalog.
-TRIGGER_BACKED_SCRIPTS: tuple[str, ...] = (SCRIPT_LATIN, SCRIPT_HANGUL)
+# A script is trigger-backed when the catalog carries enough phrases in it to
+# resolve ordinary requests -- not when one incidental token happens to be
+# written in it. The floor is what separates "this language has a pack" from
+# "a product name in this script leaked into a trigger": before any pack
+# shipped, Han and Kana sat at 5 and 1 entries respectively, which could never
+# resolve a Japanese or Chinese sentence and would have been a false claim of
+# support.
+MIN_TRIGGER_BACKED_PHRASES = 25
 
 SUPPORT_TRIGGER_BACKED = "trigger_backed"
 SUPPORT_MODEL_SELECTION_REQUIRED = "model_selection_required"
@@ -94,9 +98,32 @@ def detect_input_script(message: str) -> str:
     return SCRIPT_LATIN
 
 
+@lru_cache(maxsize=1)
+def trigger_backed_scripts() -> tuple[str, ...]:
+    """Scripts the live catalog carries a usable trigger table for.
+
+    Measured, not declared. The catalog is the merge of the authored triggers
+    and every shipped trigger language pack, so shipping `ja.json` is what makes
+    Kana trigger-backed -- no constant to remember, and no way for the claim to
+    outlive the phrases behind it.
+    """
+    from ..skills.catalog import routable_definitions
+
+    counts: dict[str, int] = {}
+    for definition in routable_definitions():
+        for trigger in definition.triggers:
+            script = detect_input_script(trigger)
+            if script == SCRIPT_UNKNOWN:
+                continue
+            counts[script] = counts.get(script, 0) + 1
+    return tuple(
+        sorted(script for script, count in counts.items() if count >= MIN_TRIGGER_BACKED_PHRASES)
+    )
+
+
 def routing_language_support(script: str) -> str:
     """State whether trigger tables can be expected to resolve this script."""
-    return SUPPORT_TRIGGER_BACKED if script in TRIGGER_BACKED_SCRIPTS else SUPPORT_MODEL_SELECTION_REQUIRED
+    return SUPPORT_TRIGGER_BACKED if script in trigger_backed_scripts() else SUPPORT_MODEL_SELECTION_REQUIRED
 
 
 def routing_input_language(message: str) -> dict[str, object]:
@@ -107,10 +134,11 @@ def routing_input_language(message: str) -> dict[str, object]:
         "schema_version": INPUT_LANGUAGE_SCHEMA_VERSION,
         "script": script,
         "trigger_support": support,
+        "trigger_backed_scripts": list(trigger_backed_scripts()),
         "boundary": (
-            "Trigger tables carry Latin and Hangul entries only. A script marked "
-            "model_selection_required is not unsupported; it means a deterministic "
-            "trigger score is not evidence of intent and the decision belongs to "
-            "model selection over supplied candidates."
+            "Trigger tables carry the scripts the shipped language packs cover. A script "
+            "marked model_selection_required is not unsupported; it means a deterministic "
+            "trigger score is not evidence of intent and the decision belongs to model "
+            "selection over supplied candidates."
         ),
     }

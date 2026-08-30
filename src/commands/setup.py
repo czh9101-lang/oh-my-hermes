@@ -1456,7 +1456,7 @@ def _doctor_operator_summary(checks: list[object]) -> dict[str, object]:
             _doctor_group("runtime", check_dicts, ("runtime_artifacts", "workflow_state", "runtime_state")),
             _doctor_group("hermes_registration", check_dicts, ("hermes_config", "external_dir", "identity_conflicts", "runtime_context")),
             _doctor_group("targets", check_dicts, ("target_registry", "target_topology")),
-            _doctor_group("optional_surfaces", check_dicts, ("plugin_", "team_profile_packs", "structural_search")),
+            _doctor_group("optional_surfaces", check_dicts, ("plugin_", "team_profile_packs", "structural_search", "trigger_language_packs")),
         ],
     }
 
