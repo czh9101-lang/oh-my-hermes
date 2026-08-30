@@ -84,6 +84,51 @@ DIRECT_ANSWER_REASON = (
 ROUTE_EXPLANATION_SCHEMA_VERSION = "route_explanation/v1"
 MULTIPLE_COMPLETE_DOMAIN_INTENTS = "multiple_complete_domain_intents"
 _ROUTER_SKILL = "oh-my-hermes"
+
+# Vagueness gate on heavy-mode routing (P2-12): `ultrawork` and `maestro` start
+# a multi-step, potentially expensive lane. A request that names no concrete
+# anchor should ask one targeted question instead of dispatching on guesswork.
+# `loop` and the coding-delegation bridge (choose_executor/present_plan/...)
+# stay out of scope -- their own review step already requires an owner choice
+# before anything runs.
+_HEAVY_LANE_ROUTE_SKILLS = frozenset({"ultrawork", "maestro"})
+_HEAVY_LANE_TRIGGER_TOKEN_STEMS: dict[str, tuple[str, ...]] = {
+    "ultrawork": ("ultrawork", "ulw"),
+    "maestro": ("maestro",),
+}
+_HEAVY_LANE_VAGUENESS_MAX_WORDS = 8
+# Generic filler and unresolved deictic references ("this", "it", "그거") in
+# the languages the trigger-language packs already cover. None of these name
+# a target, scope, or success criterion on their own. Matched by substring so
+# a fused-language token ("ulw로", "それやって") still empties out correctly.
+_HEAVY_LANE_VAGUENESS_FILLER_SUBSTRINGS: tuple[str, ...] = (
+    # English: bare-verb filler and deictic pronouns not already stripped by
+    # routing_tokens' stopword list.
+    "fix", "do", "help", "please", "just", "handle", "now",
+    # Korean: bare fix/do-it-please compounds, a fused particle left over from
+    # stripping a trigger stem (e.g. "ulw" out of "ulw로"), and deictic
+    # pronouns.
+    "고쳐줘", "해줘", "해주세요", "부탁해", "부탁드려요", "로", "좀",
+    "이거", "그거", "저거", "이것", "그것", "저것", "이걸", "그걸", "저걸",
+    # Japanese: bare do-it-please compounds and deictic pronouns.
+    "直して", "やって", "お願い", "これ", "それ", "あれ", "この", "その", "あの",
+    # Chinese (Simplified): bare fix/do-it compounds, the BA-marker, and
+    # deictic pronouns.
+    "修复", "搞定", "把", "这个", "那个", "这些", "那些",
+)
+_HEAVY_LANE_VAGUENESS_REASON_PREFIX = "Heavy-lane request names no concrete target for"
+_HEAVY_LANE_VAGUENESS_CLARIFICATION_TEMPLATES: dict[str, str] = {
+    "ultrawork": (
+        "Before starting `ultrawork`, name the concrete target (file, module, or "
+        "component), the scope of the change, and the success criterion (test or "
+        "acceptance check) that proves it worked."
+    ),
+    "maestro": (
+        "Before preparing a `maestro` handoff, name the concrete target (file, "
+        "module, or component), the scope of the handoff, and the success "
+        "criterion the executor should verify against."
+    ),
+}
 _SPECIFIC_CAPABILITY_CATALOG_MIN_SCORE = 6
 _SPECIFIC_CAPABILITY_EXCLUDED_SKILLS = frozenset(
     {
@@ -1957,6 +2002,19 @@ def _route_chat_message_cached(
         selected_skill = _ROUTER_SKILL
         action = "clarify"
         reason = f"Best match confidence {candidate_confidence} is below {min_confidence}; clarify before dispatch."
+
+    # Vagueness gate on heavy-mode routing (P2-12): an `ultrawork`/`maestro`
+    # match that names no concrete target asks one specific question instead
+    # of dispatching (or clarifying generically) on guesswork. Explicit `$`
+    # invocation always wins -- it is a deliberate user choice, not a heuristic
+    # match -- so it stays outside the gate.
+    if candidate_skill in _HEAVY_LANE_ROUTE_SKILLS and action in {"dispatch", "clarify"} and not explicit_skill:
+        heavy_vagueness_reason = _heavy_lane_vagueness_reason(routing_message, candidate_skill)
+        if heavy_vagueness_reason:
+            selected_skill = _ROUTER_SKILL
+            action = "clarify"
+            reason = heavy_vagueness_reason
+            ambiguous = False
 
     selected_harness = primary_harness_for_skill(selected_skill)
     learning_candidate_card = build_learning_candidate_card(
@@ -6532,6 +6590,71 @@ def _learning_feedback_recommendation(recommendation: dict[str, object]) -> bool
     )
 
 
+def _heavy_lane_has_concrete_anchor(message: str) -> bool:
+    """Detect explicit signals that name a real target for a heavy-lane request.
+
+    Deliberately simple, deterministic string checks -- no regex -- matching a
+    fenced code block, a quoted identifier, an issue/PR number, a file path, a
+    snake_case/camelCase symbol, or numbered steps. Any hit exempts the message
+    from the vagueness gate regardless of its filler/deictic content.
+    """
+    if "```" in message:
+        return True
+    for quote in ("`", '"'):
+        count = message.count(quote)
+        if count >= 2 and count % 2 == 0:
+            return True
+    for raw_word in message.split():
+        if raw_word[-1:] in {".", ")"} and raw_word[:-1].isdigit():
+            return True
+        word = raw_word.strip("`'\"“”‘’,.;:()[]{}!?#")
+        if not word:
+            continue
+        if raw_word.startswith("#") and word.isdigit():
+            return True
+        if "/" in word and any(character.isalpha() for character in word):
+            return True
+        if "." in word:
+            stem, _, suffix = word.rpartition(".")
+            if stem and suffix and stem[-1].isalpha() and suffix[0].isalpha():
+                return True
+        if any(character.isupper() for character in word) and any(character.islower() for character in word):
+            return True
+        if "_" in word and any(character.isalpha() for character in word):
+            return True
+    return False
+
+
+def _heavy_lane_vagueness_reason(message: str, skill: str) -> str:
+    """Return a reason string when `skill` is a heavy lane and `message` is too
+    vague to act on, else "".
+
+    A heavy-lane request is vague when it has no concrete anchor (file, path,
+    quoted identifier, cased/snake_case symbol, issue/PR number, numbered
+    steps, or code block) and, once its own trigger word and generic
+    filler/deictic references are stripped, names nothing else at all.
+    """
+    trigger_stems = _HEAVY_LANE_TRIGGER_TOKEN_STEMS.get(skill)
+    if trigger_stems is None:
+        return ""
+    if len(message.split()) > _HEAVY_LANE_VAGUENESS_MAX_WORDS:
+        return ""
+    if _heavy_lane_has_concrete_anchor(message):
+        return ""
+    for token in routing_tokens(normalized_phrase(message)):
+        # `normalized_phrase` NFD-decomposes text (diacritic-insensitive
+        # matching); recompose to NFC so precomposed Hangul/Kana filler
+        # literals can match against it with plain substring replacement.
+        remainder = unicodedata.normalize("NFC", token)
+        for stem in trigger_stems:
+            remainder = remainder.replace(stem, "")
+        for filler in _HEAVY_LANE_VAGUENESS_FILLER_SUBSTRINGS:
+            remainder = remainder.replace(filler, "")
+        if remainder.strip():
+            return ""
+    return f"{_HEAVY_LANE_VAGUENESS_REASON_PREFIX} `{skill}`: no file/path, module, component, quoted identifier, or error text names it."
+
+
 def _clarification(action: str, candidate_skill: str, candidate_confidence: str, threshold: str, reason: str = "") -> str:
     if action == "dispatch":
         return ""
@@ -6541,6 +6664,8 @@ def _clarification(action: str, candidate_skill: str, candidate_confidence: str,
         if _is_direct_answer_reason(reason):
             return "Answer directly in the current chat; do not open an OMH workflow unless the user asks for one."
         return "Ask which workflow or outcome the user wants before choosing a specialist skill."
+    if _is_heavy_lane_vagueness_reason(reason) and candidate_skill in _HEAVY_LANE_VAGUENESS_CLARIFICATION_TEMPLATES:
+        return _HEAVY_LANE_VAGUENESS_CLARIFICATION_TEMPLATES[candidate_skill]
     return f"Ask whether to use `{candidate_skill}`; confidence was {candidate_confidence}, below threshold {threshold}."
 
 
@@ -6570,6 +6695,10 @@ def _is_file_lookup_reason(reason: str) -> bool:
 
 def _is_direct_answer_reason(reason: str) -> bool:
     return reason == DIRECT_ANSWER_REASON
+
+
+def _is_heavy_lane_vagueness_reason(reason: str) -> bool:
+    return reason.startswith(_HEAVY_LANE_VAGUENESS_REASON_PREFIX)
 
 
 def _is_plain_direct_answer_question(message: str, *, candidate_score: int) -> bool:
