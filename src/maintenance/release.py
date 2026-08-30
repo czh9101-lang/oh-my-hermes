@@ -416,7 +416,15 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # language the skill cannot be asked for. The number grows with languages
 # rather than with prose -- no skill's own contract changed by a character;
 # warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 797568
+# 797568 -> 798042: `verification-gate` gained the guard-deletion regression
+# rule (+474 chars) requiring a named adversarial or regression case before a
+# diff that deletes a validation/refusal/sanitization/permission/allowlist
+# check, or the negative test that proved it, can be claimed complete. It
+# belongs in the always-loaded body for the same reason the completion-
+# integrity rule above does: it changes the verdict the skill issues, and a
+# gate that reports a lost guard instead of refusing the claim is the failure
+# this rule exists to stop; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 798042
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

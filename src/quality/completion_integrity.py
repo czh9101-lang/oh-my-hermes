@@ -27,6 +27,18 @@ A marker that names a tracked follow-up -- an issue number or a URL on the same
 line -- is a linked reason, not a placeholder, and passes. That is the
 difference between "someone will do this, tracked here" and "this is not done
 and nothing records that".
+
+A ninth rule reads a diff rather than post-change content: `guard_deletion_
+without_adversarial_regression` fires when a changed file's `diff` entry
+*removes* a validation/refusal/sanitization/permission/allowlist line, or a
+test function whose name carries negative-case vocabulary ("refuses",
+"rejects", "denies", "blocks", "invalid"), and the same idiom does not
+reappear as an *added* line anywhere in the supplied diffs. A guard that moves
+elsewhere in the same change (the identical line reappears added) is not a
+deletion. The refusal is waived for the whole claim, not line by line, the
+moment any diff adds a negative-case-named test or an evidence entry names
+"adversarial"/"regression" -- a boundary that loses its guard without a
+regression proving it still refuses is the exact hole this rule closes.
 """
 
 from __future__ import annotations
@@ -35,6 +47,8 @@ from collections.abc import Mapping, Sequence
 from typing import Final
 
 COMPLETION_INTEGRITY_SCHEMA_VERSION: Final = "omh_completion_integrity/v1"
+
+GUARD_DELETION_CATEGORY: Final = "guard_deletion_without_adversarial_regression"
 
 REFUSAL_CATEGORIES: Final = (
     "unfinished_work_marker",
@@ -45,6 +59,7 @@ REFUSAL_CATEGORIES: Final = (
     "prepared_evidence_claimed_as_observed",
     "unnamed_verification_command",
     "unproven_claim_word",
+    GUARD_DELETION_CATEGORY,
 )
 
 CLAIM_BOUNDARY: Final = (
@@ -144,6 +159,33 @@ _OBSERVED_REFERENCE_PREFIXES: Final = ("observed:", "run:", "runtime:", ".omh/",
 
 _PREPARED_NOT_OBSERVED: Final = "prepared_not_observed"
 
+# House vocabulary for a trust-boundary guard: a removed line carrying one of
+# these tokens is read as a validation/refusal/sanitization/permission/
+# allowlist check, whether it is a `raise`, a `return`/`refuse` verdict, or an
+# allowlist assignment (OMH's own `DAEMON_ENV_ALLOWLIST`-style identifiers
+# tokenize to exactly this word).
+_GUARD_VOCABULARY_WORDS: Final = frozenset((
+    "raise", "refuse", "refuses", "refused", "refusal",
+    "deny", "denies", "denied", "validate", "validates", "validated", "validation",
+    "sanitize", "sanitizes", "sanitized", "sanitise", "sanitises", "sanitised",
+    "permission", "allowlist", "forbid", "forbids", "forbidden",
+    "disallow", "disallows", "disallowed", "guard", "reject", "rejects", "rejected",
+))
+
+# omo's `ULW_LOOP_SUCCESS_CRITERION_USER_MODELS` negative-case naming
+# convention, matched against a test definition's name or description.
+_NEGATIVE_CASE_VOCABULARY_WORDS: Final = frozenset((
+    "refuse", "refuses", "refused", "refusal",
+    "reject", "rejects", "rejected", "rejection",
+    "deny", "denies", "denied", "denial",
+    "block", "blocks", "blocked",
+    "invalid", "invalidates", "invalidated",
+))
+
+# The criterion classes a claim can name in its evidence to prove a guard
+# deletion is covered, mirroring `ULW_LOOP_SUCCESS_CRITERION_USER_MODELS`.
+_REGRESSION_CRITERION_WORDS: Final = frozenset(("adversarial", "regression"))
+
 _MAX_EXCERPT_CHARS: Final = 160
 
 
@@ -169,6 +211,7 @@ def classify_completion_integrity(
     for index, (reference, status) in enumerate(normalized_evidence):
         refusals.extend(_evidence_refusals(index, reference, status))
     refusals.extend(_claim_binding_refusals(summary, normalized_evidence))
+    refusals.extend(_guard_deletion_refusals(changed_files, normalized_evidence))
     return {
         "schema_version": COMPLETION_INTEGRITY_SCHEMA_VERSION,
         "refused": bool(refusals),
@@ -263,6 +306,118 @@ def _line_refusal(path: str, line: str, *, abstract_guarded: bool) -> dict[str, 
                     "(#123 or a URL) on the same line; an unlinked placeholder note is "
                     "unfinished work, not a completed change.",
                 )
+    return None
+
+
+def _guard_deletion_refusals(
+    changed_files: Sequence[Mapping[str, object]], normalized_evidence: Sequence[tuple[str, str]]
+) -> list[dict[str, str]]:
+    """Refusals for a guard deleted with no adversarial/regression case behind it.
+
+    Each `changed_files` entry may carry an optional `diff` -- unified-diff
+    text for that path, `-`/`+`/context-prefixed lines -- alongside `content`.
+    Entries with no `diff` contribute nothing here; `content`-only entries are
+    already covered by `_changed_file_refusals`.
+    """
+    parsed: list[tuple[str, list[str], list[str]]] = []
+    for entry in changed_files:
+        if not isinstance(entry, Mapping):
+            continue
+        path = entry.get("path")
+        diff = entry.get("diff")
+        if not isinstance(path, str) or not path.strip():
+            continue
+        if not isinstance(diff, str) or not diff.strip():
+            continue
+        if not _is_scanned_code_path(path):
+            continue
+        removed, added = _diff_removed_and_added(diff)
+        parsed.append((path, removed, added))
+    if not parsed:
+        return []
+
+    added_normalized: set[str] = set()
+    added_negative_test = False
+    for _, _, added in parsed:
+        for line in added:
+            added_normalized.add(_normalized_text(line))
+            test_name = _test_definition_name(line)
+            if test_name and _tokens(test_name) & _NEGATIVE_CASE_VOCABULARY_WORDS:
+                added_negative_test = True
+
+    candidates: list[dict[str, str]] = []
+    for path, removed, _ in parsed:
+        for line in removed:
+            if not line.strip():
+                continue
+            if _normalized_text(line) in added_normalized:
+                continue  # the identical line reappears added: moved, not deleted
+            test_name = _test_definition_name(line)
+            if test_name and _tokens(test_name) & _NEGATIVE_CASE_VOCABULARY_WORDS:
+                candidates.append(
+                    _refusal(
+                        GUARD_DELETION_CATEGORY,
+                        path,
+                        line,
+                        "Restore the deleted negative-case test or add a named adversarial/"
+                        "regression test proving the boundary still refuses what it should; a "
+                        "deleted negative case with no replacement earns no completion claim.",
+                    )
+                )
+                continue
+            if _tokens(line) & _GUARD_VOCABULARY_WORDS:
+                candidates.append(
+                    _refusal(
+                        GUARD_DELETION_CATEGORY,
+                        path,
+                        line,
+                        "Add a named adversarial/regression test proving the boundary still "
+                        "refuses what it should, or restore the guard; a removed validation/"
+                        "refusal/sanitization/permission/allowlist check with no adversarial "
+                        "regression behind it earns no completion claim.",
+                    )
+                )
+
+    if not candidates or added_negative_test:
+        return []
+    if any(_tokens(reference) & _REGRESSION_CRITERION_WORDS for reference, _ in normalized_evidence):
+        return []
+    return candidates
+
+
+def _diff_removed_and_added(diff_text: str) -> tuple[list[str], list[str]]:
+    """`(-, +)` line bodies from unified-diff text, headers and hunks skipped."""
+    removed: list[str] = []
+    added: list[str] = []
+    for raw_line in diff_text.splitlines():
+        if raw_line.startswith(("---", "+++", "@@")):
+            continue
+        if raw_line.startswith("-"):
+            removed.append(raw_line[1:])
+        elif raw_line.startswith("+"):
+            added.append(raw_line[1:])
+    return removed, added
+
+
+def _test_definition_name(line: str) -> str | None:
+    """The test name/description a line declares, or None.
+
+    Covers Python's `def test_x(...)` / `async def test_x(...)` and the
+    JS/TS `it("...", ...)` / `test("...", ...)` description-string idiom.
+    """
+    stripped = line.strip()
+    for prefix in ("def ", "async def "):
+        if stripped.startswith(prefix):
+            name = stripped[len(prefix):].split("(", 1)[0].strip()
+            return name if name.lower().startswith("test") else None
+    for caller in ("it(", "test(", "it.each(", "test.each("):
+        if stripped.startswith(caller):
+            after = stripped[len(caller):].lstrip()
+            if after[:1] in ("\"", "'", "`"):
+                quote = after[0]
+                end = after.find(quote, 1)
+                if end != -1:
+                    return after[1:end]
     return None
 
 
