@@ -2816,14 +2816,23 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                     "claude-code": {"binary_present": True, "login_marker": "present"},
                     "codex": {"binary_present": False, "login_marker": "absent"},
                 },
-            ), patch("omh.commands.setup._ask_yes_no", return_value=True) as yes_no:
+            ), patch(
+                # TUI identity yes, maestro delegation yes, category walk no —
+                # declining the interview keeps this test's surface to the
+                # seeding + pointers the name promises.
+                "omh.commands.setup._ask_yes_no",
+                side_effect=[True, True, False],
+            ) as yes_no:
                 status, stdout, stderr = run_cli(base + ["setup", "--interactive"], output_json=False)
 
             self.assertEqual(status, 0, stderr)
-            # TUI identity choice, then the maestro-delegation question.
-            self.assertEqual(yes_no.call_count, 2)
+            # TUI identity choice, the maestro-delegation question, then the
+            # category-maestro interview offer.
+            self.assertEqual(yes_no.call_count, 3)
             second_prompt = yes_no.call_args_list[1].args[0]
             self.assertIn("claude-code", second_prompt)
+            third_prompt = yes_no.call_args_list[2].args[0]
+            self.assertIn("category", third_prompt)
             dispatch_models_path = omh_home / "routing" / "dispatch-models.json"
             self.assertTrue(dispatch_models_path.exists())
             seeded = json.loads(dispatch_models_path.read_text(encoding="utf-8"))

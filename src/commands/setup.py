@@ -2332,6 +2332,19 @@ def _ask_maestro_delegation_choice(args: argparse.Namespace, paths: OmhPaths, la
     seed_result = _seed_dispatch_model_preferences_result(paths, dry_run=False)
     print(tr(language, "maestro_delegation_seeded", path=str(seed_result.get("path", ""))))
     print(tr(language, "maestro_delegation_pointers"))
+    # The category dial is the part of the lane worth configuring during
+    # install: offer the guided walk right here. A "no" changes nothing —
+    # the built-in category table stays in effect until the operator opts in.
+    if _ask_yes_no(
+        tr(language, "maestro_category_prompt"),
+        default=False,
+        use_color=_use_color(),
+        note=tr(language, "maestro_category_note"),
+        language=language,
+    ):
+        from .coding import category_maestro_interview
+
+        category_maestro_interview(paths)
 
 
 def _seed_dispatch_model_preferences_result(paths: OmhPaths, *, dry_run: bool) -> dict[str, object]:

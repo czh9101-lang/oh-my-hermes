@@ -58,3 +58,6 @@ def print_model_activation_summary(
     print(f"  {tr(language, 'model_setup_status', status=payload.get('status', 'unconfigured'))}")
     print(f"  {tr(language, 'model_setup_next', action=payload.get('next_action', ''))}")
     print(f"  {tr(language, 'model_setup_chains_hint')}")
+    # The Maestro lane has its own category dial; naming it here keeps the
+    # two mixtures discoverable from the one flow an operator actually runs.
+    print(f"  {tr(language, 'model_setup_maestro_hint')}")
