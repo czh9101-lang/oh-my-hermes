@@ -155,5 +155,64 @@ class RunSummaryToolTest(unittest.TestCase):
         self.assertIn("claim_boundary", result)
 
 
+class RunSummaryUnmeasuredElapsedTest(unittest.TestCase):
+    """A session row with no recorded start time never observed starting.
+
+    `started_at` is the one field on the row that can genuinely be absent.
+    The summary must say "unknown" for it -- never a fabricated `0s` that
+    reads as a run that took no time at all.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name) / "hermes"
+        _build_state_db(
+            self.home,
+            [
+                {
+                    "id": "20260830_100000_nostart",
+                    "started_at": None,
+                    "input_tokens": 1_234,
+                    "output_tokens": 567,
+                    "usage_models": ["gpt-5.6-sol"],
+                },
+            ],
+        )
+
+    def _call(self, **args) -> dict:
+        return json.loads(
+            omh_run_summary_handler(
+                {"hermes_home": str(self.home), **args},
+                session_id="20260830_100000_nostart",
+            )
+        )
+
+    def test_elapsed_seconds_is_none_not_a_fabricated_zero(self):
+        result = self._call(language="en")
+        self.assertEqual(result["status"], "observed")
+        self.assertIsNone(result["elapsed_seconds"])
+
+    def test_summary_text_renders_the_word_unknown(self):
+        result = self._call(language="en")
+        self.assertEqual(
+            result["summary_text"],
+            "Elapsed time: unknown\nTokens used: 1,801\nModels used: gpt-5.6-sol",
+        )
+
+    def test_unknown_elapsed_is_not_localized_but_labels_still_are(self):
+        result = self._call(language="ko")
+        self.assertEqual(
+            result["summary_text"],
+            "소요 시간: unknown\n토큰 사용량: 1,801\n사용 모델: gpt-5.6-sol",
+        )
+
+    def test_measured_tokens_are_unaffected_by_unmeasured_elapsed(self):
+        result = self._call(language="en")
+        self.assertEqual(result["tokens_used"], 1_801)
+        self.assertEqual(result["breakdown"]["input_tokens"], 1_234)
+        self.assertEqual(result["breakdown"]["output_tokens"], 567)
+
+
 if __name__ == "__main__":
     unittest.main()
