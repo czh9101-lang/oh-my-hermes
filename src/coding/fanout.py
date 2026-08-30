@@ -27,7 +27,7 @@ from .executor_capability_snapshots import (
     complete_executor_capability_snapshot,
     prepared_executor_capability_snapshot,
 )
-from .model_routing import model_route_for_unit
+from .model_routing import MODEL_CATEGORIES, canonical_model_category, model_route_for_unit
 
 _UNIT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _FROZEN_CAPABILITY_SNAPSHOT_POLICY = "frozen_required"
@@ -40,6 +40,7 @@ def build_fanout_contract(
     source: str = "generic",
     source_metadata: Mapping[str, object] | None = None,
     local_catalogs: Mapping[str, Mapping[str, object]] | None = None,
+    category_config: Mapping[str, object] | None = None,
     capability_snapshots: Mapping[str, Mapping[str, object]] | None = None,
     spawn_plan: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
@@ -70,6 +71,7 @@ def build_fanout_contract(
             sibling_scopes=_sibling_scopes(normalized_units, str(unit["unit_id"])),
             fanout_id=fanout_id,
             local_catalogs=local_catalogs,
+            category_config=category_config,
             capability_snapshots=validated_capability_snapshots,
         )
         for unit in normalized_units
@@ -200,6 +202,11 @@ def validate_fanout_units(units: Sequence[Mapping[str, object]]) -> None:
         file_scope = unit.get("file_scope", [])
         if not isinstance(file_scope, (list, tuple)) or not [str(path) for path in file_scope if str(path).strip()]:
             raise FanoutContractError(f"unit {unit_id} requires a non-empty file_scope boundary")
+        category = str(unit.get("category", "") or "").strip()
+        if category and not canonical_model_category(category):
+            raise FanoutContractError(
+                f"unit {unit_id} category {category!r} is not one of {', '.join(MODEL_CATEGORIES)}"
+            )
         for dependency in unit.get("depends_on", []) or []:
             if str(dependency) not in known:
                 raise FanoutContractError(f"unit {unit_id} depends on unknown unit {dependency!r}")
@@ -382,6 +389,11 @@ def _normalized_unit(unit: Mapping[str, object], index: int) -> dict[str, object
         "model": str(unit.get("model", "") or "").strip(),
         "reasoning_effort": str(unit.get("reasoning_effort", "") or "").strip(),
         "role": str(unit.get("role", "") or "").strip(),
+        # `category` accepts the OMO/ULW ulw-* aliases the resolver already
+        # normalizes; validate_fanout_units rejects unknown vocabulary so a
+        # typo fails the freeze instead of silently routing by role only.
+        "category": str(unit.get("category", unit.get("model_category", "")) or "").strip(),
+        "scale": str(unit.get("scale", "") or "").strip(),
         "domain": str(unit.get("domain", "") or "").strip(),
         "depth": str(unit.get("depth", "") or "").strip(),
         # None (key absent) and [] (declared empty) are different answers: absent
@@ -477,13 +489,14 @@ def _contract_unit(
     sibling_scopes: list[str],
     fanout_id: str,
     local_catalogs: Mapping[str, Mapping[str, object]] | None = None,
+    category_config: Mapping[str, object] | None = None,
     capability_snapshots: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     unit_id = str(unit["unit_id"])
     own_scope = set(str(path) for path in unit.get("file_scope", []))
     executor_target = str(unit.get("owner")) if unit.get("owner") else "choose"
     local_catalog = (local_catalogs or {}).get(executor_target)
-    model_route = model_route_for_unit(unit, executor_target, local_catalog)
+    model_route = model_route_for_unit(unit, executor_target, local_catalog, category_config)
     handoff: dict[str, object] = {
         "schema_version": "fanout_unit_handoff/v1",
         "executor_target": executor_target,

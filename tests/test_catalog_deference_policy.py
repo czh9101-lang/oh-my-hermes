@@ -108,14 +108,19 @@ NON_SKILL_BACKTICKS = frozenset(
 # at `ralplan` (the plan itself), `deep-interview` (a proposal too vague to
 # attack), `code-review` (finished code, not a proposal), and `ultraqa`
 # (hostile runtime scenarios) -- four cases, four new pairs.
+# `llm-app-dev` is a new deferring owner: its do_not_use_when points at
+# `agent-evaluation` (comparing executors, not the product's own model calls),
+# `agent-debug` (a run already stuck or looping), `context-budget-review` (the
+# harness's own prompt cache, not the application), and `security-safety-review`
+# (a risk gate on work that already exists) -- four cases, four new pairs.
 # The domain skill pack adds three deferring owners and eleven cases: `backend`
 # points at `frontend`, `security-safety-review`, `verification-gate`, and
 # `rust`; `rust` points at `backend`, `native-debugging`, and `code-review`;
 # `native-debugging` points at `build-failure-triage`, `agent-debug`, `rust`,
 # and `verification-gate`. Eleven cases, eleven new pairs.
-EXPECTED_DEFERENCE_CASES = 150
-EXPECTED_DEFERENCE_PAIRS = 159
-EXPECTED_DEFERRING_OWNERS = 51
+EXPECTED_DEFERENCE_CASES = 154
+EXPECTED_DEFERENCE_PAIRS = 163
+EXPECTED_DEFERRING_OWNERS = 52
 
 # The ratchet. Recording a new inversion must be a visible edit to this number,
 # not one more dict line with a plausible sentence attached.

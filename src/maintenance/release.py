@@ -107,15 +107,18 @@ AWARENESS_PRIMER_CONTEXT_CHAR_LIMIT = 900
 AWARENESS_PRIMER_MARKDOWN_CHAR_LIMIT = 3210
 AWARENESS_WORKFLOW_CONTEXT_CHAR_LIMIT = 1500
 ROLE_CONTEXT_CHAR_LIMIT = 2600
-# 340000 -> 344689: three capability-skill sections were added by the domain
-# skill pack (`backend`, `rust`, `native-debugging`). Each section is well
-# under the per-item ceiling below; the growth is one section per new
-# workflow, not per-section padding.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 344689
+# 340000 -> 349637: three capability-skill sections were added by the domain
+# skill pack (`backend`, `rust`, `native-debugging`), on top of the
+# `llm-app-dev` section that landed on main under the old ceiling. Each section
+# is well under the per-item ceiling below; the growth is one section per new
+# workflow, not per-section padding. Re-measured on the merged tree after
+# #1181, #1183, and #1182 rather than carried over from this branch's base.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 349637
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
-# 100000 -> 101141: the same three domain workflows each add one standalone
-# capability row; warranted growth for three new workflows.
-STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 101141
+# 100000 -> 102070: the same three domain workflows each add one standalone
+# capability row, again measured on the merged tree; warranted growth for three
+# new workflows.
+STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 102070
 STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ULW fold context ceiling (issue #954, PR D). The limit is the pre-D measured
 # value of the full profile's `skill_body` chars on `main` @ acb9a060, in the
@@ -338,19 +341,54 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # mandatory planner handoff -- the rules that are wrong to discover late. The
 # remainder of the delta is the `+N more` lane line regenerating across the
 # eleven other `intent_to_plan` skills; warranted growth for a new workflow.
-# 756725 -> 781936: the domain skill pack added `backend` (8520 chars), `rust`
-# (8430), and `native-debugging` (8235) -- OMH's first technical-domain
-# workflows, each smaller than `frontend` (10698) and `adversarial-consensus`
-# (10355). The per-stack pointer table, the migration order, the UB category
-# table, and the debugger session recipes live in five on-demand references
-# (25685 chars total), outside this budget; what is always loaded is only what
-# is wrong to discover late -- the auth boundary before endpoints, the
+# 756725 -> 756890: `verification-gate`'s safety_rules gained one rule stating
+# that a change touching an authentication, secrets/config, schema/migration,
+# or payment/crypto path escalates to the thorough verification lane
+# regardless of diff size (+165 chars); warranted growth documenting the new
+# deterministic sensitive-path escalation (`quality/verification_tiering.py`)
+# absorbed into `_verification` in `coding_delegation.py`.
+# 756890 -> 758447: design-lane hardening across three existing skills. `visual-qa`
+# gained the scored-verdict stopping rule (integer 0-100 score, 90 pass line, a
+# mandatory edit-and-recapture round under it) plus the pixel-diff demotion, and
+# `frontend` gained the model-default-aesthetic rule (the editorial prior, the
+# briefs it suits and the ones it fails, and the tokens-not-negations override
+# test) with the review-prompt sweep. The verdict JSON shape, the three-state
+# loop exit, the default-prior sections, and the eight review prompts all live in
+# the on-demand references -- the new `omh-visual-qa/references/
+# visual-verdict-contract.md` (4898 chars) and the grown `taste-foundations.md`
+# (+3838) and `design-critique-rubric.md` (+1122) -- outside this budget; what is
+# always loaded is the threshold, the rerun obligation, and the two-line override
+# test, the rules that are wrong to discover after a surface has shipped
+# (+1557 chars); warranted growth.
+# 758447 -> 770048: the new `llm-app-dev` (`omh-llm-app-dev`) skill was added --
+# the build-discipline contract for an LLM-powered feature, whose always-loaded
+# body is 11577 chars, between `adversarial-consensus`'s 10355 and
+# `ultrawork`'s 23881. The per-rail decisions and the eval-harness procedure
+# live in the two on-demand references (`build-rails.md` 6348 chars,
+# `eval-harness.md` 4744), outside this budget; what is always loaded is the
+# rail order, the one-client-boundary and exact-model-ID rules, the
+# schema-first validate-and-repair rule, the prompt-artifact separation, the
+# retrieval-before-generation order, and the eval deliverables -- the rules that
+# are expensive to discover after the call sites exist. The remainder of the
+# delta is the `+N more` lane line regenerating across the twelve other
+# `coding_handoff` skills. Value re-measured on each merge of origin/main this
+# branch has taken (#1181, then #1183): the delta is +11601 every time, so this
+# ratchet move is additive to the ones below it rather than overlapping any of
+# them; warranted growth for a new workflow.
+# 770048 -> 795266: the domain skill pack added `backend`, `rust`, and
+# `native-debugging` -- OMH's first technical-domain workflows, closing its two
+# zero-coverage engineering domains. Each always-loaded body is smaller than
+# `frontend`'s and than `llm-app-dev`'s; the per-stack pointer table, the
+# migration order, the UB category table, and the debugger session recipes live
+# in five on-demand references, outside this budget. What is always loaded is
+# only what is wrong to discover late -- the auth boundary before endpoints, the
 # deterministic unsafe/FFI/lock-free escalation trigger, and the
 # three-hypotheses-on-distinct-axes floor. The remainder of the delta is the
-# `+N more` lane line regenerating across the twelve other `coding_handoff`
-# skills; warranted growth for three workflows closing two zero-coverage
-# technical domains.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 781936
+# `+N more` lane line regenerating across the other `coding_handoff` skills.
+# Re-measured on the merged tree after #1181, #1183, and #1182 rather than
+# carried over from this branch's pre-merge base; warranted growth for three
+# workflows closing two zero-coverage technical domains.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 795266
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

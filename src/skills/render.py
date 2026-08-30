@@ -31,6 +31,8 @@ from .catalog_types import (
     ADVERSARIAL_CONSENSUS_PERSPECTIVES,
     ADVERSARIAL_CONSENSUS_ROUNDS,
     DELEGATION_TRANSPARENCY_RULES,
+    LLM_APP_DEV_EVAL_DELIVERABLES,
+    LLM_APP_DEV_RAILS,
 )
 from .expert_question_rendering import (
     copy_expert_question_payloads,
@@ -3013,6 +3015,154 @@ The last row is the one that gets skipped. A symptom that stopped appearing afte
 """
 
 
+def llm_app_dev_reference_templates() -> list[SkillReferenceTemplate]:
+    return list(_llm_app_dev_reference_templates_cached())
+
+
+@lru_cache(maxsize=1)
+def _llm_app_dev_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
+    return (
+        SkillReferenceTemplate("llm-app-dev", "references/build-rails.md", _llm_app_build_rails_reference()),
+        SkillReferenceTemplate("llm-app-dev", "references/eval-harness.md", _llm_app_eval_harness_reference()),
+    )
+
+
+def _llm_app_build_rails_reference() -> str:
+    """Render the per-rail decisions from the catalog's own rail vocabulary.
+
+    The rail names are interpolated from `catalog_types` rather than retyped, so
+    this reference and the always-loaded `SKILL.md` quality bar cannot drift into
+    two different disciplines.
+    """
+    rails = ", ".join(f"`{rail}`" for rail in LLM_APP_DEV_RAILS)
+    return f"""# LLM App Build Rails
+
+Load this reference when preparing the build handoff. The always-loaded skill body states the rules; this is the per-rail decision, what it costs to defer, and the failure mode that shows up when the rail is missing.
+
+Everything here is a prepared handoff contract. OMH makes no provider call, runs no eval, and observes no token count. A rail decision recorded here is a design, not evidence that any code exists.
+
+The rails, in the order a late decision gets expensive: {rails}.
+
+## 1. Provider Boundary
+
+One module owns the provider client. It holds the model ID, the credential lookup, the timeout, the retry policy, and the rate-limit backoff, and every feature calls through it.
+
+- **Model ID is exact.** `claude-opus-4-1-20250805`, not `claude-opus-latest`. A floating alias silently re-points under a benchmark, and the run that "regressed" was measuring a different model. Keep the ID in one named constant or config value, and record it beside any result meant to be compared with another result.
+- **Credentials come from the environment or a secret store.** Never a literal in source, a prompt file, a test fixture, or an example. A key committed once is a key rotated forever.
+- **Failures are classified, not swallowed.** Timeout, rate limit, transient 5xx, invalid request, and content refusal are five different outcomes, and only the first three are safe to retry. A single broad `except` around the call turns a schema bug into an infinite retry loop and a quota exhaustion into a silent empty answer.
+- **Retries are bounded and idempotent.** Cap the attempts, back off exponentially with jitter, honor the provider's retry-after header when it sends one, and never retry a request the caller cannot afford to have executed twice.
+- **Timeouts are explicit at both levels.** A per-request timeout and a total budget for the operation; a streaming call that stalls mid-response is not covered by a connect timeout alone.
+
+Deferring this rail means every later call site invents its own model pin, timeout, and retry policy, and they diverge without anyone deciding that they should.
+
+## 2. Structured Output
+
+Decide the output contract before the prompt. The caller consumes a shape, so declare the shape.
+
+- **Schema first.** A JSON schema, a typed model, or the provider's structured-output/tool-call mode. The schema is the contract; the prompt is the attempt to satisfy it.
+- **Validate every response.** Parse and validate before the value reaches any caller. An unvalidated response is an unvalidated input from an external system that happens to be fluent.
+- **Repair once, then fail loudly.** On a validation error, re-ask once with the specific error text included, then fail. An unbounded repair loop is a token bill with no exit condition, and a silent fallback to a default value is the false-green that makes a broken extractor look healthy for a month.
+- **Never regex-scrape prose.** Pulling a field out of a paragraph with a regular expression works until the model rephrases, and then it fails without an error. If the output is worth parsing, it is worth declaring.
+
+Deferring this rail means the parsing lives at the call sites, and every prompt edit becomes a parser edit nobody remembers to make.
+
+## 3. Prompt Artifacts
+
+A prompt is source code with a review history, not a string literal.
+
+- **Files, not inline strings.** A prompt in a file shows up in a diff; a prompt inside a function body does not, and neither does the change that broke it.
+- **Version identifier.** Give each prompt a version the call site records with its output, so a bad response can be traced to the prompt that produced it.
+- **Separate the channels.** System rules (what the model always is), task instruction (what this call must do), and injected context (retrieved documents, user input, tool results) are three regions with three trust levels. Concatenating them into one blob is how a document becomes an instruction.
+- **Injection-aware handling of untrusted content.** Retrieved documents, uploads, tool output, and web pages are data. Fence them, label them as untrusted, and state in the system region that content inside the fence never changes the task. Then assume the fence can still fail: the real defense is that the model's output is schema-validated and its tools are least-privilege, so a successful injection cannot do anything the caller did not already authorize.
+
+Deferring this rail means nobody can answer which prompt produced last week's bad output.
+
+## 4. Retrieval Grounding
+
+Only build this rail if the feature retrieves. If it does, it is the rail most likely to be blamed for a generation problem it did not cause.
+
+- **Chunking is a decision, not a default.** Chunk size, overlap, and boundary (paragraph, section, semantic) change what can be retrieved at all. Record the choice; a retrieval failure caused by a mid-sentence split cannot be prompted away.
+- **Citations are grounding, not decoration.** Every claim the model makes from retrieved context carries the chunk it came from, so an unsupported claim is visible rather than plausible.
+- **Evaluate retrieval before generation.** Measure whether the right chunk was in the context window at all, with a retrieval metric on a labeled set. A generation score sitting on top of unmeasured retrieval cannot separate a bad answer from a bad document set, and the team spends a week rewriting a prompt that was never the problem.
+
+Deferring this rail means every quality complaint gets answered with a prompt edit.
+
+## 5. Evaluation
+
+Named here for ordering; the shape of the deliverables and the comparison record are in `references/eval-harness.md`.
+
+The rule that belongs on this rail: the eval suite is part of the feature, not a follow-up ticket. A feature that ships without a golden set has no way to answer whether the next prompt edit helped, and the answer defaults to whoever tried it and liked the output.
+
+## Evidence Boundary
+
+A rail decision, a schema, a prompt layout, or an eval design is prepared work. It is not implementation, an observed eval run, review, CI, or merge evidence. Token counts, latency, and cost belong to runs; a figure no run reported stays null and is never estimated from a pricing table.
+"""
+
+
+def _llm_app_eval_harness_reference() -> str:
+    """Render the eval deliverables from the catalog's own deliverable vocabulary."""
+    deliverables = "\n".join(f"- **{item}**" for item in LLM_APP_DEV_EVAL_DELIVERABLES)
+    return f"""# LLM Feature Eval Harness
+
+Load this reference when the work is the eval suite: the golden set, the validators, and the comparison that decides whether a prompt or model swap ships.
+
+This is a prepared contract. OMH runs no eval and observes no result. A designed comparison is not a comparison that happened.
+
+## The Deliverables
+
+{deliverables}
+
+They are artifacts committed beside the code, not activities described in a chat log. "We tested it and it looked better" is the state this workflow exists to replace.
+
+## 1. The Golden Set
+
+A golden set is a small, committed collection of task inputs with their expected outcomes.
+
+- **Seed it from real failures.** The cases worth keeping are the ones that already broke: the invoice with two dates, the question the retriever missed, the input that produced a confidently wrong answer. A golden set written from imagination measures the imagination.
+- **Keep it small and adversarial.** Twenty cases that each isolate a distinct failure beat five hundred that all exercise the happy path. The cost of the set is paid on every run.
+- **Store it as data.** A JSON/CSV/YAML file under version control, with a stable case ID per row, so a result can name which cases moved.
+- **Grow it on every escape.** Any defect found in production becomes a case before it is fixed. This is the only mechanism that keeps the set aimed at what actually breaks.
+
+## 2. The Validator Ladder
+
+Prefer the most deterministic validator the task allows, and climb only when the rung below genuinely cannot express the check:
+
+1. **Exact or normalized match** - the output is a field, an ID, a label, a number. Compare it. This is a boolean, not a similarity score.
+2. **Schema and constraint checks** - the output parses, every required field is present, values are in range, referenced IDs exist. Cheap, deterministic, and catches the majority of real regressions.
+3. **Programmatic property checks** - the citation resolves to a real chunk, the summary contains no entity absent from the source, the SQL parses and runs against a fixture.
+4. **Model-graded rubric** - only for genuinely open outputs, and only with a fixed rubric, a pinned grader model ID, and a human-labeled sample confirming the grader agrees with people. A model-graded score with an unpinned grader is a moving ruler.
+
+A task-level verdict is pass or fail per case. Aggregate scores hide which case broke; keep the per-case results.
+
+## 3. The Comparison Record
+
+Run the regression **before** the swap, not after it.
+
+- **Same set, same validators, both sides.** Baseline and candidate run against the identical golden set. A comparison whose two sides ran different cases is not a comparison.
+- **Pin both sides.** Record the exact model ID and the prompt version for baseline and for candidate. This is the reason both rails exist.
+- **Capture tokens and cost per run.** Prompt tokens, completion tokens, and cost belong in the record, because a candidate that is two points better and four times more expensive is a decision, not a win.
+- **Report per-case movement.** Which cases newly pass, which newly fail. A net-positive run that broke a case someone reported last month is not an improvement.
+- **Missing telemetry stays null.** If the harness did not report tokens, latency, or cost, the field is null and the report says the harness did not report it. Never reconstruct a token count from a pricing table or a character count; an estimate presented beside observed numbers reads as observed.
+
+## 4. What A Result Is Not
+
+- A designed comparison is not a result. Until the run happened and its output was observed, every number is absent, not zero.
+- A passing eval is not implementation, review, CI, or merge evidence.
+- A golden-set pass rate is a statement about the golden set. It bounds the claim to the cases in the file, and the honest report says so.
+
+## Anti-Patterns
+
+| Pattern | Why it fails |
+| --- | --- |
+| Eyeballing a few outputs after a prompt edit | The sample is chosen after the change, by the person who wants it to work. |
+| One aggregate quality score | It cannot say which case regressed, so it cannot block a swap. |
+| Model-graded everything | An unpinned grader drifts, and a rubric nobody validated against human labels measures the grader. |
+| Golden set written up front, never grown | It ossifies around the failures imagined on day one and misses every real one. |
+| Comparing a candidate against a remembered baseline | The baseline was a different prompt, a different model, or a different day. Re-run it. |
+| Estimating cost from a pricing page | An estimate placed beside observed metrics is read as observed. Leave it null. |
+"""
+
+
 def context_skill() -> SkillTemplate:
     """Render the canonical project-terminology workflow with progressive references."""
     template = workflow_skill("context")
@@ -3651,6 +3801,11 @@ def _design_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
             "references/design-critique-rubric.md",
             _design_critique_rubric_reference(),
         ),
+        SkillReferenceTemplate(
+            "visual-qa",
+            "references/visual-verdict-contract.md",
+            _visual_verdict_contract_reference(),
+        ),
     )
 
 
@@ -3781,6 +3936,77 @@ at all.
 - **Bold / expressive** — statement pages that lead with oversized display
   type and hard contrast, breaking one grid rule at a time on purpose.
   Typical failure: every element shouting, so nothing leads.
+
+## The default aesthetic you already carry
+
+A coding model does not start neutral. Left to its own judgment it converges
+on one house style — cream and off-white grounds, a serif display face over a
+quiet sans, muted terracotta or clay accents, wide margins, an editorial
+rhythm. It is a real aesthetic and often a good one, but it is a prior, not a
+response to the brief, and it arrives whether or not anyone chose it.
+
+Say which case the brief is before using it:
+
+- **It suits** editorial and long-form reading, portfolio and studio sites,
+  hospitality, food, wellness, and print-adjacent marketing — briefs where
+  warmth and unhurried calm are the product.
+- **It is a failure mode** for dashboards, developer tools, admin consoles,
+  fintech, trading, analytics, and anything data-dense. Cream grounds wash out
+  status color, serif display faces fight tabular figures, and editorial
+  margins spend the width a dense table needs. An operational brief rendered
+  in the default prior reads as a blog that grew a table.
+
+## Overriding the default takes tokens, not negations
+
+"Don't make it look AI-generated", "make it minimal", "less generic", "more
+modern" — none of these move the output. They retire one default and leave the
+next-most-likely default in its place, which is usually the same house style
+with the serif swapped out. A negation names what to stop; it never names
+where to go.
+
+An override is actionable only when it carries concrete values:
+
+- a palette as hex — every background layer, every text level, the accent and
+  its budget;
+- a typeface stack — display family, text family, and fallbacks, including the
+  CJK stack when the audience needs one;
+- the geometry that travels with them: radius, border weight, spacing base.
+
+Those land in `DESIGN.md` sections 2 and 3 before implementation starts. When
+the direction arrives as negations only, convert it into tokens and state them
+back — a named palette and stack the user can reject is a decision; "less
+AI-looking" is not.
+
+## Review prompts — not bans
+
+The patterns below are not forbidden. They are the ones that show up when
+nothing chose them, so each is a question the review asks; a stated reason
+closes it and keeps the pattern.
+
+- **Framework blue** — is the primary `#3B82F6` (or a framework-default
+  neighbour) because the brand is blue, or because it was already there? A
+  default accent with no brand rationale is an unmade decision.
+- **Glass surfaces and cyan-to-purple gradients** — what do the blur and the
+  gradient communicate? Depth and brand can both justify them; "it looked
+  modern" cannot.
+- **Inter everywhere** — Inter and the system stack are good text faces and
+  poor signatures. Is anything on the page doing typographic work the default
+  UI face is not?
+- **Bounce easing** — does the overshoot describe a physical motion the user
+  initiated, or is it decoration on a menu that should settle?
+- **Shadows on every surface** — elevation is a hierarchy signal, and when
+  every card carries the same shadow it signals nothing. Which surfaces are
+  deliberately raised, and above what?
+- **Eyebrow, title, description, on every section** — does each section need
+  all three, or did the template supply them? Stacked labels above every
+  heading are padding wearing hierarchy's clothes.
+- **The uniform grid** — a perfect 3- or 4-column row is right when the items
+  are peers of equal weight. When they are not, an asymmetric or bento rhythm
+  says which one leads, and the uniform grid says nothing leads.
+- **CJK body under 14px** — Korean, Japanese, and Chinese glyphs carry more
+  strokes inside the same em. Copy that reads cleanly at 13px in Latin is
+  degraded in CJK: hold a 14px floor for Korean body text, and measure
+  captions against that floor instead of shrinking below it.
 
 ## Anti-slop checklist — reject on sight
 
@@ -4126,6 +4352,24 @@ axis explicitly; a PASS with no named evidence per axis is not a review.
 - **CJK and localization fit** — when the audience needs it: fallback
   stacks, line-height, and truncation behave in the heavy script. FAIL:
   Latin-tuned metrics breaking CJK text.
+- **Default-prior fit** — the surface does not silently inherit the model's
+  own house aesthetic (cream ground, serif display, terracotta accent) where
+  the brief is operational or data-dense. FAIL: an editorial prior applied to
+  a dashboard, fintech, or developer-tool surface with no stated reason.
+- **Chosen, not inherited** — framework blue, glass surfaces, gradient
+  accents, the default UI typeface, per-surface shadows, and uniform column
+  grids each carry a stated reason or are replaced. FAIL: a default present
+  with no rationale, checked against the review prompts in
+  `omh-frontend/references/taste-foundations.md`.
+
+## Scoring the axes
+
+The axes produce the deductions; the number and the stopping rule live in
+`omh-visual-qa/references/visual-verdict-contract.md`. Use them together —
+each FAIL named here becomes one entry in that contract's `differences` list,
+paired with the smallest change that would flip it, and the round carries an
+integer score with its verdict. 90 is the pass line; under it the verdict is
+REVISE and another edit-and-recapture round is owed, not a softer adjective.
 
 ## Verdict discipline
 
@@ -4144,4 +4388,105 @@ axis explicitly; a PASS with no named evidence per axis is not a review.
   from description alone.
 
 {_DESIGN_CRAFT_ATTRIBUTION}
+"""
+
+
+def _visual_verdict_contract_reference() -> str:
+    material = """# Visual Verdict Contract
+
+Subjective visual work has no natural stopping point. "Looks better" ends the
+loop whenever patience runs out, which is how a surface gets revised four
+times and ships the same defect. This contract gives the loop a number: one
+scored verdict per capture round, a threshold that decides whether the round
+ends, and a required next action when it does not.
+
+## The verdict shape
+
+A round returns one JSON object and nothing else — no prose above it, no
+commentary after it:
+
+```json
+{
+  "score": 84,
+  "verdict": "REVISE",
+  "differences": [
+    {
+      "difference": "Card padding is 12px against the reference's 24px, so the three-up row reads cramped at 1440px.",
+      "suggestion": "Raise card padding to the contract's space-6 step and recapture the row at 1440/768/375."
+    }
+  ]
+}
+```
+
+- `score` — an integer from 0 to 100. Not a band, not a letter, not a range: a
+  whole number, so two rounds are comparable and a regression is visible.
+- `verdict` — `PASS`, `REVISE`, or `BLOCK`, the same three states
+  `visual_qa_verdict/v1` already carries.
+- `differences` — one entry per observed difference, each pairing what is
+  wrong with the smallest change that would fix it. A difference with no
+  suggestion is an unfinished finding; a suggestion with no difference is an
+  opinion. Neither is admissible.
+
+An empty `differences` list under a sub-threshold score is a contradiction:
+either the differences were never written down, or the score was guessed.
+
+## The threshold
+
+**90 is the pass line.** At or above it the round may return `PASS`, provided
+the evidence rules below still hold. Under it the verdict is `REVISE` and the
+loop is not over: the differences go back to the implementation owner, the
+named edits land, the same pages, states, and viewports are recaptured, and a
+fresh scored round runs against the new captures. Rescoring the same captures
+is not a round.
+
+The loop ends in one of three stated states:
+
+- the round scores 90 or above and the evidence rules hold — `PASS`;
+- the round scores under 90 and another edit-and-recapture round is available
+  — `REVISE`, with the differences attached;
+- the round cannot proceed — missing captures, mismatched lineage, an
+  exhausted iteration budget — `BLOCK`, naming exactly what is missing. An
+  exhausted budget is a reported blocker, never a quiet `PASS`.
+
+The score never substitutes for the lineage rule. A 96 on captures whose
+repository and revision do not match the package target is still not a `PASS`.
+
+## Pixel diff is the secondary aid
+
+An objective diff — `diffRatio`, `similarityScore`, `dimensionsMatch`, hotspot
+coordinates — answers where two images differ. It does not answer whether the
+difference matters, and it cannot see a defect that is pixel-identical to its
+reference and wrong anyway: contrast under the floor, a label that says the
+wrong thing, a hierarchy that reads flat.
+
+So the diff localizes hotspots; it does not score:
+
+- it points the review at the regions worth looking at first;
+- it never produces the `score`, and a low `diffRatio` is not evidence of a
+  high one;
+- a region with no diff is still judged on the rubric axes;
+- `visual_diff_evidence/v1` and `visual_hotspot_review/v1` stay separate
+  fields from the verdict, because they answer a different question.
+
+The score comes from the rubric instead: the axes in
+`omh-design-quality-gate/references/design-critique-rubric.md`, judged against
+the declared target, with `differences` as the working record of every
+deduction.
+
+## Boundary
+
+OMH prepares this contract; it does not run it. Captures, edits, and reruns
+happen in whichever executor or wrapper lane the user selected — named in the
+handoff, never assumed. What OMH holds is the shape of the verdict, the
+threshold, and the rule that a sub-threshold score owes another observed
+round. A scored verdict with no attached observed captures is a prepared
+claim, not an observed one.
+"""
+    return f"""{material}
+{_DESIGN_CRAFT_ATTRIBUTION}
+
+The scored-verdict shape additionally adapts the score-then-iterate pattern
+common to community visual-review skills, restated in OMH's prepared-versus-
+observed vocabulary. No text from any of them is reproduced either; the
+wording here is OMH's own.
 """

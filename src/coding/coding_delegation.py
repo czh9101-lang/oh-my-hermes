@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 import hashlib
@@ -72,6 +73,7 @@ from .context_safety import (
 )
 from ..harness_quality import with_wrapper_actions
 from ..quality.specialist_work import build_specialist_work_quality_contract
+from ..quality.verification_tiering import sensitive_path_escalation
 from ..ingress import CHAT_SOURCES, extract_message_text, extract_source_metadata
 from ..isolation import build_isolation_plan
 from ..memory import validate_handoff_context_blocked, validate_handoff_context_pack, validate_project_memory_recall_pack
@@ -548,6 +550,11 @@ def _build_coding_delegation_payload_native(
         workflow = "oh-my-hermes"
     harness = primary_harness_for_skill(workflow)
     review_required = _review_required(message, intent, workflow)
+    # Same extraction `_safety_preflight_request` uses below for its own
+    # `target_paths` declaration -- reused here (and re-derived there) rather
+    # than threaded through the dataclass, since it is a pure, cheap scan of
+    # the message and the two call sites read it for unrelated purposes.
+    verification_target_paths = _safety_preflight_target_paths(message)
     delegation = CodingDelegation(
         action=action,
         intent=intent,
@@ -555,7 +562,7 @@ def _build_coding_delegation_payload_native(
         recommended_harness=harness,
         executor_profile=_executor_profile(intent, action),
         acceptance_criteria=_acceptance_criteria(intent, action, workflow),
-        verification=_verification(intent, action, workflow),
+        verification=_verification(intent, action, workflow, target_paths=verification_target_paths),
         review_required=review_required,
         review_workflow="code-review" if review_required else None,
         delegation_prompt_template=_delegation_prompt_template(action, intent, workflow, harness),
@@ -1652,7 +1659,7 @@ def _acceptance_criteria(intent: str, action: str, workflow: str) -> tuple[str, 
     return criteria
 
 
-def _verification(intent: str, action: str, workflow: str) -> tuple[str, ...]:
+def _verification(intent: str, action: str, workflow: str, target_paths: Sequence[str] = ()) -> tuple[str, ...]:
     if action == "fallback":
         return ("No executor verification until the task is clarified.",)
     if action == "clarify":
@@ -1668,6 +1675,14 @@ def _verification(intent: str, action: str, workflow: str) -> tuple[str, ...]:
         intent,
         ("Run targeted tests for the changed behavior.", "Run static or compile checks when available."),
     )
+    # Path escalation (verification tiering): a target that touches a
+    # security-sensitive surface forces the thorough verification lane
+    # regardless of how small the change is. This runs after the intent-based
+    # checklist so the escalation reason is always the last, most specific
+    # line rather than folded into (and possibly lost among) the base checks.
+    escalation = sensitive_path_escalation(target_paths)
+    if escalation is not None:
+        checks = (*checks, f"Escalate to the thorough verification lane: {escalation['reason']}")
     return checks
 
 

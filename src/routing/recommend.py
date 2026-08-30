@@ -207,6 +207,45 @@ _ADVERSARIAL_CONSENSUS_EXPLICIT_PHRASES = tuple(
         "허점 찾아",
     )
 )
+# Complete phrases that mean building an LLM feature, not discussing one. The
+# workflow's own tokens are held back by `_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS`
+# below, so without this direct match a full trigger phrase scores only the +6
+# phrase credit and loses to whatever else the sentence mentions. The boost is
+# sized above the ordinary name/phase/metadata band and below the guard rules',
+# so an explicit code-edit request on an LLM component still reaches the coding
+# lane rather than this design pass.
+#
+# Only intent-bearing phrases are listed. The catalog also triggers on the bare
+# subject nouns `rag pipeline` and `golden set` (and their Korean forms), and
+# they are deliberately NOT boosted here: with the boost they carried
+# "refactor the rag pipeline module", "rename the rag pipeline package", and
+# "delete the golden set fixture" -- ordinary code edits that name an LLM
+# component and belong to the coding lane. Left at the +6 phrase credit those
+# sentences route on their verb, while "build a rag pipeline" still lands here.
+_LLM_APP_DEV_EXPLICIT_PHRASES = tuple(
+    normalized_phrase(phrase)
+    for phrase in (
+        "llm-app-dev",
+        "llm app development",
+        "llm application development",
+        "build an llm app",
+        "build an llm feature",
+        "llm feature development",
+        "build a rag pipeline",
+        "retrieval augmented generation",
+        "structured output schema",
+        "json schema output",
+        "prompt versioning",
+        "llm eval suite",
+        "llm 앱 개발",
+        "llm 애플리케이션 개발",
+        "llm 기능 개발",
+        "rag 파이프라인 구축",
+        "구조화된 출력 스키마",
+        "프롬프트 버전 관리",
+        "llm 평가셋",
+    )
+)
 _FAILURE_SIGNAL_AUDIT_EXPLICIT_PHRASES = tuple(
     normalized_phrase(phrase)
     for phrase in (
@@ -478,6 +517,22 @@ _SKILL_POLICIES = {
         next_action="present_meta_route",
         evidence_boundary="A meta-routing decision names the workflow(s) to run; it is not execution, review, CI, or merge evidence.",
         wrapper_guidance="Reason over the /omh remainder, consult the live catalog with omh recommend --json, exclude meta-router itself, and present the chosen workflow or chain with its evidence boundary.",
+    ),
+    # `llm-app-dev` sits in the `delivery` category for its reasoning demand and
+    # role, but the category policy is idea-to-deploy's app delivery loop --
+    # idea, decision, plan, deploy, monitor. That is the wrong card: this
+    # workflow never reaches deploy, and its output is a build handoff with rail
+    # decisions, not a release stage rail.
+    "llm-app-dev": RecommendationPolicy(
+        next_action="prepare_llm_app_build",
+        evidence_boundary=(
+            "An LLM app build handoff is not a provider call, an observed eval run, a token or cost measurement, "
+            "implementation, review, CI, or merge evidence; telemetry no run reported stays null and is never estimated."
+        ),
+        wrapper_guidance=(
+            "Show the rail decisions, the output schema and its repair path, the prompt artifact layout, and the eval "
+            "deliverables; keep model responses, eval results, token counts, and cost unobserved until a run reports them."
+        ),
     ),
     "cancel": RecommendationPolicy(
         next_action="cancel",
@@ -1716,6 +1771,51 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
             "찾아",
         }
     ),
+    # `llm-app-dev` is named out of the most generic vocabulary in the catalog:
+    # `llm`, `app`, `build`, `output`, `schema`, `prompt`, `eval`, `set`. Split
+    # into tokens, "what does an llm agent eval look like?" and "the app build
+    # failed" both credit this workflow, and `llm` alone appears in every
+    # sentence about agents -- which is `agent-evaluation`'s and `agent-debug`'s
+    # subject, not this one. `rag` is held back for the same reason even though
+    # it looks distinctive: crediting it dispatched "rename the rag pipeline
+    # package" and "refactor the rag pipeline module" -- ordinary renames on an
+    # LLM component -- at a score of 9 against a field of 4s. Only `dev` and
+    # `llm-app` stay creditable on their own; the rest carry the intent only
+    # inside a complete trigger phrase, which the phrase match and the
+    # `direct:llm_app_dev` boost cover.
+    #
+    # English only, deliberately. `routing_tokens` decomposes Hangul, so a
+    # Korean entry written here in composed form never matches the decomposed
+    # token and is a silent no-op -- the same already-shipped shape as
+    # `adversarial-consensus`'s Korean entries. The Korean triggers do not need
+    # the hold-back: measured on "앱 개발 시작하자", "기능 개발 계획 세워줘",
+    # "버전 관리 어떻게 해?", "출력 형식 바꿔줘", and "프롬프트 좀 고쳐줘", their
+    # token credit tops out at 6, which stays in clarify and never dispatches.
+    "llm-app-dev": frozenset(
+        {
+            "app",
+            "application",
+            "augmented",
+            "build",
+            "development",
+            "eval",
+            "feature",
+            "generation",
+            "golden",
+            "json",
+            "llm",
+            "output",
+            "pipeline",
+            "prompt",
+            "rag",
+            "retrieval",
+            "schema",
+            "set",
+            "structured",
+            "suite",
+            "versioning",
+        }
+    ),
 }
 
 
@@ -1836,6 +1936,9 @@ def _score_definition(
     if definition.name == "adversarial-consensus" and _adversarial_consensus_explicit_match(normalized_query):
         score += 30
         matched.add("direct:adversarial_consensus")
+    if definition.name == "llm-app-dev" and _llm_app_dev_explicit_match(normalized_query):
+        score += 30
+        matched.add("direct:llm_app_dev")
     if definition.name == "failure-signal-audit" and _failure_signal_audit_explicit_match(normalized_query):
         score += 34
         matched.add("direct:failure_signal_audit")
@@ -2436,6 +2539,10 @@ def _adversarial_consensus_explicit_match(normalized_query: str) -> bool:
         _explicit_phrase_match(normalized_query, phrase)
         for phrase in _ADVERSARIAL_CONSENSUS_EXPLICIT_PHRASES
     )
+
+
+def _llm_app_dev_explicit_match(normalized_query: str) -> bool:
+    return any(_explicit_phrase_match(normalized_query, phrase) for phrase in _LLM_APP_DEV_EXPLICIT_PHRASES)
 
 
 def _failure_signal_audit_explicit_match(normalized_query: str) -> bool:

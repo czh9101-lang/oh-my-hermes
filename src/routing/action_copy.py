@@ -46,6 +46,7 @@ NEXT_ACTION_LABELS: dict[str, str] = {
     "prepare_failure_signal_audit": "preparing a failure signal audit",
     "prepare_finance_analysis": "preparing a finance analysis",
     "prepare_people_ops_brief": "preparing a people-operations brief",
+    "prepare_llm_app_build": "preparing the LLM app build handoff",
     "prepare_learning_brief": "confirming the learning target and preparing the learning brief",
     "prepare_legal_compliance_review": "preparing a legal and compliance review",
     "prepare_support_operations": "preparing support triage and reply guidance",

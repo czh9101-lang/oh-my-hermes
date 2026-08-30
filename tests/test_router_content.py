@@ -3768,7 +3768,7 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("`deep-interview`, `ralplan`, `loop`", docs_readme)
         # Retired engines must not be presented as current planning skills.
         self.assertNotIn("`ultragoal`", docs_readme)
-        self.assertIn("**107 installable skills**", docs_readme)
+        self.assertIn("**108 installable skills**", docs_readme)
         self.assertIn("**Retain knowledge**", docs_readme)
         self.assertIn("python -m unittest discover -s tests", ci)
         self.assertIn("python -m compileall src", ci)

@@ -51,7 +51,7 @@ Bad example:
 
 ## Workflow Lane
 
-- Current lane: **Coding handoff** (`idea-to-deploy`, `cto-loop`, `deploy-and-monitor`, `code-review`, `build-failure-triage`, `verification-gate`, `security-safety-review`, `ultrawork`, `+10 more`) - coding owners, handoffs, review, CI, and merge evidence.
+- Current lane: **Coding handoff** (`idea-to-deploy`, `llm-app-dev`, `cto-loop`, `deploy-and-monitor`, `code-review`, `build-failure-triage`, `verification-gate`, `security-safety-review`, `+11 more`) - coding owners, handoffs, review, CI, and merge evidence.
 - If intent belongs to another lane, hand back to `oh-my-hermes` or name the adjacent workflow.
 - Shared product, routing, compatibility, and evidence rules: `omh-routing/references/skill-common-rail.md`.
 
@@ -107,6 +107,7 @@ Safety rules:
 - Do not treat a planned command, stale output, green local check, or prepared handoff as fresh verification evidence.
 - Do not collapse build, lint, tests, security, generated docs, review, CI, DCO, merge-readiness, or merge into one claim.
 - Failed or unavailable checks must produce HOLD/BLOCK with a rerun or remediation path.
+- A change touching an authentication, secrets/config, schema/migration, or payment/crypto path escalates to the thorough verification lane regardless of diff size.
 
 ## Runtime Evidence
 

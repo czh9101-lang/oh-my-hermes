@@ -822,6 +822,39 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_directly",
         "direct_answer",
     ),
+    # llm-app-dev shield. The workflow is named out of the most generic
+    # vocabulary in the catalog -- `llm`, `app`, `rag`, `prompt`, `eval` -- and
+    # every one of those words also appears in a question ABOUT LLMs, which is a
+    # direct answer, and in the subject matter of the agent-operations skills,
+    # which are a different lane. These pin the boundary from the negative side.
+    RoutingPrecisionCase(
+        "llm-concept-question",
+        "An LLM concept question stays a direct answer, not an app build handoff",
+        "what is an llm?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "llm-concept-question-korean",
+        "A Korean LLM concept question stays a direct answer",
+        "llm이 뭐야?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "retrieval-augmented-generation-concept",
+        "A retrieval-augmented-generation concept question stays a direct answer",
+        "what is retrieval augmented generation?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "rag-concept-question-korean",
+        "A Korean RAG concept question stays a direct answer",
+        "rag가 뭐야?",
+        "answer_directly",
+        "direct_answer",
+    ),
     # Ask bare-token retirement: "claude code가 뭐야" previously reached `ask` via
     # the now-removed bare `claude` trigger at score 9. With that token gone the
     # top catalog matches tie at score 4, so this pins the honest new
@@ -3147,6 +3180,64 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "frontend",
         "prepare_frontend_handoff",
         "frontend_handoff",
+    ),
+    RoutingInterventionCase(
+        "llm-app-dev-direct-invocation",
+        "Direct llm-app-dev invocation opens the LLM app build handoff",
+        "$llm-app-dev",
+        "dispatch",
+        "llm-app-dev",
+        "prepare_llm_app_build",
+        "llm_app_build",
+    ),
+    RoutingInterventionCase(
+        "rag-pipeline-build-request",
+        "A RAG pipeline build request opens the LLM app build handoff",
+        "build a rag pipeline",
+        "dispatch",
+        "llm-app-dev",
+        "prepare_llm_app_build",
+        "llm_app_build",
+    ),
+    RoutingInterventionCase(
+        "prompt-versioning-request",
+        "A prompt-versioning request opens the LLM app build handoff",
+        "we need prompt versioning before the next model swap",
+        "dispatch",
+        "llm-app-dev",
+        "prepare_llm_app_build",
+        "llm_app_build",
+    ),
+    RoutingInterventionCase(
+        "structured-output-schema-request",
+        "A structured-output schema request opens the LLM app build handoff",
+        "structured output schema for the invoice extractor",
+        "dispatch",
+        "llm-app-dev",
+        "prepare_llm_app_build",
+        "llm_app_build",
+    ),
+    RoutingInterventionCase(
+        "korean-llm-app-development-request",
+        "A Korean LLM app development request opens the LLM app build handoff",
+        "llm 앱 개발 시작하자",
+        "dispatch",
+        "llm-app-dev",
+        "prepare_llm_app_build",
+        "llm_app_build",
+    ),
+    # The other half of the llm-app-dev guard. Its triggers carry `eval`, and
+    # comparing executors is `agent-evaluation`'s subject, not this workflow's;
+    # without this case a trigger regression that swallowed the agent-operations
+    # lane would look like a pass.
+    RoutingInterventionCase(
+        "executor-comparison-keeps-agent-evaluation",
+        "An executor comparison stays with agent-evaluation, not the LLM app build handoff",
+        "run an agent evaluation across codex and claude",
+        "dispatch",
+        "agent-evaluation",
+        "prepare_agent_evaluation",
+        "agent_evaluation",
     ),
 )
 

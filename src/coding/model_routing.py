@@ -123,6 +123,10 @@ MODEL_CATALOG_KINDS: Final[tuple[str, ...]] = (
     "built_in_defaults",
     "local_inventory",
     "editorial_recommendations",
+    # The operator's category-maestro config merged over the built-in table
+    # (`~/.omh/routing/category-maestro.json`); such routes also carry the
+    # config's fingerprint so a frozen record names its exact basis.
+    "operator_category_config",
 )
 
 EXECUTOR_MODEL_OPTIONS: Final[dict[str, tuple[dict[str, object], ...]]] = {
@@ -460,6 +464,7 @@ def resolve_model_route(
     requested_scale: str = "",
     requested_category: str = "",
     chains: Mapping[str, Mapping[str, tuple[Mapping[str, str], ...]]] | None = None,
+    category_config: Mapping[str, object] | None = None,
     local_catalog: Mapping[str, object] | None = None,
     active_models: Iterable[str | Mapping[str, object]] | None = None,
     recommendation_overrides: Mapping[str, object] | None = None,
@@ -471,9 +476,19 @@ def resolve_model_route(
     to its chain head; a role whose chain is missing is an explicit choice;
     no data leaves the executor CLI default in place as a named outcome.
 
-    Injection precedence — the two parameters never apply to the same profile:
-    `chains` (tests only) overrides role chains for profiles WITH a built-in
-    catalog; `local_catalog` (a `local_model_catalog/v1` payload derived by
+    Injection precedence — the injected sources never apply to the same
+    profile: `chains` (tests only) overrides role chains for profiles WITH a
+    built-in catalog and wins over `category_config`; `category_config` (the
+    validated `omh_category_maestro/v1` payload read by the caller — I/O stays
+    in the caller) merges the operator's per-category chains over the built-in
+    table for built-in-catalog profiles only, feeding every path that consults
+    that table (explicit category, role, research depth, task scale) and
+    recording `catalog_kind: "operator_category_config"` plus the config
+    fingerprint — the kind names which TABLE was consulted for this profile,
+    not that the override changed the outcome: a route whose chain happens to
+    match the built-in one, or that a requested model won over, still records
+    the operator basis because that is the table that would have adjudicated;
+    `local_catalog` (a `local_model_catalog/v1` payload derived by
     the caller from an observed inventory — I/O stays in the caller, this
     function remains pure) is consulted ONLY when the profile has no built-in
     catalog and the payload names this profile. A route resolved from a local
@@ -557,19 +572,60 @@ def resolve_model_route(
             role_reasons.append(
                 "A local model catalog was offered but carried no usable options; it was not consulted."
             )
+    # The operator's category-maestro config applies only to profiles WITH a
+    # built-in category table (the dispatchable CLIs); catalogless profiles
+    # keep the local-inventory path as their single override source. `chains`
+    # stays the tests-only injection and wins over the operator table.
+    operator_categories: Mapping[str, object] | None = None
+    if (
+        category_config is not None
+        and chains is None
+        and catalog_kind == MODEL_CATALOG_KIND
+        and profile in BUILTIN_CATEGORY_MODELS
+    ):
+        config_profiles = category_config.get("profiles") if isinstance(category_config, Mapping) else None
+        raw_operator = config_profiles.get(profile) if isinstance(config_profiles, Mapping) else None
+        if isinstance(raw_operator, Mapping) and raw_operator:
+            operator_categories = raw_operator
+            catalog_kind = "operator_category_config"
+            raw_config_fingerprint = category_config.get("fingerprint")
+            if isinstance(raw_config_fingerprint, Mapping):
+                catalog_fingerprint = dict(raw_config_fingerprint)
+    effective_categories: Mapping[str, object] = (
+        {**BUILTIN_CATEGORY_MODELS.get(profile, {}), **dict(operator_categories)}
+        if operator_categories is not None
+        else BUILTIN_CATEGORY_MODELS.get(profile, {})
+    )
     candidates = [dict(option) for option in options]
     if catalog_kind == "local_inventory":
         role_chain = tuple(local_chains.get(normalized_role, ())) if normalized_role else ()
+    elif operator_categories is not None:
+        role_chain = (
+            merged_category_chain(effective_categories, CATEGORY_ROLE_SOURCES.get(normalized_role, ()))
+            if normalized_role
+            else ()
+        )
     else:
         chain_table = ROLE_MODEL_CHAINS if chains is None else chains
         role_chain = tuple(chain_table.get(profile, {}).get(normalized_role, ())) if normalized_role else ()
     attempted: list[dict[str, str]] = []
+    if operator_categories is not None:
+        attempted.append(
+            {
+                "stage": "category_config",
+                "outcome": "applied",
+                "reason": (
+                    "operator category-maestro config overrides categories "
+                    f"({', '.join(sorted(str(name) for name in operator_categories))}) for `{profile}`"
+                ),
+            }
+        )
     if category:
         if catalog_kind == "local_inventory":
             raw_categories = local_catalog.get("categories", {}) if isinstance(local_catalog, Mapping) else {}
             category_chain = raw_categories.get(category, ()) if isinstance(raw_categories, Mapping) else ()
         else:
-            category_chain = BUILTIN_CATEGORY_MODELS.get(profile, {}).get(category, ())
+            category_chain = effective_categories.get(category, ())
         role_chain = tuple(entry for entry in category_chain if isinstance(entry, Mapping))
         attempted.append(
             {
@@ -578,9 +634,16 @@ def resolve_model_route(
                 "reason": f"explicit category `{category}` selects its chain independently of role `{normalized_role or 'none'}`",
             }
         )
+    operator_table = effective_categories if operator_categories is not None else None
     if depth and not category:
         role_chain = _depth_selected_chain(
-            depth, normalized_role, profile, role_chain, local_chains if catalog_kind == "local_inventory" else None, attempted
+            depth,
+            normalized_role,
+            profile,
+            role_chain,
+            local_chains if catalog_kind == "local_inventory" else None,
+            attempted,
+            operator_table=operator_table,
         )
     if scale and not category:
         role_chain = _scale_selected_chain(
@@ -591,6 +654,7 @@ def resolve_model_route(
             local_chains if catalog_kind == "local_inventory" else None,
             depth,
             attempted,
+            operator_table=operator_table,
         )
     if domain:
         role_chain = _domain_ordered_chain(
@@ -771,11 +835,13 @@ def model_route_for_unit(
     unit: Mapping[str, object],
     executor_target: str,
     local_catalog: Mapping[str, object] | None = None,
+    category_config: Mapping[str, object] | None = None,
 ) -> dict[str, object] | None:
     """Return the prepared model route for a fanout unit, or None when unrouted.
 
-    `local_catalog` is passed through verbatim; this function stays pure and
-    the resolver's precedence rules decide whether it applies.
+    `local_catalog` and `category_config` are passed through verbatim; this
+    function stays pure and the resolver's precedence rules decide whether
+    either applies.
     """
     model = str(unit.get("model", "") or "").strip()
     effort = str(unit.get("reasoning_effort", "") or "").strip()
@@ -794,6 +860,7 @@ def model_route_for_unit(
         requested_depth=str(unit.get("depth", "") or "").strip(),
         requested_scale=str(unit.get("scale", "") or "").strip(),
         requested_category=category,
+        category_config=category_config,
         local_catalog=local_catalog,
     )
 
@@ -1173,6 +1240,8 @@ def _scale_selected_chain(
     local_chains: Mapping[str, object] | None,
     depth: str,
     attempted: list[dict[str, str]],
+    *,
+    operator_table: Mapping[str, object] | None = None,
 ) -> tuple[Mapping[str, str], ...]:
     """Swap in the declared task-scale chain, recording the outcome.
 
@@ -1227,7 +1296,10 @@ def _scale_selected_chain(
             }
         )
         return role_chain
-    scale_chain = TASK_SCALE_CHAINS.get(profile, {}).get(scale, ())
+    if operator_table is not None:
+        scale_chain = merged_category_chain(operator_table, CATEGORY_SCALE_SOURCES.get(scale, ()))
+    else:
+        scale_chain = TASK_SCALE_CHAINS.get(profile, {}).get(scale, ())
     if scale_chain:
         attempted.append(
             {
@@ -1254,6 +1326,8 @@ def _depth_selected_chain(
     role_chain: tuple[Mapping[str, str], ...],
     local_chains: Mapping[str, object] | None,
     attempted: list[dict[str, str]],
+    *,
+    operator_table: Mapping[str, object] | None = None,
 ) -> tuple[Mapping[str, str], ...]:
     """Swap in the declared research-depth chain, recording the outcome.
 
@@ -1303,7 +1377,10 @@ def _depth_selected_chain(
             }
         )
         return role_chain
-    depth_chain = RESEARCH_DEPTH_CHAINS.get(profile, {}).get(depth, ())
+    if operator_table is not None:
+        depth_chain = merged_category_chain(operator_table, CATEGORY_ROLE_SOURCES.get(f"research:{depth}", ()))
+    else:
+        depth_chain = RESEARCH_DEPTH_CHAINS.get(profile, {}).get(depth, ())
     if depth_chain:
         attempted.append(
             {
