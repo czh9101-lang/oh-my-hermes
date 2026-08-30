@@ -9,6 +9,7 @@ from typing import Any, Final, Iterable
 
 from ..hashutil import sha256_text
 from ..local_store import ensure_dir, read_json_object, utc_now
+from ..quality.completion_integrity import classify_completion_integrity
 from ..system.record_revision import (
     DuplicateMutationReplay,
     guarded_record_update,
@@ -687,12 +688,20 @@ def build_goal_completion_gate(paths: OmhPaths, goal_id: str) -> dict[str, Any]:
         status_gaps.append("goal status is failed")
     if goal["status"] == "cancelled":
         status_gaps.append("goal status is cancelled")
-    ready = not missing_required and not active_blockers and not runtime_gaps and not status_gaps
+    integrity_refusals = _completion_integrity_refusals(goal)
+    ready = (
+        not missing_required
+        and not active_blockers
+        and not runtime_gaps
+        and not status_gaps
+        and not integrity_refusals
+    )
     next_action = _completion_next_action(
         missing_required=missing_required,
         active_blockers=active_blockers,
         runtime_gaps=runtime_gaps,
         status_gaps=status_gaps,
+        integrity_refusals=integrity_refusals,
     )
     if goal["status"] == "cancelled":
         # A cancelled goal is terminal: recording blockers or checkpoints is
@@ -708,12 +717,50 @@ def build_goal_completion_gate(paths: OmhPaths, goal_id: str) -> dict[str, Any]:
             active_blockers=active_blockers,
             runtime_gaps=runtime_gaps,
             status_gaps=status_gaps,
+            integrity_refusals=integrity_refusals,
         ),
         "missing_required_criteria": missing_required,
         "active_blockers": active_blockers,
         "linked_runtime_checks": runtime_checks,
+        "integrity_refusals": integrity_refusals,
         "next_action": next_action,
     }
+
+
+def _completion_integrity_refusals(goal: dict[str, Any]) -> list[dict[str, str]]:
+    """Refusals the goal's own completion claim earns, as blocking gaps.
+
+    The ledger stores the claim, not the diff: satisfied criteria and done
+    checkpoints carry the summaries that make the claim and the evidence refs
+    that are supposed to prove it. Those are what get classified here, so a
+    goal cannot pass the gate on the string "TBD" or on a summary asserting
+    "tests passing" with nothing naming a command. Changed-file content is not
+    stored in the ledger and is therefore not scanned at this call site; a
+    caller holding a diff classifies it directly.
+    """
+    claim_lines = [
+        checkpoint["summary"]
+        for checkpoint in goal["checkpoints"]
+        if checkpoint.get("status") == "done"
+    ]
+    claim_lines.extend(
+        checkpoint["notes_summary"]
+        for checkpoint in goal["checkpoints"]
+        if checkpoint.get("status") == "done" and checkpoint.get("notes_summary")
+    )
+    evidence: list[str] = []
+    for criterion in goal["acceptance_criteria"]:
+        if criterion["required"] and criterion["status"] == "satisfied":
+            evidence.extend(criterion["evidence_refs"])
+    for checkpoint in goal["checkpoints"]:
+        if checkpoint.get("status") == "done":
+            evidence.extend(checkpoint.get("evidence_refs", []))
+    verdict = classify_completion_integrity(
+        summary=" ".join(claim_lines),
+        evidence=list(dict.fromkeys(evidence)),
+    )
+    refusals = verdict["refusals"]
+    return refusals if isinstance(refusals, list) else []
 
 
 def complete_goal_ledger(
@@ -973,8 +1020,15 @@ def _completion_gate_summary(
     active_blockers: list[dict[str, Any]],
     runtime_gaps: list[dict[str, Any]],
     status_gaps: list[str],
+    integrity_refusals: list[dict[str, str]],
 ) -> str:
-    if not missing_required and not active_blockers and not runtime_gaps and not status_gaps:
+    if (
+        not missing_required
+        and not active_blockers
+        and not runtime_gaps
+        and not status_gaps
+        and not integrity_refusals
+    ):
         return "Goal is ready for completion."
     parts = []
     if missing_required:
@@ -983,6 +1037,9 @@ def _completion_gate_summary(
         parts.append(f"{len(active_blockers)} active blockers remain")
     if runtime_gaps:
         parts.append(f"{len(runtime_gaps)} linked runtime runs still need observed evidence")
+    if integrity_refusals:
+        categories = ", ".join(sorted({item["category"] for item in integrity_refusals}))
+        parts.append(f"{len(integrity_refusals)} completion-integrity refusals remain ({categories})")
     if status_gaps:
         parts.append("; ".join(status_gaps))
     return "; ".join(parts) + "."
@@ -994,10 +1051,15 @@ def _completion_next_action(
     active_blockers: list[dict[str, Any]],
     runtime_gaps: list[dict[str, Any]],
     status_gaps: list[str],
+    integrity_refusals: list[dict[str, str]],
 ) -> str:
     if active_blockers or status_gaps:
         return "record_blocker"
     if missing_required:
+        return "record_checkpoint"
+    if integrity_refusals:
+        # The claim itself is the gap: a new checkpoint carrying a real command
+        # and a summary that does not outrun it is what clears this.
         return "record_checkpoint"
     if runtime_gaps:
         return "show_status"

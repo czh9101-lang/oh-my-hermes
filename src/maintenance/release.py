@@ -392,7 +392,15 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # lookup line (+292 chars: `omh design data --kind palette|font|ux --context`
 # with the rows-inform-DESIGN.md-but-the-contract-gates-the-code boundary);
 # warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 795558
+# 795558 -> 795956: `verification-gate` gained the completion-integrity refusal
+# rule (+398 chars) naming the four things that make a completion claim refuse
+# rather than report -- an unlinked TODO/FIXME/stub marker in changed code, a
+# suppressed test with no linked reason, placeholder or self-referential
+# evidence, and a proof word with no command behind it. It belongs in the
+# always-loaded body because it changes the verdict the skill issues, and a
+# gate that only reports its verdict after the claim is written is the failure
+# this rule exists to stop; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 795956
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
