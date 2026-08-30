@@ -116,6 +116,57 @@ fifth generalizes that harness's priced-prefix composition constraint to
 every family, because every major serving stack is a byte-exact prefix
 cacher.
 
+### Writing for the smallest model in the fleet
+
+The per-family blocks below vary by family. The shared preamble does not: it
+is byte-identical across sibling prompts on purpose, so providers can cache
+the prefix. That makes it the one block that has to be written for the
+*smallest* model that will read it, not the largest. A frontier model
+tolerates a dense head; a weaker local CLI starts dropping rules once a
+prompt carries more than it can hold, and the rule it drops is not the one
+you would have picked. So every rule added to the shared head is paid for by
+displacing a rule already there — on exactly the lanes least able to afford
+it.
+
+`src/quality/small_model_prompt_budget.py` measures the two halves of that
+which a gate can actually check, and
+`tests/test_small_model_prompt_budget.py` enforces them:
+
+| Ceiling | Value | What it bounds |
+| --- | --- | --- |
+| `SHARED_PREAMBLE_MAX_BYTES` | 2770 | OMH-authored bytes of the executor-invariant head. `UNIT_PROMPT_MAX_BYTES` bounds the whole assembled prompt, which would let the shared head triple without tripping; the caller's goal line is excluded because its length is the operator's business. |
+| `SHARED_PREAMBLE_MAX_CONSTRAINTS` | 10 | Directive sentences in that head. |
+| `BLOCK_MAX_CONSTRAINTS` | 3 | Directive sentences in any single dispatched block, family calibrations included. |
+
+All three are the **measured current values**, not aspirations. The upstream
+doctrine puts a tiny pattern-completer's limit at roughly 3-5 constraints
+before rules start displacing each other; OMH's consumers are coding-agent
+CLIs rather than tiny models, so 5 is recorded as the target while the
+ceilings freeze the head where it is. Raising one is allowed and is a
+decision: say which existing rule the new one displaces, or move the rule
+into a unit-varying block where only the units that need it pay. The
+constraint count is a sentence-level proxy and is named as one — it counts
+the sentences a reader must hold as a rule, not the rules themselves.
+
+One further rule is mechanized: **no labelled contrast examples**. A block
+containing `Bad:` or `Wrong:` followed by a sample gets the sample copied
+rather than avoided by a weaker model, which is the opposite of the intent.
+State the wanted shape instead.
+
+Two rules are deliberately left to the author, because no regex can apply
+them:
+
+- **Positive framing, except where the negation is the payload.** Small
+  models drop the "not" and do the thing anyway, so prefer stating the
+  wanted behavior. But "do not re-verify once every criterion has passed" is
+  the entire anti-inertia rule; rewriting it positively would lose it. Judge
+  per rule, and keep the negation only when it *is* the rule.
+- **Delete rules the code already enforces deterministically.** OMH enforces
+  a great deal at freeze time — boundary overlap, dependency cycles, unit
+  schema, owner and model resolution — and a prompt rule restating one of
+  those spends headroom that a rule the code cannot enforce needs. Before
+  adding a rule, check whether a gate already makes it true.
+
 ### Techniques compared and already structural (DeepSeek Harness review)
 
 The same harness review surfaced techniques OMH already carries structurally,
