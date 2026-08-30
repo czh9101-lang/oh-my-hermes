@@ -19,8 +19,13 @@ from ..harness_quality import (
     unknown_harness_quality_contract,
 )
 
+from copy import copy
 from functools import lru_cache
 
+from ..routing.trigger_language_packs import (
+    merged_trigger_phrases,
+    shipped_trigger_language_packs,
+)
 from .native_capability_surfaces import (
     native_capability_harnesses,
     native_capability_skill_definitions,
@@ -999,7 +1004,50 @@ def builtin_harnesses() -> list[HarnessDefinition]:
 
 @lru_cache(maxsize=1)
 def _builtin_definitions_cached() -> tuple[SkillDefinition, ...]:
-    return tuple(_DEFINITIONS)
+    return _with_shipped_trigger_packs(tuple(_DEFINITIONS))
+
+
+def _with_shipped_trigger_packs(definitions: tuple[SkillDefinition, ...]) -> tuple[SkillDefinition, ...]:
+    """Fold the repo-shipped trigger language packs into the catalog itself.
+
+    A shipped pack is product data, not local configuration, so its phrases
+    join the catalog before anything reads it: scoring, the rendered `SKILL.md`
+    trigger lists, and the generated workflow docs all see one trigger table
+    rather than an English one plus a hidden per-language side table. Phrases
+    append after the authored ones and repeat phrases are dropped, so a pack
+    can only widen what a skill answers to, never reorder or replace it.
+
+    User packs deliberately do NOT merge here -- see
+    `routing/trigger_language_packs.py` for why local config stops at the
+    scoring layer.
+    """
+    known_skills = frozenset(definition.name for definition in definitions)
+    packs = shipped_trigger_language_packs(known_skills)
+    if not packs:
+        return definitions
+    phrases_by_skill = merged_trigger_phrases(packs)
+    if not phrases_by_skill:
+        return definitions
+    merged: list[SkillDefinition] = []
+    for definition in definitions:
+        extra = tuple(
+            phrase
+            for phrase in phrases_by_skill.get(definition.name, ())
+            if phrase not in definition.triggers
+        )
+        if not extra:
+            merged.append(definition)
+            continue
+        # `copy.copy` rather than `dataclasses.replace`: the definition is
+        # already assembled, and `__post_init__` is not idempotent -- rerunning
+        # it would re-apply `omh_description` and push an already-canonical
+        # `hermes_role` through the alias table a second time. A pack only ever
+        # widens the trigger tuple, so copy the finished object and set that
+        # one field, the same way `__post_init__` sets its own.
+        widened = copy(definition)
+        object.__setattr__(widened, "triggers", definition.triggers + extra)
+        merged.append(widened)
+    return tuple(merged)
 
 
 @lru_cache(maxsize=1)

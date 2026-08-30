@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 import re
 
-from ..skills.catalog import SkillDefinition, routable_definitions
+from ..skills.catalog import SkillDefinition, builtin_definitions, routable_definitions
 from .domain_signals import (
     DomainOperatorOverride,
     DomainRouteSignal,
@@ -16,6 +16,14 @@ from .domain_signals import (
 from .intent import scrub_diagnostic_status_text
 from .localization import normalized_phrase, prepare_routing_text, routing_tokens
 from .missed_route import is_missed_route_feedback
+from .trigger_language_packs import (
+    ORIGIN_USER,
+    TriggerLanguagePack,
+    load_user_trigger_language_packs,
+    merged_holdback_tokens,
+    merged_trigger_phrases,
+    shipped_trigger_language_packs,
+)
 from .policy import (
     PUBLIC_PLUGIN_CONNECTOR_ALIAS_PHRASES,
     PUBLIC_PLUGIN_CONNECTOR_READINESS_CONTEXT_PHRASES,
@@ -1747,9 +1755,11 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     # `plan` alone made the catalog question "what can OMH do for plan?" score
     # this workflow at high confidence and show its card instead of the picker.
     # The distinctive tokens (`adversarial`, `consensus`, `perspective`,
-    # `red-team`, `hyperplan`, `적대적`, `다관점`, `레드팀`, `반박`, `허점`) still
-    # score; these carry the intent only inside a complete trigger phrase, which
-    # the +6 phrase match already covers.
+    # `red-team`, `hyperplan`) still score; these carry the intent only inside a
+    # complete trigger phrase, which the +6 phrase match already covers. The
+    # non-English words with the same problem live beside their own language's
+    # phrases, in that language's trigger pack `whole_phrase_only_tokens` --
+    # a hold-back belongs wherever the phrase it guards was authored.
     "adversarial-consensus": frozenset(
         {
             "attack",
@@ -1764,11 +1774,6 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
             "red",
             "review",
             "team",
-            "검토",
-            "계획",
-            "관점에서",
-            "여러",
-            "찾아",
         }
     ),
     # `llm-app-dev` is named out of the most generic vocabulary in the catalog:
@@ -1784,10 +1789,10 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     # inside a complete trigger phrase, which the phrase match and the
     # `direct:llm_app_dev` boost cover.
     #
-    # English only -- not because a composed Korean entry here would be a
-    # no-op (entries are normalized through `routing_tokens` before use, same
-    # as `adversarial-consensus`'s Korean entries below), but because the
-    # Korean triggers do not need the hold-back at all: measured on "앱 개발
+    # English only -- not because a non-English entry could not be held back
+    # (pack entries are normalized through `routing_tokens` before use, same as
+    # these), but because the Korean triggers do not need the hold-back at all:
+    # measured on "앱 개발
     # 시작하자", "기능 개발 계획 세워줘", "버전 관리 어떻게 해?", "출력 형식
     # 바꿔줘", and "프롬프트 좀 고쳐줘", their token credit tops out at 6, which
     # stays in clarify and never dispatches.
@@ -1845,8 +1850,50 @@ _NORMALIZED_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
 }
 
 
+@lru_cache(maxsize=1)
+def _trigger_pack_packs() -> tuple[TriggerLanguagePack, ...]:
+    """Shipped packs plus the person's own, for the scoring layer only.
+
+    Shipped packs already merged into the catalog, so their *phrases* arrive
+    through `definition.triggers`; they are re-read here for their hold-back
+    entries, which are a scoring concern rather than a catalog one. User packs
+    contribute both, and only here: a local pack must widen what this router
+    recognises without rewriting the product's generated artifacts.
+    """
+    known_skills = frozenset(definition.name for definition in builtin_definitions())
+    shipped = shipped_trigger_language_packs(known_skills)
+    user_packs, _ = load_user_trigger_language_packs(None, known_skills)
+    return shipped + user_packs
+
+
+@lru_cache(maxsize=1)
+def _user_trigger_pack_phrases() -> dict[str, tuple[str, ...]]:
+    return merged_trigger_phrases(
+        tuple(pack for pack in _trigger_pack_packs() if pack.origin == ORIGIN_USER)
+    )
+
+
+@lru_cache(maxsize=1)
+def _pack_trigger_token_holdback() -> dict[str, frozenset[str]]:
+    return {
+        skill: _normalized_trigger_token_holdback(frozenset(tokens))
+        for skill, tokens in merged_holdback_tokens(_trigger_pack_packs()).items()
+    }
+
+
+def _trigger_token_holdback_for(name: str) -> frozenset[str]:
+    return _NORMALIZED_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS.get(
+        name, frozenset()
+    ) | _pack_trigger_token_holdback().get(name, frozenset())
+
+
 def _prepare_definition(definition: SkillDefinition) -> _PreparedDefinition:
-    trigger_phrases = tuple(normalized_phrase(trigger) for trigger in definition.triggers)
+    triggers = definition.triggers + tuple(
+        phrase
+        for phrase in _user_trigger_pack_phrases().get(definition.name, ())
+        if phrase not in definition.triggers
+    )
+    trigger_phrases = tuple(normalized_phrase(trigger) for trigger in triggers)
     metadata_tokens = frozenset(
         _tokens(" ".join((definition.name, definition.description, definition.use_when)))
     ) - _SIBLING_POINTER_METADATA_TOKENS.get(definition.name, frozenset())
@@ -1856,8 +1903,7 @@ def _prepare_definition(definition: SkillDefinition) -> _PreparedDefinition:
         trigger_phrases=trigger_phrases,
         command_trigger_phrases=tuple(trigger for trigger in trigger_phrases if trigger in _COMMAND_TRIGGER_PHRASES),
         plain_trigger_phrases=tuple(trigger for trigger in trigger_phrases if trigger and trigger not in _COMMAND_TRIGGER_PHRASES),
-        trigger_tokens=frozenset(_tokens(" ".join(definition.triggers)))
-        - _NORMALIZED_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS.get(definition.name, frozenset()),
+        trigger_tokens=frozenset(_tokens(" ".join(triggers))) - _trigger_token_holdback_for(definition.name),
         name_phrase=normalized_phrase(definition.name),
         description_phrase=normalized_phrase(definition.description),
         use_when_phrase=normalized_phrase(definition.use_when),

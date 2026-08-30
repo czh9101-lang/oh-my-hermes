@@ -61,6 +61,7 @@ packages = [
   "omh.profiles",
   "omh.quality",
   "omh.routing",
+  "omh.routing.trigger_packs",
   "omh.runtime",
   "omh.skills",
   "omh.surfaces",
@@ -87,6 +88,7 @@ packages = [
 "omh.profiles" = "src/profiles"
 "omh.quality" = "src/quality"
 "omh.routing" = "src/routing"
+"omh.routing.trigger_packs" = "src/routing/trigger_packs"
 "omh.runtime" = "src/runtime"
 "omh.skills" = "src/skills"
 "omh.surfaces" = "src/surfaces"
@@ -98,6 +100,7 @@ packages = [
 "omh.skins" = ["*.yaml"]
 "omh.tui_widgets" = ["*.mjs"]
 "omh.catalogs" = ["*.json"]
+"omh.routing.trigger_packs" = ["*.json"]
 "omh.plugin_bundle.omh" = ["plugin.yaml", "config.yaml"]
 "omh.plugin_bundle.omh.references" = ["*.md"]
 "omh.plugin_bundle.omh.tools" = ["capability_families.json"]

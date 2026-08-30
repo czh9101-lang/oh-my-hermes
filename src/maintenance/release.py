@@ -113,7 +113,13 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # is well under the per-item ceiling below; the growth is one section per new
 # workflow, not per-section padding. Re-measured on the merged tree after
 # #1181, #1183, and #1182 rather than carried over from this branch's base.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 349637
+# 349637 -> 349663: the trigger language packs put the first Japanese and
+# Chinese trigger phrases into the catalog, and a handful reach the picker
+# description of skills whose English trigger list did not already fill the
+# eight-phrase budget (+26 chars). Recognising a language is what the growth
+# buys; it is one line-tail per affected skill, not per-section padding;
+# warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 349663
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -400,7 +406,17 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # always-loaded body because it changes the verdict the skill issues, and a
 # gate that only reports its verdict after the claim is written is the failure
 # this rule exists to stop; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 795956
+# 795956 -> 797568: the seed `ja` and `zh` trigger language packs put their
+# phrases into the catalog, so the always-loaded "Strong routing signals" line
+# of nineteen skills now also carries the Japanese and Chinese phrasings for
+# that skill (+1612 chars across all of them). It belongs in the always-loaded
+# body for exactly the reason the English and Korean phrases do: the routing
+# signal list is what a host's picker and the skill body both read to decide
+# whether this workflow is the one, and a phrase that is not there is a
+# language the skill cannot be asked for. The number grows with languages
+# rather than with prose -- no skill's own contract changed by a character;
+# warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 797568
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

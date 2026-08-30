@@ -368,9 +368,15 @@ class RouterContentTests(unittest.TestCase):
         # the platform ceiling the list holds the body once more, and the
         # rendering block is embedded across the payload, so the duplicate
         # costs ~1.0KB on this probe (18,666 -> 19,665, leaving 335 B of
-        # headroom). Deliberate raises for named content changes, not room
-        # for silent growth.
-        self.assertLess(len(json.dumps(route_payload, sort_keys=True)), 20_000)
+        # headroom). Raised to 20,500 when `routing_input_language` began
+        # naming `trigger_backed_scripts`: the payload already said a script
+        # was `model_selection_required`, and listing the scripts the shipped
+        # trigger language packs do cover is what lets a reader check that
+        # verdict instead of taking it. The block is embedded three times, so
+        # the list plus its one-line boundary edit costs ~0.4KB on this probe
+        # (19,665 -> 20,059, leaving 441 B of headroom). Deliberate raises for
+        # named content changes, not room for silent growth.
+        self.assertLess(len(json.dumps(route_payload, sort_keys=True)), 20_500)
         # Raised from 61,000 with the same public/direct path unification: the
         # context payload also gains input_language and skill governance
         # (measured 61,841). Raised to 64,000 alongside the route-payload
