@@ -5,6 +5,10 @@ import json
 
 from ..ingress import CHAT_SOURCES, extract_message_text
 from ..installer import OmhError
+from ..quality.routing_log_calibration import (
+    build_routing_log_calibration,
+    format_routing_log_calibration,
+)
 from ..routing.chat import CONFIDENCE_LEVELS
 from ..workflow_learning import (
     WorkflowLearningError,
@@ -56,7 +60,7 @@ from ..workflows.skill_draft import (
 )
 from ..local_store import utc_now
 from ..wrapper.contract import INTERACTION_MODES, build_chat_interaction_payload
-from .common import _chat_input_and_metadata, _explicit_source_metadata, _paths, _print_json
+from .common import _chat_input_and_metadata, _explicit_source_metadata, _paths, _print_json, _wants_json
 
 
 def cmd_learning_route_signal(args: argparse.Namespace) -> int:
@@ -467,6 +471,18 @@ def cmd_learning_metrics(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_learning_route_calibration(args: argparse.Namespace) -> int:
+    """Compare the hand-written routing corpus against locally recorded decisions."""
+    paths = _paths(args)
+    since = None if args.since is None else str(args.since)
+    payload = build_routing_log_calibration(paths.runtime_runs_dir, since=since)
+    if _wants_json(args):
+        _print_json(payload)
+    else:
+        print(format_routing_log_calibration(payload))
+    return 0
+
+
 SKILL_DRAFT_CLAIM_BOUNDARY_NOTE = (
     "A skill draft is review material stored under .omh/learning/skill-drafts/. OMH did not install a skill, "
     "write anything under skills/, register catalog data, run the workflow, pass review, run CI, or merge."
@@ -826,6 +842,25 @@ def _add_learning_commands(sub) -> None:
     )
     metrics.add_argument("--limit", type=int, default=None, help="Use only the newest N learning traces.")
     metrics.set_defaults(func=cmd_learning_metrics)
+
+    calibration = learning_sub.add_parser(
+        "route-calibration",
+        help=(
+            "Compare the hand-written routing corpus against locally recorded routing decisions "
+            "(no network, no model, no message text)."
+        ),
+    )
+    calibration.add_argument(
+        "--since",
+        default=None,
+        help=(
+            "ISO-8601 lower bound on the recorded timestamp. Defaults to the modification time of "
+            "src/routing/chat.py, so the report covers decisions made by the current router; pass "
+            "an empty string to read every record."
+        ),
+    )
+    calibration.add_argument("--json", action="store_true", help="Print the full machine-readable payload.")
+    calibration.set_defaults(func=cmd_learning_route_calibration)
 
     regression = learning_sub.add_parser("regression", help="Manage deterministic workflow regression cases.")
     regression_sub = regression.add_subparsers(dest="regression_command", required=True)
