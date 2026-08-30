@@ -332,7 +332,13 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # mandatory planner handoff -- the rules that are wrong to discover late. The
 # remainder of the delta is the `+N more` lane line regenerating across the
 # eleven other `intent_to_plan` skills; warranted growth for a new workflow.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 756725
+# 756725 -> 756890: `verification-gate`'s safety_rules gained one rule stating
+# that a change touching an authentication, secrets/config, schema/migration,
+# or payment/crypto path escalates to the thorough verification lane
+# regardless of diff size (+165 chars); warranted growth documenting the new
+# deterministic sensitive-path escalation (`quality/verification_tiering.py`)
+# absorbed into `_verification` in `coding_delegation.py`.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 756890
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
