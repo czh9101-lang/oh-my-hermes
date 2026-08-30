@@ -130,6 +130,40 @@ Two rules the gate cannot check for you:
   text the remaining words are the payload; an undeclared loss is a silent
   regression, and a single-digit win is not worth re-reading every rule for.
 
+## 7. Tool-facing text: a prune candidate is never a delete
+
+The same question applies to the `src/plugin_bundle/omh/tools/` descriptions,
+with a sharper test available: a JSON schema sits beside each one, so text a
+reader could reconstruct from `(name, schema, blank outline)` is measurable
+rather than argued. `tests/test_schema_overlap.py` runs that measurement over
+every registered tool; the rules and the reviewed verdicts live in
+`src/quality/schema_overlap.py`.
+
+What the probe finds is a **prune candidate**, never an automatic delete:
+
+| Bucket | Examples |
+| --- | --- |
+| Prune candidate | Parameter names and types. `required`. Value examples that only restate an enum. Clamp ranges already declared as `minimum` / `maximum`. |
+| Keep, always | Defaults **and their direction** — `gitignore: true` does not say "respects gitignore". Routing and escalation rules. Exact output shape. Worked anti-patterns. Constraints the type system cannot express, such as a field required only for one action. |
+
+Three rules the measurement cannot apply for you:
+
+- **`git blame` the line before cutting it.** Much of what restates a schema is
+  incident scar tissue: somebody added that sentence because a model got it
+  wrong once, and the schema has not started saying it since.
+- **One sample is noise.** A single overlap hit is a question for review, not a
+  finding. The gate is that every hit carries a verdict, not that the count is
+  zero.
+- **Decide what ships before you compress it.** Scope first, density second; a
+  tighter description of a parameter that should not exist is still a worse
+  tool.
+
+The gate fails when a finding has no reviewed verdict, and it fails with the
+finding id and paste-ready instructions. Add the id to
+`REVIEWED_OVERLAP_DECISIONS` with `keep — <which bucket>` or
+`prune candidate — <what git blame showed>`. Self-documenting flag-style tools
+prune heavily; DSL and capability tools barely, so most verdicts are `keep`.
+
 ## Acknowledgements
 
 Domain taxonomy adapted from revfactory/harness (https://github.com/revfactory/harness), Apache License 2.0, Copyright 2025 robin.
