@@ -2456,6 +2456,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Quality bar:
   - Name the product goal, audience, target surfaces, routes, states, and visual quality bar.
   - Hold the named bar: what a senior product designer at a top-tier product company (the Linear/Stripe/Supabase class) would sign off on — technically clean but flat output fails it. Load `references/taste-foundations.md`, name one primary taste direction, and reject the anti-slop patterns it lists.
+  - Name the model's own default aesthetic before inheriting it — the editorial prior of cream grounds, serif display faces, and muted terracotta accents suits editorial, portfolio, and hospitality briefs and is a failure mode on dashboards, developer tools, fintech, and data-dense UIs. Treat a generic negation ("don't make it look AI", "make it minimal") as unactionable: an override counts only when it carries concrete tokens, a hex palette and a typeface stack recorded in DESIGN.md. Run the review prompts in `references/taste-foundations.md` over framework blue, glass and gradient surfaces, default UI typefaces, bounce easing, blanket shadows, eyebrow/title/description stuffing, uniform column grids, and CJK body under the 14px Korean floor.
   - When the target surface is a terminal UI (TUI), load `references/tui-craft.md` and hold the same bar there: default widgets are scaffolding, not finished UI; borders spent sparingly with spacing and a muted-color ladder doing the hierarchy; one named terminal aesthetic; verification rendered at 80x24 and 120x40 minimum with the pasted output as the screenshot-equivalent.
   - Use references and domain fit to avoid generic AI-looking frontend output; when the user supplies a visual reference, load `references/reference-token-extraction.md` and extract tokens into the contract instead of eyeballing.
   - Prepare a concrete design-system contract before implementation handoff: load `references/design-system-contract.md` and write DESIGN.md before the first component — no component code before the contract exists.
@@ -2641,6 +2642,8 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Record console/network health, keyboard navigation, accessibility scan boundaries, and mutating-flow safety for live browser QA claims.
   - Separate design-system consistency, functional integrity, visual fidelity, responsive behavior, accessibility visibility, and CJK/text precision.
   - Return PASS, REVISE, or BLOCK with concrete evidence IDs and missing-evidence gaps.
+  - Score every round through `references/visual-verdict-contract.md`: one JSON object carrying an integer 0-100 score, the PASS/REVISE/BLOCK verdict, and a differences list whose every entry pairs the observed problem with the smallest suggested fix.
+  - Hold 90 as the pass line: under it the verdict is REVISE and the named edits, a recapture of the same pages/states/viewports, and a fresh scored round are owed; rescoring the same captures is not a new round.
   - Keep implementation fixes and follow-up edits separate from the observed QA verdict.
 - Completion checklist:
   - The visual_qa_plan/v1 lists target surfaces, references, states, viewports, locales, and target repository/revision lineage.
@@ -2698,6 +2701,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - motion_interaction_capture/v1 only when hover/focus/active/load/scroll motion frames are observed before, during, and after transition
   - visual_hotspot_review/v1 maps diff hotspots, TUI overflow lines, or screenshot regions to concrete visual causes
   - dual_oracle_visual_review/v1 only when independent read-only review evidence exists
+  - visual_qa_verdict/v1 carries the scored round: an integer 0-100 score, PASS/REVISE/BLOCK, and difference/suggestion pairs, with the sub-90 rerun requirement stated rather than narrated away
   - PASS unavailable until capture repository/revision lineage exactly matches the package target, every required viewport is captured, and all supplied blocking findings are resolved
 - Safety rules:
   - Never claim PASS without rendered evidence whose repository and revision exactly match the package target lineage.
@@ -2707,6 +2711,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Do not claim browser interaction PASS without observed click-path/state-transition traces for the touchpoints in scope.
   - Do not claim accessibility from automated scan output alone; keyboard navigation and focus-order evidence remain separate observed checks.
   - Objective diffs are evidence, not verdicts; review visual hierarchy, layout, CJK text, state coverage, and product intent separately.
+  - Pixel diff localizes hotspots only; it never produces the round score or the verdict, and a low diff ratio is not evidence that the rubric axes pass.
   - Do not excuse diff hotspots as animation; capture settled frames and motion frames separately.
   - Run or request two read-only review perspectives when claiming high confidence: design-system/functional integrity and visual fidelity/CJK precision.
   - Recorded operator-supplied blocking criteria for CJK clipping, broken wrapping, overlapping UI, invisible text, unusable controls, or offscreen critical content block PASS until `_validate_pass` sees passing evidence refs.

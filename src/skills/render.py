@@ -3423,6 +3423,11 @@ def _design_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
             "references/design-critique-rubric.md",
             _design_critique_rubric_reference(),
         ),
+        SkillReferenceTemplate(
+            "visual-qa",
+            "references/visual-verdict-contract.md",
+            _visual_verdict_contract_reference(),
+        ),
     )
 
 
@@ -3553,6 +3558,77 @@ at all.
 - **Bold / expressive** — statement pages that lead with oversized display
   type and hard contrast, breaking one grid rule at a time on purpose.
   Typical failure: every element shouting, so nothing leads.
+
+## The default aesthetic you already carry
+
+A coding model does not start neutral. Left to its own judgment it converges
+on one house style — cream and off-white grounds, a serif display face over a
+quiet sans, muted terracotta or clay accents, wide margins, an editorial
+rhythm. It is a real aesthetic and often a good one, but it is a prior, not a
+response to the brief, and it arrives whether or not anyone chose it.
+
+Say which case the brief is before using it:
+
+- **It suits** editorial and long-form reading, portfolio and studio sites,
+  hospitality, food, wellness, and print-adjacent marketing — briefs where
+  warmth and unhurried calm are the product.
+- **It is a failure mode** for dashboards, developer tools, admin consoles,
+  fintech, trading, analytics, and anything data-dense. Cream grounds wash out
+  status color, serif display faces fight tabular figures, and editorial
+  margins spend the width a dense table needs. An operational brief rendered
+  in the default prior reads as a blog that grew a table.
+
+## Overriding the default takes tokens, not negations
+
+"Don't make it look AI-generated", "make it minimal", "less generic", "more
+modern" — none of these move the output. They retire one default and leave the
+next-most-likely default in its place, which is usually the same house style
+with the serif swapped out. A negation names what to stop; it never names
+where to go.
+
+An override is actionable only when it carries concrete values:
+
+- a palette as hex — every background layer, every text level, the accent and
+  its budget;
+- a typeface stack — display family, text family, and fallbacks, including the
+  CJK stack when the audience needs one;
+- the geometry that travels with them: radius, border weight, spacing base.
+
+Those land in `DESIGN.md` sections 2 and 3 before implementation starts. When
+the direction arrives as negations only, convert it into tokens and state them
+back — a named palette and stack the user can reject is a decision; "less
+AI-looking" is not.
+
+## Review prompts — not bans
+
+The patterns below are not forbidden. They are the ones that show up when
+nothing chose them, so each is a question the review asks; a stated reason
+closes it and keeps the pattern.
+
+- **Framework blue** — is the primary `#3B82F6` (or a framework-default
+  neighbour) because the brand is blue, or because it was already there? A
+  default accent with no brand rationale is an unmade decision.
+- **Glass surfaces and cyan-to-purple gradients** — what do the blur and the
+  gradient communicate? Depth and brand can both justify them; "it looked
+  modern" cannot.
+- **Inter everywhere** — Inter and the system stack are good text faces and
+  poor signatures. Is anything on the page doing typographic work the default
+  UI face is not?
+- **Bounce easing** — does the overshoot describe a physical motion the user
+  initiated, or is it decoration on a menu that should settle?
+- **Shadows on every surface** — elevation is a hierarchy signal, and when
+  every card carries the same shadow it signals nothing. Which surfaces are
+  deliberately raised, and above what?
+- **Eyebrow, title, description, on every section** — does each section need
+  all three, or did the template supply them? Stacked labels above every
+  heading are padding wearing hierarchy's clothes.
+- **The uniform grid** — a perfect 3- or 4-column row is right when the items
+  are peers of equal weight. When they are not, an asymmetric or bento rhythm
+  says which one leads, and the uniform grid says nothing leads.
+- **CJK body under 14px** — Korean, Japanese, and Chinese glyphs carry more
+  strokes inside the same em. Copy that reads cleanly at 13px in Latin is
+  degraded in CJK: hold a 14px floor for Korean body text, and measure
+  captions against that floor instead of shrinking below it.
 
 ## Anti-slop checklist — reject on sight
 
@@ -3898,6 +3974,24 @@ axis explicitly; a PASS with no named evidence per axis is not a review.
 - **CJK and localization fit** — when the audience needs it: fallback
   stacks, line-height, and truncation behave in the heavy script. FAIL:
   Latin-tuned metrics breaking CJK text.
+- **Default-prior fit** — the surface does not silently inherit the model's
+  own house aesthetic (cream ground, serif display, terracotta accent) where
+  the brief is operational or data-dense. FAIL: an editorial prior applied to
+  a dashboard, fintech, or developer-tool surface with no stated reason.
+- **Chosen, not inherited** — framework blue, glass surfaces, gradient
+  accents, the default UI typeface, per-surface shadows, and uniform column
+  grids each carry a stated reason or are replaced. FAIL: a default present
+  with no rationale, checked against the review prompts in
+  `omh-frontend/references/taste-foundations.md`.
+
+## Scoring the axes
+
+The axes produce the deductions; the number and the stopping rule live in
+`omh-visual-qa/references/visual-verdict-contract.md`. Use them together —
+each FAIL named here becomes one entry in that contract's `differences` list,
+paired with the smallest change that would flip it, and the round carries an
+integer score with its verdict. 90 is the pass line; under it the verdict is
+REVISE and another edit-and-recapture round is owed, not a softer adjective.
 
 ## Verdict discipline
 
@@ -3916,4 +4010,105 @@ axis explicitly; a PASS with no named evidence per axis is not a review.
   from description alone.
 
 {_DESIGN_CRAFT_ATTRIBUTION}
+"""
+
+
+def _visual_verdict_contract_reference() -> str:
+    material = """# Visual Verdict Contract
+
+Subjective visual work has no natural stopping point. "Looks better" ends the
+loop whenever patience runs out, which is how a surface gets revised four
+times and ships the same defect. This contract gives the loop a number: one
+scored verdict per capture round, a threshold that decides whether the round
+ends, and a required next action when it does not.
+
+## The verdict shape
+
+A round returns one JSON object and nothing else — no prose above it, no
+commentary after it:
+
+```json
+{
+  "score": 84,
+  "verdict": "REVISE",
+  "differences": [
+    {
+      "difference": "Card padding is 12px against the reference's 24px, so the three-up row reads cramped at 1440px.",
+      "suggestion": "Raise card padding to the contract's space-6 step and recapture the row at 1440/768/375."
+    }
+  ]
+}
+```
+
+- `score` — an integer from 0 to 100. Not a band, not a letter, not a range: a
+  whole number, so two rounds are comparable and a regression is visible.
+- `verdict` — `PASS`, `REVISE`, or `BLOCK`, the same three states
+  `visual_qa_verdict/v1` already carries.
+- `differences` — one entry per observed difference, each pairing what is
+  wrong with the smallest change that would fix it. A difference with no
+  suggestion is an unfinished finding; a suggestion with no difference is an
+  opinion. Neither is admissible.
+
+An empty `differences` list under a sub-threshold score is a contradiction:
+either the differences were never written down, or the score was guessed.
+
+## The threshold
+
+**90 is the pass line.** At or above it the round may return `PASS`, provided
+the evidence rules below still hold. Under it the verdict is `REVISE` and the
+loop is not over: the differences go back to the implementation owner, the
+named edits land, the same pages, states, and viewports are recaptured, and a
+fresh scored round runs against the new captures. Rescoring the same captures
+is not a round.
+
+The loop ends in one of three stated states:
+
+- the round scores 90 or above and the evidence rules hold — `PASS`;
+- the round scores under 90 and another edit-and-recapture round is available
+  — `REVISE`, with the differences attached;
+- the round cannot proceed — missing captures, mismatched lineage, an
+  exhausted iteration budget — `BLOCK`, naming exactly what is missing. An
+  exhausted budget is a reported blocker, never a quiet `PASS`.
+
+The score never substitutes for the lineage rule. A 96 on captures whose
+repository and revision do not match the package target is still not a `PASS`.
+
+## Pixel diff is the secondary aid
+
+An objective diff — `diffRatio`, `similarityScore`, `dimensionsMatch`, hotspot
+coordinates — answers where two images differ. It does not answer whether the
+difference matters, and it cannot see a defect that is pixel-identical to its
+reference and wrong anyway: contrast under the floor, a label that says the
+wrong thing, a hierarchy that reads flat.
+
+So the diff localizes hotspots; it does not score:
+
+- it points the review at the regions worth looking at first;
+- it never produces the `score`, and a low `diffRatio` is not evidence of a
+  high one;
+- a region with no diff is still judged on the rubric axes;
+- `visual_diff_evidence/v1` and `visual_hotspot_review/v1` stay separate
+  fields from the verdict, because they answer a different question.
+
+The score comes from the rubric instead: the axes in
+`omh-design-quality-gate/references/design-critique-rubric.md`, judged against
+the declared target, with `differences` as the working record of every
+deduction.
+
+## Boundary
+
+OMH prepares this contract; it does not run it. Captures, edits, and reruns
+happen in whichever executor or wrapper lane the user selected — named in the
+handoff, never assumed. What OMH holds is the shape of the verdict, the
+threshold, and the rule that a sub-threshold score owes another observed
+round. A scored verdict with no attached observed captures is a prepared
+claim, not an observed one.
+"""
+    return f"""{material}
+{_DESIGN_CRAFT_ATTRIBUTION}
+
+The scored-verdict shape additionally adapts the score-then-iterate pattern
+common to community visual-review skills, restated in OMH's prepared-versus-
+observed vocabulary. No text from any of them is reproduced either; the
+wording here is OMH's own.
 """

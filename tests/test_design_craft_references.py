@@ -54,6 +54,7 @@ class DesignReferenceRegistryTests(unittest.TestCase):
             ("frontend", "references/tui-craft.md"),
             ("frontend", "references/screenshot-loop.md"),
             ("design-quality-gate", "references/design-critique-rubric.md"),
+            ("visual-qa", "references/visual-verdict-contract.md"),
         }
         registered = {
             (template.skill_name, template.relative_path)
@@ -152,6 +153,55 @@ class TasteFoundationsTests(unittest.TestCase):
     def test_content_ordering_beats_visual_symmetry(self) -> None:
         content = _reference("frontend", "references/taste-foundations.md")
         self.assertIn("visual symmetry never outranks that sequence", _unwrapped(content))
+
+    def test_the_model_default_prior_is_named_with_both_its_fits(self) -> None:
+        # The prior arrives whether or not anyone chose it, so the reference
+        # has to name it AND split the briefs it serves from the ones it
+        # actively damages. Naming only the aesthetic would read as a
+        # recommendation.
+        content = _unwrapped(_reference("frontend", "references/taste-foundations.md"))
+        self.assertIn("A coding model does not start neutral", content)
+        for token in ("cream", "serif display", "terracotta"):
+            self.assertIn(token, content, token)
+        self.assertIn("It suits", content)
+        self.assertIn("It is a failure mode", content)
+        for suited in ("editorial", "portfolio", "hospitality"):
+            self.assertIn(suited, content, suited)
+        for failing in ("dashboards", "developer tools", "fintech", "data-dense"):
+            self.assertIn(failing, content, failing)
+
+    def test_a_negation_is_not_an_override_without_tokens(self) -> None:
+        # "don't make it look AI" swaps one fixed default for the next one;
+        # the override only becomes actionable as a hex palette plus a
+        # typeface stack written into the contract.
+        content = _unwrapped(_reference("frontend", "references/taste-foundations.md"))
+        self.assertIn("Overriding the default takes tokens, not negations", content)
+        self.assertIn("A negation names what to stop; it never names where to go", content)
+        self.assertIn("a palette as hex", content)
+        self.assertIn("a typeface stack", content)
+        self.assertIn("`DESIGN.md` sections 2 and 3", content)
+
+    def test_review_prompts_are_questions_not_a_second_ban_list(self) -> None:
+        # These patterns are legitimate when something chose them, so they
+        # ship as review questions a stated reason closes - separate from the
+        # reject-on-sight checklist above them.
+        content = _unwrapped(_reference("frontend", "references/taste-foundations.md"))
+        self.assertIn("Review prompts — not bans", content)
+        self.assertIn("They are the ones that show up when nothing chose them", content)
+        for prompt in (
+            "Framework blue",
+            "`#3B82F6`",
+            "Glass surfaces and cyan-to-purple gradients",
+            "Inter everywhere",
+            "Bounce easing",
+            "Shadows on every surface",
+            "Eyebrow, title, description",
+            "The uniform grid",
+            "CJK body under 14px",
+        ):
+            self.assertIn(prompt, content, prompt)
+        self.assertIn("bento", content)
+        self.assertIn("14px floor for Korean body text", content)
 
 
 class TuiCraftTests(unittest.TestCase):
@@ -300,6 +350,67 @@ class DesignCritiqueRubricTests(unittest.TestCase):
         self.assertIn("Technically clean but flat fails", content)
 
 
+class VisualVerdictContractTests(unittest.TestCase):
+    def test_the_verdict_shape_is_json_only_with_an_integer_score(self) -> None:
+        # A band or a letter grade makes two rounds incomparable, so the score
+        # is pinned as a whole number and the object ships alone.
+        content = _reference("visual-qa", "references/visual-verdict-contract.md")
+        self.assertIn("```json", content)
+        self.assertIn('"score"', content)
+        self.assertIn('"verdict"', content)
+        self.assertIn('"differences"', content)
+        self.assertIn("an integer from 0 to 100", content)
+        self.assertIn("Not a band, not a letter, not a range", _unwrapped(content))
+        self.assertIn("one JSON object and nothing else", _unwrapped(content))
+
+    def test_every_difference_is_paired_with_its_suggestion(self) -> None:
+        content = _unwrapped(_reference("visual-qa", "references/visual-verdict-contract.md"))
+        self.assertIn('"suggestion"', content)
+        self.assertIn("A difference with no suggestion is an unfinished finding", content)
+        self.assertIn("a suggestion with no difference is an opinion", content)
+
+    def test_ninety_is_the_pass_line_and_below_it_owes_a_rerun(self) -> None:
+        # The whole point of the number is a stopping rule; a sub-threshold
+        # round has to buy a real recapture, not a re-score of the same
+        # images or a softer adjective.
+        content = _unwrapped(_reference("visual-qa", "references/visual-verdict-contract.md"))
+        self.assertIn("**90 is the pass line.**", content)
+        self.assertIn("the same pages, states, and viewports are recaptured", content)
+        self.assertIn("Rescoring the same captures is not a round", content)
+        self.assertIn("An exhausted budget is a reported blocker, never a quiet `PASS`", content)
+        for verdict in ("`PASS`", "`REVISE`", "`BLOCK`"):
+            self.assertIn(verdict, content, verdict)
+
+    def test_pixel_diff_is_demoted_to_hotspot_localization(self) -> None:
+        content = _unwrapped(_reference("visual-qa", "references/visual-verdict-contract.md"))
+        self.assertIn("Pixel diff is the secondary aid", content)
+        self.assertIn("answers where two images differ", content)
+        self.assertIn("it never produces the `score`", content)
+        self.assertIn("a region with no diff is still judged on the rubric axes", content)
+        self.assertIn("design-critique-rubric.md", content)
+
+    def test_the_contract_stays_prepared_and_executor_neutral(self) -> None:
+        content = _unwrapped(_reference("visual-qa", "references/visual-verdict-contract.md"))
+        self.assertIn("OMH prepares this contract; it does not run it", content)
+        self.assertIn("whichever executor or wrapper lane the user selected", content)
+        self.assertIn("prepared claim, not an observed one", content)
+
+    def test_the_rubric_carries_the_score_hook_and_the_default_axes(self) -> None:
+        content = _reference("design-quality-gate", "references/design-critique-rubric.md")
+        self.assertIn("omh-visual-qa/references/visual-verdict-contract.md", content)
+        self.assertIn("90 is the pass line", content)
+        self.assertIn("Default-prior fit", content)
+        self.assertIn("Chosen, not inherited", content)
+
+    def test_visual_qa_body_carries_the_threshold_and_the_pointer(self) -> None:
+        body = _body("visual-qa")
+        self.assertIn("references/visual-verdict-contract.md", body)
+        self.assertIn("integer 0-100 score", body)
+        self.assertIn("Hold 90 as the pass line", body)
+        self.assertIn("rescoring the same captures is not a new round", body)
+        self.assertIn("Pixel diff localizes hotspots only", body)
+
+
 class SkillBodyPointerTests(unittest.TestCase):
     def test_frontend_body_carries_the_named_bar_and_all_three_pointers(self) -> None:
         body = _body("frontend")
@@ -309,6 +420,17 @@ class SkillBodyPointerTests(unittest.TestCase):
         self.assertIn("references/taste-foundations.md", body)
         self.assertIn("references/reference-token-extraction.md", body)
         self.assertIn("no component code before the contract exists", body)
+
+    def test_frontend_body_carries_the_default_prior_and_the_override_test(self) -> None:
+        # The prior and the "negations are not overrides" rule are wrong to
+        # discover after a surface shipped, so they stay in the always-loaded
+        # body rather than only in the on-demand reference.
+        body = _body("frontend")
+        self.assertIn("model's own default aesthetic", body)
+        self.assertIn("cream grounds, serif display faces, and muted terracotta accents", body)
+        self.assertIn("data-dense UIs", body)
+        self.assertIn("an override counts only when it carries concrete tokens", body)
+        self.assertIn("hex palette and a typeface stack", body)
 
     def test_quality_gate_body_points_at_the_rubric(self) -> None:
         body = _body("design-quality-gate")

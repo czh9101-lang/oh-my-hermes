@@ -338,7 +338,20 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # regardless of diff size (+165 chars); warranted growth documenting the new
 # deterministic sensitive-path escalation (`quality/verification_tiering.py`)
 # absorbed into `_verification` in `coding_delegation.py`.
-# 756890 -> 768491: the new `llm-app-dev` (`omh-llm-app-dev`) skill was added --
+# 756890 -> 758447: design-lane hardening across three existing skills. `visual-qa`
+# gained the scored-verdict stopping rule (integer 0-100 score, 90 pass line, a
+# mandatory edit-and-recapture round under it) plus the pixel-diff demotion, and
+# `frontend` gained the model-default-aesthetic rule (the editorial prior, the
+# briefs it suits and the ones it fails, and the tokens-not-negations override
+# test) with the review-prompt sweep. The verdict JSON shape, the three-state
+# loop exit, the default-prior sections, and the eight review prompts all live in
+# the on-demand references -- the new `omh-visual-qa/references/
+# visual-verdict-contract.md` (4898 chars) and the grown `taste-foundations.md`
+# (+3838) and `design-critique-rubric.md` (+1122) -- outside this budget; what is
+# always loaded is the threshold, the rerun obligation, and the two-line override
+# test, the rules that are wrong to discover after a surface has shipped
+# (+1557 chars); warranted growth.
+# 758447 -> 770048: the new `llm-app-dev` (`omh-llm-app-dev`) skill was added --
 # the build-discipline contract for an LLM-powered feature, whose always-loaded
 # body is 11577 chars, between `adversarial-consensus`'s 10355 and
 # `ultrawork`'s 23881. The per-rail decisions and the eval-harness procedure
@@ -349,11 +362,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # retrieval-before-generation order, and the eval deliverables -- the rules that
 # are expensive to discover after the call sites exist. The remainder of the
 # delta is the `+N more` lane line regenerating across the twelve other
-# `coding_handoff` skills. Value re-measured on the merge of origin/main after
-# #1181: the +11601 delta is identical either side of that merge, so the two
-# ratchet moves are additive rather than overlapping; warranted growth for a new
-# workflow.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 768491
+# `coding_handoff` skills. Value re-measured on each merge of origin/main this
+# branch has taken (#1181, then #1183): the delta is +11601 every time, so this
+# ratchet move is additive to the ones below it rather than overlapping any of
+# them; warranted growth for a new workflow.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 770048
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
