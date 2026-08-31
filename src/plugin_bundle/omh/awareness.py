@@ -3962,6 +3962,9 @@ _ROUTE_HINT_RULES = (
             "memory inspect",
             "memory check",
             "memory update",
+            "memory interview",
+            "your memories",
+            "memories still true",
             "context review",
             "context cleanup",
             "hermes remembers",
@@ -3997,7 +4000,11 @@ _ROUTE_HINT_RULES = (
             "맥락 점검",
             "맥락 피드백",
         ),
-        "tokens": ("memory", "memories", "context"),
+        # Bare "memories"/"context" tokens hinted this rule for concept
+        # sentences ("how do computers store memories", "my childhood
+        # memories are fuzzy"); the review intent lives in the phrases, so
+        # only the unambiguous "memory" token keeps bare credit.
+        "tokens": ("memory",),
         "adjacent_workflows": ("workflow-learning", "doctor"),
     },
     {

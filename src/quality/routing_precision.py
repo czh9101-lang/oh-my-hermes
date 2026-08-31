@@ -1024,6 +1024,25 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "",
         "model-optimization",
     ),
+    RoutingPrecisionCase(
+        "memories-concept-question-not-memory-sync",
+        "A concept question about memories stays direct, not a memory review",
+        "how do computers store memories",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        # This is the load-bearing guard for the memory-sync token hold-back:
+        # with the hold-back lifted, bare `still`+`true` trigger-token credit
+        # names memory-sync as the clarify candidate for this ordinary
+        # follow-up sentence.
+        "still-true-followup-not-memory-sync",
+        "An ordinary is-that-still-true follow-up does not name the memory review",
+        "is that still true",
+        "answer_clarification",
+        "",
+        "memory-sync",
+    ),
 )
 
 
@@ -3533,6 +3552,27 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "model-optimization",
         "run_hermes_research",
         "web_research",
+    ),
+    RoutingInterventionCase(
+        "natural-memory-interview-reaches-memory-sync",
+        "The memory interview phrased naturally reaches memory-sync, not the ask advisor",
+        "pick a few of your memories and ask me if they are still true",
+        "dispatch",
+        "memory-sync",
+        "prepare_memory_sync",
+        "memory_curation",
+    ),
+    RoutingInterventionCase(
+        # A paraphrase with different verbs pins the direct memory-interview
+        # boost (possessive memory vocabulary co-occurring with an asking
+        # verb), not one literal fixture sentence.
+        "memory-interview-paraphrase-reaches-memory-sync",
+        "A paraphrased memory interview still beats the ask advisor",
+        "check your memories and ask me if they are still true",
+        "dispatch",
+        "memory-sync",
+        "prepare_memory_sync",
+        "memory_curation",
     ),
 )
 

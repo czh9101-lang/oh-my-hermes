@@ -814,8 +814,9 @@ _HUMAN_ACK_BODY_BY_SKILL = {
     ),
     "memory-sync": (
         "I will review existing claims in English, with concise Korean help labels when useful, and prepare a native "
-        "write diff only. This guidance never invokes, applies, or observes a MEMORY.md or USER.md write; native, "
-        "provider, and vector context is not_omh_reviewed and never inherits OMH approval."
+        "write diff. No OMH surface invokes, applies, or observes a MEMORY.md or USER.md write — an approved diff is "
+        "applied by Hermes's own native memory tool; native, provider, and vector context is not_omh_reviewed and "
+        "never inherits OMH approval."
     ),
     "memory-new": (
         "I will ask source class, target store, scope, and retention class, then make one explicit choice: remember "
@@ -2109,16 +2110,17 @@ _WORKFLOW_OPERATIONS_CHAT_CARDS: dict[str, dict[str, object]] = {
     },
     "memory-sync": {
         "kind": "memory_curation",
-        "headline": "I can prepare Hermes memory diffs without invoking a native write.",
+        "headline": "I can review Hermes memory candidates and prepare a write diff for your approval.",
         "body": (
             "I will review existing claims in English, with concise Korean help labels and preserved Korean routing. I can prepare "
-            "a native write diff, but this guidance never invokes, applies, or observes a MEMORY.md or USER.md write."
+            "a native write diff; no OMH surface invokes, applies, or observes a MEMORY.md or USER.md write — after your explicit "
+            "approval the diff is applied by Hermes's own native memory tool and reported as an observed native write."
         ),
         "phase": "memory_curation_prepared",
         "next_action": "prepare_memory_sync",
         "artifact_schema": "memory_curation_card/v1",
         "claim_boundary_suffix": (
-            "It is prepared guidance only and never invokes, applies, or observes a MEMORY.md/USER.md write. It is not Hermes internal memory, MEMORY.md, USER.md, skill-file modification, or external source freshness evidence. Hermes-native and external provider/vector context is not_omh_reviewed and never inherits OMH approval."
+            "It is prepared guidance only: no OMH surface invokes, applies, or observes a MEMORY.md/USER.md write, and an approved diff applied through Hermes's native memory tool is Hermes's own act, never OMH mutation evidence. It is not Hermes internal memory, MEMORY.md, USER.md, skill-file modification, or external source freshness evidence. Hermes-native and external provider/vector context is not_omh_reviewed and never inherits OMH approval."
         ),
         "actions": [
             {"id": "prepare_memory_sync", "label": "Review memory", "style": "primary"},
@@ -2130,9 +2132,11 @@ _WORKFLOW_OPERATIONS_CHAT_CARDS: dict[str, dict[str, object]] = {
             "distinguish_omh_reviewed_vs_not_omh_reviewed_context",
             "prepare_native_write_diff_only",
             "present_keep_revise_archive_choices",
+            "apply_approved_diff_via_native_memory_tool",
+            "report_observed_native_write",
         ],
         "evidence_not_observed": [
-            "prepared guidance only and never invokes, applies, or observes a MEMORY.md/USER.md write",
+            "prepared guidance only: no OMH surface invokes, applies, or observes a MEMORY.md/USER.md write",
             "native MEMORY.md write",
             "native USER.md write",
             "native write invocation or application",

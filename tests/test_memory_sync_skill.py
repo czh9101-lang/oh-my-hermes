@@ -98,7 +98,7 @@ class MemorySyncSkillTests(unittest.TestCase):
         self.assertIn("memory_curation_review/v1", memory_sync)
         self.assertIn("English-Canonical Interview Protocol", memory_sync)
         self.assertIn("Claim extraction (추출)", memory_sync)
-        self.assertIn("never invokes, applies, or observes a `MEMORY.md`/`USER.md` write", memory_sync)
+        self.assertIn("no OMH surface invokes, applies, or observes a `MEMORY.md`/`USER.md` write", memory_sync)
         self.assertIn("not_omh_reviewed", memory_sync)
         self.assertNotIn("memory_new_candidate/v1", memory_sync)
 
@@ -163,7 +163,10 @@ class MemorySyncSkillTests(unittest.TestCase):
             "Diff (차이)",
             "2,200 characters",
             "1,375 characters",
-            "never invokes, applies, or observes a `MEMORY.md`/`USER.md` write",
+            "no OMH surface invokes, applies, or observes a `MEMORY.md`/`USER.md` write",
+            "Apply after approval (적용)",
+            "through the Hermes-native memory tool",
+            "never becomes OMH mutation evidence",
             "stale_review_required",
             "expired_volatile_records",
         ):

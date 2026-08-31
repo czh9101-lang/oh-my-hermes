@@ -124,7 +124,11 @@ FROZEN_HANGUL_TRIGGERS_BY_SKILL: dict[str, int] = {
     "media-input-operator": 19,
     "meeting-brief": 7,
     "memory-new": 7,
-    "memory-sync": 25,
+    # 25 -> 27 (2026-08-31): the memory-interview intent arrived as English
+    # phrases ("memory interview", "your memories", "memories still true")
+    # WITH the owner-spoken Korean forms in the same commit ("메모리 인터뷰",
+    # "기억 인터뷰") — new capability reach, not padding over a routing miss.
+    "memory-sync": 27,
     # 5 -> 7 (2026-08-19): provider-switch / quota-relogin intents arrived as
     # owner-spoken Korean ("프로바이더 전환", "다른 계정으로 로그인") WITH their
     # English equivalents in the same commit ("switch provider account",

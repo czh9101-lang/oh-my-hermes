@@ -123,7 +123,12 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # model-onboarding process contract distilled from the GLM 5.3 run); one new
 # capability section for one new workflow, not per-section padding; warranted
 # growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 353786
+# 353786 -> CAPLIMIT: the memory-sync boundary/safety sentences now name who
+# applies a user-approved diff (Hermes's own native memory tool). The
+# capability section truncates safety rules and caps triggers, so the delta
+# here is truncation-boundary jitter from those rewordings, not the full
+# sentence growth; measured live, warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 353787
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -448,7 +453,16 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # research -> trait-to-counter calibration -> config-first routing placement
 # -> documented-price-only cost -> measurement close). One new skill body for
 # one new workflow; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 806869
+# 806869 -> 808826: the memory-sync interview protocol gains candidate
+# selection (top-~5 per pass from dreaming/similarity signals), a resume
+# cursor whose resume point is named as conversation-only, the
+# apply-after-approval close (explicit diff approval, tool-unavailable
+# branch, no raw file edits) that stops interviews from ending at an
+# unapplied diff, and the natural interview trigger phrases (with their Korean pack forms); the boundary
+# sentences across the pack now name who applies an approved diff. Protocol
+# and boundary text that change the interview's verdict and completion, not
+# padding; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 808826
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

@@ -5690,12 +5690,12 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Preferred usage: Use as an installed Hermes workflow skill when the user asks to review stale, duplicate, or conflicting memory and skill context.
 - Handoff policy: Keep this as Hermes-facing orchestration guidance first. Prepare executor, connector, gateway, or host-runtime handoff only when the user accepts that next step and observed evidence can be recorded.
 - Why this exists: `memory-sync` exists so Hermes users can ask for this workflow in chat and receive a structured, evidence-bounded OMH operating surface instead of ad hoc narration.
-- Use when: Use when existing Hermes USER.md, MEMORY.md, or accumulated skill memories need an English-canonical, claim-by-claim review. It prepares native write guidance only; it never invokes, applies, or observes a native write. Do not use for new project or product candidates.
+- Use when: Use when existing Hermes USER.md, MEMORY.md, or accumulated skill memories need an English-canonical, claim-by-claim review. It prepares native write guidance only; no OMH surface invokes, applies, or observes a native write — a user-approved diff is applied by Hermes's own native memory tool. Do not use for new project or product candidates.
 - Do not use when:
   - The request is already handled by a narrower explicit skill with stronger evidence.
   - The user asks OMH to secretly run external platforms, connectors, schedulers, file exports, or runtime agents.
   - The only safe answer is to ask for missing authority, credentials, target, or observed evidence first.
-- Strong routing signals: `memory-sync`, `memory curation`, `memory review`, `memory inspect`, `memory check`, `memory update`, `context cleanup`, `curate memory`, `stale memory`, `hermes remembers`, `conflicting memory`, `duplicate skill`, `MEMORY.md`, `USER.md`, `what you remember about me`, `your memory about me`, `기억하고 있는`, `기억하고 있는 프로젝트 맥락`, `기억하는 맥락`, `현재 hermes가 기억하는 맥락`, `현재 헤르메스가 기억하는 맥락`, `헤르메스가 기억하는 맥락`, `오래된 맥락`, `오래된 기억`, `기억 점검`, `기억 정리`, `메모리 업데이트`, `메모리 검사`, `메모리 점검`, `메모리 정리`, `맥락 점검`, `맥락 정리`, `맥락 피드백`, `등록된 맥락`, `헤르메스 기억`, `중복 스킬`, `나에 대해 잘못 알고`, `저장된 내 정보`, `너한테 저장된`, `저장된 프로필`, `기억 바로잡`
+- Strong routing signals: `memory-sync`, `memory curation`, `memory review`, `memory inspect`, `memory check`, `memory update`, `context cleanup`, `curate memory`, `stale memory`, `hermes remembers`, `conflicting memory`, `duplicate skill`, `MEMORY.md`, `USER.md`, `what you remember about me`, `your memory about me`, `your memories`, `memory interview`, `memories still true`, `기억하고 있는`, `기억하고 있는 프로젝트 맥락`, `기억하는 맥락`, `현재 hermes가 기억하는 맥락`, `현재 헤르메스가 기억하는 맥락`, `헤르메스가 기억하는 맥락`, `오래된 맥락`, `오래된 기억`, `기억 점검`, `기억 정리`, `메모리 업데이트`, `메모리 검사`, `메모리 점검`, `메모리 정리`, `맥락 점검`, `맥락 정리`, `맥락 피드백`, `등록된 맥락`, `헤르메스 기억`, `중복 스킬`, `나에 대해 잘못 알고`, `저장된 내 정보`, `너한테 저장된`, `저장된 프로필`, `기억 바로잡`, `메모리 인터뷰`, `기억 인터뷰`
 - Good example:
   - Prompt: memory-sync inspect stale MEMORY.md claims, prepare a native write diff, and ask which claims to keep, revise, or archive.
   - Expected behavior: Produce `prepare_memory_sync` with required context, wrapper actions, and not-evidence boundaries.
@@ -5728,7 +5728,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Artifact expectations:
   - memory-sync/v1 metadata-only runtime or wrapper card when recorded
 - Safety rules:
-  - A memory-sync review is prompt guidance only. It can prepare a native MEMORY.md or USER.md write diff but never invokes, applies, or observes that write. Hermes-native and external provider/vector context is not_omh_reviewed and never inherits OMH approval.
+  - A memory-sync review is prompt guidance only: no OMH surface invokes, applies, or observes a MEMORY.md or USER.md write. Applying a user-approved diff is Hermes's own act through its native memory tool — report it as an observed native write, never as OMH mutation evidence. Hermes-native and external provider/vector context is not_omh_reviewed and never inherits OMH approval.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
   - Keep English as the canonical protocol; Korean routing triggers and concise Korean help labels remain available.
   - Quote claims only when observed, do not invent provenance, and keep the prepared native diff separate from any native write.
@@ -10369,9 +10369,9 @@ Capture one bounded durable project or product memory candidate through explicit
 
 ### memory-sync
 
-English-canonical Hermes memory-review guidance: inspect USER.md and MEMORY.md claims and prepare a native write diff without invoking, applying, or observing a native write; for a new fact use memory-new.
+English-canonical Hermes memory-review guidance: inspect USER.md and MEMORY.md claims and prepare a native write diff; no OMH surface invokes, applies, or observes a native write — a user-approved diff is applied by Hermes's own native memory tool. For a new fact use memory-new.
 
-- Use when: Use when existing Hermes USER.md, MEMORY.md, or accumulated skill memories need an English-canonical, claim-by-claim review; it prepares native write guidance only and never invokes, applies, or observes a native write.
+- Use when: Use when existing Hermes USER.md, MEMORY.md, or accumulated skill memories need an English-canonical, claim-by-claim review; it prepares native write guidance only, and no OMH surface invokes, applies, or observes a native write.
 - Quality tier: `curation-gated`
 - Quality bar:
   - Name the workflow objective, owner, input boundary, next action, and stop condition.
@@ -10399,6 +10399,7 @@ English-canonical Hermes memory-review guidance: inspect USER.md and MEMORY.md c
   - `conflicts_ranked`
   - `review_actions_prepared`
   - `native_diff_prepared_when_available`
+  - `native_write_observed_when_available`
 - Wrapper actions:
   - `show_memory_review`
   - `prepare_memory_diff`
@@ -10411,7 +10412,7 @@ English-canonical Hermes memory-review guidance: inspect USER.md and MEMORY.md c
 - Delegation expectation: Record this harness as Hermes-retained orchestration; external runtime/platform/file/memory/connector evidence requires a separate observed artifact.
 - Privacy default: `metadata_only`
 - Overclaim guards:
-  - A memory review is prepared guidance only and never invokes, applies, or observes a MEMORY.md/USER.md write. Hermes-native and external provider/vector context is not_omh_reviewed and never inherits OMH approval.
+  - A memory review is prepared guidance only: no OMH surface invokes, applies, or observes a MEMORY.md/USER.md write, and a user-approved diff applied through Hermes's native memory tool is Hermes's own act, reported as an observed native write, never OMH mutation evidence. Hermes-native and external provider/vector context is not_omh_reviewed and never inherits OMH approval.
 - Fallback: If a required target, credential, runtime, or observation is missing, show a blocker or confirmation action instead of claiming completion.
 
 ### gateway-intent-card
