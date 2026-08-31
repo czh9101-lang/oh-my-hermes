@@ -109,12 +109,23 @@ RESUME_HOLD_SUCCEEDED = "hold_succeeded"
 RESUME_HOLD_REPLAY_UNSAFE = "hold_replay_unsafe"
 RESUME_HOLD_BLOCKED_DEPENDENCY = "hold_blocked_dependency"
 RESUME_HOLD_DECLINED = "hold_declined_conclusive"
+# The operator chose "wait" for this unit in the dispatch recovery interview:
+# its provider refused to serve the owner, and the answer was to come back
+# later rather than retarget or switch lanes. It is a rerun action with its own
+# name so the resume record says the unit is being re-attempted because someone
+# asked for exactly that, not because a failure happened to be replay-safe.
+RESUME_RERUN_AWAITING_RETRY = "rerun_awaiting_retry"
 
 RESUME_HOLD_ACTIONS = frozenset(
     {RESUME_HOLD_SUCCEEDED, RESUME_HOLD_REPLAY_UNSAFE, RESUME_HOLD_BLOCKED_DEPENDENCY, RESUME_HOLD_DECLINED}
 )
 RESUME_RERUN_ACTIONS = frozenset(
-    {RESUME_RERUN_FAILED, RESUME_RERUN_NOT_ATTEMPTED, RESUME_UNSKIP_DEPENDENT}
+    {
+        RESUME_RERUN_FAILED,
+        RESUME_RERUN_NOT_ATTEMPTED,
+        RESUME_UNSKIP_DEPENDENT,
+        RESUME_RERUN_AWAITING_RETRY,
+    }
 )
 
 # Reason codes for an unreadable journal, in OMH's `reason_code` idiom so a
@@ -134,6 +145,12 @@ _NEVER_SPAWNED_STATUSES = frozenset(
         "interrupted",
         "model_choice_required",
         "spawn_ceiling_reached",
+        # A cooldown veto refuses the spawn before the worktree exists, so the
+        # unit left nothing behind and a later resume — by which time the
+        # window may have reset or the credential been repaired — re-attempts
+        # it like any other unit that never ran.
+        "executor_limit_cooldown",
+        "executor_auth_invalid",
     }
 )
 _SUCCEEDED_STATUSES = frozenset({"completed", "already_completed", "dry_run_planned"})
@@ -189,6 +206,17 @@ def journal_unit_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
     exit_code = entry.get("exit_code")
     if isinstance(exit_code, int) and not isinstance(exit_code, bool):
         row["exit_code"] = exit_code
+    # Optional rather than part of `_JOURNAL_UNIT_KEYS`: a journal written
+    # before the recovery lane existed is still readable, and a unit nobody
+    # chose to defer carries no marker at all.
+    kind = str(entry.get("failure_kind", ""))
+    if kind:
+        row["failure_kind"] = kind
+    if entry.get("awaiting_retry"):
+        row["awaiting_retry"] = True
+        choice = entry.get("recovery_choice")
+        if isinstance(choice, Mapping):
+            row["awaiting_retry_kind"] = str(choice.get("failure_kind", ""))
     return row
 
 
@@ -371,6 +399,23 @@ def _unit_resume_decision(
                 "held because "
                 + ", ".join(unresolved)
                 + " is not being re-dispatched, so this unit would only block again"
+            ),
+            row=row,
+        )
+    if row.get("awaiting_retry"):
+        # Reached only after replay-safety and the blocker check have both
+        # passed: "wait for the provider window" is a reason to re-attempt a
+        # unit, never a licence to rebuild a worktree over work a failure left
+        # behind. A deferred unit that IS replay-unsafe is held above, with the
+        # side effect named, exactly like any other.
+        return _decision(
+            unit_id,
+            prior_state=prior_state,
+            action=RESUME_RERUN_AWAITING_RETRY,
+            reason=(
+                "the operator deferred this unit in the dispatch recovery interview after a "
+                f"{row.get('awaiting_retry_kind') or row.get('failure_kind') or 'recoverable'} failure; "
+                "this resume is the retry that was asked for"
             ),
             row=row,
         )

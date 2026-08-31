@@ -29,6 +29,35 @@ from ..system.paths import OmhPaths
 from ._hermes_child_process import terminate_process_group
 from .action_gate import recheck_safety_profile_revision
 from .coding_contracts import STRUCTURAL_SEARCH_GUIDANCE
+from .dispatch_failure_recovery import (
+    HERMES_LANE_CONSENT,
+    dispatch_unit_via_hermes_child,
+    hermes_routing_available,
+    CHOICE_HERMES,
+    CHOICE_REPORT,
+    CHOICE_RETARGET,
+    CHOICE_WAIT,
+    COOLDOWN_STATUS_AUTH,
+    COOLDOWN_STATUS_LIMIT,
+    ON_FAILURE_HERMES,
+    ON_FAILURE_REPORT,
+    ON_FAILURE_WAIT,
+    FAILURE_KIND_AUTH_SHAPED,
+    FAILURE_KIND_LIMIT_SHAPED,
+    FAILURE_RECOVERY_CLAIM_BOUNDARY,
+    FAILURE_RECOVERY_SCHEMA_VERSION,
+    auth_shaped_label,
+    build_repair_card,
+    classify_failure_kind,
+    clear_auth_failure_signal,
+    prompt_recovery_choice,
+    record_auth_failure_signal,
+    recovery_candidates,
+    recovery_decision,
+    recovery_options,
+    retarget_candidates,
+    spawn_cooldown,
+)
 from .executor_capability_snapshots import (
     complete_executor_capability_snapshot,
     validate_executor_capability_snapshot,
@@ -1190,6 +1219,19 @@ def dispatch_fanout(
     max_retries: int = FANOUT_MAX_RETRIES,
     rng: Callable[[], float] = random.random,
     sleep: Callable[[float], None] = time.sleep,
+    # Failure-recovery inputs. `on_failure` is the closed degradation mode
+    # (`report` changes nothing, which is the pre-recovery behavior); the
+    # interview only ever runs when the caller states BOTH that this session is
+    # interactive and how to read a line, so nothing here can block on a
+    # terminal that is not there.
+    ignore_limit_signal: bool = False,
+    on_failure: str = ON_FAILURE_REPORT,
+    retarget_owner: str = "",
+    interactive: bool = False,
+    read_line: Callable[[str], str] | None = None,
+    write_line: Callable[[str], None] | None = None,
+    hermes_routing: Mapping[str, Any] | None = None,
+    hermes_child: Callable[..., Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     # The spawn guard runs before every other check, including the two
     # boundary re-checks below: it is the only one whose whole job is that no
@@ -1369,6 +1411,32 @@ def dispatch_fanout(
     # only for runners carrying the real-runner `accepts_on_spawn` seam, so
     # injected test runners and dry runs never wait.
     spawn_stagger = _SpawnStagger(CACHE_WARM_SPAWN_STAGGER_SECONDS)
+    # Every per-unit argument except the unit and its capability precheck.
+    # Named once so the post-run recovery pass re-dispatches a retargeted unit
+    # through exactly the arguments the pool used, rather than a second
+    # hand-maintained copy of them that would drift on the next new parameter.
+    unit_dispatch_kwargs: dict[str, Any] = {
+        "goal_text": goal_text,
+        "repo_root": repo_root,
+        "base_sha": base_sha,
+        "source_ref": source_ref,
+        "timeout": timeout,
+        "dry_run": dry_run,
+        "run_verification": run_verification,
+        "runner": runner,
+        "readiness": readiness,
+        "current_catalog_digest": current_catalog_digest,
+        "fanout_id": fanout_id,
+        "discoveries": discoveries,
+        "spawn_stagger": spawn_stagger,
+        "spawn_ledger": spawn_ledger,
+        "dispatch_depth": current_depth,
+        "base_env": guard_env,
+        "max_retries": max_retries,
+        "rng": rng,
+        "sleep": sleep,
+        "ignore_limit_signal": ignore_limit_signal,
+    }
 
     def _dispatch_with_owner_gate(unit: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
         # A worker that reaches its turn after the interrupt — queued in the
@@ -1416,26 +1484,8 @@ def dispatch_fanout(
             futures[unit_id] = pool.submit(
                 _dispatch_with_owner_gate,
                 units[unit_id],
-                goal_text=goal_text,
-                repo_root=repo_root,
-                base_sha=base_sha,
-                source_ref=source_ref,
-                timeout=timeout,
-                dry_run=dry_run,
-                run_verification=run_verification,
-                runner=runner,
-                readiness=readiness,
-                current_catalog_digest=current_catalog_digest,
-                fanout_id=fanout_id,
-                discoveries=discoveries,
+                **unit_dispatch_kwargs,
                 capability_precheck=capability_prechecks[unit_id],
-                spawn_stagger=spawn_stagger,
-                spawn_ledger=spawn_ledger,
-                dispatch_depth=current_depth,
-                base_env=guard_env,
-                max_retries=max_retries,
-                rng=rng,
-                sleep=sleep,
             )
 
         def _admit_frontier() -> None:
@@ -1521,6 +1571,30 @@ def dispatch_fanout(
         if installed_term:
             signal.signal(signal.SIGTERM, previous_term)
 
+    # Recovery runs on the collected results and before the summary is built, so
+    # a retarget attempt's own outcome and a `wait` mark are both in hand when
+    # the run journal is projected. An interrupted batch is skipped entirely:
+    # the operator already asked for it to stop.
+    failure_recovery = (
+        None
+        if (dry_run or interrupted_by is not None)
+        else _run_failure_recovery(
+            paths,
+            results=results,
+            order=order,
+            units=units,
+            repo_root=repo_root,
+            timeout=timeout,
+            mode=on_failure,
+            retarget_owner=retarget_owner,
+            interactive=interactive,
+            read_line=read_line,
+            write_line=write_line,
+            hermes_routing=hermes_routing,
+            hermes_child=hermes_child,
+            unit_dispatch_kwargs=unit_dispatch_kwargs,
+        )
+    )
     summary_units = [results[unit_id] for unit_id in order]
     for entry in summary_units:
         decision = resume_decisions.get(str(entry.get("unit_id", "")))
@@ -1565,6 +1639,8 @@ def dispatch_fanout(
         "spawns_claimed": spawn_ledger.claimed,
         "claim_boundary": FANOUT_SPAWN_GUARD_CLAIM_BOUNDARY,
     }
+    if failure_recovery is not None:
+        summary["failure_recovery"] = failure_recovery
     if resume_plan is not None:
         summary["resume"] = {**resume_plan, "counts": resume_counts(resume_plan["decisions"])}
     if interrupted_by is not None:
@@ -1609,6 +1685,296 @@ def dispatch_fanout(
         # operator is at the keyboard reading it.
         raise interrupted_by
     return summary
+
+
+def _silent_write_line(_line: str) -> None:
+    """Default narration sink: a library call prints nothing.
+
+    The decisions and their options ride the summary, so a programmatic caller
+    already has everything the narration would have said. The CLI passes a real
+    writer (stderr, so a piped JSON stdout stays clean).
+    """
+    return None
+
+
+def _run_failure_recovery(
+    paths: OmhPaths,
+    *,
+    results: dict[str, dict[str, Any]],
+    order: Sequence[str],
+    units: Mapping[str, Mapping[str, Any]],
+    repo_root: Path,
+    timeout: int,
+    mode: str,
+    retarget_owner: str,
+    interactive: bool,
+    read_line: Callable[[str], str] | None,
+    write_line: Callable[[str], None] | None,
+    hermes_routing: Mapping[str, Any] | None,
+    hermes_child: Callable[..., Mapping[str, Any]] | None,
+    unit_dispatch_kwargs: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Offer, record, and carry out one recovery action per recoverable failure.
+
+    Returns None when nothing failed recoverably, so a clean run's summary is
+    byte-identical to what it was before this lane existed. Every decision is
+    recorded whether or not it changed anything: `report` is a decision too, and
+    an operator who was shown three options and picked none should be able to
+    see that in the record.
+
+    The one invariant this function exists to hold: no coding owner is ever
+    switched without an explicit choice — an interview answer, or an explicit
+    `--on-failure=retarget:<owner>` on the command line.
+    """
+    candidates = recovery_candidates([results[unit_id] for unit_id in order if unit_id in results])
+    if not candidates:
+        return None
+    emit = write_line if write_line is not None else _silent_write_line
+    hermes_available = hermes_routing_available(hermes_routing)
+    context: dict[str, Any] | None = None
+
+    def _choice_context() -> Mapping[str, Any]:
+        nonlocal context
+        if context is None:
+            from .executor_readiness import executor_choice_context
+
+            try:
+                context = dict(executor_choice_context(paths))
+            except (OSError, ValueError):
+                # Ranking context is advisory. Losing it costs the operator the
+                # readiness column on the retarget list, never the choice.
+                context = {"candidates": []}
+        return context
+
+    decisions: list[dict[str, Any]] = []
+    for candidate in candidates:
+        unit_id = str(candidate["unit_id"])
+        entry = results[unit_id]
+        retargets = retarget_candidates(_choice_context(), exclude_owner=str(candidate["owner"]))
+        options = recovery_options(
+            candidate=candidate, retargets=retargets, hermes_available=hermes_available
+        )
+        chosen = _chosen_recovery(
+            candidate=candidate,
+            options=options,
+            mode=mode,
+            retarget_owner=retarget_owner,
+            interactive=interactive,
+            read_line=read_line,
+            emit=emit,
+        )
+        decision = recovery_decision(
+            candidate=candidate,
+            choice=str(chosen["choice"]),
+            target_owner=str(chosen.get("target_owner", "")),
+            consent=HERMES_LANE_CONSENT if chosen["choice"] == CHOICE_HERMES else "",
+            reason=str(chosen.get("reason", "")),
+        )
+        decision["options"] = options
+        if entry.get("repair_card") is not None:
+            decision["repair_card"] = entry["repair_card"]
+        if decision["choice"] == CHOICE_RETARGET:
+            decision["attempt"] = _retarget_dispatch(
+                paths,
+                unit=units[unit_id],
+                new_owner=str(decision["target_owner"]),
+                failed_owner=str(candidate["owner"]),
+                unit_dispatch_kwargs=unit_dispatch_kwargs,
+            )
+        elif decision["choice"] == CHOICE_HERMES:
+            decision["attempt"] = _hermes_recovery_dispatch(
+                unit=units[unit_id],
+                goal_text=str(unit_dispatch_kwargs["goal_text"]),
+                repo_root=repo_root,
+                timeout=timeout,
+                routing=hermes_routing or {},
+                hermes_child=hermes_child,
+            )
+        elif decision["choice"] == CHOICE_WAIT:
+            # No re-dispatch: the mark on the unit is the whole action, and the
+            # run journal turns it into the next resume's selection.
+            entry["awaiting_retry"] = True
+        entry["recovery_choice"] = {
+            "choice": decision["choice"],
+            "failure_kind": str(candidate["failure_kind"]),
+            **({"target_owner": decision["target_owner"]} if decision.get("target_owner") else {}),
+        }
+        decisions.append(decision)
+    return {
+        "schema_version": FAILURE_RECOVERY_SCHEMA_VERSION,
+        "mode": mode,
+        "interactive": bool(interactive and read_line is not None),
+        "decisions": decisions,
+        "awaiting_retry_units": [
+            str(decision["unit_id"]) for decision in decisions if decision["choice"] == CHOICE_WAIT
+        ],
+        "claim_boundary": FAILURE_RECOVERY_CLAIM_BOUNDARY,
+    }
+
+
+def _chosen_recovery(
+    *,
+    candidate: Mapping[str, Any],
+    options: Sequence[Mapping[str, Any]],
+    mode: str,
+    retarget_owner: str,
+    interactive: bool,
+    read_line: Callable[[str], str] | None,
+    emit: Callable[[str], None],
+) -> dict[str, Any]:
+    """Resolve one unit's recovery choice from the mode, or by asking.
+
+    A named mode is obeyed without a prompt even on a terminal: the operator
+    already answered on the command line. `report` prompts only when the caller
+    stated the session is interactive AND supplied a reader — which is how a
+    non-tty invocation can never block.
+    """
+    by_choice = {str(option.get("choice")): option for option in options}
+    if mode == CHOICE_RETARGET:
+        if retarget_owner == str(candidate.get("owner", "")):
+            return {
+                "choice": CHOICE_REPORT,
+                "reason": f"--on-failure named {retarget_owner}, the owner that just failed",
+            }
+        return {"choice": CHOICE_RETARGET, "target_owner": retarget_owner}
+    if mode == ON_FAILURE_HERMES:
+        option = by_choice.get(CHOICE_HERMES, {})
+        if not option.get("available"):
+            return {"choice": CHOICE_REPORT, "reason": str(option.get("unavailable_reason", ""))}
+        return {"choice": CHOICE_HERMES}
+    if mode == ON_FAILURE_WAIT:
+        return {"choice": CHOICE_WAIT}
+    if interactive and read_line is not None:
+        return prompt_recovery_choice(
+            candidate=candidate, options=options, read_line=read_line, write_line=emit
+        )
+    _report_recovery_options(candidate=candidate, options=options, emit=emit)
+    return {"choice": CHOICE_REPORT, "reason": "no recovery action was requested"}
+
+
+def _report_recovery_options(
+    *,
+    candidate: Mapping[str, Any],
+    options: Sequence[Mapping[str, Any]],
+    emit: Callable[[str], None],
+) -> None:
+    emit(
+        f"Unit {candidate.get('unit_id')} failed on {candidate.get('owner')} as "
+        f"{candidate.get('failure_kind')}. Recovery options (none taken; pass --on-failure to choose):"
+    )
+    for option in options:
+        suffix = "" if option.get("available") else f"  (unavailable: {option.get('unavailable_reason')})"
+        emit(f"  [{option.get('key')}] {option.get('title')}{suffix}")
+
+
+def _retarget_dispatch(
+    paths: OmhPaths,
+    *,
+    unit: Mapping[str, Any],
+    new_owner: str,
+    failed_owner: str,
+    unit_dispatch_kwargs: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Re-dispatch one failed unit under an explicitly chosen different owner.
+
+    The attempt runs as a DERIVED unit id, which is what gives it its own
+    worktree and branch. Reusing the failed unit's worktree would mean either
+    building on state a refused spawn left behind or deleting an operator's
+    directory, and this engine does neither — `worktree_creator` refuses a
+    pre-existing path for exactly that reason.
+
+    The frozen model route is dropped rather than carried across: a model id
+    belongs to the CLI it was resolved for, and handing codex's route to claude
+    substitutes a value the contract never froze for this owner. The retarget
+    falls through to the new owner's own dispatch-model preference, or its CLI
+    default, both of which are recorded.
+    """
+    from .executor_capability_snapshots import (
+        ExecutorCapabilitySnapshotError,
+        resolved_executor_capability_snapshot,
+    )
+
+    unit_id = str(unit.get("unit_id", ""))
+    retarget_id = f"{unit_id}-retarget-{new_owner}"
+    try:
+        snapshot = resolved_executor_capability_snapshot(
+            new_owner, paths.executor_capability_snapshots_dir
+        )
+    except (ExecutorCapabilitySnapshotError, ValueError) as exc:
+        return {
+            "unit_id": retarget_id,
+            "owner": new_owner,
+            "status": "capability_snapshot_invalid",
+            "reason": str(exc),
+        }
+    handoff = dict(unit.get("handoff") or {})
+    handoff["executor_target"] = new_owner
+    handoff["executor_capability_snapshot"] = snapshot
+    handoff["executor_capability_snapshot_policy"] = "frozen_required"
+    handoff.pop("model_route", None)
+    retargeted = {
+        **dict(unit),
+        "unit_id": retarget_id,
+        "run_ref": f"{unit.get('run_ref', unit_id)}-retarget-{new_owner}",
+        "owner": new_owner,
+        "branch_suggestion": f"agent/{retarget_id}",
+        "handoff": handoff,
+        "depends_on": [],
+    }
+    result = _dispatch_unit(
+        paths,
+        retargeted,
+        **{**dict(unit_dispatch_kwargs), "ignore_limit_signal": False},
+        capability_precheck=(new_owner, snapshot, []),
+    )
+    result["retargeted_from"] = {"unit_id": unit_id, "owner": failed_owner}
+    return result
+
+
+def _hermes_recovery_dispatch(
+    *,
+    unit: Mapping[str, Any],
+    goal_text: str,
+    repo_root: Path,
+    timeout: int,
+    routing: Mapping[str, Any],
+    hermes_child: Callable[..., Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    """Re-run one failed unit through the Hermes subagent lane, in its worktree.
+
+    The child runs in the unit's OWN worktree or not at all: pointing it at the
+    dispatch repo root would let a recovery attempt edit the operator's main
+    checkout, which no unit of a fanout is ever allowed to do.
+    """
+    unit_id = str(unit.get("unit_id", ""))
+    worktree = _worktree_path(repo_root, unit_id)
+    if not worktree.is_dir():
+        return {
+            "unit_id": unit_id,
+            "owner": "hermes",
+            "status": "hermes_child_refused",
+            "reason": (
+                f"unit worktree {worktree} does not exist; the Hermes lane never runs against the "
+                "dispatch repo root"
+            ),
+        }
+    dispatcher = hermes_child if hermes_child is not None else dispatch_unit_via_hermes_child
+    run_ref = str(unit.get("run_ref", unit_id))
+    attempt = dispatcher(
+        prompt=build_unit_prompt(unit, goal_text),
+        routing=routing,
+        parent_run_id=run_ref,
+        run_id=f"{run_ref}-hermes-recovery",
+        cwd=worktree,
+        timeout_seconds=float(timeout),
+    )
+    return {
+        "unit_id": unit_id,
+        "owner": "hermes",
+        "worktree_path": str(worktree),
+        "consent": HERMES_LANE_CONSENT,
+        **dict(attempt),
+    }
 
 
 def _depth_refusal_summary(
@@ -2127,6 +2493,7 @@ def _dispatch_unit(
     max_retries: int = FANOUT_MAX_RETRIES,
     rng: Callable[[], float] = random.random,
     sleep: Callable[[float], None] = time.sleep,
+    ignore_limit_signal: bool = False,
 ) -> dict[str, Any]:
     from .model_inventory import catalog_fingerprint_note
 
@@ -2174,6 +2541,31 @@ def _dispatch_unit(
             **_dispatch_status_ladder(),
             "fallback": "use the unit handoff as a prepared prompt for this owner",
         }
+    # The one place an observed signal vetoes a spawn instead of ranking one.
+    # It is checked before the readiness probe because the cheapest refusal is
+    # the one that runs no subprocess at all, and it never fires on a dry run,
+    # which spawns nothing to begin with. See COOLDOWN_CLAIM_BOUNDARY for why
+    # this does not contradict the advisory-marker principle: the input is a
+    # runtime failure omh observed from a real spawn of this owner, not the
+    # absence of a local login file.
+    if not dry_run and not ignore_limit_signal:
+        cooldown = spawn_cooldown(paths, owner)
+        if cooldown is not None:
+            return {
+                "unit_id": unit_id,
+                "run_ref": run_ref,
+                "owner": owner,
+                "status": str(cooldown["status"]),
+                "failure_kind": str(cooldown["failure_kind"]),
+                **_dispatch_status_ladder(),
+                "reason": str(cooldown["reason"]),
+                "cooldown": {
+                    key: value
+                    for key, value in cooldown.items()
+                    if key in {"pattern_label", "observed_at", "cooldown_remaining_seconds", "claim_boundary"}
+                },
+                "repair_card": cooldown["repair_card"],
+            }
     probe = readiness(paths, owner)
     if str(probe.get("status", "")) != "ready":
         # The pre-handoff recheck (#837) can turn a once-ready owner into
@@ -2562,13 +2954,29 @@ def _dispatch_unit(
     finished_at = utc_now()
     duration_seconds = round(time.monotonic() - started_clock, 3)
     limit_label = _limit_shaped_label(output_tail, stderr_tail) if exit_code != 0 else ""
-    if limit_label:
+    auth_label = auth_shaped_label(output_tail, stderr_tail) if exit_code != 0 else ""
+    # One closed-enum answer per failed unit, derived once so the envelope, the
+    # persisted signal, and the recovery interview cannot disagree about what
+    # kind of failure this was.
+    failure_kind = classify_failure_kind(
+        exit_code=exit_code, limit_label=limit_label, auth_label=auth_label
+    )
+    # Auth takes the persisted signal when both shapes match, for the same
+    # reason it takes the enum: a credential rejection filed as a limit would be
+    # waited out forever. `limit_shaped` stays on the envelope either way, so no
+    # existing consumer of that flag loses its answer.
+    if failure_kind == FAILURE_KIND_AUTH_SHAPED:
+        record_auth_failure_signal(
+            paths, owner, run_ref=run_ref, unit_id=unit_id, pattern_label=auth_label
+        )
+    elif limit_label:
         _record_limit_signal(paths, owner, run_ref=run_ref, unit_id=unit_id, pattern_label=limit_label)
     elif exit_code == 0:
         # A successful dispatch to this executor is the freshest evidence the
-        # provider is serving it again; a stale limit signal must not keep
-        # down-ranking the executor forever.
+        # provider is serving it again; a stale limit or auth signal must not
+        # keep down-ranking (or vetoing) the executor forever.
         _clear_limit_signal(paths, owner)
+        clear_auth_failure_signal(paths, owner)
     status = "observed" if exit_code == 0 else "failed"
     # A second cap over an already-bounded tail. It goes through the shared
     # contract too, so the journal line says which of the two it is: the whole
@@ -2595,7 +3003,9 @@ def _dispatch_unit(
     journal_notice = truncation_notice(journal_truncation, compact=True)
     if journal_notice:
         summary = f"{summary} {journal_notice}"
-    if limit_label:
+    if failure_kind == FAILURE_KIND_AUTH_SHAPED:
+        summary = f"auth-shaped failure ({auth_label}); {summary}"
+    elif limit_label:
         summary = f"limit-shaped failure ({limit_label}); {summary}"
     # The compact notice above says "continuation=evidence_refs"; these are the
     # refs it means. Uncapped by the journal, so the pointer arrives whole.
@@ -2693,6 +3103,20 @@ def _dispatch_unit(
     if limit_label:
         result["limit_shaped"] = True
         result["limit_pattern"] = limit_label
+    if failure_kind:
+        # Every failed envelope carries exactly one closed-enum kind, including
+        # `crash` -- the fallback exists so a reader never has to infer "no kind
+        # recorded" from an absent key.
+        result["failure_kind"] = failure_kind
+    if failure_kind == FAILURE_KIND_AUTH_SHAPED:
+        result["auth_shaped"] = True
+        result["auth_pattern"] = auth_label
+    if failure_kind in {FAILURE_KIND_AUTH_SHAPED, FAILURE_KIND_LIMIT_SHAPED}:
+        result["repair_card"] = build_repair_card(
+            owner=owner,
+            failure_kind=failure_kind,
+            detail=f"unit {unit_id} exited {exit_code} on {owner} with a {failure_kind} output shape",
+        )
     if retry_decisions:
         # Only when something actually failed once: a unit that succeeded on
         # its first attempt carries no retry key at all, so the presence of
@@ -3350,6 +3774,11 @@ def _dependency_failed(result: dict[str, Any] | None) -> bool:
         "unsupported_for_local_dispatch",
         "worktree_failed",
         "not_selected",
+        # A vetoed spawn never ran, so a dependent must block on it exactly as
+        # it would on an unready executor -- admitting the dependent would run
+        # it against work that does not exist.
+        COOLDOWN_STATUS_AUTH,
+        COOLDOWN_STATUS_LIMIT,
     } and not result.get("process_succeeded")
 
 

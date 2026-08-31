@@ -109,6 +109,16 @@ def last_limit_signal_for_profile(paths: OmhPaths, profile: str) -> dict[str, ob
     return payload
 
 
+def signal_age_seconds(observed_at: str) -> int | None:
+    """Age in whole seconds of one recorded observation timestamp, or None.
+
+    Public because the auth-failure signals in `dispatch_failure_recovery` age
+    their records by the same rule; a second copy of this arithmetic is how two
+    staleness answers start disagreeing.
+    """
+    return _age_seconds(observed_at)
+
+
 def _age_seconds(observed_at: str) -> int | None:
     if not observed_at:
         return None
