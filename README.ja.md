@@ -187,8 +187,8 @@ OMH には次の編集可能な順序付き recommendation chain が含まれて
 | `deep` | 強力なデフォルト層 | GPT-5.6 Terra、次に DeepSeek V3.2 (high) |
 | `architect` | アーキテクチャ・システム設計 | Claude Fable 5、次に GPT-5.6 Sol、次に Kimi K3 (xhigh) |
 | `unspecified-high` | デフォルト作業モデル | Kimi K3、次に Claude Opus 5 (medium) |
-| `unspecified-low` | 低コストのフォールバック | GLM 5.2、次に GLM 5.2 Ultrafast、次に DeepSeek V3.2、次に Claude Opus 5 (low) |
-| `quick` | 短いタスク | GLM 5.2 Ultrafast、次に Kimi K3、次に GPT-5.6 Luna、次に Claude Fable 5 (low) |
+| `unspecified-low` | 低コストのフォールバック | GLM 5.3、次に GLM 5.2、次に GLM 5.2 Ultrafast、次に DeepSeek V3.2、次に Claude Opus 5 (low) |
+| `quick` | 短いタスク | GLM 5.3 Flash、次に GLM 5.2 Ultrafast、次に Kimi K3、次に GPT-5.6 Luna、次に Claude Fable 5 (low) |
 | `writing` | 文章・ドキュメント | Kimi K3、次に Qwen3-Coder、次に Gemini 3.1 Pro (medium) |
 | `visual-engineering` | フロントエンド・ビジュアル | Claude Fable 5、次に Kimi K3 (high) |
 | `artistry` | 型にはまらない創作 | Gemini 3.1 Pro、次に Claude Fable 5、次に Kimi K3 (high) |

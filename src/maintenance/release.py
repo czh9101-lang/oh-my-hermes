@@ -432,7 +432,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # loaded body for the same reason the tool-preference sentence beside it does:
 # it is search discipline the skill states up front, not a fact worth an
 # on-demand reference lookup; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 798440
+# 798440 -> 798464: `model-setup` names the shipped editorial chains verbatim,
+# and the unspecified-low / quick chains each gained a GLM 5.3-generation head
+# (owner decision, 2026-08-31: glm-5.3 and glm-5.3-flash lead, the 5.2
+# entries stay as fall-through). +24 chars of chain names, not new prose;
+# warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 798464
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
