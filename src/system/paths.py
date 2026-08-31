@@ -310,6 +310,15 @@ class OmhPaths:
         return self.runtime_dir / "executor-limit-signals.json"
 
     @property
+    def executor_auth_failure_signals_path(self) -> Path:
+        # A sibling of the limit signals rather than another key inside them:
+        # the limit record's own field is `last_limit_shaped_at`, and writing an
+        # observed credential rejection under that name would make every reader
+        # of `last_limit_signal_for_profile` report a quota problem that never
+        # happened.
+        return self.runtime_dir / "executor-auth-failure-signals.json"
+
+    @property
     def executor_capability_snapshots_dir(self) -> Path:
         return self.omh_home / "coding" / "executor-capability-snapshots"
 

@@ -327,11 +327,19 @@ def _with_advisory_signals(paths: OmhPaths, profile: str, result: dict[str, obje
     Login and limit markers change whenever the user logs in/out or a dispatch
     hits a provider limit, so they are recomputed on every call and never
     persisted with the cached probe (which would freeze them at first use).
+
+    `last_auth_failure_signal` is the third, and the only one of the three that
+    can currently refuse a spawn (see `dispatch_failure_recovery.spawn_cooldown`).
+    It is surfaced here because an operator whose unit came back
+    `executor_auth_invalid` should be able to read WHY from the readiness
+    surface, rather than only from the dispatch summary that refused them.
     """
+    from .dispatch_failure_recovery import last_auth_failure_signal
     from .executor_auth_signals import auth_signal_for_profile, last_limit_signal_for_profile
 
     result["auth_signal"] = auth_signal_for_profile(profile)
     result["last_limit_signal"] = last_limit_signal_for_profile(paths, profile)
+    result["last_auth_failure_signal"] = last_auth_failure_signal(paths, profile)
     return result
 
 
@@ -647,6 +655,7 @@ def _write_state(paths: OmhPaths, state: dict[str, Any], profile: str, result: d
     # login/limit state at first probe (see _with_advisory_signals).
     stored.pop("auth_signal", None)
     stored.pop("last_limit_signal", None)
+    stored.pop("last_auth_failure_signal", None)
     # The binding is what makes `updated_at` readable later: without it a
     # stored decision can only be aged, never checked against the machine it
     # described. It carries no timestamp of its own, deliberately -- it is

@@ -1946,6 +1946,53 @@ def _record_fanout_board_emission(paths, watched_runs: list[str], payload: dict,
         )
 
 
+def _failure_recovery_kwargs(args: argparse.Namespace) -> dict:
+    """Resolve the failure-recovery inputs the dispatch engine takes.
+
+    The interview runs only when `--on-failure` is left at `report` AND stdin is
+    a real terminal AND `--no-interactive` was not passed: a named mode is the
+    operator answering on the command line, and a pipe or a CI job must never
+    block on a prompt that nobody can see.
+    """
+    from ..coding.dispatch_failure_recovery import (
+        ON_FAILURE_REPORT,
+        OnFailureModeError,
+        parse_on_failure,
+    )
+    from ..executors import EXECUTOR_PROFILES
+
+    try:
+        mode, target_owner = parse_on_failure(
+            getattr(args, "on_failure", "") or "", known_owners=EXECUTOR_PROFILES
+        )
+    except OnFailureModeError as exc:
+        raise OmhError(str(exc)) from exc
+    interactive = (
+        mode == ON_FAILURE_REPORT
+        and not getattr(args, "no_interactive", False)
+        and sys.stdin.isatty()
+    )
+    routing = {
+        "model": getattr(args, "hermes_model", "") or "",
+        "provider": getattr(args, "hermes_provider", "") or "",
+        "reasoning": getattr(args, "hermes_reasoning", "") or "",
+    }
+    return {
+        "ignore_limit_signal": bool(getattr(args, "ignore_limit_signal", False)),
+        "on_failure": mode,
+        "retarget_owner": target_owner,
+        "interactive": interactive,
+        "read_line": input if interactive else None,
+        # stderr, so a caller piping the dispatch JSON reads a clean document.
+        "write_line": _write_stderr_line,
+        "hermes_routing": routing,
+    }
+
+
+def _write_stderr_line(line: str) -> None:
+    print(line, file=sys.stderr)
+
+
 def _fanout_dispatch_exit_code(summary: dict) -> int:
     """130 for a cut-short batch, 1 for a refusal, 0 otherwise.
 
@@ -1972,6 +2019,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
     from ..coding.parallelism_policy import read_parallelism_policy, resolve_fanout_concurrency
 
     paths = _paths(args)
+    recovery_kwargs = _failure_recovery_kwargs(args)
     try:
         parallelism = read_parallelism_policy(paths)
     except ValueError as exc:
@@ -2027,6 +2075,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
             resume_journal=resume_journal,
+            **recovery_kwargs,
         )
         _print_json(summary)
         return _fanout_dispatch_exit_code(summary)
@@ -2061,6 +2110,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
             resume_journal=resume_journal,
+            **recovery_kwargs,
         )
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
@@ -2194,6 +2244,7 @@ def cmd_coding_run(args: argparse.Namespace) -> int:
             timeout=args.timeout,
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
+            **_failure_recovery_kwargs(args),
         )
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
@@ -2445,6 +2496,40 @@ def cmd_coding_commit_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_failure_recovery_arguments(parser) -> None:
+    """The failure-recovery flags shared by `fanout dispatch` and `coding run`.
+
+    Both surfaces funnel into the same `dispatch_fanout`, so a recovery option
+    that exists on one and not the other would be a difference in the CLI only.
+    """
+    parser.add_argument(
+        "--on-failure",
+        default="report",
+        metavar="report|retarget:<owner>|hermes|wait",
+        help=(
+            "What to do with units that failed as auth_shaped or limit_shaped. 'report' (default) "
+            "prints the repair card and the options and changes nothing, or runs the interactive "
+            "interview when stdin is a terminal. A named mode is applied without prompting."
+        ),
+    )
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="Never prompt, even on a terminal; --on-failure alone decides.",
+    )
+    parser.add_argument(
+        "--ignore-limit-signal",
+        action="store_true",
+        help=(
+            "Spawn even when this machine observed a fresh limit-shaped or auth-shaped failure for "
+            "the unit's owner, re-observing the provider's answer directly."
+        ),
+    )
+    parser.add_argument("--hermes-model", default="", help="Hermes model alias for the Hermes-subagent recovery lane.")
+    parser.add_argument("--hermes-provider", default="", help="Hermes provider alias for the Hermes-subagent recovery lane.")
+    parser.add_argument("--hermes-reasoning", default="", help="Hermes reasoning alias for the Hermes-subagent recovery lane.")
+
+
 def _add_coding_commands(sub) -> None:
     coding = sub.add_parser("coding", help="Prepare executor-neutral or tracked coding handoff artifacts.")
     coding_sub = coding.add_subparsers(dest="coding_command", required=True)
@@ -2519,6 +2604,7 @@ def _add_coding_commands(sub) -> None:
             "re-run a unit that already succeeded."
         ),
     )
+    _add_failure_recovery_arguments(fanout_dispatch)
     fanout_dispatch.set_defaults(func=cmd_coding_fanout_dispatch)
 
     fanout_migrate = fanout_sub.add_parser(
@@ -2626,6 +2712,7 @@ def _add_coding_commands(sub) -> None:
             "category-maestro table when one is configured. --model still wins."
         ),
     )
+    _add_failure_recovery_arguments(run_cmd)
     run_cmd.set_defaults(func=cmd_coding_run)
 
     model_route = coding_sub.add_parser(

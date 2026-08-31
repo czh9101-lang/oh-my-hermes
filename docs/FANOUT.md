@@ -638,6 +638,100 @@ Rules:
   work that cannot resolve an executor becomes an explicit user choice, not
   retained Hermes implementation).
 
+## Failure recovery
+
+A spawned agent CLI that dies because the provider quota is spent or the stored
+credential is rejected is recoverable, and the two are not recoverable the same
+way. This section is what dispatch does about that. It applies identically to
+`omh coding fanout dispatch` and to the `omh coding run` single-run entry, which
+funnel into the same engine.
+
+- **`failure_kind` is a closed enum on every failed unit envelope**:
+  `auth_shaped`, `limit_shaped`, `timeout`, `binary_missing`, or `crash` as the
+  fallback. Precedence is fixed and deterministic. The dispatcher's own
+  synthetic exit codes classify first — 127 is `binary_missing`, 124 is
+  `timeout` — because they are observations of the process rather than text the
+  provider wrote. Text then classifies as `auth_shaped` **before**
+  `limit_shaped`: the two pattern sets overlap in practice (a 401 body routinely
+  also mentions a rate limit for unauthenticated callers), and an invalid
+  credential must be repaired before any attempt can succeed while a limit
+  clears on its own — filing an overlapping failure into the wait-it-out lane
+  would put it where waiting can never clear it. The auth patterns are
+  multi-word and anchored to credential context for the same reason the limit
+  patterns are: a bare `401`, `token`, or `auth` matches ordinary CLI narration.
+  Only the boolean and the matched label are ever persisted, never the matched
+  text. The existing `limit_shaped` / `limit_pattern` fields are unchanged.
+- **Auth-failure signals persist per owner**, in
+  `~/.omh/runtime/executor-auth-failure-signals.json`
+  (`executor_auth_failure_signals/v1`), a sibling of the limit signals rather
+  than another key inside them — the limit record's own field is
+  `last_limit_shaped_at`, and writing a credential rejection under that name
+  would make every reader report a quota problem that never happened. Records
+  gain read-time `age_seconds` and a `stale` marker, and the owner's next exit-0
+  clears them, exactly like limit signals. These are **not** the presence
+  markers in `executor_auth_signals`: a marker is absent for every legitimate
+  API-key install and never vetoes anything.
+- **Repair cards** ride every `auth_shaped` and `limit_shaped` unit entry
+  (`dispatch_failure_repair_card/v1`). An auth card names re-authentication then
+  re-dispatch, with the owner's own login command where this repo has verified
+  one and a neutral "re-authenticate the `<owner>` CLI" instruction where it has
+  not — no CLI is the implied default. A limit card names the wait and the
+  remaining cooldown window.
+- **A fresh observed signal is a spawn cooldown.** At spawn time, an owner
+  carrying a non-stale auth or limit signal does not spawn: the unit finishes as
+  `executor_auth_invalid` or `executor_limit_cooldown`, before the readiness
+  probe and before its worktree exists, so nothing is left behind. This is the
+  one place an observed signal becomes a veto rather than a ranking hint, and it
+  does not contradict the advisory-marker principle: the input is a runtime
+  failure omh observed from a real spawn of that owner, not the absence of a
+  local login file. A record whose observation time cannot be read never vetoes
+  — it cannot be *shown* to be inside the window. `--ignore-limit-signal`
+  overrides both and re-observes the provider's answer directly. A vetoed unit
+  blocks its dependents and journals as `not_attempted`, so a later resume
+  re-attempts it.
+- **The recovery interview offers three actions, and never picks one.** After
+  the run, each unit that failed as `auth_shaped` or `limit_shaped` gets a
+  numbered choice: **[1] retarget** to another coding owner, ranked from
+  `executor_choice_context` with the failed owner excluded; **[2] Hermes
+  subagent**, re-running the unit through the `omh coding hermes-child dispatch`
+  boundary, which carries separate auth and a separate quota; **[3] wait**,
+  marking the unit for retry later. An option this environment cannot carry out
+  is still listed, with `available: false` and the reason. Every decision —
+  including "none" — is recorded in the summary's `failure_recovery` block
+  (`fanout_failure_recovery/v1`). **No coding owner is ever switched without an
+  explicit choice recorded there.**
+  - **Retarget** re-dispatches under a derived unit id
+    (`<unit-id>-retarget-<owner>`), which gives it its own worktree and branch.
+    The failed unit's worktree is neither reused nor deleted — this engine
+    refuses a pre-existing worktree path and never removes an operator's
+    directory. The frozen model route is dropped rather than carried across: a
+    model id belongs to the CLI it was resolved for. Retargeting to the owner
+    that just failed is refused.
+  - **Hermes** runs the unit in its OWN worktree or not at all; pointing the
+    child at the dispatch repo root would let a recovery attempt edit the main
+    checkout. Selecting it is the explicit dispatch consent the Hermes child
+    boundary requires — equivalent to `--confirm-dispatch` — and it is recorded
+    as such. The lane is offered only when `--hermes-model`,
+    `--hermes-provider`, and `--hermes-reasoning` are supplied.
+  - **Wait** marks the unit `awaiting_retry` in the run journal with its
+    failure kind. The next `--resume-journal` run re-dispatches exactly those
+    units under the `rerun_awaiting_retry` action; units whose success was
+    observed stay skipped, and a deferred unit that is replay-unsafe is still
+    held with its side effect named — deferring is a reason to re-attempt, never
+    a licence to rebuild a worktree over work a failure left behind.
+- **`--on-failure=report|retarget:<owner>|hermes|wait`** is the non-interactive
+  degradation. `report` is the default and today's behavior: the notice, the
+  repair card, and the options are printed to stderr and nothing changes. The
+  interview runs only when the mode is `report`, `--no-interactive` was not
+  passed, and stdin is a real terminal — a named mode is the operator answering
+  on the command line, and a pipe or a CI job never blocks on a prompt nobody
+  can see. The prompt-reading seam is injected, so the interview is exercised
+  without a terminal anywhere in the test suite.
+- **Not evidence.** A recovery decision records what was chosen and what the
+  attempt observed. Choosing an action is not a claim it succeeded, and a
+  retargeted or Hermes-lane unit that exits 0 is no more verified than any other
+  unit that exits 0.
+
 ## Installed-skill discovery
 
 Before building unit prompts, dispatch probes fixed executor-specific
