@@ -891,6 +891,18 @@ _SKILL_POLICIES = {
             "claiming any runtime or AI-token efficiency improvement."
         ),
     ),
+    "model-optimization": RecommendationPolicy(
+        next_action="run_hermes_research",
+        evidence_boundary=(
+            "A recognition probe, research synthesis, or drafted calibration is prepared_not_observed; it is not a "
+            "routing change, benchmark execution, measured superiority, provider readiness, or merge evidence."
+        ),
+        wrapper_guidance=(
+            "Probe recognition for each new model id first, research official docs before community harness reports "
+            "with every finding labeled, then draft trait-to-counter calibration and name routing/pricing placement "
+            "surfaces and the measurement close."
+        ),
+    ),
     "source-finder": RecommendationPolicy(
         next_action="prepare_source_finder_plan",
         evidence_boundary=(
@@ -1749,6 +1761,15 @@ _SIBLING_POINTER_METADATA_TOKENS = {
 # `models` and `work` look like observed-work inventory requests.
 _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     "running-work-board": frozenset({"board", "models", "running", "units", "what", "which", "work"}),
+    # `model-optimization` names the onboarding process with ordinary ML and
+    # tuning words. Credited as bare tokens they made "which model is cheapest
+    # right now", "optimize database indexes", and "calibrate the load
+    # balancer weights" name this workflow as a candidate. The intent lives
+    # only in the complete phrases ("onboard new model", "model calibration",
+    # ...), which the +6 phrase match already covers.
+    "model-optimization": frozenset(
+        {"calibrate", "calibration", "model", "new", "onboard", "optimization", "optimize"}
+    ),
     # `adversarial-consensus` names its mechanic with ordinary planning words --
     # "red team this plan", "attack this proposal", "poke holes in this". Split
     # into tokens they are the vocabulary of every planning request: crediting

@@ -118,9 +118,9 @@ NON_SKILL_BACKTICKS = frozenset(
 # `rust`; `rust` points at `backend`, `native-debugging`, and `code-review`;
 # `native-debugging` points at `build-failure-triage`, `agent-debug`, `rust`,
 # and `verification-gate`. Eleven cases, eleven new pairs.
-EXPECTED_DEFERENCE_CASES = 154
-EXPECTED_DEFERENCE_PAIRS = 163
-EXPECTED_DEFERRING_OWNERS = 52
+EXPECTED_DEFERENCE_CASES = 156
+EXPECTED_DEFERENCE_PAIRS = 166
+EXPECTED_DEFERRING_OWNERS = 53
 
 # The ratchet. Recording a new inversion must be a visible edit to this number,
 # not one more dict line with a plausible sentence attached.
