@@ -18,6 +18,7 @@ import unittest
 from unittest.mock import patch
 
 from _cli_harness import run_cli
+from _platform_support import requires_posix_select
 
 from omh.commands.theme_picker import (
     ESC,
@@ -149,6 +150,7 @@ class TerminalKeyReaderTests(unittest.TestCase):
 
         return _Stream()
 
+    @requires_posix_select
     def test_an_arrow_sequence_is_read_whole(self) -> None:
         # The regression this exists for: reading through `sys.stdin` pulls
         # `[B` into Python's buffer, `select` on the descriptor then reports
@@ -165,9 +167,11 @@ class TerminalKeyReaderTests(unittest.TestCase):
             [KEY_DOWN, KEY_UP, KEY_ENTER, KEY_QUIT, KEY_QUIT, KEY_QUIT],
         )
 
+    @requires_posix_select
     def test_a_lone_escape_cancels(self) -> None:
         self.assertEqual(read_terminal_key(self._reader(b"\x1b")), KEY_QUIT)
 
+    @requires_posix_select
     def test_an_unrecognised_escape_sequence_is_ignored_not_obeyed(self) -> None:
         self.assertEqual(read_terminal_key(self._reader(b"\x1b[C")), KEY_NONE)
 
