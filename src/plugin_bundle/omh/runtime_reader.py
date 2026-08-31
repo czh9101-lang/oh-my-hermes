@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from .approval_bypass import effective_approval_bypass
 from .hermes_delegation import read_hermes_native_subagents
+from .live_session import LIVE_TUI_SESSION_FRESH_SECONDS, live_tui_session_rows
 from .subagent_graph import project_subagent_graph
 from .subagent_graph_contract import (
     GRAPH_CONTRACT_UNIT_LIMIT,
@@ -32,6 +33,7 @@ from .todo_store import (
     MAX_TODO_DEPTH,
     MAX_TODO_ITEMS,
     MAX_TODO_PHASE_CHARS,
+    MAX_TODO_SESSION_REF_CHARS,
     MAX_TODO_SOURCE_CHARS,
     MAX_TODO_TEXT_CHARS,
     MAX_TODO_TITLE_CHARS,
@@ -775,7 +777,10 @@ def read_omh_hud(
         "runtime": _hud_runtime_summary(status_payload, latest_run),
         "achievements": _achievements_summary(hermes),
         "tokens": _token_summary(token_metadata or {}),
-        "todo": _todo_summary(home),
+        # Scoped to the live TUI session: one OMH home holds one plan todo, so
+        # without that scope a previous session's unfinished checklist renders
+        # in every new session.
+        "todo": _todo_summary(home, hermes),
         # Concurrent tool-call batches observed by the pre_tool_call hook;
         # the [OMH] status line brands a fresh batch as a parallel shot.
         "parallel_shot": tool_calls["parallel_shot"],
@@ -1678,10 +1683,13 @@ def _evidence_state(run: dict[str, Any]) -> str:
     return str(run.get("observation_status", "unknown") or "unknown")
 
 
-def read_omh_todo(omh_home: str | Path | None = None) -> dict[str, Any]:
+def read_omh_todo(
+    omh_home: str | Path | None = None, hermes_home: str | Path | None = None
+) -> dict[str, Any]:
     """Public todo projection for tools and hosts that only need the panel."""
     home = _expand_path(omh_home) if omh_home else _default_omh_home()
-    return _todo_summary(home)
+    hermes = _expand_path(hermes_home) if hermes_home else _default_hermes_home()
+    return _todo_summary(home, hermes)
 
 
 def default_omh_home() -> Path:
@@ -1689,7 +1697,7 @@ def default_omh_home() -> Path:
     return _default_omh_home()
 
 
-def _todo_summary(home: Path) -> dict[str, Any]:
+def _todo_summary(home: Path, hermes: Path | None = None) -> dict[str, Any]:
     empty = {
         "status": "absent",
         "title": "",
@@ -1760,6 +1768,9 @@ def _todo_summary(home: Path) -> dict[str, Any]:
     if age is None or age > TODO_STALE_SECONDS:
         summary["status"] = "stale"
         return summary
+    if _todo_belongs_to_another_session(record, summary["updated_at"], hermes):
+        summary["status"] = "stale"
+        return summary
     if counts["done"] == counts["total"]:
         # A finished plan is a receipt, not ambient chrome. It lingers briefly
         # so the session that finished it sees the ✓, then leaves -- without
@@ -1804,6 +1815,54 @@ def _todo_summary(home: Path) -> dict[str, Any]:
     # honest; VOLATILE_KEYS carries it forward on the metrics repaint cadence.
     summary["updated_age_seconds"] = age
     return summary
+
+
+def _todo_belongs_to_another_session(
+    record: dict[str, Any], updated_at: str, hermes: Path | None
+) -> bool:
+    """Whether this plan was declared by a session other than the live one.
+
+    The plan todo is one artifact per OMH home, so nothing about the file
+    itself says which session declared it. Wall-clock age alone cannot answer
+    that: an INCOMPLETE plan written hours ago is inside every age bound and
+    so greeted every new session with a checklist it never created (a 4/7 plan
+    from one session observed rendering in a fresh one the next day).
+
+    The host's own ``state.db`` does say it. Scoped to the live TUI session
+    (`live_session.live_tui_session_rows`), a stamped record answers by
+    identity and an unstamped legacy or CLI record answers by write time --
+    a plan written before the current session started belongs to an earlier
+    one.
+
+    Unanswerable reads to False on purpose: no state.db, no live TUI row, an
+    unreadable one, or a row too old to describe anyone's session all keep the
+    age-only gates. A legitimately current plan must never be hidden on
+    missing evidence. The narrow known gap is two concurrently live TUI
+    sessions -- the widget poll carries no session identity, so the most
+    recently active row answers for both, and the other session's plan
+    returns as soon as that session is touched again.
+    """
+    if hermes is None:
+        return False
+    session = next(iter(live_tui_session_rows(str(hermes))), None)
+    if session is None:
+        return False
+    session_id = str(session.get("id") or "")
+    if not session_id:
+        return False
+    activity = session.get("activity")
+    if not isinstance(activity, (int, float)) or (
+        _utc_epoch_now() - float(activity) > LIVE_TUI_SESSION_FRESH_SECONDS
+    ):
+        return False
+    reference = strip_control_characters(record.get("session_ref", ""))[:MAX_TODO_SESSION_REF_CHARS]
+    if reference:
+        return reference != session_id
+    started_at = session.get("started_at")
+    written_at = _epoch_seconds(updated_at)
+    if not isinstance(started_at, (int, float)) or written_at is None:
+        return False
+    return written_at < float(started_at)
 
 
 def _collapse_todo_items(items: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -2506,7 +2565,8 @@ def _has_raw_or_hidden_content(value: Any) -> bool:
     return False
 
 
-def _seconds_since(value: str) -> float | None:
+def _epoch_seconds(value: str) -> float | None:
+    """Parse an ISO-8601 stamp into POSIX seconds, comparable with state.db."""
     try:
         cleaned = value.strip()
         if cleaned.endswith("Z"):
@@ -2514,7 +2574,17 @@ def _seconds_since(value: str) -> float | None:
         parsed = datetime.fromisoformat(cleaned)
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        return (now - parsed.astimezone(timezone.utc)).total_seconds()
+        return parsed.astimezone(timezone.utc).timestamp()
     except (TypeError, ValueError):
         return None
+
+
+def _utc_epoch_now() -> float:
+    return datetime.now(timezone.utc).timestamp()
+
+
+def _seconds_since(value: str) -> float | None:
+    parsed = _epoch_seconds(value)
+    if parsed is None:
+        return None
+    return _utc_epoch_now() - parsed

@@ -30,6 +30,9 @@ from typing import Any
 # Reuse the awareness ledger's portable lock and atomic-write primitives so
 # there is exactly one file-locking implementation in the plugin.
 from .awareness_delivery import _awareness_delivery_lock, _write_delivery_record
+# One definition of "a live TUI session row", shared with the plan-todo
+# session scope so the two readers cannot drift apart on what they scope to.
+from .live_session import live_tui_session_rows
 
 APPROVAL_BYPASS_SCHEMA_VERSION = "omh_approval_bypass/v1"
 APPROVAL_BYPASS_FILE = "approval-bypass.json"
@@ -103,65 +106,22 @@ def _session_yolo_row(
     when no such row speaks (missing DB, older schema, no live TUI session,
     or a session the host has not stamped) so the caller can fall back.
     """
-    import json
-    import sqlite3
-    from urllib.parse import quote
-
     current = float(now if now is not None else time.time())
-    home = Path(hermes_home).expanduser() if hermes_home else Path.home() / ".hermes"
-    path = home / "state.db"
-    if not path.exists():
-        return None
-    try:
-        connection = sqlite3.connect(
-            f"file:{quote(str(path))}?mode=ro", uri=True, timeout=0.2
-        )
-    except sqlite3.Error:
-        return None
-    try:
-        cursor = connection.execute(
-            """
-            SELECT model_config, COALESCE(last_activity_at, started_at)
-            FROM sessions
-            WHERE source = 'tui'
-              AND ended_at IS NULL
-              AND COALESCE(archived, 0) = 0
-              AND COALESCE(hidden, 0) = 0
-              AND (
-                model_config IS NULL
-                OR NOT json_valid(model_config)
-                OR json_extract(model_config, '$._delegate_from') IS NULL
-              )
-            ORDER BY COALESCE(last_activity_at, started_at) DESC
-            LIMIT 32
-            """
-        )
-        for raw_config, activity in cursor.fetchall():
-            try:
-                config = json.loads(raw_config) if raw_config else {}
-            except (ValueError, TypeError):
-                continue
-            if not isinstance(config, dict) or config.get("_delegate_from"):
-                continue
-            if not isinstance(activity, (int, float)) or (
-                current - float(activity) > APPROVAL_BYPASS_FRESH_SECONDS
-            ):
-                # The freshest live TUI row is already too old to describe a
-                # session anyone is looking at; nothing below it is fresher.
-                return None
-            # A row without the key means the host never persisted a toggle
-            # for this session; only the hook ledger can speak for it.
-            if "yolo_mode" not in config:
-                return None
-            return bool(config.get("yolo_mode")), float(activity)
-        return None
-    except (sqlite3.Error, TypeError, ValueError):
-        return None
-    finally:
-        try:
-            connection.close()
-        except sqlite3.Error:
-            pass
+    for row in live_tui_session_rows(hermes_home):
+        activity = row["activity"]
+        config = row["model_config"]
+        if not isinstance(activity, (int, float)) or (
+            current - float(activity) > APPROVAL_BYPASS_FRESH_SECONDS
+        ):
+            # The freshest live TUI row is already too old to describe a
+            # session anyone is looking at; nothing below it is fresher.
+            return None
+        # A row without the key means the host never persisted a toggle
+        # for this session; only the hook ledger can speak for it.
+        if "yolo_mode" not in config:
+            return None
+        return bool(config.get("yolo_mode")), float(activity)
+    return None
 
 
 def _approvals_mode_off(hermes_home: str = "") -> bool:

@@ -88,6 +88,19 @@ OMH_TODO_SCHEMA = {
 }
 
 
+def _observed_session_ref(observation: dict[str, Any] | None) -> str:
+    """The host session id this write belongs to, when the host supplied one.
+
+    Hermes passes its stable session/thread id as observation metadata on
+    every tool call, so a plan declared in chat can record which session
+    declared it. A host that supplies none leaves this empty and the record
+    stays unstamped, exactly like a CLI write.
+    """
+    if not isinstance(observation, dict):
+        return ""
+    return str(observation.get("session_id", "") or "")
+
+
 def omh_todo_handler(args: dict[str, Any], **kwargs) -> str:
     observation = observe_plugin_tool_call("omh_todo", args, kwargs)
     home_arg = str(args.get("omh_home", "") or "")
@@ -107,7 +120,12 @@ def omh_todo_handler(args: dict[str, Any], **kwargs) -> str:
         return json.dumps(attach_public_observation(payload, observation), sort_keys=True)
     if action == "set":
         try:
-            record = build_todo_record(args.get("title", ""), args.get("items"), source="omh_todo")
+            record = build_todo_record(
+                args.get("title", ""),
+                args.get("items"),
+                source="omh_todo",
+                session_ref=_observed_session_ref(observation),
+            )
             write_todo(default_omh_home(), record)
             payload["status"] = "written"
         except (TodoValidationError, TodoStoreError) as error:
