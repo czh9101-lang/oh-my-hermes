@@ -84,7 +84,7 @@ from ..release import (
     package_url_for,
     release_artifact_note,
 )
-from ..skin_pack import SKIN_NAME, install_skin, uninstall_skin
+from ..skin_pack import SKIN_NAME, install_skin, is_omh_skin_name, uninstall_skin
 from ..tui_widget_pack import install_tui_widget, uninstall_tui_widget
 from ..routing.recommend import recommend_skills
 from ..routing.route_plan import build_workflow_route_plan, compact_workflow_route_plan
@@ -1583,7 +1583,14 @@ def _apply_result(args: argparse.Namespace) -> dict[str, object]:
             )
         elif tui_choice is True:
             tui_interface = activate_tui_interface(plugin_enable.text)
-            skin_active = activate_omh_skin(tui_interface.text, SKIN_NAME)
+            # Accepting the branded TUI must not undo a theme choice: an
+            # operator on `omh-crimson` who says yes to the modern TUI keeps
+            # crimson. Only a non-OMH or unset skin resolves to the default.
+            chosen_skin = display_skin_selection(tui_interface.text)
+            skin_active = activate_omh_skin(
+                tui_interface.text,
+                chosen_skin if is_omh_skin_name(chosen_skin) else SKIN_NAME,
+            )
         else:
             tui_interface = ensure_tui_interface(plugin_enable.text)
             skin_active = ensure_omh_skin(tui_interface.text, SKIN_NAME)
@@ -2257,14 +2264,15 @@ def _ask_tui_identity_choice(args: argparse.Namespace, paths: OmhPaths, language
     if hasattr(args, "_omh_tui_choice"):
         return
     config_text = read_config(paths.hermes_config_path)
-    if (
-        display_interface_selection(config_text) == "tui"
-        and display_skin_selection(config_text) == SKIN_NAME
-    ):
+    # Any shipped theme counts as identity-active: asking a crimson user to
+    # switch to the default skin is asking them to lose a choice they made.
+    selected_skin = display_skin_selection(config_text)
+    if display_interface_selection(config_text) == "tui" and is_omh_skin_name(selected_skin):
         return
+    target_skin = selected_skin if is_omh_skin_name(selected_skin) else SKIN_NAME
     if (
         not activate_tui_interface(config_text).changed
-        and not activate_omh_skin(config_text, SKIN_NAME).changed
+        and not activate_omh_skin(config_text, target_skin).changed
     ):
         return
     args._omh_tui_choice = _ask_yes_no(

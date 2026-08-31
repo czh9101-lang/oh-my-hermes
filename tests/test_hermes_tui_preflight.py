@@ -181,6 +181,38 @@ class HermesTuiPreflightTests(unittest.TestCase):
 
             self.assertEqual(verdict["status"], "ready")
             self.assertTrue(any("midnight" in note for note in verdict["notes"]))
+            self.assertTrue(any("explicit choice" in note for note in verdict["notes"]))
+
+    def test_verdict_reports_an_omh_theme_as_the_identity_being_active(self) -> None:
+        # An operator who ran `omh theme use crimson` has the OMH identity ON.
+        # Reporting it the way a foreign skin is reported told them the
+        # branding had been declined while it was working.
+        with TemporaryDirectory() as tmp:
+            paths = _make_paths(Path(tmp))
+            _make_hermes_install(paths.hermes_home)
+            paths.hermes_home.mkdir(parents=True, exist_ok=True)
+            (paths.hermes_home / "config.yaml").write_text(
+                "display:\n  interface: tui\n  skin: omh-crimson\n", encoding="utf-8"
+            )
+            install_tui_widget(paths.hermes_home)
+
+            verdict = tui_identity_verdict(paths)
+
+            self.assertEqual(verdict["status"], "ready")
+            self.assertTrue(any("OMH theme crimson is active" in note for note in verdict["notes"]))
+            self.assertFalse(any("explicit choice" in note for note in verdict["notes"]))
+
+    def test_verdict_says_nothing_extra_about_the_default_skin(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _make_paths(Path(tmp))
+            _make_hermes_install(paths.hermes_home)
+            paths.hermes_home.mkdir(parents=True, exist_ok=True)
+            (paths.hermes_home / "config.yaml").write_text(
+                "display:\n  interface: tui\n  skin: omh\n", encoding="utf-8"
+            )
+            install_tui_widget(paths.hermes_home)
+
+            self.assertEqual(tui_identity_verdict(paths)["notes"], [])
 
     def test_old_hermes_without_widget_loader_names_hermes_update(self) -> None:
         with TemporaryDirectory() as tmp:

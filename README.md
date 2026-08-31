@@ -390,7 +390,7 @@ generated catalog, triggers, harnesses, and evidence rules live in
 | Intelligence | What OMH adds |
 | --- | --- |
 | 🧭 **Mixture-of-models routing** | Routes each delegated lane onto a category (model + reasoning effort) applied per dispatch, with editable fallback chains that advance when a provider rejects a model — and honest `failed` rows when a child did no work. |
-| 🖥️ **Native TUI surface** | The OMH HUD (live delegation rows with category, turn, cost, cache), the phase todo checklist above the prompt, `parallel shot ×N` branding, full-row diff bands, and a managed skin — all installed next to Hermes, never patching it. |
+| 🖥️ **Native TUI surface** | The OMH HUD (live delegation rows with category, turn, cost, cache), the phase todo checklist above the prompt, `parallel shot ×N` branding, full-row diff bands, and four managed skins (sky, amber, crimson, mono) you switch from an arrow-key picker with `omh theme` — all installed next to Hermes, never patching it. |
 | 📋 **Phase-structured plans** | `todo init` declares phases and tasks before engine work so runs walk a bounded checklist instead of an open-ended reasoning loop. |
 | ⚡ **Observed parallel work** | Splits independent work into explicit fanout units with isolated ownership, progress observation, and verification gates. |
 | 🎼 **Maestro handoffs** | Prepares handoffs to explicit coding owners and runtime profiles without becoming a hidden executor or treating preparation as execution. |

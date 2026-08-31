@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..paths import OmhPaths
+from ..skin_pack import SKIN_NAME, theme_for_skin_name
 from ..tui_widget_pack import MANIFEST_FILENAME, WIDGET_FILENAME
 
 HERMES_TUI_PREFLIGHT_SCHEMA_VERSION = "omh_hermes_tui_preflight/v1"
@@ -292,7 +293,13 @@ def tui_identity_verdict(paths: OmhPaths) -> dict[str, Any]:
         next_commands.append("hermes update")
     notes: list[str] = []
     skin_value = str(skin.get("value") or "")
-    if skin_value and skin_value != "omh":
+    theme = theme_for_skin_name(skin_value) if skin_value else None
+    if theme is not None and theme.skin_name != SKIN_NAME:
+        # An OMH theme is the OMH identity, not a foreign skin. Reporting
+        # `omh-crimson` as "the user's explicit choice, banner keeps that look"
+        # told operators the branding had been declined when it was active.
+        notes.append(f"OMH theme {theme.short_name} is active (display.skin: {theme.skin_name}).")
+    elif skin_value and theme is None:
         notes.append(
             f"display.skin is the user's explicit choice ({skin_value!r}); the banner keeps that look on purpose."
         )

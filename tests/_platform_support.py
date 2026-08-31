@@ -51,3 +51,7 @@ requires_domain_intelligence_store = unittest.skipUnless(
     HAS_SECURE_DIR_IO and HAS_FCNTL,
     "domain-intelligence safe stores require POSIX dirfd/O_NOFOLLOW/fcntl primitives",
 )
+requires_posix_select = unittest.skipUnless(
+    os.name == "posix",
+    "select() on Windows accepts only sockets, not pipe/tty descriptors",
+)

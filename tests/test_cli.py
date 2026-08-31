@@ -2709,6 +2709,54 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertIn("  interface: tui\n", config_text)
             self.assertIn("  skin: omh\n", config_text)
 
+    def test_update_skips_prompt_when_a_chosen_omh_theme_is_active(self) -> None:
+        # An operator on `omh theme use crimson` has the branded TUI on. The
+        # prompt used to compare against the default skin name alone, so it
+        # asked them to switch back and their yes would have erased the theme.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            omh_home = root / ".omh"
+            hermes_home = root / ".hermes"
+            base = ["--omh-home", str(omh_home), "--hermes-home", str(hermes_home)]
+            status, _, stderr = run_cli(base + ["setup", "--json"], output_json=False)
+            self.assertEqual(status, 0, stderr)
+            status, _, stderr = run_cli(base + ["theme", "use", "crimson", "--json"], output_json=False)
+            self.assertEqual(status, 0, stderr)
+
+            with patch("omh.commands.setup._ask_yes_no") as yes_no:
+                status, _, stderr = run_cli(base + ["update", "--interactive"], output_json=False)
+
+            self.assertEqual(status, 0, stderr)
+            yes_no.assert_not_called()
+            self.assertIn("  skin: omh-crimson\n", (hermes_home / "config.yaml").read_text(encoding="utf-8"))
+
+    def test_accepting_the_branded_tui_keeps_a_chosen_omh_theme(self) -> None:
+        # Same guarantee one branch over: the operator declined the modern TUI
+        # earlier but kept crimson. Saying yes now must set the interface and
+        # leave the palette they picked alone.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            omh_home = root / ".omh"
+            hermes_home = root / ".hermes"
+            base = ["--omh-home", str(omh_home), "--hermes-home", str(hermes_home)]
+            status, _, stderr = run_cli(base + ["setup", "--json"], output_json=False)
+            self.assertEqual(status, 0, stderr)
+            run_cli(base + ["theme", "use", "amber", "--json"], output_json=False)
+            config = hermes_home / "config.yaml"
+            config.write_text(
+                config.read_text(encoding="utf-8").replace("  interface: tui\n", "  interface: cli\n"),
+                encoding="utf-8",
+            )
+
+            with patch("omh.commands.setup._ask_yes_no", return_value=True) as yes_no:
+                status, _, stderr = run_cli(base + ["update", "--interactive"], output_json=False)
+
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(yes_no.call_count, 1)
+            config_text = config.read_text(encoding="utf-8")
+            self.assertIn("  interface: tui\n", config_text)
+            self.assertIn("  skin: omh-amber\n", config_text)
+
     def test_update_skips_prompt_for_noncanonical_display_config(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

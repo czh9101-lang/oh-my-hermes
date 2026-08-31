@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 from ..local_store import atomic_write_text
+from ..skin_pack import SKIN_NAME, is_omh_skin_name
 
 
 @dataclass(frozen=True)
@@ -372,12 +373,17 @@ def _activate_display_scalar(config_text: str, key: str, value: str) -> ConfigCh
     return ConfigChange(True, f"inserted display.{key}", "\n".join(lines) + "\n")
 
 
-def activate_omh_skin(config_text: str, name: str) -> ConfigChange:
-    """Select the managed OMH skin after the operator accepts the prompt."""
+def activate_omh_skin(config_text: str, name: str = SKIN_NAME) -> ConfigChange:
+    """Select one managed OMH skin after the operator accepts it.
+
+    Forcing on purpose: this is the consent path. The setup/update prompt and
+    `omh theme use <name>` are both explicit choices, so they may replace an
+    existing canonical value; `ensure_omh_skin` is the narrow unset-only writer.
+    """
     return _activate_display_scalar(config_text, "skin", name)
 
 
-def ensure_omh_skin(config_text: str, name: str) -> ConfigChange:
+def ensure_omh_skin(config_text: str, name: str = SKIN_NAME) -> ConfigChange:
     """Default `display.skin` to the managed OMH skin when no skin is chosen.
 
     This is the owner-directed identity default: installing OMH is opting into
@@ -388,6 +394,11 @@ def ensure_omh_skin(config_text: str, name: str) -> ConfigChange:
     they already use, only when `display.skin` is unset, and `hermes skin use
     <anything>` immediately and permanently overrides it because an explicit
     value is never rewritten.
+
+    An already-selected OMH theme (`omh theme use amber` and friends) is left
+    alone for the same reason a foreign skin is: it is an explicit choice. The
+    two cases differ only in the message, because "leaving user preference
+    unchanged" reads as a foreign skin and would hide a working OMH theme.
     """
     lines = config_text.splitlines()
     guard = _display_edit_guard(lines)
@@ -404,6 +415,8 @@ def ensure_omh_skin(config_text: str, name: str) -> ConfigChange:
     selected = display_skin_selection(config_text)
     if selected == name:
         return ConfigChange(False, f"display.skin is already {name}", config_text)
+    if selected and is_omh_skin_name(selected):
+        return ConfigChange(False, f"display.skin is the chosen OMH theme {selected}; leaving it unchanged", config_text)
     if selected:
         return ConfigChange(False, f"display.skin is {selected}; leaving user preference unchanged", config_text)
 
