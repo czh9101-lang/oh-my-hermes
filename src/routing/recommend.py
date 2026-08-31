@@ -1008,7 +1008,8 @@ _SKILL_POLICIES.update(
             next_action="prepare_memory_sync",
             evidence_boundary=(
                 "Memory-sync prompt guidance is not Hermes internal memory, MEMORY.md, USER.md, or skill-file mutation "
-                "evidence; it never invokes, applies, or observes a native MEMORY.md/USER.md write."
+                "evidence; no OMH surface invokes, applies, or observes a native MEMORY.md/USER.md write, and a "
+                "user-approved diff applied through Hermes's native memory tool is Hermes's own act, never OMH evidence."
             ),
             wrapper_guidance=(
                 "Use English-canonical claim review with concise Korean help labels and preserved Korean routes. Prepare a "
@@ -1770,6 +1771,15 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     "model-optimization": frozenset(
         {"calibrate", "calibration", "model", "new", "onboard", "optimization", "optimize"}
     ),
+    # `memory-sync` gained natural interview phrases ("your memories",
+    # "memories still true", "memory interview"); their loose tokens are
+    # everyday words that made "how do computers store memories" name this
+    # workflow ("memories") and would credit any "is it still true ..."
+    # sentence ("still", "true") or pull deep-interview requests
+    # ("interview"). The intent lives only in the complete phrases; "your"
+    # stays creditable because it was already trigger vocabulary before
+    # these phrases landed.
+    "memory-sync": frozenset({"interview", "memories", "still", "true"}),
     # `adversarial-consensus` names its mechanic with ordinary planning words --
     # "red team this plan", "attack this proposal", "poke holes in this". Split
     # into tokens they are the vocabulary of every planning request: crediting
@@ -2032,6 +2042,9 @@ def _score_definition(
     if definition.name == "llm-app-dev" and _llm_app_dev_explicit_match(normalized_query):
         score += 30
         matched.add("direct:llm_app_dev")
+    if definition.name == "memory-sync" and _memory_interview_explicit_match(normalized_query):
+        score += 30
+        matched.add("direct:memory_interview")
     if definition.name == "failure-signal-audit" and _failure_signal_audit_explicit_match(normalized_query):
         score += 34
         matched.add("direct:failure_signal_audit")
@@ -2636,6 +2649,16 @@ def _adversarial_consensus_explicit_match(normalized_query: str) -> bool:
 
 def _llm_app_dev_explicit_match(normalized_query: str) -> bool:
     return any(_explicit_phrase_match(normalized_query, phrase) for phrase in _LLM_APP_DEV_EXPLICIT_PHRASES)
+
+
+def _memory_interview_explicit_match(normalized_query: str) -> bool:
+    # "ask" is the ask skill's home vocabulary (name + bare trigger = 15 for
+    # any sentence containing the word), so the memory-interview intent —
+    # "<verb> your memories ... and ask me ..." — lost to `ask` on every
+    # paraphrase except a literal fixture sentence. Possessive memory
+    # vocabulary co-occurring with an asking verb is the interview asking the
+    # user about their memories, not an advisor question.
+    return _phrase_match(normalized_query, "your memories") and _phrase_match(normalized_query, "ask")
 
 
 def _failure_signal_audit_explicit_match(normalized_query: str) -> bool:

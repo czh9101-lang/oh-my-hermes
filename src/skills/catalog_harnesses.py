@@ -2413,14 +2413,14 @@ _FEATURE_SURFACE_HARNESSES = (
     ),
     _feature_surface_harness(
         "memory-sync",
-        "English-canonical Hermes memory-review guidance: inspect USER.md and MEMORY.md claims and prepare a native write diff without invoking, applying, or observing a native write; for a new fact use memory-new.",
-        "Use when existing Hermes USER.md, MEMORY.md, or accumulated skill memories need an English-canonical, claim-by-claim review; it prepares native write guidance only and never invokes, applies, or observes a native write.",
+        "English-canonical Hermes memory-review guidance: inspect USER.md and MEMORY.md claims and prepare a native write diff; no OMH surface invokes, applies, or observes a native write — a user-approved diff is applied by Hermes's own native memory tool. For a new fact use memory-new.",
+        "Use when existing Hermes USER.md, MEMORY.md, or accumulated skill memories need an English-canonical, claim-by-claim review; it prepares native write guidance only, and no OMH surface invokes, applies, or observes a native write.",
         ("native memory source", "claims to review", "staleness/conflict signal", "review owner"),
         ("memory_curation_review/v1", "native write diff guidance", "not_omh_reviewed disclosure", "write boundary"),
         quality_tier="curation-gated",
-        evidence_ladder=("memory_candidates_scoped", "conflicts_ranked", "review_actions_prepared", "native_diff_prepared_when_available"),
+        evidence_ladder=("memory_candidates_scoped", "conflicts_ranked", "review_actions_prepared", "native_diff_prepared_when_available", "native_write_observed_when_available"),
         wrapper_actions=("show_memory_review", "prepare_memory_diff", "approve_diff_application", "show_status"),
-        overclaim_guard="A memory review is prepared guidance only and never invokes, applies, or observes a MEMORY.md/USER.md write. Hermes-native and external provider/vector context is not_omh_reviewed and never inherits OMH approval.",
+        overclaim_guard="A memory review is prepared guidance only: no OMH surface invokes, applies, or observes a MEMORY.md/USER.md write, and a user-approved diff applied through Hermes's native memory tool is Hermes's own act, reported as an observed native write, never OMH mutation evidence. Hermes-native and external provider/vector context is not_omh_reviewed and never inherits OMH approval.",
     ),
     _feature_surface_harness(
         "gateway-intent-card",

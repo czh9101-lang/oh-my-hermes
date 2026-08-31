@@ -660,7 +660,7 @@ class RouterContentTests(unittest.TestCase):
         )
         self.assertIn("not_omh_reviewed", recommend_module._SKILL_POLICIES["memory-new"].evidence_boundary)
         self.assertIn(
-            "never invokes, applies, or observes",
+            "no OMH surface invokes, applies, or observes",
             recommend_module._SKILL_POLICIES["memory-sync"].evidence_boundary,
         )
         self.assertIn("Korean routes", recommend_module._SKILL_POLICIES["memory-sync"].wrapper_guidance)

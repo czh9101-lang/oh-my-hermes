@@ -1,8 +1,8 @@
 {
  "schema_version": "omh_routing_precision_subset/v1",
- "captured_at": "case ids: main @ acb9a060 (PR C merge); digest: re-pinned once at #954 stage 5 (window=0 retirement PR)",
+ "captured_at": "case ids: main @ acb9a060 (PR C merge); digest: re-pinned once at #954 stage 5 (window=0 retirement PR), and once for the memory-sync boundary rewording (no OMH surface applies / apply-after-approval; claim_boundary and plain_headline text only, zero route changes — verified by row diff against main)",
  "serialization": "sha256 over json.dumps({'cases': sorted(cases, key=id), 'intervention_cases': sorted(intervention_cases, key=id)}, sort_keys=True, ensure_ascii=False).encode() with both row lists filtered to case_ids; the summary block is excluded by construction",
- "digest": "e61bf7797d8623ab7a9b96b5c740bce1b24f2cd22d879fdba0430ddb293f49f6",
+ "digest": "70d812af9f1d26573cb852d874740cbfe135795b07ce22e55ba8af1d42a2c9af",
  "case_ids": [
   "bounded-slow-query-stays-direct",
   "catalog-no-shell-approval-korean",

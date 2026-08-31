@@ -35,9 +35,12 @@ remain supported, with concise Korean help labels such as `추출` (extract),
 `출처` (source), `대상` (target), `검토` (review), and `차이` (diff).
 
 It may ask Hermes to inspect supplied claims and prepare a native `MEMORY.md`
-or `USER.md` write diff. It never invokes, applies, or observes that native
-write. The review states that a prepared diff is not native mutation evidence.
-New facts belong in the remember/refuse/defer candidate flow instead.
+or `USER.md` write diff. No OMH surface invokes, applies, or observes that
+native write; after explicit user approval the diff is applied by Hermes's own
+native memory tool and reported as an observed native write, which is Hermes's
+act, not OMH mutation evidence. The review states that a prepared diff is not
+native mutation evidence. New facts belong in the remember/refuse/defer
+candidate flow instead.
 
 ## Migration and Review-Required Notice
 

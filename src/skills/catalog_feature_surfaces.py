@@ -154,12 +154,19 @@ _FEATURE_SURFACE_SKILLS = (
             "USER.md",
             "what you remember about me",
             "your memory about me",
+            # The interview ask phrased naturally ("pick a few of your
+            # memories and ask me if they are still true") lost to the `ask`
+            # advisor skill on its name token; these phrases carry the
+            # memory-review intent that sentence actually has.
+            "your memories",
+            "memory interview",
+            "memories still true",
         ),
-        "Use when existing Hermes USER.md, MEMORY.md, or accumulated skill memories need an English-canonical, claim-by-claim review. It prepares native write guidance only; it never invokes, applies, or observes a native write. Do not use for new project or product candidates.",
+        "Use when existing Hermes USER.md, MEMORY.md, or accumulated skill memories need an English-canonical, claim-by-claim review. It prepares native write guidance only; no OMH surface invokes, applies, or observes a native write — a user-approved diff is applied by Hermes's own native memory tool. Do not use for new project or product candidates.",
         category="memory",
         phase="curation-review",
         next_action="prepare_memory_sync",
-        boundary="A memory-sync review is prompt guidance only. It can prepare a native MEMORY.md or USER.md write diff but never invokes, applies, or observes that write. Hermes-native and external provider/vector context is not_omh_reviewed and never inherits OMH approval.",
+        boundary="A memory-sync review is prompt guidance only: no OMH surface invokes, applies, or observes a MEMORY.md or USER.md write. Applying a user-approved diff is Hermes's own act through its native memory tool — report it as an observed native write, never as OMH mutation evidence. Hermes-native and external provider/vector context is not_omh_reviewed and never inherits OMH approval.",
         good_prompt="memory-sync inspect stale MEMORY.md claims, prepare a native write diff, and ask which claims to keep, revise, or archive.",
         bad_prompt="memory-sync claim a prepared native diff changed MEMORY.md or USER.md.",
         extra_safety_rules=(
