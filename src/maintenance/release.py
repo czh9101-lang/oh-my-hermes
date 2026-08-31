@@ -119,12 +119,18 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # eight-phrase budget (+26 chars). Recognising a language is what the growth
 # buys; it is one line-tail per affected skill, not per-section padding;
 # warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 349663
+# 349663 -> 353786: `model-optimization` is a new installable skill (the
+# model-onboarding process contract distilled from the GLM 5.3 run); one new
+# capability section for one new workflow, not per-section padding; warranted
+# growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 353786
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
 # new workflows.
-STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 102070
+# 102070 -> 103020: one standalone capability row for the new
+# `model-optimization` skill; warranted growth.
+STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 103020
 STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ULW fold context ceiling (issue #954, PR D). The limit is the pre-D measured
 # value of the full profile's `skill_body` chars on `main` @ acb9a060, in the
@@ -437,7 +443,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # (owner decision, 2026-08-31: glm-5.3 and glm-5.3-flash lead, the 5.2
 # entries stay as fall-through). +24 chars of chain names, not new prose;
 # warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 798464
+# 798464 -> 806869: `model-optimization` is a new installable skill carrying
+# the model-onboarding process contract (recognition probe -> official-first
+# research -> trait-to-counter calibration -> config-first routing placement
+# -> documented-price-only cost -> measurement close). One new skill body for
+# one new workflow; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 806869
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

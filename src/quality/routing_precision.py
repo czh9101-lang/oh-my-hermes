@@ -1008,6 +1008,22 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "",
         "maestro",
     ),
+    RoutingPrecisionCase(
+        "model-price-question-not-model-optimization",
+        "A model price question clarifies instead of opening the model-onboarding process",
+        "which model is cheapest right now",
+        "answer_clarification",
+        "",
+        "model-optimization",
+    ),
+    RoutingPrecisionCase(
+        "query-optimization-not-model-optimization",
+        "Optimizing a query is not onboarding a model",
+        "optimize this query",
+        "answer_clarification",
+        "",
+        "model-optimization",
+    ),
 )
 
 
@@ -3499,6 +3515,24 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "maestro",
         "forward_plan_to_selected_workflow",
         "plan",
+    ),
+    RoutingInterventionCase(
+        "new-model-onboarding-reaches-model-optimization",
+        "A new-model onboarding request opens the model-onboarding process",
+        "onboard new model",
+        "dispatch",
+        "model-optimization",
+        "run_hermes_research",
+        "web_research",
+    ),
+    RoutingInterventionCase(
+        "model-optimization-by-name-dispatches",
+        "Naming the model-optimization workflow dispatches it",
+        "model optimization",
+        "dispatch",
+        "model-optimization",
+        "run_hermes_research",
+        "web_research",
     ),
 )
 
