@@ -9,6 +9,11 @@ Running `omh theme use <name>` IS the explicit consent the managed-artifact
 rule asks for, which is why it takes the forcing `activate_omh_skin` path
 rather than the unset-only `ensure_omh_skin` default writer.
 
+`omh theme repair` follows the same consent rule for the other direction: it
+adopts a theme file OMH does not own, so the bare form only reports and a
+theme name (or `--all`) is the accept. Nothing else in the product may call
+the repair path.
+
 Plain text is the default and `--json` is the opt-in, matching every other
 polled surface in this package.
 """
@@ -30,6 +35,7 @@ from ..skin_pack import (
     install_skin,
     installed_skin_report,
     is_omh_skin_name,
+    repair_skins,
     theme_for_name,
     theme_for_skin_name,
     theme_names,
@@ -45,6 +51,7 @@ from .quickstart import _color, _use_color
 THEME_LIST_SCHEMA_VERSION = "omh_theme_list/v1"
 THEME_CHANGE_SCHEMA_VERSION = "omh_theme_change/v1"
 THEME_STATUS_SCHEMA_VERSION = "omh_theme_status/v1"
+THEME_REPAIR_SCHEMA_VERSION = "omh_theme_repair/v1"
 
 
 def _language(args: argparse.Namespace) -> str:
@@ -88,6 +95,12 @@ def _theme_report(args: argparse.Namespace) -> dict[str, object]:
         "config_path": str(paths.hermes_config_path),
         "skins_dir": str(paths.hermes_home / "skins"),
         "themes": [_theme_row(theme, active_skin, states) for theme in SKIN_THEMES],
+        # Named separately from the per-theme rows so the hint that makes
+        # `omh theme repair` findable has one thing to test, in both the text
+        # and the JSON surface.
+        "unmanaged_themes": [
+            theme.short_name for theme in SKIN_THEMES if states.get(theme.skin_name) == "unmanaged"
+        ],
     }
 
 
@@ -158,6 +171,55 @@ def cmd_theme_use(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_theme_repair(args: argparse.Namespace) -> int:
+    """Report unmanaged theme files, and adopt the ones explicitly named.
+
+    The invocation IS the consent. Nothing on disk distinguishes a theme file
+    OMH wrote from one a person wrote -- a manifest that went stale while the
+    template also moved on leaves ours looking exactly like theirs -- so the
+    bare form never writes and a name (or `--all`) is the accept.
+    """
+    language = _language(args)
+    paths = _paths(args)
+    requested = str(getattr(args, "name", "") or "")
+    every = bool(getattr(args, "all", False))
+    dry_run = bool(getattr(args, "dry_run", False))
+    if requested and every:
+        print("omh: pass a theme name or --all, not both.")
+        return 2
+    theme = theme_for_name(requested) if requested else None
+    if requested and theme is None:
+        print(
+            f"omh: unknown theme {requested!r}; valid names are {', '.join(theme_names())} "
+            "(or the full skin name, for example omh-amber)."
+        )
+        return 2
+    if every:
+        adopt = frozenset(candidate.filename for candidate in SKIN_THEMES)
+    elif theme is not None:
+        adopt = frozenset({theme.filename})
+    else:
+        adopt = frozenset()
+    result = repair_skins(paths.hermes_home, adopt=adopt, dry_run=dry_run)
+    payload = {
+        "schema_version": THEME_REPAIR_SCHEMA_VERSION,
+        "mode": "repair" if adopt else "report",
+        "requested": theme.short_name if theme is not None else "",
+        "all": every,
+        "dry_run": dry_run,
+        "status": result["status"],
+        "skins_dir": str(result["path"]),
+        "themes": result["skins"],
+        "restart_note": _restart_note(language),
+        "language": language,
+    }
+    if _wants_json(args):
+        _print_json(payload)
+    else:
+        _print_theme_repair(payload)
+    return 0
+
+
 def _apply_theme(args: argparse.Namespace, theme: SkinTheme, *, dry_run: bool) -> dict[str, object]:
     """The one selection path. `theme use` and the picker both land here.
 
@@ -204,6 +266,23 @@ def _active_line(payload: dict[str, object]) -> str:
     return f"  Active: {payload.get('active_skin', '')} - not an OMH theme; your own skin choice is kept."
 
 
+def _repair_hint(payload: dict[str, object]) -> str:
+    """The one line that makes `omh theme repair` findable, when it applies.
+
+    Printed only while something is actually unmanaged. An always-on hint would
+    train people to skip the Next block, and a hand-authored skin is a valid
+    end state rather than a fault to nag about.
+    """
+    names = payload.get("unmanaged_themes")
+    if not isinstance(names, list) or not names:
+        return ""
+    joined = ", ".join(str(name) for name in names)
+    return (
+        f"  Unmanaged: {joined} - OMH leaves these alone and never updates them. "
+        "Run `omh theme repair` to see what adopting them would change."
+    )
+
+
 def _print_theme_list(payload: dict[str, object]) -> None:
     use_color = _use_color()
     print(_color("OMH TUI themes", "1;36", use_color))
@@ -219,6 +298,9 @@ def _print_theme_list(payload: dict[str, object]) -> None:
     print(_active_line(payload))
     print(_color("Next", "1;32", use_color))
     print("  Switch with `omh theme use <name>`; the new look applies on the next Hermes start.")
+    hint = _repair_hint(payload)
+    if hint:
+        print(hint)
 
 
 def _print_theme_status(payload: dict[str, object]) -> None:
@@ -235,6 +317,9 @@ def _print_theme_status(payload: dict[str, object]) -> None:
                 print(f"  {str(entry.get('theme', '')):<8} {entry.get('filename', '')} - {entry.get('state', '')}")
     print(_color("Next", "1;32", use_color))
     print(f"  {payload.get('restart_note', '')}")
+    hint = _repair_hint(payload)
+    if hint:
+        print(hint)
 
 
 def _print_theme_change(payload: dict[str, object]) -> None:
@@ -252,6 +337,69 @@ def _print_theme_change(payload: dict[str, object]) -> None:
     print(_color("Next", "1;32", use_color))
     print(f"  {payload.get('restart_note', '')}")
     print(f"  Reverse: {payload.get('reverse_command', '')}")
+
+
+# What each repair status means in one human phrase. Kept out of the payload
+# on purpose: the JSON carries `state`/`status` for machines, and prose that
+# consumers might start parsing is prose that can never be reworded.
+_REPAIR_NOTES: dict[str, str] = {
+    "managed": "managed; untouched",
+    "unmanaged": "unmanaged; NOT adopted (name it, or pass --all, to accept)",
+    "missing": "missing; NOT installed (name it, or pass --all, to install)",
+    "would_repair": "unmanaged; WOULD be replaced with the shipped file",
+    "would_install": "missing; WOULD be installed",
+    "repaired": "repaired; replaced with the shipped file",
+    "installed": "installed",
+}
+_REPAIR_WRITTEN = ("repaired", "installed")
+
+
+def _print_theme_repair(payload: dict[str, object]) -> None:
+    """Show the before/after of every file BEFORE anything destructive lands.
+
+    Digest pair plus the palette tokens that move, per file. A person accepting
+    an overwrite of a file OMH cannot prove it wrote deserves to see exactly
+    what they are trading away first.
+    """
+    use_color = _use_color()
+    print(_color("OMH theme repair", "1;36", use_color))
+    print(f"  Skins directory: {payload.get('skins_dir', '')}")
+    print(_color("Theme files", "1;32", use_color))
+    written = 0
+    pending = 0
+    themes = payload.get("themes", [])
+    if isinstance(themes, list):
+        for entry in themes:
+            if not isinstance(entry, dict):
+                continue
+            status = str(entry.get("status", ""))
+            if status in _REPAIR_WRITTEN:
+                written += 1
+            elif status in ("unmanaged", "missing"):
+                pending += 1
+            note = _REPAIR_NOTES.get(status, status)
+            print(f"  {str(entry.get('theme', '')):<8} {str(entry.get('filename', '')):<17} - {note}")
+            if status == "managed":
+                continue
+            before = str(entry.get("before_sha256", "")) or "(absent)"
+            print(f"      sha256 {before[:16]} -> {str(entry.get('after_sha256', ''))[:16]}")
+            changes = entry.get("palette_changes")
+            if isinstance(changes, list):
+                for change in changes:
+                    if isinstance(change, dict):
+                        old = str(change.get("before", "")) or "(unset)"
+                        new = str(change.get("after", "")) or "(removed)"
+                        print(f"      {change.get('key', '')}: {old} -> {new}")
+    print(_color("Next", "1;32", use_color))
+    if payload.get("dry_run"):
+        print("  Dry run: nothing was written. Re-run without --dry-run to accept.")
+    elif written:
+        print(f"  Adopted {written} theme file(s); future updates now reach them.")
+        print(f"  {payload.get('restart_note', '')}")
+    elif pending:
+        print("  Nothing was written. Accept with `omh theme repair <name>` or `omh theme repair --all`.")
+    else:
+        print("  Every shipped theme file is managed; there is nothing to repair.")
 
 
 def _add_theme_commands(sub) -> None:
@@ -281,6 +429,25 @@ def _add_theme_commands(sub) -> None:
     )
     _add_shared_theme_arguments(theme_use, "Print the full machine-readable change payload.")
     theme_use.set_defaults(func=cmd_theme_use)
+
+    theme_repair = theme_sub.add_parser(
+        "repair",
+        help="Report theme files OMH does not own, and adopt the ones you name.",
+    )
+    theme_repair.add_argument(
+        "name",
+        nargs="?",
+        default="",
+        help=f"Theme to adopt ({', '.join(theme_names())}) or full skin name. Omit to only report.",
+    )
+    theme_repair.add_argument("--all", action="store_true", help="Adopt every unmanaged theme file.")
+    theme_repair.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what adopting would change without writing anything.",
+    )
+    _add_shared_theme_arguments(theme_repair, "Print the full machine-readable repair payload.")
+    theme_repair.set_defaults(func=cmd_theme_repair)
 
     theme_status = theme_sub.add_parser(
         "status",
