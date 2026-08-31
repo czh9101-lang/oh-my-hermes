@@ -689,6 +689,14 @@ Rules worth knowing:
   in its own manifest record, so editing `omh-mono.yaml` keeps that file
   untouched forever without stopping the other three from being refreshed.
   `omh theme status` reports such a file as `unmanaged`.
+- **A stale manifest heals itself.** OMH owns a theme file when the manifest
+  record matches it *or* when its bytes are identical to the currently shipped
+  template. The second proof exists because a manifest can fall behind the file
+  it describes — an older update refreshed a skin without refreshing its
+  record — and record-only ownership would then read OMH's own file as
+  hand-edited and stop updating it forever. Adopting our own bytes cannot
+  destroy anything you wrote, because overwriting them is a no-op. A file
+  matching neither proof stays `unmanaged`.
 
 ## Bot Profiles
 

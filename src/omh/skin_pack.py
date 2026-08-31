@@ -221,11 +221,31 @@ def _manifest_document(records: dict[str, str]) -> bytes:
     ).encode()
 
 
-def _is_managed_file(destination: Path, records: dict[str, str]) -> bool:
+def _is_managed_file(destination: Path, records: dict[str, str], payload: bytes) -> bool:
+    """Does OMH own this file -- by manifest record, or by being our own content?
+
+    Two proofs, either sufficient. The manifest record is the primary one. The
+    second exists because a manifest can fall behind the file it describes: on
+    a real install the owner's `omh.yaml` was byte-identical to the shipped
+    template while the v1 manifest still recorded an older sha, because some
+    past update refreshed the file without refreshing the record. Record-only
+    ownership read that machine as user-authored, which would have frozen the
+    skin as `kept_unmanaged` forever and meant no future template change ever
+    reached it.
+
+    Matching the current template is a safe second proof precisely because the
+    bytes are ours: adopting the file cannot destroy anything a user wrote,
+    since overwriting it with the template is a no-op. A file that matches
+    neither the record nor the template is genuinely user-edited and stays
+    kept_unmanaged, exactly as before.
+    """
     try:
-        return bool(records.get(destination.name)) and records[destination.name] == _sha256(destination.read_bytes())
+        digest = _sha256(destination.read_bytes())
     except OSError:
         return False
+    if records.get(destination.name) == digest:
+        return True
+    return digest == _sha256(payload)
 
 
 _INSTALL_STATUS_ORDER = ("installed", "would_install", "unchanged", "kept_unmanaged")
@@ -260,7 +280,7 @@ def install_skin(hermes_home: Path, *, dry_run: bool = False) -> dict[str, objec
         if destination.exists() and not destination.is_file():
             raise SkinInstallError(f"skin destination is not a regular file: {destination}")
         payload = skin_payload(theme.skin_name)
-        if destination.exists() and not _is_managed_file(destination, records):
+        if destination.exists() and not _is_managed_file(destination, records, payload):
             # A user-authored file wins over ours forever; identity is theirs
             # to override and update must not undo that.
             updated.pop(theme.filename, None)
@@ -304,7 +324,12 @@ def install_skin(hermes_home: Path, *, dry_run: bool = False) -> dict[str, objec
 
 
 def uninstall_skin(hermes_home: Path, *, dry_run: bool = False) -> dict[str, object]:
-    """Remove only the theme files a manifest record proves OMH wrote."""
+    """Remove only the theme files OMH owns -- by record, or by being our bytes.
+
+    Symmetric with `install_skin` on purpose: a file the installer would adopt
+    and refresh is a file the uninstaller must take away again, or a machine
+    with a stale manifest would keep orphaned skin files after removal.
+    """
     destination_dir = hermes_home / "skins"
     manifest = destination_dir / MANIFEST_FILENAME
     _reject_symlink_path(destination_dir)
@@ -326,7 +351,7 @@ def uninstall_skin(hermes_home: Path, *, dry_run: bool = False) -> dict[str, obj
                 }
             )
             continue
-        if not _is_managed_file(destination, records):
+        if not _is_managed_file(destination, records, skin_payload(theme.skin_name)):
             entries.append(
                 {
                     "skin": theme.skin_name,
@@ -368,7 +393,7 @@ def installed_skin_report(hermes_home: Path) -> list[dict[str, str]]:
         destination = destination_dir / theme.filename
         if not destination.is_file():
             state = "missing"
-        elif _is_managed_file(destination, records):
+        elif _is_managed_file(destination, records, skin_payload(theme.skin_name)):
             state = "managed"
         else:
             state = "unmanaged"
