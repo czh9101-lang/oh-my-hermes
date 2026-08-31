@@ -192,7 +192,7 @@ class RecommendationCatalogTests(unittest.TestCase):
         # so one rejected ecosystem cannot exhaust the chain.
         self.assertEqual(
             aliases("categories", "unspecified-low"),
-            ["glm-5.2", "glm-5.2-ultrafast", "deepseek-v3.2", "claude-opus-5"],
+            ["glm-5.3", "glm-5.2", "glm-5.2-ultrafast", "deepseek-v3.2", "claude-opus-5"],
         )
         self.assertEqual(aliases("categories", "unspecified-high"), ["kimi-k3", "claude-opus-5"])
         self.assertEqual(aliases("categories", "ultrabrain"), ["gpt-5.6-sol"])
@@ -205,7 +205,7 @@ class RecommendationCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             aliases("categories", "quick"),
-            ["glm-5.2-ultrafast", "kimi-k3", "gpt-5.6-luna", "claude-fable-5"],
+            ["glm-5.3-flash", "glm-5.2-ultrafast", "kimi-k3", "gpt-5.6-luna", "claude-fable-5"],
         )
         self.assertEqual(
             aliases("categories", "writing"),
@@ -222,7 +222,7 @@ class RecommendationCatalogTests(unittest.TestCase):
         self.assertEqual(aliases("categories", "visual-engineering"), ["claude-fable-5", "kimi-k3"])
         self.assertEqual(
             aliases("categories", "quick"),
-            ["glm-5.2-ultrafast", "kimi-k3", "gpt-5.6-luna", "claude-fable-5"],
+            ["glm-5.3-flash", "glm-5.2-ultrafast", "kimi-k3", "gpt-5.6-luna", "claude-fable-5"],
         )
         self.assertEqual(aliases("categories", "writing"), ["kimi-k3", "qwen3-coder", "gemini-3.1-pro"])
         self.assertEqual(aliases("categories", "artistry"), ["gemini-3.1-pro", "claude-fable-5", "kimi-k3"])
@@ -539,7 +539,14 @@ class LastResortFallbackTests(unittest.TestCase):
         self.assertEqual(route["available_chain"], ["claude-opus-5"])
         self.assertEqual(
             route["inactive_candidates"],
-            ["glm-5.2-ultrafast", "kimi-k3", "gpt-5.6-luna", "claude-fable-5", "gpt-5.6-sol"],
+            [
+                "glm-5.3-flash",
+                "glm-5.2-ultrafast",
+                "kimi-k3",
+                "gpt-5.6-luna",
+                "claude-fable-5",
+                "gpt-5.6-sol",
+            ],
         )
         self.assertEqual(route["projection"]["kind"], "hermes_native_binding")
         self.assertEqual(route["projection"]["apply_state"], "approval_required")
@@ -583,6 +590,7 @@ class LastResortFallbackTests(unittest.TestCase):
         self.assertEqual(
             route["inactive_candidates"],
             [
+                "glm-5.3-flash",
                 "glm-5.2-ultrafast",
                 "kimi-k3",
                 "gpt-5.6-luna",

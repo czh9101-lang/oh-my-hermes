@@ -126,6 +126,18 @@ _GLM_FAST = _candidate(
     ("zai", "openrouter", "opencode"),
     reasoning="Editorial fast alternative; not a benchmark claim.",
 )
+_GLM_53 = _candidate(
+    "glm-5.3",
+    "glm",
+    ("zai", "openrouter", "opencode"),
+    reasoning="Editorial low-cost work recommendation; not a benchmark claim.",
+)
+_GLM_53_FLASH = _candidate(
+    "glm-5.3-flash",
+    "glm",
+    ("zai", "openrouter", "opencode"),
+    reasoning="Editorial fast alternative; not a benchmark claim.",
+)
 _GROK = _candidate(
     "grok-code-fast",
     "grok",
@@ -190,13 +202,18 @@ SHIPPED_MODEL_RECOMMENDATIONS: Final[dict[str, object]] = {
         # quick fell straight to inherit). Tails are the owner's explicit
         # picks: Opus 5 at low closes unspecified-low, and quick runs the
         # owner-ordered Ultrafast -> Kimi -> Luna -> Fable sequence.
+        # GLM 5.3 leads (owner decision, 2026-08-31): 5.3 heads the low-cost
+        # chains and the 5.2 entries stay as fall-through so machines that only
+        # serve 5.2 keep resolving to GLM instead of skipping the ecosystem.
         "unspecified-low": [
+            _with_effort(_GLM_53, "low"),
             _with_effort(_GLM, "low"),
             _with_effort(_GLM_FAST, "low"),
             _with_effort(_DEEPSEEK, "low"),
             _with_effort(_OPUS_5, "low"),
         ],
         "quick": [
+            _with_effort(_GLM_53_FLASH, "low"),
             _with_effort(_GLM_FAST, "low"),
             _with_effort(_KIMI_K3, "low"),
             _with_effort(_LUNA, "low"),

@@ -47,7 +47,7 @@ identical prompt. Nothing else about the pipeline changes per model.
 | `claude` | `claude-`; design-qualified alias `anthropic-claude-`; bare tiers `opus`/`sonnet`/`haiku` | `claude-fable-5`, `digitalocean/anthropic-claude-opus-5` |
 | `gemini` | `gemini-` | `gemini-3.1-pro` |
 | `kimi` | `kimi-` | `kimi-k3`, `kimi-k3-ultrafast` |
-| `glm` | `glm-` | `glm-5.2`, `glm-5.2-ultrafast` |
+| `glm` | `glm-` | `glm-5.3`, `glm-5.3-flash`, `glm-5.2-ultrafast` |
 | `grok` | `grok-` | `grok-code-fast-1` |
 | `qwen` | `qwen-`, alias `qwen3-` | `qwen3-coder` |
 | `deepseek` | `deepseek-` | versioned DeepSeek ids |
@@ -287,21 +287,40 @@ pairing so a benchmark claim can never mix in other prompt changes.
 - **Source:** observed failure modes in live OMH usage of Kimi K3 (authored
   in the per-family calibration commit).
 
-### `glm` (GLM 5.2, 5.2 Ultrafast)
+### `glm` (GLM 5.3, 5.3 Flash, 5.2, speed tiers)
 
 - **Model trait:** an interleaved-reasoning style — thinking woven between
   tool calls. That style genuinely improves tool-result interpretation, but
-  applied indiscriminately it plans mechanical steps that need no plan.
+  applied indiscriminately it plans mechanical steps that need no plan. The
+  5.3 generation hardens the style into a served contract: thinking cannot
+  be disabled (depth moves through the provider's reasoning-effort levels
+  instead), and the coding endpoint preserves reasoning across tool calls by
+  default — expecting the preserved blocks returned complete, unmodified,
+  and in order, or cache effectiveness and continuity are lost. GLM 5.3
+  Flash is a separately trained smaller MoE, not a speed tier, but it is the
+  same `glm-` family and receives the same calibration; the served 5.3
+  speed tier is `glm-5.3-highspeed`. Community harness evidence (Cline's
+  GLM system-prompt rework) adds two family sensitivities: short,
+  mechanically explicit prompts with strict tool-invocation rules outperform
+  narrative ones, and tool-call formatting decays in very long contexts.
 - **What OMH injects (subagent):** use interleaved reasoning only where it
   improves a tool decision — interpret each result, choose the next bounded
-  action, preserve prior reasoning context when the runtime exposes it;
+  action, preserve prior reasoning context when the runtime exposes it,
+  returned complete and unmodified in its original order; on 5.3, reasoning
+  depth is the routed effort level, never a request for no thinking;
   mechanical steps need no extended plan.
 - **What OMH injects (composer):** interleave reasoning to interpret evidence
   between contract-building tools; mechanical field assembly needs no extra
-  planning; freeze the smallest split once boundaries are clean.
+  planning; keep unit prompts lean and mechanically explicit and unit scopes
+  bounded (long-context tool-call decay); Z.ai prices cached input
+  separately, so the shared prompt-cache discipline is billing-visible;
+  freeze the smallest split once boundaries are clean.
 - **Source:** observed failure modes plus the family's documented
-  interleaved-thinking design; the GLM guidance shipped with the
-  baseline-vs-calibrated benchmark harness so its effect is measurable.
+  interleaved/preserved-thinking contract (docs.z.ai thinking-mode and
+  GLM-5.3 release docs, 2026-08) and community harness reports (Cline's
+  GLM-4.6 system-prompt rework; OpenCode long-context tool-call-format
+  reports). The GLM guidance shipped with the baseline-vs-calibrated
+  benchmark harness so its effect is measurable.
 
 ### `qwen` (Qwen3-Coder)
 
@@ -482,13 +501,17 @@ gate requires a completed paired run on the intended execution surface.
 - **Mixture chains** — per-category ordered model chains (see the README
   model-routing section), user-editable via
   `~/.omh/routing/model-chains.json` (`mixture_chain_overrides/v1`).
-- **Ultrafast variants are not a separate family** — `kimi-k3-ultrafast` and
+- **Speed tiers are not a separate family** — `kimi-k3-ultrafast` and
   `glm-5.2-ultrafast` are the same base models served on OpenGateway's speed
-  tier: same weights, same family (`kimi-` / `glm-` prefix match), and
-  therefore exactly the same calibration — only serving speed differs. A
-  `-ultrafast` variant the chains do not name still projects onto its base
-  model's category for HUD labels (`mixture_category_for`), so speed tiers
-  never unlabel a lane.
+  tier, and Z.ai serves its own `glm-5.3-highspeed` (gateways also use a
+  `-fast` suffix): same weights, same family (`kimi-` / `glm-` prefix
+  match), and therefore exactly the same calibration — only serving speed
+  differs. A `-ultrafast`/`-highspeed`/`-fast` variant the chains do not
+  name still projects onto its base model's category for HUD labels
+  (`mixture_category_for`), so speed tiers never unlabel a lane. GLM 5.3
+  Flash is the one lookalike that is NOT a tier — a separately trained
+  smaller model — which is why the chains name `glm-5.3-flash` explicitly
+  instead of relying on projection.
 - **Cost approximation** — `APPROX_PRICE_PER_MTOK` in
   `src/plugin_bundle/omh/hermes_delegation.py` supplies `~$` estimates only
   when the host recorded no cost; models absent from the table show no

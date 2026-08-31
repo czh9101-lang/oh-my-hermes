@@ -164,8 +164,11 @@ HIGH_EFFORT_CALIBRATIONS: Final[dict[str, str]] = {
     "glm": (
         "High-effort calibration: use interleaved reasoning only where it improves a tool decision: "
         "interpret each result, choose the next bounded action, and preserve prior reasoning context "
-        "when the runtime exposes it. Mechanical steps need no extended plan. Keep the change "
-        "goal-shaped, and let the single verification pass prove it."
+        "when the runtime exposes it — returned complete and unmodified, in its original order, as "
+        "this family's preserved-thinking contract expects. The 5.3 generation cannot disable "
+        "thinking, so reasoning depth is the routed effort level, never a request for no thinking. "
+        "Mechanical steps need no extended plan. Keep the change goal-shaped, and let the single "
+        "verification pass prove it."
     ),
     "qwen": (
         "High-effort calibration: current Qwen3-Coder is a non-thinking coding-agent model, so do not "
@@ -247,8 +250,12 @@ MAIN_AGENT_COMPOSITION_CALIBRATIONS: Final[dict[str, str]] = {
     ),
     "glm": (
         "Composition calibration: use interleaved reasoning only to interpret evidence between "
-        "contract-building tools; mechanical field assembly needs no extra planning. Every unit "
-        "carries its owner, boundary, and known route fields. Once boundaries are clean and "
+        "contract-building tools; mechanical field assembly needs no extra planning. This family "
+        "rewards lean, mechanically explicit unit prompts — exact schemas and invocation rules over "
+        "narrative instruction — and its tool-call formatting decays in very long contexts, so keep "
+        "each unit's scope bounded rather than letting one unit sprawl. Z.ai prices cached input "
+        "separately, so the shared prompt-cache discipline is billing-visible on this family. Every "
+        "unit carries its owner, boundary, and known route fields. Once boundaries are clean and "
         "dependencies acyclic, freeze the smallest split that covers the goal."
     ),
     "grok": (

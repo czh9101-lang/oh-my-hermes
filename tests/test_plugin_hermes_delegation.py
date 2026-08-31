@@ -149,11 +149,35 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
         )
 
     def test_head_match_beats_membership_match(self):
-        # glm-5.2-ultrafast:low heads `quick` and is also second in
-        # unspecified-low; the head attribution wins.
+        # glm-5.3-flash:low heads `quick`; the head attribution wins over its
+        # membership anywhere else.
+        self.assertEqual(
+            mixture_category_for("glm-5.3-flash", "low", parent_model="kimi-k3"),
+            "quick",
+        )
+
+    def test_earliest_chain_position_beats_category_order(self):
+        # glm-5.2-ultrafast:low sits second in `quick` but only third in
+        # `unspecified-low` (which precedes quick in canonical order); the
+        # shallower fall-through slot is the likelier route, so the quick
+        # label survives glm-5.3-flash taking the quick head.
         self.assertEqual(
             mixture_category_for("glm-5.2-ultrafast", "low", parent_model="kimi-k3"),
             "quick",
+        )
+
+    def test_a_53_generation_head_labels_its_category(self):
+        self.assertEqual(
+            mixture_category_for("glm-5.3", "low", parent_model="kimi-k3"),
+            "unspecified-low",
+        )
+
+    def test_a_highspeed_variant_projects_onto_its_base_models_category(self):
+        # Z.ai serves its own 5.3 speed tier as glm-5.3-highspeed; the chains
+        # name only the base model, so the variant projects onto it.
+        self.assertEqual(
+            mixture_category_for("glm-5.3-highspeed", "low", parent_model="kimi-k3"),
+            "unspecified-low",
         )
 
     def test_a_membership_only_model_falls_back_to_its_first_chain(self):

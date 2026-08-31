@@ -62,13 +62,18 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
     # A chain that would otherwise sit in one provider ecosystem ends with a
     # comparable-tier candidate from another (owner rule, 2026-08-19), so one
     # rejected ecosystem cannot exhaust the whole chain.
+    # GLM 5.3 leads (owner decision, 2026-08-31): 5.3 heads the low-cost
+    # chains and the 5.2 entries stay as fall-through so machines that only
+    # serve 5.2 keep resolving to GLM instead of skipping the ecosystem.
     "unspecified-low": (
+        ("glm-5.3", "low"),
         ("glm-5.2", "low"),
         ("glm-5.2-ultrafast", "low"),
         ("deepseek-v3.2", "low"),
         ("claude-opus-5", "low"),
     ),
     "quick": (
+        ("glm-5.3-flash", "low"),
         ("glm-5.2-ultrafast", "low"),
         ("kimi-k3", "low"),
         ("gpt-5.6-luna", "low"),
@@ -529,6 +534,11 @@ APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5": (1.0, 5.0),
     "kimi-k3": (0.6, 2.5),
     "glm-5.2": (0.6, 2.2),
+    # Z.ai list price for the 5.3 generation (docs.z.ai pricing, 2026-08).
+    # 5.3 always reasons and bills the reasoning inside output tokens, so the
+    # output side dominates real spend; still an approximation, not billing.
+    "glm-5.3": (1.4, 4.4),
+    "glm-5.3-flash": (0.15, 0.5),
     "deepseek-v3.2": (0.28, 0.42),
     "glm-5.2-ultrafast": (0.3, 1.2),
     # Speed-tier ballpark mirrors the glm pattern (roughly half the base
@@ -593,8 +603,10 @@ def mixture_category_for(
     ``inherit`` wins over any chain match: a child on the parent session's own
     model was not routed, whatever chain its model also appears in. Otherwise
     the first category (canonical chain order) whose head matches wins, then
-    the first category containing the model anywhere; a chain entry that
-    declares a reasoning effort only matches that effort.
+    the category where the model sits earliest in its chain (a shallow
+    fall-through entry is a likelier route than a deep one; canonical order
+    breaks position ties); a chain entry that declares a reasoning effort
+    only matches that effort.
     """
     observed_model = _text(model).casefold()
     observed_effort = _text(effort, limit=40).casefold()
@@ -604,13 +616,16 @@ def mixture_category_for(
         return "inherit"
 
     # Providers serve some chain models through speed variants (e.g. the
-    # OpenGateway Ultrafast tier: kimi-k3 -> kimi-k3-ultrafast). A variant
-    # the chains do not name explicitly still projects onto its base model's
+    # OpenGateway Ultrafast tier: kimi-k3 -> kimi-k3-ultrafast, or Z.ai's own
+    # glm-5.3 -> glm-5.3-highspeed / gateway "-fast" tiers). A variant the
+    # chains do not name explicitly still projects onto its base model's
     # category instead of leaving the HUD row unlabeled; explicitly-named
     # variants (glm-5.2-ultrafast) match themselves first and are unaffected.
     candidates = [observed_model]
-    if observed_model.endswith("-ultrafast"):
-        candidates.append(observed_model[: -len("-ultrafast")])
+    for speed_suffix in ("-ultrafast", "-highspeed", "-fast"):
+        if observed_model.endswith(speed_suffix):
+            candidates.append(observed_model[: -len(speed_suffix)])
+            break
     active_chains = HERMES_MIXTURE_CATEGORY_CHAINS if chains is None else chains
 
     def _entry_matches(entry: tuple[str, str], model: str) -> bool:
@@ -623,9 +638,17 @@ def mixture_category_for(
         for category, chain in active_chains.items():
             if chain and _entry_matches(chain[0], model):
                 return category
+        best_category = ""
+        best_position = -1
         for category, chain in active_chains.items():
-            if any(_entry_matches(entry, model) for entry in chain):
-                return category
+            for position, entry in enumerate(chain):
+                if _entry_matches(entry, model):
+                    if best_position < 0 or position < best_position:
+                        best_category = category
+                        best_position = position
+                    break
+        if best_category:
+            return best_category
     return ""
 
 
