@@ -1508,6 +1508,284 @@ class TodoHudTests(unittest.TestCase):
             self.assertEqual(len(payload["display"]["todo_lines"]), 2)
 
 
+class TodoSessionScopeTests(unittest.TestCase):
+    """A plan belongs to the session that declared it, not to the OMH home.
+
+    The plan todo is ONE artifact per OMH home, and wall-clock age was its
+    only gate: a 24h staleness bound, plus a 15-minute linger that applies
+    only once every item is done. An INCOMPLETE plan written hours ago sat
+    inside both, so it projected `established` into every new Hermes session —
+    observed live, where a checklist declared in one session greeted a fresh
+    one the next day as state that session never created.
+
+    The host's own `state.db` knows which TUI session is live. A record
+    stamped with `session_ref` answers by identity; an unstamped legacy or CLI
+    record answers by write time. When state.db cannot answer — absent,
+    unreadable, no live TUI row, or a row too old to describe anyone's
+    session — the age-only gates stand, because hiding a legitimately current
+    plan on missing evidence is the worse failure.
+    """
+
+    NOW = 1788158400.0
+
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.omh_home = self.root / ".omh"
+        self.hermes_home = self.root / ".hermes"
+        self.hermes_home.mkdir(parents=True, exist_ok=True)
+
+    def _stamp(self, offset_seconds: float) -> str:
+        from datetime import datetime, timedelta, timezone
+
+        return (
+            (datetime.now(timezone.utc) + timedelta(seconds=offset_seconds))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+
+    def _epoch(self, offset_seconds: float) -> float:
+        from datetime import datetime, timezone
+
+        return datetime.now(timezone.utc).timestamp() + offset_seconds
+
+    def _write_todo(self, record: dict) -> None:
+        runtime_dir = self.omh_home / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        (runtime_dir / "todo.json").write_text(json.dumps(record), encoding="utf-8")
+
+    def _record(self, **overrides: object) -> dict:
+        record = {
+            "schema_version": "omh_todo/v1",
+            "title": "Foundation",
+            "source": "omh_todo",
+            "updated_at": self._stamp(0),
+            "items": [
+                {"text": "Restore RED baseline", "state": "done"},
+                {"text": "Inspect routing fixtures", "state": "active"},
+                {"text": "Update count assertions", "state": "pending"},
+            ],
+        }
+        record.update(overrides)
+        return record
+
+    def _build_state_db(self, rows) -> None:
+        """rows: (id, started_at, activity, source='tui', ended_at=None)."""
+        import sqlite3
+
+        connection = sqlite3.connect(self.hermes_home / "state.db")
+        connection.executescript(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, source TEXT, model_config TEXT,
+                started_at REAL NOT NULL, last_activity_at REAL, ended_at REAL,
+                archived INTEGER DEFAULT 0, hidden INTEGER DEFAULT 0
+            );
+            """
+        )
+        for row in rows:
+            session_id, started_at, activity = row[0], row[1], row[2]
+            source = row[3] if len(row) > 3 else "tui"
+            ended_at = row[4] if len(row) > 4 else None
+            connection.execute(
+                "INSERT INTO sessions (id, source, model_config, started_at,"
+                " last_activity_at, ended_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, source, "{}", started_at, activity, ended_at),
+            )
+        connection.commit()
+        connection.close()
+
+    def _todo(self) -> dict:
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        return read_omh_hud(self.omh_home, self.hermes_home)["todo"]
+
+    def test_an_incomplete_plan_from_a_previous_session_is_hidden(self) -> None:
+        # The reported bug, in the shape it was observed: a checklist declared
+        # in an earlier session, well inside the 24h staleness bound and not
+        # all done, rendering in a brand new session.
+        self._build_state_db([("20260831_153632_11fc69", self._epoch(-300), self._epoch(-60))])
+        self._write_todo(
+            self._record(updated_at=self._stamp(-7200), session_ref="20260829_192031_7f614e")
+        )
+
+        todo = self._todo()
+
+        self.assertEqual(todo["status"], "stale")
+        self.assertEqual(todo["display_items"], [])
+
+    def test_a_concurrently_live_foreign_writer_cannot_reach_this_tui(self) -> None:
+        # The sharper half of the same bug: the plan is not merely leftover.
+        # Another live session (a wrapper/bot lane running its own workflow)
+        # keeps writing the SAME global todo.json, so the checklist the owner
+        # cleared reappeared seconds later, progressed. Its write is NEWER
+        # than this TUI session's start, so no age or write-time rule can
+        # catch it -- only identity can. A wrapper session is not source
+        # 'tui', so it never becomes the reading-side identity either.
+        self._build_state_db(
+            [
+                ("20260831_153632_11fc69", self._epoch(-300), self._epoch(-60)),
+                ("bot-lane", self._epoch(-200), self._epoch(-5), "tool"),
+            ]
+        )
+        self._write_todo(
+            self._record(updated_at=self._stamp(-5), session_ref="bot-lane")
+        )
+
+        self.assertEqual(self._todo()["status"], "stale")
+
+    def test_a_plan_declared_by_the_live_session_still_renders(self) -> None:
+        self._build_state_db([("20260831_153632_11fc69", self._epoch(-300), self._epoch(-60))])
+        self._write_todo(
+            self._record(updated_at=self._stamp(-7200), session_ref="20260831_153632_11fc69")
+        )
+
+        todo = self._todo()
+
+        self.assertEqual(todo["status"], "established")
+        self.assertEqual(todo["counts"]["total"], 3)
+
+    def test_an_unstamped_plan_written_before_the_live_session_is_hidden(self) -> None:
+        # Legacy records and `omh runtime todo set` writes carry no
+        # session_ref. Write time still separates them: a plan that predates
+        # the session's own start cannot belong to it.
+        self._build_state_db([("20260831_153632_11fc69", self._epoch(-300), self._epoch(-60))])
+        self._write_todo(self._record(source="cli", updated_at=self._stamp(-3600)))
+
+        self.assertEqual(self._todo()["status"], "stale")
+
+    def test_an_unstamped_plan_written_inside_the_live_session_renders(self) -> None:
+        # A CLI-written plan is not foreign just because it lacks a stamp.
+        self._build_state_db([("20260831_153632_11fc69", self._epoch(-3600), self._epoch(-60))])
+        self._write_todo(self._record(source="cli", updated_at=self._stamp(-120)))
+
+        self.assertEqual(self._todo()["status"], "established")
+
+    def test_an_all_done_plan_still_lingers_inside_its_own_session(self) -> None:
+        # The finished-plan receipt is unchanged within the owning session:
+        # it lingers briefly, then goes absent on its own 15-minute window.
+        self._build_state_db([("20260831_153632_11fc69", self._epoch(-3600), self._epoch(-60))])
+        done_items = [{"text": "Ship", "state": "done"}]
+        self._write_todo(
+            self._record(
+                items=done_items,
+                updated_at=self._stamp(-60),
+                session_ref="20260831_153632_11fc69",
+            )
+        )
+        self.assertEqual(self._todo()["status"], "all_done")
+
+        self._write_todo(
+            self._record(
+                items=done_items,
+                updated_at=self._stamp(-1200),
+                session_ref="20260831_153632_11fc69",
+            )
+        )
+        self.assertEqual(self._todo()["status"], "absent")
+
+    def test_an_unanswerable_host_state_keeps_the_age_only_gates(self) -> None:
+        # No state.db, an unreadable one, a schema without the columns, no
+        # live TUI row at all, and a live row too old to describe anyone's
+        # session: every one of these is "the host cannot say", never "this
+        # plan is foreign". Today's behavior stands.
+        self._write_todo(self._record(session_ref="20260829_192031_7f614e"))
+        self.assertEqual(self._todo()["status"], "established")
+
+        db = self.hermes_home / "state.db"
+        db.write_bytes(b"not a sqlite database")
+        self.assertEqual(self._todo()["status"], "established")
+
+        db.unlink()
+        self._build_state_db(
+            [
+                ("cli-session", self._epoch(-300), self._epoch(-60), "cli"),
+                ("ended-tui", self._epoch(-300), self._epoch(-60), "tui", self._epoch(-30)),
+            ]
+        )
+        self.assertEqual(self._todo()["status"], "established")
+
+        db.unlink()
+        self._build_state_db([("stale-tui", self._epoch(-90000), self._epoch(-80000))])
+        self.assertEqual(self._todo()["status"], "established")
+
+    def test_a_foreign_plan_stops_nagging_the_reconciliation_reminder(self) -> None:
+        # `open_todo_reminder` binds completion claims to an OPEN plan. A
+        # previous session's plan is not this session's open work, so the
+        # per-turn reminder must stop with the panel.
+        import os
+
+        from omh.plugin_bundle.omh.todo_reconciliation import open_todo_reminder
+
+        self._build_state_db([("20260831_153632_11fc69", self._epoch(-300), self._epoch(-60))])
+        self._write_todo(
+            self._record(updated_at=self._stamp(-7200), session_ref="20260829_192031_7f614e")
+        )
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(self.hermes_home)}):
+            self.assertEqual(open_todo_reminder(omh_home=str(self.omh_home)), "")
+
+    def test_the_plugin_tool_stamps_the_host_session_that_declared_the_plan(self) -> None:
+        import os
+
+        from omh.plugin_bundle.omh.tools.todo_tool import omh_todo_handler
+
+        with patch.dict(
+            os.environ,
+            {"OMH_HOME": str(self.omh_home), "HERMES_HOME": str(self.hermes_home)},
+        ):
+            written = json.loads(
+                omh_todo_handler(
+                    {
+                        "action": "set",
+                        "title": "Foundation",
+                        "items": [{"text": "Inspect routing fixtures", "state": "active"}],
+                        "observation": {
+                            "host": "hermes-agent",
+                            "session_id": "20260831_153632_11fc69",
+                        },
+                    }
+                )
+            )
+
+        self.assertEqual(written["status"], "written")
+        record = json.loads(
+            (self.omh_home / "runtime" / "todo.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(record["session_ref"], "20260831_153632_11fc69")
+        self.assertEqual(record["schema_version"], "omh_todo/v1")
+
+    def test_an_unstamped_write_stays_byte_identical_to_the_pre_field_record(self) -> None:
+        # session_ref is additive-optional inside omh_todo/v1: a writer that
+        # knows no session emits exactly the keys it always did.
+        from omh.plugin_bundle.omh.todo_store import build_todo_record
+
+        record = build_todo_record("Foundation", [{"text": "x"}], source="cli")
+
+        self.assertNotIn("session_ref", record)
+        self.assertEqual(
+            sorted(record),
+            ["claim_boundary", "items", "schema_version", "source", "title", "updated_at"],
+        )
+
+    def test_a_session_ref_is_bounded_and_control_stripped_like_every_field(self) -> None:
+        from omh.plugin_bundle.omh.todo_store import (
+            MAX_TODO_SESSION_REF_CHARS,
+            build_todo_record,
+        )
+
+        record = build_todo_record(
+            "Foundation",
+            [{"text": "x"}],
+            source="omh_todo",
+            session_ref="s\x1b[2J" + "9" * (MAX_TODO_SESSION_REF_CHARS + 40),
+        )
+
+        self.assertEqual(len(record["session_ref"]), MAX_TODO_SESSION_REF_CHARS)
+        self.assertTrue(record["session_ref"].startswith("s[2J9"))
+
+
 class ActivityRowOrderTests(unittest.TestCase):
     """Merged activity rows: running first, settled newest-first, capped at 8.
 

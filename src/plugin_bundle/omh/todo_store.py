@@ -4,6 +4,13 @@ One todo list per OMH home, written to ``$OMH_HOME/runtime/todo.json``. The
 CLI (`omh runtime todo`) and the `omh_todo` plugin tool both write through this
 module so the schema has a single source of truth; `runtime_reader` projects
 the file into the HUD payload read-only.
+
+Because the artifact is global to the home and its writers are not, a record
+carries the session that declared it (``session_ref``) whenever the writer
+knows one. Nothing here enforces the scope -- the reader does, in
+``runtime_reader._todo_summary`` -- but without the stamp a plan from one
+session, or from a concurrent writer sharing the same home, is
+indistinguishable from the reader's own.
 """
 from __future__ import annotations
 
@@ -21,6 +28,11 @@ MAX_TODO_ITEMS = 20
 MAX_TODO_TEXT_CHARS = 200
 MAX_TODO_TITLE_CHARS = 80
 MAX_TODO_SOURCE_CHARS = 80
+# Optional owning-session id, stamped when the writer knows which host session
+# declared the plan. Bounded to the host-observation session limit because it
+# is the same identifier. A record without it is a legacy or CLI write, and
+# readers scope it by write time instead of by identity.
+MAX_TODO_SESSION_REF_CHARS = 160
 # Optional phase label per item ("Internal Context", "Delivery", ...). A
 # phase-structured plan declared BEFORE engine work bounds the run: progress
 # is a checklist walked phase by phase, not an open-ended reasoning loop.
@@ -86,12 +98,23 @@ def validate_todo_items(items: object) -> list[dict[str, Any]]:
     return validated
 
 
-def build_todo_record(title: object, items: object, *, source: str) -> dict[str, Any]:
+def build_todo_record(
+    title: object, items: object, *, source: str, session_ref: object = ""
+) -> dict[str, Any]:
+    """Build the on-disk todo record.
+
+    ``session_ref`` names the host session that declared this plan, when the
+    writer knows it. It is additive-optional inside ``omh_todo/v1``: the key is
+    written only when non-empty, so a CLI write is byte-identical to what it
+    was before the field existed, and a reader that predates it still reads
+    every field it knew.
+    """
     safe_title = strip_control_characters(title)
     if len(safe_title) > MAX_TODO_TITLE_CHARS:
         raise TodoValidationError(f"todo title is capped at {MAX_TODO_TITLE_CHARS} characters")
     safe_source = strip_control_characters(source)[:MAX_TODO_SOURCE_CHARS]
-    return {
+    safe_session_ref = strip_control_characters(session_ref)[:MAX_TODO_SESSION_REF_CHARS]
+    record: dict[str, Any] = {
         "schema_version": TODO_SCHEMA_VERSION,
         "title": safe_title,
         "source": safe_source,
@@ -99,6 +122,9 @@ def build_todo_record(title: object, items: object, *, source: str) -> dict[str,
         "items": validate_todo_items(items),
         "claim_boundary": TODO_CLAIM_BOUNDARY,
     }
+    if safe_session_ref:
+        record["session_ref"] = safe_session_ref
+    return record
 
 
 def todo_path(omh_home: Path) -> Path:

@@ -110,7 +110,11 @@ _Avoid_: process handle, job
 **Plan todo**:
 The declared checklist at `$OMH_HOME/runtime/todo.json` that HUD surfaces
 render above the Hermes prompt input. Items are plan declarations; a done mark
-never upgrades into observed evidence.
+never upgrades into observed evidence. The artifact is global to the OMH home
+but the panel is scoped to the session that declared the plan: a record
+stamped with `session_ref` renders only for the live Hermes TUI session that
+owns it, an unstamped record is scoped by write time, and a host that cannot
+say which session is live keeps the age-only behavior.
 _Avoid_: task list as evidence, TodoWrite (that is another product's tool name)
 
 ### Coding delegation

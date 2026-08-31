@@ -759,6 +759,25 @@ does not load TUI widget files, so this panel is a modern-TUI-only surface.
 merge evidence; an all-done list collapses to a single header line and a list
 untouched for 24 hours is hidden as stale.
 
+The panel is also scoped to the session that declared the plan. One OMH home
+holds one todo list, so without that scope an unfinished checklist from an
+earlier session — or one another live session is writing to the same OMH home
+right now — renders in every session, as state the reader never created. When
+Hermes declares a plan through `omh_todo` it stamps the record with its own
+session id, and the HUD projects the plan only for the live Hermes TUI session
+that owns it; a plan belonging to another session reads as stale and is not
+rendered. Records written without a session id — `omh runtime todo set`, or
+anything predating the field — are scoped by write time instead: a plan
+written before the live session started belongs to an earlier one.
+
+The scope only applies where the host can answer it. With no
+`$HERMES_HOME/state.db`, an unreadable one, or no live TUI session recorded in
+it, the projection keeps the age-only behavior above and shows the plan, since
+hiding a legitimately current checklist on missing evidence is the worse
+failure. Two TUI sessions live at once share one panel answer — the most
+recently active session owns it, and the other session's plan returns as soon
+as that session is used again.
+
 #### Status model: no-run, prepared-handoff, observed-run
 
 `omh setup` deliberately records a safety-first `choose` preference and asks
