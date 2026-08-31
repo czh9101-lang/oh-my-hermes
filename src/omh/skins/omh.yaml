@@ -21,7 +21,12 @@ colors:
   banner_dim: "#3E7C8A"
   banner_text: "#E4FAFF"
   ui_accent: "#00CED1"
-  ui_label: "#7FDBFF"
+  # `ui_label` colours the user's own prompt rows in the transcript, so it is
+  # deliberately one step brighter than `banner_title` rather than equal to it
+  # (it was #7FDBFF, the banner title's exact value, and user rows read as more
+  # label-coloured chrome). A small delta on purpose: the default theme's look
+  # must not drift, only the row a person is looking for has to lead.
+  ui_label: "#9FE8FF"
   ui_ok: "#4caf50"
   ui_error: "#ef5350"
   ui_warn: "#ffa726"

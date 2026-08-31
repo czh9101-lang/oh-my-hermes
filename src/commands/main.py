@@ -179,6 +179,7 @@ from .setup import (
     cmd_update,
 )
 from .state import _add_state_commands, cmd_state_clear, cmd_state_finish, cmd_state_start, cmd_state_status
+from .theme import _add_theme_commands
 from .update_check import _add_update_check_commands
 from .use_cases import _add_cases_commands, cmd_cases_inspect, cmd_cases_list, cmd_cases_recommend
 from .visual import _add_visual_commands, cmd_visual_observe, cmd_visual_prompt_card
@@ -310,6 +311,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runtime_commands(sub)
     _add_goal_commands(sub)
     _add_state_commands(sub)
+    _add_theme_commands(sub)
     _add_update_check_commands(sub)
     return parser
 

@@ -645,6 +645,51 @@ when any managed setup field changes, including skill registration, compression
 fallbacks, plugin enablement, the fresh-config TUI default, or memory-provider
 selection. Model-alias writes remain a separate preview-and-approval step.
 
+### TUI Themes
+
+OMH ships four palettes for the branded TUI. `omh setup` and `omh update`
+install all four into `$HERMES_HOME/skins/`, so switching is instant and
+offline — nothing is fetched when a theme is selected.
+
+| Theme | Skin name | Look |
+| --- | --- | --- |
+| `sky` | `omh` | Sky turquoise on deep teal. The default. |
+| `amber` | `omh-amber` | Amber gold on deep bronze. |
+| `crimson` | `omh-crimson` | Ember red-orange on deep crimson. |
+| `mono` | `omh-mono` | Neutral grayscale with white accents. |
+
+```sh
+omh theme                    # arrow-key picker with a live colour preview
+omh theme list               # plain listing, always (the scriptable surface)
+omh theme use crimson        # select one directly (also accepts omh-crimson)
+omh theme use crimson --dry-run
+omh theme status             # active skin, ownership, managed files on disk
+```
+
+Bare `omh theme` opens a picker: up/down arrows (or `j`/`k`) move the cursor,
+each theme paints a sample of its own palette as you pass over it, Enter
+applies the highlighted theme, and `q`, Escape, or Ctrl-C cancels without
+writing anything. It needs a terminal on both ends — with `--json`, a pipe,
+`TERM=dumb`, `OMH_NO_TUI=1`, or on Windows (no `termios`), bare `omh theme`
+prints the same plain listing `omh theme list` prints. `NO_COLOR` keeps the
+picker but drops every escape sequence, naming the hex values as text instead.
+
+Rules worth knowing:
+
+- **Selection is one config key.** `omh theme use` writes `display.skin` in the
+  Hermes config and nothing else. It never patches Hermes.
+- **A theme applies on the next Hermes start.** `omh` runs `hermes` as a child
+  process and Hermes reads its skin at startup, so a running session keeps the
+  look it opened with. Restart it.
+- **An explicit choice survives updates.** `omh theme use` is the consent, and
+  every later `omh setup` / `omh update` leaves the chosen theme alone — the
+  default is written only when `display.skin` is unset. A foreign skin (say
+  `ares`) is preserved the same way and reported as yours, not replaced.
+- **A hand-edited theme file is yours.** Each of the four skin YAMLs is tracked
+  in its own manifest record, so editing `omh-mono.yaml` keeps that file
+  untouched forever without stopping the other three from being refreshed.
+  `omh theme status` reports such a file as `unmanaged`.
+
 ## Bot Profiles
 
 Hermes bot profiles (`hermes profile create`, Desktop bot chats) are fully
