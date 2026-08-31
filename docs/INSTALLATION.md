@@ -664,6 +664,9 @@ omh theme list               # plain listing, always (the scriptable surface)
 omh theme use crimson        # select one directly (also accepts omh-crimson)
 omh theme use crimson --dry-run
 omh theme status             # active skin, ownership, managed files on disk
+omh theme repair             # report unmanaged theme files; writes nothing
+omh theme repair sky         # adopt one back under OMH management
+omh theme repair --all --dry-run
 ```
 
 Bare `omh theme` opens a picker: up/down arrows (or `j`/`k`) move the cursor,
@@ -697,6 +700,65 @@ Rules worth knowing:
   hand-edited and stop updating it forever. Adopting our own bytes cannot
   destroy anything you wrote, because overwriting them is a no-op. A file
   matching neither proof stays `unmanaged`.
+
+#### Why a theme file can be `unmanaged`
+
+`omh theme status` reports each theme file as `managed`, `unmanaged`, or
+`missing`. `unmanaged` means OMH cannot prove it wrote that file, so it will
+never overwrite it — and therefore never update it either. Two very different
+situations end up there:
+
+1. **You edited it, or wrote your own.** Working as designed. The file is
+   yours, it keeps winning over every future release, and nothing needs fixing.
+2. **It is OMH's file, stranded.** The manifest record went stale at some point
+   *and* the shipped template has since changed, so the file now matches
+   neither ownership proof. It is ours in origin but indistinguishable on disk
+   from case 1 — and it is frozen on an old palette forever, because no later
+   release can reach a file OMH will not touch.
+
+Nothing on disk separates those two cases, which is why OMH cannot fix case 2
+on its own. `omh theme repair` resolves it by asking you:
+
+```sh
+omh theme repair                  # report only; safe and idempotent, writes nothing
+omh theme repair sky              # adopt sky: overwrite it with the shipped file and record it
+omh theme repair --all            # adopt every unmanaged theme file
+omh theme repair sky --dry-run    # show exactly what adopting would do, without doing it
+omh theme repair --json           # machine-readable payload (omh_theme_repair/v1)
+```
+
+The bare form and `--dry-run` never write. Both print, per file, the
+before/after `sha256` and the palette tokens that would change, so you see what
+you are accepting before anything is destructive:
+
+```text
+OMH theme repair
+  Skins directory: /Users/you/.hermes/skins
+Theme files
+  sky      omh.yaml          - unmanaged; NOT adopted (name it, or pass --all, to accept)
+      sha256 e99be0e84830b659 -> 122577bf7c5080e3
+      ui_label: #7FDBFF -> #9FE8FF
+  amber    omh-amber.yaml    - managed; untouched
+  crimson  omh-crimson.yaml  - managed; untouched
+  mono     omh-mono.yaml     - managed; untouched
+Next
+  Nothing was written. Accept with `omh theme repair <name>` or `omh theme repair --all`.
+```
+
+Naming a theme (or passing `--all`) IS the consent — there is no hash that can
+give it, which is why the command asks for a name instead. Rules:
+
+- **Nothing repairs automatically.** `omh setup`, `omh update`, and
+  `omh theme use` never call the repair path. A skin you wrote is never
+  silently overwritten.
+- **Already-`managed` files are untouched** and reported as such, whether or
+  not you named them.
+- **A `missing` file is installed when named**, matching what `omh setup` and
+  `omh update` already do for a theme file that is not there.
+- **Repair is reversible the usual way.** A repaired file is a managed file, so
+  `omh uninstall --all` takes it away exactly like an installed one.
+- **After a repair, updates flow again.** The file is recorded in the manifest,
+  so the next release's template change lands on it normally.
 
 ## Bot Profiles
 
