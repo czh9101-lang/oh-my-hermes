@@ -29,6 +29,7 @@ _FAMILY_DEFINITIONS = (
             "ralplan",
             "codebase-onboarding",
             "codegraph-refresh",
+            "codebase-uml",
             "loop",
             "strategy-brief",
         ),

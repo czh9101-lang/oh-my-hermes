@@ -4527,6 +4527,115 @@ _DEFINITIONS = [
         ),
     ),
     SkillDefinition(
+        "codebase-uml",
+        "OMH Codebase UML workflow: turn a repository into one readable, interface-level PlantUML architecture picture - packages or modules, the public symbols other units actually import, bounded import edges - and get it rendered to a single PNG a chat surface can show.",
+        (
+            "codebase-uml",
+            "codebase uml",
+            "uml",
+            "plantuml",
+            "uml diagram",
+            "class diagram",
+            "package diagram",
+            "module diagram",
+            "architecture diagram",
+            "dependency diagram",
+            "module dependency diagram",
+            "visualize the codebase",
+            "visualize this codebase",
+            "visualize the code",
+            "visualize the architecture",
+            "codebase visualization",
+            "code visualization",
+            "diagram of the codebase",
+            "diagram the codebase",
+            "draw the architecture",
+            "draw the codebase",
+            "architecture picture",
+            "codebase picture",
+            "picture of the codebase",
+        ),
+        (
+            "Use when the user wants to see the shape of a codebase as one picture - a package, module, or "
+            "focused-area diagram they can drop into Slack, Discord, a PR, or a doc - rather than a prose tour "
+            "or a refreshed code index."
+        ),
+        category="planning",
+        phase="codebase-uml",
+        hermes_role="retained-operator",
+        delegation_boundary="retained-catalog-intent",
+        handoff_policy=(
+            "Keep diagram scoping, the `omh codegraph uml` source generation, and the render command in Hermes; "
+            "the render runs through Hermes' own terminal tool and the image is attached by the chat surface. "
+            "A generated `.puml` is prepared context; the picture exists only when the render command's exit "
+            "status and output file are observed, and neither is architecture proof, review, CI, or merge evidence."
+        ),
+        required_inputs=(
+            "repo root or current workspace",
+            "view: whole repo at package level, one area by `--focus <path>`, or module level for a subsystem",
+            "delivery target (chat attachment, PR, doc) which fixes the format: PNG for chat, SVG only when asked",
+            "renderer readiness from the command's render plan (`plantuml` on PATH, or `PLANTUML_JAR` plus `java`)",
+        ),
+        expected_outputs=(
+            "codebase_uml/v1 model (units, interfaces, edges, omissions) via `omh codegraph uml --json`",
+            "PlantUML source written by `omh codegraph uml --output <file>.puml`",
+            "uml_render_plan/v1 naming the exact render command or the blocker",
+            "one rendered PNG (or SVG on request) attached to the reply, with the omissions legend visible",
+            "not-evidence boundary",
+        ),
+        artifact_expectations=(
+            "codebase_uml/v1 with `view` (level, depth, focus, caps), `nodes` carrying fan-in-ranked public interfaces, weighted `edges`, `layout` hardening, and `omissions` counts",
+            "uml_render_plan/v1 with `status`, `renderer`, `layout_engine`, `command`, `blockers`, and `notes`",
+            "the rendered image path only after the render command is observed to exit 0 and the file exists",
+        ),
+        safety_rules=(
+            "Do not hand-draw the diagram from memory or from a partial read; the boxes and arrows come from `omh codegraph uml` over the actual tree.",
+            "Do not claim the image was rendered or attached without the observed render command result and file.",
+            "Do not present the picture as complete architecture: the legend's folded units, pruned edges, and hidden symbols are part of the answer.",
+            "Never send the diagram to a chat surface or repository the user did not name; the render is local and the attachment is the wrapper's observed action.",
+        ),
+        quality_tier="codegraph-gated",
+        quality_bar=(
+            "Scope first: whole-repo package view for 'show me the codebase', `--focus <path>` for one area, `--level module` for a subsystem; never render more than one view per request unless asked.",
+            "Generate with `omh codegraph uml --repo <root> --output <dir>/codebase.puml` and read the printed render plan; when it is `blocked`, report the exact blocker and install hint instead of improvising a renderer.",
+            "Render with the plan's command verbatim (`-DPLANTUML_LIMIT_SIZE=8192` stays on) and attach the PNG; use `--layout smetana` when Graphviz `dot` is absent and `--format svg` only when the user asked for SVG.",
+            "Read the legend back to the user in one line: units shown, units folded, edges pruned, symbols hidden - so nobody mistakes 16 boxes for the whole system.",
+            "Answer follow-up exploration by re-running with a narrower `--focus` or `--level module` rather than describing what the first picture omitted from memory.",
+            "Keep the omh theme unless the user asks for `--theme mono`; the theme exists so every OMH diagram reads as one family.",
+        ),
+        why_this_exists=(
+            "`codebase-uml` exists so 'visualize our codebase' produces one deterministic, readable picture instead of a "
+            "hand-drawn guess: the interface each unit exposes is ranked by who imports it, the layout is bounded "
+            "before PlantUML sees it, and every omission the bounding made is printed on the image."
+        ),
+        do_not_use_when=(
+            "The user wants the local code index refreshed or a task-scoped handoff pack, not a picture; use `codegraph-refresh`.",
+            "The user wants a narrative first-read tour, reading path, or glossary; use `codebase-onboarding`.",
+            "The user wants a summary card, thumbnail, or explainer image of a PR, meeting, or release rather than a structural diagram; use `img-summary`.",
+        ),
+        good_example=SkillExample(
+            prompt="Visualize our codebase and drop the picture here so the new teammate can see how the routing package fits.",
+            expected="Run `omh codegraph uml --focus src/routing --output .omh/uml/routing.puml`, render with the plan's command, attach the PNG, and read back the legend (units shown, folded, edges pruned).",
+            why="The request is a structural picture of one area for a chat surface, which is exactly the bounded diagram this workflow produces.",
+        ),
+        bad_example=SkillExample(
+            prompt="Just sketch what you think the architecture looks like from the README.",
+            expected="Decline to draw from memory; generate the diagram from the tree with `omh codegraph uml` or say the renderer is missing and name the install step.",
+            why="A diagram not derived from the actual tree misleads more than no diagram.",
+        ),
+        final_checklist=(
+            "The view (package, focus, or module) matches the question asked, and only one view was rendered unless more were requested.",
+            "The render command and its observed result are recorded before the image is claimed.",
+            "The legend's omissions were read back to the user in the reply.",
+            "Follow-up exploration used narrower generated views, not recollection of the first picture.",
+        ),
+        recovery_notes=(
+            "If the render plan is blocked, send the PlantUML source path plus the install hint; do not attach a stale or hand-drawn image.",
+            "If the picture is still unreadable, lower `--max-nodes`, narrow `--focus`, or raise `--depth` by one, and say which knob changed.",
+            "If Graphviz `dot` is missing, rerun with `--layout smetana`; the layout differs but the content is identical.",
+        ),
+    ),
+    SkillDefinition(
         "context-budget-review",
         "Hermes Context Budget Review workflow: plan compact context, token/cost budgets, summarization checkpoints, and overflow recovery before long agent work.",
         (

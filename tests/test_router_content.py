@@ -186,12 +186,11 @@ class RouterContentTests(unittest.TestCase):
         on_disk = Path("skills/omh-routing/references/catalog-index.md").read_text(encoding="utf-8")
         self.assertEqual(on_disk, rendered)
 
-        # 20,000 -> 20,500: the `web-research` split added one index line
-        # (378 bytes, inside the 400-byte per-line gate below) and took the
-        # index to 20,017. Raised deliberately rather than by shedding a
-        # skill or dropping to name-only lines, which are the other two
-        # escalations named above; 20,500 restores ~2.4% headroom.
-        self.assertLess(len(rendered.encode("utf-8")), 20_500)
+        # 20,000 -> 20,800: the `web-research` split and the `codebase-uml`
+        # catalog row each added one index line; one name-and-hook line per
+        # new skill is the growth this index is supposed to have, and the
+        # ceiling keeps ~3% headroom.
+        self.assertLess(len(rendered.encode("utf-8")), 20_800)
         for line in rendered.splitlines():
             self.assertLess(len(line.encode("utf-8")), 400, line)
 
@@ -328,12 +327,12 @@ class RouterContentTests(unittest.TestCase):
         # keeps ~3.3% headroom while still forcing the router skill to stay a
         # compact index rather than a second catalog.
         self.assertLess(len(router.content.encode("utf-8")), 13_000)
-        # 24,500 -> 25,000: workflow-registry.md carries one row per routable
-        # workflow, so the `web-research` split took it to 24,622. The row is
-        # the growth; harness-registry.md (23,985B) stays the tightest
-        # reference and keeps over 1KB of room under the new ceiling.
+        # 24,500 -> 25,300: workflow-registry.md carries one row per routable
+        # workflow, so the `web-research` split and the `codebase-uml` row
+        # together took it past the old ceiling; one row per new skill, and
+        # the ceiling keeps ~2% headroom.
         for template in builtin_skill_reference_templates():
-            self.assertLess(len(template.content.encode("utf-8")), 25_000, template.relative_path)
+            self.assertLess(len(template.content.encode("utf-8")), 25_300, template.relative_path)
 
         schemas = (
             OMH_CAPABILITIES_SCHEMA,
@@ -3783,7 +3782,7 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("`deep-interview`, `ralplan`, `loop`", docs_readme)
         # Retired engines must not be presented as current planning skills.
         self.assertNotIn("`ultragoal`", docs_readme)
-        self.assertIn("**110 installable skills**", docs_readme)
+        self.assertIn("**111 installable skills**", docs_readme)
         self.assertIn("**Retain knowledge**", docs_readme)
         self.assertIn("python -m unittest discover -s tests", ci)
         self.assertIn("python -m compileall src", ci)

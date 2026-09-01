@@ -361,6 +361,8 @@ VISIBLE_ACTIONS = (
     "record_first_task_runway",
     "prepare_codegraph_refresh",
     "show_codegraph_refresh",
+    "prepare_codebase_uml",
+    "show_codebase_uml",
     "record_codegraph_build",
     "record_codegraph_summary",
     "record_codegraph_handoff",
@@ -772,6 +774,11 @@ _HUMAN_ACK_BODY_BY_SKILL = {
         "file-write policy, and observed-only codegraph summary or handoff evidence. Command execution and "
         "generated files stay separate until observed."
     ),
+    "codebase-uml": (
+        "I will draw the codebase as one interface-level diagram: scope the view, generate the PlantUML source "
+        "from the actual tree, render it with the local renderer, and attach the picture with its omissions "
+        "legend. The image counts only once the render is observed."
+    ),
     "skill-scout": (
         "I will prepare a skill scout report: intended skill workflow, search keywords, local and external candidate "
         "sources, risk review gaps, and use/fork/create options. Installation, copying, external trust, and "
@@ -937,6 +944,7 @@ _ACK_PRIMARY_ACTIONS_BY_NEXT_ACTION = {
     "prepare_rules_distillation": ("prepare_rules_distillation", "Distill rules"),
     "prepare_codebase_onboarding": ("prepare_codebase_onboarding", "Prepare onboarding"),
     "prepare_codegraph_refresh": ("prepare_codegraph_refresh", "Refresh codegraph"),
+    "prepare_codebase_uml": ("prepare_codebase_uml", "Draw codebase"),
     "prepare_agent_debug": ("prepare_agent_debug", "Prepare agent debug"),
     "prepare_failure_signal_audit": ("prepare_failure_signal_audit", "Audit failure signals"),
     "prepare_llm_app_build": ("prepare_llm_app_build", "Prepare LLM build"),
@@ -2372,6 +2380,37 @@ _WORKFLOW_OPERATIONS_CHAT_CARDS: dict[str, dict[str, object]] = {
             "implementation",
             "executor dispatch",
             "verification",
+            "CI",
+        ],
+    },
+    "codebase-uml": {
+        "kind": "codebase_uml",
+        "headline": "I can draw the codebase as one diagram.",
+        "body": (
+            "I will scope the view (whole repo, one area, or module level), generate the PlantUML source from the "
+            "actual tree, render it locally, and attach the picture with its omissions legend. "
+            "The image counts only once the render is observed."
+        ),
+        "phase": "codebase_uml_prepared",
+        "next_action": "prepare_codebase_uml",
+        "artifact_schema": "codebase_uml/v1",
+        "claim_boundary_suffix": "It is not a rendered image, an attachment, complete architecture, review, CI, or merge evidence.",
+        "actions": [
+            {"id": "prepare_codebase_uml", "label": "Draw codebase", "style": "primary"},
+            {"id": "prepare_codegraph_refresh", "label": "Refresh codegraph", "style": "secondary"},
+            {"id": "show_status", "label": "Show status", "style": "secondary"},
+        ],
+        "recommended_flow": [
+            "scope_view_package_focus_or_module",
+            "generate_plantuml_source_from_tree",
+            "render_with_plan_command_and_attach",
+            "read_omissions_legend_back",
+        ],
+        "evidence_not_observed": [
+            "render command result",
+            "image attachment",
+            "complete architecture",
+            "review",
             "CI",
         ],
     },

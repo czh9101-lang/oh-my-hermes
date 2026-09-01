@@ -330,6 +330,14 @@ CHAT_CARD_COVERAGE_CASES: tuple[ChatCardCoverageCase, ...] = (
         "prepare_codegraph_refresh",
     ),
     ChatCardCoverageCase(
+        "codebase-uml",
+        "Codebase UML",
+        "visualize the codebase as a uml diagram",
+        "codebase-uml",
+        "codebase_uml",
+        "prepare_codebase_uml",
+    ),
+    ChatCardCoverageCase(
         "command-operator",
         "Command Operator",
         "command-operator",

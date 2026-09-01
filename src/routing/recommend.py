@@ -752,6 +752,17 @@ _SKILL_POLICIES = {
             "risk_and_unknowns_map/v1, and first_task_runway/v1 from observed repo evidence."
         ),
     ),
+    "codebase-uml": RecommendationPolicy(
+        next_action="prepare_codebase_uml",
+        evidence_boundary=(
+            "A generated PlantUML source or render plan is prepared_not_observed; it is not a rendered image, an "
+            "attachment, complete architecture, review, CI, or merge evidence."
+        ),
+        wrapper_guidance=(
+            "Scope the view (package, --focus, or module), generate the source with `omh codegraph uml --output`, "
+            "render with the plan's exact command, attach the PNG, and read the omissions legend back."
+        ),
+    ),
     "codegraph-refresh": RecommendationPolicy(
         next_action="prepare_codegraph_refresh",
         evidence_boundary=(
@@ -1782,6 +1793,30 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     # ...), which the +6 phrase match already covers.
     "model-optimization": frozenset(
         {"calibrate", "calibration", "model", "new", "onboard", "optimization", "optimize"}
+    ),
+    # `codebase-uml` names its picture with the vocabulary of every code
+    # question -- "draw", "diagram", "architecture", "package", "module",
+    # "picture". Credited as bare tokens they made "which package owns the
+    # router" and "draw up a release plan" name the diagram as a candidate.
+    # Only `uml` and `plantuml` are unambiguous alone; the rest dispatch as
+    # complete phrases.
+    "codebase-uml": frozenset(
+        {
+            "architecture",
+            "class",
+            "code",
+            "codebase",
+            "dependency",
+            "diagram",
+            "draw",
+            "module",
+            "package",
+            "picture",
+            "the",
+            "this",
+            "visualization",
+            "visualize",
+        }
     ),
     # `memory-sync` gained natural interview phrases ("your memories",
     # "memories still true", "memory interview"); their loose tokens are
@@ -2816,6 +2851,26 @@ def _context_alignment_offers_itself(normalized_query: str, query_tokens: set[st
     )
 
 
+def _codebase_uml_offers_itself(normalized_query: str, query_tokens: set[str]) -> bool:
+    """Keep prose about architecture from offering the diagram workflow.
+
+    The skill's description and metadata carry ordinary planning words
+    ("architecture", "codebase", "picture"), so a bare "architecture" scored it
+    level with `ralplan` on field matches alone. It offers itself only when the
+    message is diagram-shaped: a diagram/UML token, a visualize verb aimed at
+    code, or draw/picture aimed at the codebase. Explicit invocation overrides
+    this, as `_score_definition` already exempts.
+    """
+    if {"uml", "plantuml", "diagram", "diagrams", "다이어그램"} & query_tokens:
+        return True
+    if any(token.startswith("시각화") for token in query_tokens):
+        return True
+    code_target = bool({"architecture", "code", "codebase", "repo", "repository"} & query_tokens)
+    if code_target and {"visualize", "visualise", "visualization", "visualisation"} & query_tokens:
+        return True
+    return bool({"architecture", "codebase"} & query_tokens) and bool({"draw", "picture"} & query_tokens)
+
+
 def _jit_learn_offers_itself(normalized_query: str, query_tokens: set[str]) -> bool:
     """Keep a bare "learn" from carrying the just-in-time learning route.
 
@@ -2838,6 +2893,7 @@ def _jit_learn_offers_itself(normalized_query: str, query_tokens: set[str]) -> b
 # as blockers upstream and keep that phrasing in the wrappers above rather than
 # being rewritten, so the predicates here are the same ones as before.
 _SKILL_OFFERS_ITSELF: dict[str, Callable[[str, set[str]], bool]] = {
+    "codebase-uml": _codebase_uml_offers_itself,
     "context": _context_alignment_offers_itself,
     "jit-learn": _jit_learn_offers_itself,
     "ops-observability-card": _ops_observability_card_offers_itself,

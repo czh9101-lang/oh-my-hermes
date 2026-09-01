@@ -26,6 +26,7 @@ Trigger phrases and the role registry live in `references/workflow-registry.md`;
 - `omh-capability-toggle`: [omh] Hermes adaptation for turning one OMH capability family on or off so an install can be tailored instead of taken whole.
 - `omh-code-review`: [omh] Hermes Code Review workflow: bug-first review with evidence.
 - `omh-codebase-onboarding`: [omh] Hermes Codebase Onboarding workflow: create a repo map, reading path, glossary, risk map, and first-task runway for unfamiliar codebases.
+- `omh-codebase-uml`: [omh] OMH Codebase UML workflow: turn a repository into one readable, interface-level PlantUML architecture picture - packages or modules, the public symbols other units actually import, bounded import edges - and get it rendered to a single PNG a chat surface can show.
 - `omh-codegraph-refresh`: [omh] Hermes Codegraph Refresh workflow: refresh local code intelligence, summarize repo structure, and prepare task-scoped codegraph handoff context without overclaiming execution.
 - `omh-terminal`: [omh] Policy overlay for terminal commands - add cwd, environment, safety, and result-evidence gates after preferring native shell tools for ordinary CLI, package-manager, and test runs.
 - `omh-apps`: [omh] External app actions - email, Slack, Discord, Notion, Linear, Jira, CRM, and similar providers, scoped with auth, payload, confirmation, and result-evidence gates.
