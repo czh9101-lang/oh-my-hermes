@@ -133,7 +133,13 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # paying the engine's declared depth budget and reference-implementation
 # study. One section for one new workflow, not per-section padding;
 # the engine's own section shrank by the triggers that left it.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 356826
+# 356826 -> 357345: `research` gained the audience branch -- three required
+# inputs (audience, format, language), the briefing artifact in its outputs,
+# and the three quality-bar rules that make Hermes ask before retrieval
+# rather than after. The document standard itself is a reference file, so it
+# costs progressive disclosure rather than the always-loaded body; what is
+# counted here is the asking, not the standard.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 357345
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -481,7 +487,13 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # became two once the lookup half of it stopped belonging to the engine.
 # The split is what removed a deference inversion the policy test had been
 # carrying; 106 chars is the sentence that did it.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 815057
+# 815057 -> 816478: `research` gained the audience branch -- three required
+# inputs (audience, format, language), the briefing artifact in its outputs,
+# and the three quality-bar rules that make Hermes ask before retrieval
+# rather than after. The document standard itself is a reference file, so it
+# costs progressive disclosure rather than the always-loaded body; what is
+# counted here is the asking, not the standard.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 816478
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
