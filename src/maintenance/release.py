@@ -142,7 +142,10 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # 357345 -> 358092: ai-slop-cleaner's capability section grew its taxonomy,
 # ordered-pass, detection, and closing-report rules; instruction lines on one
 # existing skill, not padding; warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 358092
+# 358092 -> 358305: the code-review capability section grew its two-axis
+# (correctness/spec) and checked-and-clean closing rules; instruction lines on
+# one existing skill, not padding; warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 358305
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -500,7 +503,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # the fixed pass order, the detection-first rule, the scope boundary, and the
 # four-part closing report; the taxonomy and command tables live in the new
 # on-demand cleanup-passes reference outside this count; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 817601
+# 817601 -> 819169: code-review gained the spec-conformance axis, the
+# smell-baseline pointer, and the checked-and-clean / could-not-assess closing
+# contract; the twelve-smell table itself lives in an on-demand reference
+# outside this body count; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 819169
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
