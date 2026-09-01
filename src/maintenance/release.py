@@ -139,7 +139,10 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # rather than after. The document standard itself is a reference file, so it
 # costs progressive disclosure rather than the always-loaded body; what is
 # counted here is the asking, not the standard.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 357345
+# 357345 -> 358092: ai-slop-cleaner's capability section grew its taxonomy,
+# ordered-pass, detection, and closing-report rules; instruction lines on one
+# existing skill, not padding; warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 358092
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -493,7 +496,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # rather than after. The document standard itself is a reference file, so it
 # costs progressive disclosure rather than the always-loaded body; what is
 # counted here is the asking, not the standard.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 816478
+# 816478 -> 817601: ai-slop-cleaner gained the classify-first taxonomy line,
+# the fixed pass order, the detection-first rule, the scope boundary, and the
+# four-part closing report; the taxonomy and command tables live in the new
+# on-demand cleanup-passes reference outside this count; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 817601
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

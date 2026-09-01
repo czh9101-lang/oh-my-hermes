@@ -15,6 +15,7 @@ from .render import (
     context_reference_templates,
     context_skill,
     deep_interview_skill,
+    ai_slop_cleaner_reference_templates,
     design_reference_templates,
     domain_engineering_reference_templates,
     idea_to_deploy_reference_templates,
@@ -66,6 +67,7 @@ def builtin_skill_reference_templates() -> list[SkillReferenceTemplate]:
         ],
         *research_reference_templates(),
         *design_reference_templates(),
+        *ai_slop_cleaner_reference_templates(),
         *domain_engineering_reference_templates(),
     ]
 
