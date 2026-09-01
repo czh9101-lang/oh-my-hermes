@@ -330,6 +330,14 @@ CHAT_CARD_COVERAGE_CASES: tuple[ChatCardCoverageCase, ...] = (
         "prepare_refactor_plan",
     ),
     ChatCardCoverageCase(
+        "inference-serving",
+        "Inference Serving",
+        "serve this model with vllm for the team",
+        "inference-serving",
+        "inference_serving",
+        "prepare_inference_serving",
+    ),
+    ChatCardCoverageCase(
         "codegraph-refresh",
         "Codegraph Refresh",
         "codegraph-refresh",

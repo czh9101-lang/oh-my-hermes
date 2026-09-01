@@ -55,6 +55,7 @@ Trigger phrases and the role registry live in `references/workflow-registry.md`;
 - `omh-harness-session-inventory`: [omh] Hermes harness session inventory workflow: normalize Codex, Claude Code, Hermes, OpenCode, Cursor, MCP host, worktree, and wrapper session metadata into one drift-aware inventory.
 - `omh-idea-to-deploy`: [omh] Hermes Idea-to-Deploy workflow: shape an app idea into decisions, delivery handoff, verification, release, and monitoring status.
 - `omh-image-cards`: [omh] Image prompt cards - turn meetings, reports, PRs, issues, research, and releases into domain-aware image prompt cards.
+- `omh-inference-serving`: [omh] OMH Inference Serving workflow: choose the serving engine and quantization from decision tables, prepare deployment as an idempotent runbook with observed-only verification, and measure the endpoint with the standard TTFT/TPOT/goodput protocol.
 - `omh-instinct-ledger`: [omh] Instinct Ledger workflow: turn repeated project or cross-project lessons into atomic, confidence-scored instinct candidates with scoped promotion and export boundaries.
 - `omh-jit-learn`: [omh] Just-in-time learning workflow: select and confirm an immediate learning target, research credible sources, and prepare an application-first brief without popularity ranking.
 - `omh-legal-compliance-review`: [omh] Surface contract and compliance risks, questions, and escalation points before a legal decision or action.

@@ -361,6 +361,8 @@ VISIBLE_ACTIONS = (
     "record_first_task_runway",
     "prepare_codegraph_refresh",
     "show_codegraph_refresh",
+    "prepare_inference_serving",
+    "show_inference_serving",
     "prepare_refactor_plan",
     "show_refactor_plan",
     "prepare_codebase_uml",
@@ -776,6 +778,11 @@ _HUMAN_ACK_BODY_BY_SKILL = {
         "contracts-first phase order with per-phase verification and rollback, the files table, and a stop at "
         "the approval gate. No phase is implemented until you approve the plan."
     ),
+    "inference-serving": (
+        "I will prepare the serving process: engine and quantization from the decision tables, the gated "
+        "deployment runbook with its verification commands, and the benchmark protocol with metrics, load "
+        "shape, and SLO. Every step stays prepared until its command result is observed."
+    ),
     "codegraph-refresh": (
         "I will prepare a codegraph refresh: repo root, build/summary/handoff command choices, staleness scope, "
         "file-write policy, and observed-only codegraph summary or handoff evidence. Command execution and "
@@ -951,6 +958,7 @@ _ACK_PRIMARY_ACTIONS_BY_NEXT_ACTION = {
     "prepare_rules_distillation": ("prepare_rules_distillation", "Distill rules"),
     "prepare_codebase_onboarding": ("prepare_codebase_onboarding", "Prepare onboarding"),
     "prepare_codegraph_refresh": ("prepare_codegraph_refresh", "Refresh codegraph"),
+    "prepare_inference_serving": ("prepare_inference_serving", "Prepare serving"),
     "prepare_refactor_plan": ("prepare_refactor_plan", "Plan refactor"),
     "prepare_codebase_uml": ("prepare_codebase_uml", "Draw codebase"),
     "prepare_agent_debug": ("prepare_agent_debug", "Prepare agent debug"),
@@ -2449,6 +2457,37 @@ _WORKFLOW_OPERATIONS_CHAT_CARDS: dict[str, dict[str, object]] = {
             "implementation",
             "migration",
             "verification",
+            "review",
+            "CI",
+        ],
+    },
+    "inference-serving": {
+        "kind": "inference_serving",
+        "headline": "I can prepare the serving process for this model.",
+        "body": (
+            "I will decide engine and quantization from the tables, prepare the gated docker or Kubernetes "
+            "runbook with its verification commands, and design the benchmark with metrics, load shape, and "
+            "SLO. Every step stays prepared until its command result is observed."
+        ),
+        "phase": "inference_serving_prepared",
+        "next_action": "prepare_inference_serving",
+        "artifact_schema": "inference_serving_plan/v1",
+        "claim_boundary_suffix": "It is not a running server, rollout evidence, a measured capacity claim, review, CI, or merge evidence.",
+        "actions": [
+            {"id": "prepare_inference_serving", "label": "Prepare serving", "style": "primary"},
+            {"id": "prepare_command_operator_card", "label": "Prepare command card", "style": "secondary"},
+            {"id": "show_status", "label": "Show status", "style": "secondary"},
+        ],
+        "recommended_flow": [
+            "decide_engine_and_quantization_from_tables",
+            "prepare_gated_runbook_with_verification",
+            "design_benchmark_with_slo_and_load_shape",
+            "report_each_step_prepared_or_observed",
+        ],
+        "evidence_not_observed": [
+            "server rollout",
+            "readiness or smoke result",
+            "benchmark measurement",
             "review",
             "CI",
         ],
