@@ -1240,6 +1240,16 @@ _FEATURE_SURFACE_SKILLS = (
             "external_metric_provider_adapter/v1 connector-ready adapter metadata when available",
             "ops_service_quality_board/v1 evidence-gated service-quality board",
         ),
+        extra_quality_bar=(
+            "When advising what to record per model call, require the five answers - which model, how long, how "
+            "many tokens in and out, whether it succeeded, and why it failed - with streaming calls adding "
+            "time-to-first-token; the attribute tiers live in "
+            "`omh-agent-ops-review/references/instrumentation-ladder.md`.",
+            "Aggregate cost at the four levels - per call, per agent run, per session, per user - and name the "
+            "budget threshold each level checks against before recommending any optimization signal.",
+            "Never recommend logging raw prompts, responses, or secret values into telemetry; counts, lengths, "
+            "hashes, and key-set booleans carry the signal without the leak.",
+        ),
     ),
     _feature_surface_skill(
         "achievements",
@@ -1316,6 +1326,17 @@ _FEATURE_SURFACE_SKILLS = (
         boundary="An agent ops review card is not source retrieval, executor dispatch, coding progress, implementation, review, verification, CI, merge, platform delivery, provider billing, or live runtime telemetry evidence. If Hermes is the coding owner, summarize `hermes_coding_harness/v1` stage, lane owner, next action, and missing evidence.",
         good_prompt="agent-ops-review show quality, blockers, and throughput for AI-agent work.",
         bad_prompt="agent-ops-review claim Codex finished and CI passed because a handoff exists.",
+        extra_quality_bar=(
+            "For instrumentation-audit requests, grade against the tier ladder in "
+            "`omh-agent-ops-review/references/instrumentation-ladder.md`: T0 foundation through T5 advanced, "
+            "with every verdict PASS, FAIL, or PARTIAL and a file or config location attached.",
+            "Audit coverage in priority order - P0 (telemetry init, LLM-call capture, tool-call capture, error "
+            "capture) before P1 (tokens, cost attribution, agent identity, multi-agent links) before P2 "
+            "(memory/RAG spans, human-in-the-loop, evaluation runs) - and rank remediation as quick win "
+            "(under an hour), medium, or larger.",
+            "Check the audited setup against the anti-pattern checklist in the same reference; an anti-pattern "
+            "hit is a finding with its location and fix, never a style remark.",
+        ),
     ),
     _feature_surface_skill(
         "agent-debug",

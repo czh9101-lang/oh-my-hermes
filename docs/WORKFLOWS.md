@@ -4077,6 +4077,8 @@ These surfaces are generated command references, not installed Hermes workflow s
   - For retrieval, fix chunking and citation grounding first and evaluate retrieval before evaluating generation: a generation score on top of unmeasured retrieval cannot tell a bad answer from a bad document set.
   - Ship the eval suite as a deliverable, not a follow-up: golden set, task-level validators, baseline-vs-candidate comparison, with deterministic validators wherever the task allows one. Load `references/eval-harness.md` for the golden-set shape, the validator ladder, and the comparison record.
   - Run the regression before a prompt or model swap, not after, and compare baseline against candidate on the same golden set with token and cost capture. Report only what the run reported; a metric the harness did not emit stays null.
+  - Give every agentic loop its budgets as product features, not prompt advice: step, time, token, cost, and tool-call budgets each with a recorded termination reason, and for recursive delegation the budgets bind the whole tree, not each node separately.
+  - Separate draft from commit for risky side effects: reads and drafts may run autonomously when scoped and labeled, but external writes, deletions, and communications need an approval record outside the prompt - a model's stated intention is never the authorization.
   - Keep design and evidence separate: a prepared schema, prompt layout, or eval plan is not implementation, an observed eval run, review, CI, or merge evidence.
 - Completion checklist:
   - Every rail - provider boundary, structured output, prompt artifacts, retrieval grounding, evaluation - is either decided or explicitly deferred with a reason.
@@ -7216,6 +7218,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Name the user-facing workflow objective, required context, next action, and stop condition.
   - Separate prepared guidance from observed platform, runtime, connector, file, memory, or delivery evidence.
   - Expose missing tools, credentials, targets, or observations as user-visible gaps.
+  - When advising what to record per model call, require the five answers - which model, how long, how many tokens in and out, whether it succeeded, and why it failed - with streaming calls adding time-to-first-token; the attribute tiers live in `omh-agent-ops-review/references/instrumentation-ladder.md`.
+  - Aggregate cost at the four levels - per call, per agent run, per session, per user - and name the budget threshold each level checks against before recommending any optimization signal.
+  - Never recommend logging raw prompts, responses, or secret values into telemetry; counts, lengths, hashes, and key-set booleans carry the signal without the leak.
 - Completion checklist:
   - The run or workflow scope, metric window, failure modes, and cost/latency boundary are named.
   - Local telemetry, provider truth, billing truth, and completion evidence are separate states.
@@ -7341,6 +7346,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Name the user-facing workflow objective, required context, next action, and stop condition.
   - Separate prepared guidance from observed platform, runtime, connector, file, memory, or delivery evidence.
   - Expose missing tools, credentials, targets, or observations as user-visible gaps.
+  - For instrumentation-audit requests, grade against the tier ladder in `omh-agent-ops-review/references/instrumentation-ladder.md`: T0 foundation through T5 advanced, with every verdict PASS, FAIL, or PARTIAL and a file or config location attached.
+  - Audit coverage in priority order - P0 (telemetry init, LLM-call capture, tool-call capture, error capture) before P1 (tokens, cost attribution, agent identity, multi-agent links) before P2 (memory/RAG spans, human-in-the-loop, evaluation runs) - and rank remediation as quick win (under an hour), medium, or larger.
+  - Check the audited setup against the anti-pattern checklist in the same reference; an anti-pattern hit is a finding with its location and fix, never a style remark.
 - Completion checklist:
   - The local command, managed path, config surface, and state artifact inspected are named.
   - Blocking issues, warnings, and optional surfaces are separated.
