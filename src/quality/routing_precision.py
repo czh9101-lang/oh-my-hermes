@@ -38,6 +38,81 @@ class RoutingInterventionCase:
 # helpful but should not hijack the answer into workflow selection, catalog
 # pickers, coding handoffs, or generic workflow acknowledgements.
 ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
+    # A trigger inside a sentence that reports rather than asks. Every one of
+    # these dispatched before the narration guard: the trigger match is a
+    # substring match, and nothing weighed whether the sentence wanted work.
+    # They are negative controls rather than interventions because the correct
+    # answer is a direct reply, not a different workflow.
+    RoutingPrecisionCase(
+        "reported-research-decision-stays-direct",
+        "A decision the research team already made stays direct",
+        "the research team already signed off on this",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "reported-research-budget-stays-direct",
+        "A spent research budget stays direct",
+        "our research budget is basically gone for the quarter",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "reported-web-search-cost-stays-direct",
+        "A web search bill that went up stays direct",
+        "our web search bill went up a lot last month",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "declined-lookup-stays-direct",
+        "A lookup the user declines to delegate stays direct",
+        "i will look up the answer myself, thanks",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "reported-shipped-feature-stays-direct",
+        "A changelog line about a shipped web search feature stays direct",
+        "the changelog says web search shipped last year",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "reported-team-move-stays-direct",
+        "A person moving off the research team stays direct",
+        "she moved from research to platform last month",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "reported-prior-art-outcome-stays-direct",
+        "A settled prior-art outcome stays direct",
+        "prior art was not an issue for that patent",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "reported-citation-check-failure-stays-direct",
+        "A citation check that already failed stays direct",
+        "the citation check on that PR failed",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "reported-source-diversity-cause-stays-direct",
+        "Source diversity named as a cause stays direct",
+        "source diversity is why the review took so long",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "explicit-no-action-stays-direct",
+        "Fresh sources already in hand with no action wanted stays direct",
+        "we already have fresh sources for this, no action needed",
+        "answer_directly",
+        "direct_answer",
+    ),
     RoutingPrecisionCase(
         "lookup-lane-file-question-stays-direct",
         "A repo-file question naming the lookup lane stays a file lookup",
@@ -1270,6 +1345,15 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "paper-learning",
         "prepare_paper_learning",
         "paper_learning",
+    ),
+    RoutingInterventionCase(
+        "reported-customer-signal-still-dispatches",
+        "A customer signal relayed as reported speech still reaches feedback-triage",
+        "Customer feedback says the checkout click path is broken.",
+        "dispatch",
+        "feedback-triage",
+        "triage_feedback",
+        "feedback_triage",
     ),
     # The split gave the lookup phrases their own lane, so both sides need a
     # case: the deep cues must stay on the engine, an English lookup must reach

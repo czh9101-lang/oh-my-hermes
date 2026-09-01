@@ -1923,7 +1923,7 @@ def _route_chat_message_cached(
     direct_answer = _is_plain_direct_answer_question(
         routing_message,
         candidate_score=candidate_score,
-    )
+    ) or _is_narration_not_request(routing_message)
 
     if explicit_skill and not task_card_overrides_explicit:
         selected_skill = explicit_skill
@@ -4184,6 +4184,8 @@ def _operator_surface_fast_path_decision(
     if _has_explicit_invocation_prefix(routing_message):
         return None
     if not allow_explicit_skill and explicit_skill_invocation(routing_message):
+        return None
+    if _is_narration_not_request(routing_message):
         return None
     match = _ai_usability_research_fast_path_match(routing_message) if only_skill is None else None
     if match is None:
@@ -6730,6 +6732,155 @@ def _is_plain_direct_answer_question(message: str, *, candidate_score: int) -> b
         return True
     return any(keyword in direct_text for keyword in _DIRECT_ANSWER_KEYWORDS) and "?" in text
 
+
+# A sentence can carry a routing trigger without asking for anything. "our web
+# search bill went up a lot last month" reports a cost, "the research team
+# already signed off on this" reports a decision, and "the citation check on
+# that PR failed" reports an outcome. None of them wants a workflow. The router
+# read them as requests because a trigger match is a substring match and nothing
+# weighed whether the sentence asks for work at all.
+#
+# The weigh-in is deliberately conservative, because a false positive here
+# silently drops a real request: it fires only when the message carries a
+# settled-report token AND carries no request cue anywhere. An ambiguous
+# sentence keeps whatever route it had.
+#
+# `says` and `said` are deliberately not report tokens. Reported speech is how
+# a live problem arrives in this product -- "Customer feedback says the checkout
+# click path is broken" is a feedback-triage request wearing a report's grammar
+# -- and including them routed that sentence to a direct answer. A report token
+# has to name a settled outcome, not the act of relaying one.
+#
+# English only, and that is a decision rather than an omission. Korean
+# past-tense narration is frequently a real request in this product -- the
+# missed-OMH recovery lane exists for exactly `리서치 요청했는데 OMH를 안 썼어`,
+# which is a past-tense report that must still dispatch. Adding Hangul report
+# tokens here would break that lane, so Korean narration keeps its route until
+# there is a cue that separates the two.
+_NARRATION_REPORT_TOKENS = frozenset(
+    {
+        "was",
+        "were",
+        "went",
+        "gone",
+        "shipped",
+        "signed",
+        "moved",
+        "failed",
+        "took",
+        "became",
+        "happened",
+        "already",
+        "turned",
+        "ended",
+    }
+)
+
+# Phrases that ask the assistant to act. Multi-word and Korean cues are safe as
+# cue phrases; single English words are not, because `contains_cue_phrase`
+# matches inside a word and `search` lives inside `research`.
+_NARRATION_REQUEST_PHRASES = (
+    "please",
+    "can you",
+    "could you",
+    "would you",
+    "i need",
+    "we need",
+    "i want",
+    "we want",
+    "help me",
+    "let us",
+    "show me",
+    "give me",
+    "tell me",
+    "해줘",
+    "해주",
+    "부탁",
+    "알려",
+    "만들",
+    "고쳐",
+    "찾아",
+    "정리",
+    "봐줘",
+    "줄래",
+    "주세요",
+    "해봐",
+    "뽑아",
+)
+
+# Verbs that are requests wherever they appear, because they are not also the
+# nouns this catalog's triggers are made of. "the build failed, fix it" is a
+# request even though it opens on a report.
+_NARRATION_REQUEST_VERBS = frozenset(
+    {
+        "find",
+        "make",
+        "write",
+        "build",
+        "compare",
+        "summarize",
+        "summarise",
+        "explain",
+        "fix",
+        "generate",
+        "prepare",
+        "give",
+    }
+)
+
+# Verbs that are also ordinary nouns in this domain -- a web search, a citation
+# check, the review, the list, a draft. They count as a request only in the
+# imperative position, which in English is the first word.
+_NARRATION_AMBIGUOUS_REQUEST_VERBS = frozenset(
+    {
+        "search",
+        "look",
+        "check",
+        "review",
+        "list",
+        "run",
+        "get",
+        "show",
+        "tell",
+        "draft",
+        "research",
+        "study",
+    }
+)
+
+# Sentences that state outright that no work is wanted. These win over a request
+# cue, because the request word is usually the thing being declined -- "i will
+# look up the answer myself, thanks" contains `look up` and asks for nothing.
+_NARRATION_DECLINE_CUES = (
+    "myself thanks",
+    "no action needed",
+    "no action required",
+    "nothing to do here",
+    "never mind",
+    "nevermind",
+    "i will handle it",
+    "we have it covered",
+)
+
+
+def _is_narration_not_request(message: str) -> bool:
+    """True when the message reports something rather than asking for work."""
+    normalized = normalized_phrase(prepare_routing_text(message).scoring_text)
+    if not normalized or "?" in message or "？" in message:
+        return False
+    if contains_cue_phrase(normalized, _NARRATION_DECLINE_CUES):
+        return True
+    if contains_cue_phrase(normalized, _NARRATION_REQUEST_PHRASES):
+        return False
+    words = normalized.split()
+    if not words:
+        return False
+    if words[0] in _NARRATION_AMBIGUOUS_REQUEST_VERBS:
+        return False
+    tokens = routing_tokens(normalized)
+    if tokens & _NARRATION_REQUEST_VERBS:
+        return False
+    return bool(tokens & _NARRATION_REPORT_TOKENS)
 
 def _is_domain_lane_concept_question(message: str) -> bool:
     """True when a domain-lane trigger is being asked about rather than acted on.
