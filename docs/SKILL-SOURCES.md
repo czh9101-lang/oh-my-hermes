@@ -1,0 +1,48 @@
+# Skill Upstream Sources
+
+Provenance registry for OMH skills whose content was **reconstructed** from
+external skill ecosystems. This file lives outside the generated skill bodies
+on purpose: it is the input for the upstream-tracking automation that checks
+whether a referenced source changed since the recorded review, and raises an
+issue when a change looks worth folding back into our skill.
+
+Rules:
+
+- One row per (OMH skill, upstream source) pair; a skill may have several rows.
+- `reviewed_ref` is the upstream commit the reconstruction was reviewed
+  against. The tracker diffs upstream HEAD against it and, when the diff
+  touches the listed paths, raises an issue labeled `upstream-skill-update`.
+- Reconstruction, never copying: our skill text is OMH's own wording and
+  contract language. The license column records what made close study
+  acceptable; `none` means link-only reference.
+- When a tracker issue is resolved (folded in or rejected), update
+  `reviewed_ref` and `reviewed_on` in the same PR that resolves it.
+- This file is hand-written; no generator owns it.
+
+## Shipped skills
+
+| OMH skill | Category | Upstream repo | Paths studied | License | reviewed_on | reviewed_ref |
+| --- | --- | --- | --- | --- | --- | --- |
+| `codebase-uml` (PR #1230) | planning | https://github.com/plantuml/plantuml | CLI flags/pragmas/size limits (docs, `src/main/java/net/sourceforge/plantuml/cli/CliFlag.java`) | GPL-3.0 (external tool, invoked not vendored) | 2026-09-01 | v1.2026.7 |
+| `code-review` spec axis + smell baseline (PR #1237) | review | https://github.com/mattpocock (code-review skill, plugin dist 1.2.3) | `skills/engineering/code-review/SKILL.md` | plugin dist | 2026-09-01 | plugin 1.2.3 |
+| `ai-slop-cleaner` taxonomy + passes (PR #1239) | maintenance | https://github.com/Effeilo/claude-code-frontend-skills | `front-refactor/SKILL.md`, `front-refactor/front-refactor-rules.md` | MIT | 2026-09-01 | 3c9d5a0501ff |
+| `frontend-refactor` (PR #1238) | maintenance | https://github.com/Effeilo/claude-code-frontend-skills | `front-refactor/*` (preview/apply mode contract, DEAD→NAMING→SIMPLIFY→MODERN) | MIT | 2026-09-01 | 3c9d5a0501ff |
+| `frontend-refactor` (PR #1238) | maintenance | https://github.com/pproenca/dot-skills | `skills/.experimental/react-refactor/` (40 impact-ordered rules) | MIT | 2026-09-01 | cf93c57cac89 |
+| `frontend-refactor` state-discipline (PR #1238) | maintenance | https://github.com/Cst2989/react-tips-skill | `skills/react-tips/SKILL.md`, `skills/no-unnecessary-effects/SKILL.md` | MIT | 2026-09-01 | 8c42b9e6390c |
+| `frontend-refactor` state-discipline (PR #1238) | maintenance | https://github.com/mickeyyaya/refactoring-skills | `skills/state-management-patterns/SKILL.md` | MIT | 2026-09-01 | cd0c22762849 |
+| `refactor-plan` (PR #1241) | planning | https://github.com/github/awesome-copilot | refactor-plan skill (phase order, files table, stop-for-confirmation gate) | MIT | 2026-09-01 | 5eaae7e2cde2 |
+| `inference-serving` (PR #1243) | operations | https://github.com/vllm-project/vllm-skills | deploy (docker/k8s) + bench (serve, prefix-cache) skills | Apache-2.0 | 2026-09-01 | c99623410c15 |
+| `inference-serving` (PR #1243) | operations | https://github.com/Orchestra-Research/AI-Research-SKILLs | `12-inference-serving/` vLLM + llama.cpp skills | MIT | 2026-09-01 | 773a52944ba4 |
+| `agent-ops-review` instrumentation ladder (PR #1246) | operator | https://github.com/nexus-labs-automation/agent-observability | audit + instrument skills, tier methodology, anti-patterns | MIT | 2026-09-01 | 1714a4b38d7f |
+| `ops-observability-card` span vocabulary (PR #1246) | observability | https://github.com/nexus-labs-automation/agent-observability | llm-call-tracing, token-cost-tracking skills | MIT | 2026-09-01 | 1714a4b38d7f |
+| `llm-app-dev` harness budgets (PR #1246) | delivery | https://github.com/DenisSergeevitch/agents-best-practices | `SKILL.md` + budget/permission references | MIT | 2026-09-01 | dace8b70c563 |
+
+## Candidate rows (researched, not yet shipped — see the open issues)
+
+| Proposed OMH unit | Upstream repo | Paths | License | Issue |
+| --- | --- | --- | --- | --- |
+| tech-debt ledger | https://github.com/ksimback/tech-debt-skill | `SKILL.md` | check before reconstruction | #1235 |
+| ADR lifecycle | https://github.com/wshobson/agents | `plugins/documentation-generation/skills/architecture-decision-records/SKILL.md` | check before reconstruction | #1236 |
+| a11y rule IDs + auto-fixable partition | https://github.com/Effeilo/claude-code-frontend-skills | `front-a11y/*` | MIT | — |
+| CWV performance budgets | https://github.com/rohitg00/awesome-claude-code-toolkit | `skills/frontend-excellence/SKILL.md` | Apache-2.0 | — |
+| agentic-eval rubrics | https://github.com/kodustech/awesome-agent-skills | agentic-eval entry | check | — |
