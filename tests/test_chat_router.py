@@ -1340,7 +1340,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             ("논문 요약해줘", "paper-learning", "prepare_paper_learning", "operator_surface_fast_path:paper"),
             ("이 PDF 쉽게 설명해줘", "paper-learning", "prepare_paper_learning", "operator_surface_fast_path:paper"),
             ("첨부한 paper를 쉬운 난이도로 설명해줘", "paper-learning", "prepare_paper_learning", "operator_surface_fast_path:paper"),
-            ("웹서치해서 최신 자료 정리해줘", "research", "run_hermes_research", "operator_surface_fast_path:research"),
+            ("웹서치해서 최신 자료 정리해줘", "web-research", "run_hermes_research", "operator_surface_fast_path:web_research"),
             ("이미지 생성해줘. 회의록을 세로 카드로 요약해줘", "img-summary", "prepare_visual_prompt_card", "operator_surface_fast_path:visual"),
             ("PPT 만들어줘", "materials-package", "prepare_material_package", "operator_surface_fast_path:materials"),
             (
@@ -2775,7 +2775,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                 "자료 찾아줘",
                 "research",
                 "run_hermes_research",
-                "operator_surface_fast_path:research",
+                "operator_surface_fast_path:web_research",
             ),
             (
                 "성능 최적화해줘",
@@ -3976,7 +3976,7 @@ selected_workflow=ultraprocess
                 self.assertEqual(decision["confidence"], "high")
                 matched = decision["recommendations"][0]["matched"]
                 self.assertIn("operator_surface_fast_path:ai_usability_research", matched)
-                self.assertNotIn("operator_surface_fast_path:research", matched)
+                self.assertNotIn("operator_surface_fast_path:web_research", matched)
 
         for message in (
             "AI agent usability",

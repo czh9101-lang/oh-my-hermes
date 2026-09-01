@@ -39,6 +39,20 @@ class RoutingInterventionCase:
 # pickers, coding handoffs, or generic workflow acknowledgements.
 ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
     RoutingPrecisionCase(
+        "lookup-lane-file-question-stays-direct",
+        "A repo-file question naming the lookup lane stays a file lookup",
+        "show me the SKILL.md for the lookup lane",
+        "answer_file_lookup",
+        "file_or_text",
+    ),
+    RoutingPrecisionCase(
+        "catalog-definition-file-question-stays-direct",
+        "A question about where skill definitions live stays a file lookup",
+        "which file holds the skill catalog definitions?",
+        "answer_file_lookup",
+        "file_or_text",
+    ),
+    RoutingPrecisionCase(
         "repo-file-list",
         "Repo file lookup stays direct",
         "what files are in this repo?",
@@ -1257,12 +1271,43 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "prepare_paper_learning",
         "paper_learning",
     ),
+    # The split gave the lookup phrases their own lane, so both sides need a
+    # case: the deep cues must stay on the engine, an English lookup must reach
+    # the new skill, and `websearch-setup` must keep the requests that are about
+    # configuring web search rather than using it.
     RoutingInterventionCase(
-        "hindi-research",
-        "Hindi current-source request routes to research",
-        "वेब पर खोजकर ताज़ा स्रोतों के साथ सारांश दो",
+        "deep-cue-stays-on-research-after-split",
+        "A prior-art request stays on the research engine after the lookup lane split off",
+        "prior art research before we write the spec",
         "dispatch",
         "research",
+        "run_hermes_research",
+        "web_research",
+    ),
+    RoutingInterventionCase(
+        "english-lookup-reaches-web-research",
+        "An English cited-lookup request reaches the web lookup lane",
+        "web search the current rate limits and cite the sources",
+        "dispatch",
+        "web-research",
+        "run_hermes_research",
+        "web_research",
+    ),
+    RoutingInterventionCase(
+        "websearch-setup-outranks-the-lookup-lane",
+        "Configuring web search still reaches websearch-setup rather than the lookup lane",
+        "set up web search",
+        "dispatch",
+        "websearch-setup",
+        "run_setup_guide",
+        "setup_guide",
+    ),
+    RoutingInterventionCase(
+        "hindi-research",
+        "Hindi current-source request routes to the web lookup lane",
+        "वेब पर खोजकर ताज़ा स्रोतों के साथ सारांश दो",
+        "dispatch",
+        "web-research",
         "run_hermes_research",
         "web_research",
     ),
@@ -2497,10 +2542,10 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
     # former bare `strategy` token.
     RoutingInterventionCase(
         "look-up-phrase-still-research",
-        "A look-up request still routes to research without the bare lookup token",
+        "A look-up request still routes without the bare lookup token, now to the web lookup lane",
         "look up the pricing table",
         "dispatch",
-        "research",
+        "web-research",
         "run_hermes_research",
         "web_research",
     ),
@@ -2530,10 +2575,10 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
     ),
     RoutingInterventionCase(
         "plain-web-search-still-reaches-research",
-        "A plain current-source request keeps reaching research after the deep cues joined it",
+        "A plain current-source request reaches the web lookup lane after the split",
         "웹서치해서 최신 자료 정리해줘",
         "dispatch",
-        "research",
+        "web-research",
         "run_hermes_research",
         "web_research",
     ),
@@ -2910,10 +2955,10 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
     ),
     RoutingInterventionCase(
         "jit-learn-negative-research",
-        "An already-scoped current-source investigation remains research",
+        "An already-scoped current-source investigation reaches the web lookup lane",
         "Research the latest Kubernetes 1.35 release notes with current primary sources and citations.",
         "dispatch",
-        "research",
+        "web-research",
         "run_hermes_research",
         "web_research",
     ),

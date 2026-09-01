@@ -164,7 +164,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="chat_card_case_count",
             describe="Chat card coverage cases",
             live=_chat_card_case_count,
-            expected=76,
+            expected=77,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -175,7 +175,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="route_hint_case_count",
             describe="Route hint alignment cases",
             live=_route_hint_case_count,
-            expected=196,
+            expected=197,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -186,7 +186,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="routing_precision_case_count",
             describe="Routing precision cases",
             live=_routing_precision_case_count,
-            expected=139,
+            expected=141,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -198,7 +198,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="routing_precision_intervention_case_count",
             describe="Routing precision intervention cases",
             live=_routing_precision_intervention_case_count,
-            expected=269,
+            expected=272,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -210,7 +210,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="installable_skill_count",
             describe="Installable workflow skills quoted in reference surfaces",
             live=_installable_skill_count,
-            expected=109,
+            expected=110,
             sites=(
                 "docs/README.md",
             ),
@@ -219,7 +219,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="common_request_case_count",
             describe="Common request coverage cases",
             live=_common_request_case_count,
-            expected=91,
+            expected=92,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",

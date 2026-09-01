@@ -24,7 +24,7 @@ POPULAR_PLUGIN_FAMILIES: tuple[PopularPluginFamily, ...] = (
         "Web search, citations, papers, and source discovery",
         10,
         ("web-search", "scholar", "github-search", "dataset-search"),
-        ("research", "source-finder", "paper-learning", "research-department"),
+        ("web-research", "research", "source-finder", "paper-learning", "research-department"),
         "Routes source-heavy asks to research/source cards with citation and freshness boundaries.",
     ),
     PopularPluginFamily(

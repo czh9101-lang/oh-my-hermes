@@ -4719,11 +4719,11 @@ OPS_OBSERVABILITY_GUARD = RoutingGuardRule(
 )
 WEB_RESEARCH_BEFORE_PROCESS_GUARD = RoutingGuardRule(
     id="web_research_before_process",
-    rule="Plain web/source/current-evidence requests should route to the research engine before one-cycle delivery.",
+    rule="Plain web/source/current-evidence requests should route to the web lookup lane before one-cycle delivery.",
     matched_label="guard:web_research_before_process",
-    preferred_skills=("research",),
+    preferred_skills=("web-research",),
     score_boost=14,
-    why="Matched guard/trigger metadata; web, source, or freshness requests should start with source-backed Hermes research.",
+    why="Matched guard/trigger metadata; web, source, or freshness requests should start with one cited retrieval round.",
     activation_status="active",
 )
 SOURCE_FINDER_GUARD = RoutingGuardRule(
@@ -6833,6 +6833,7 @@ _HERMES_SETUP_GUIDE_PHRASES = (
     "모델 프로바이더 설정",
     "websearch-setup",
     "web search setup",
+    "set up web search",
     "make web search cheaper",
     "reduce web search cost",
     "web search cheaper",

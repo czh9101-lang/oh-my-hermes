@@ -4752,8 +4752,8 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(gates["context_brief_coverage"]["status"], "passed")
             self.assertIn("10/10 context brief cases passing", gates["context_brief_coverage"]["summary"])
             self.assertEqual(gates["routing_precision"]["status"], "passed")
-            self.assertIn("139/139 negative-control cases", gates["routing_precision"]["summary"])
-            self.assertIn("269/269 interventions", gates["routing_precision"]["summary"])
+            self.assertIn("141/141 negative-control cases", gates["routing_precision"]["summary"])
+            self.assertIn("272/272 interventions", gates["routing_precision"]["summary"])
             self.assertIn("overroutes 0", gates["routing_precision"]["summary"])
             self.assertIn("missed interventions 0", gates["routing_precision"]["summary"])
             self.assertEqual(gates["localized_chat_copy"]["status"], "passed")
@@ -4763,13 +4763,13 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertIn("11/11 fast-path cases", gates["router_fast_path"]["summary"])
             self.assertIn("missing markers 0", gates["router_fast_path"]["summary"])
             self.assertEqual(gates["common_request_coverage"]["status"], "passed")
-            self.assertIn("91/91 common request cases", gates["common_request_coverage"]["summary"])
+            self.assertIn("92/92 common request cases", gates["common_request_coverage"]["summary"])
             self.assertIn("coverage 100.0%", gates["common_request_coverage"]["summary"])
             self.assertIn("popular plugin families 10/10 (100.0%)", gates["common_request_coverage"]["summary"])
             self.assertEqual(gates["hermes_ux_quality"]["status"], "passed")
             self.assertIn("9/9 UX gates passing", gates["hermes_ux_quality"]["summary"])
             self.assertIn("fast paths 11/11", gates["hermes_ux_quality"]["summary"])
-            self.assertIn("common requests 91/91", gates["hermes_ux_quality"]["summary"])
+            self.assertIn("common requests 92/92", gates["hermes_ux_quality"]["summary"])
             self.assertEqual(gates["parity_contracts"]["status"], "passed")
             self.assertIn("not run the release checklist", payload["boundary"])
 
@@ -4807,13 +4807,13 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertIn("Chat card coverage: 76/76 (generic ack 0)", stdout)
             self.assertIn("Context brief coverage: 10/10 (route hints 9, catalog hints 1)", stdout)
             self.assertIn(
-                "Routing precision: 139/139 negative controls, 269/269 interventions "
+                "Routing precision: 139/139 negative controls, 272/272 interventions "
                 "(overroutes 0, catalog pickers 0, generic ack 0, missed interventions 0)",
                 stdout,
             )
             self.assertIn("Localized chat copy: 8/8 (locales 6)", stdout)
             self.assertIn(
-                "Common request coverage: 91/91 "
+                "Common request coverage: 92/92 "
                 "(100.0%; target 95.0%; generic ack 0; popular plugin families 10/10 at 100.0%)",
                 stdout,
             )
@@ -4841,11 +4841,11 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(payload["summary"]["route_hint_mismatch_count"], 0)
             self.assertEqual(payload["summary"]["context_brief_coverage_passing"], 10)
             self.assertEqual(payload["summary"]["context_brief_coverage_total"], 10)
-            self.assertEqual(payload["summary"]["routing_precision_passing"], 139)
-            self.assertEqual(payload["summary"]["routing_precision_total"], 139)
+            self.assertEqual(payload["summary"]["routing_precision_passing"], 141)
+            self.assertEqual(payload["summary"]["routing_precision_total"], 141)
             self.assertEqual(payload["summary"]["routing_precision_overroute_count"], 0)
-            self.assertEqual(payload["summary"]["routing_precision_intervention_passing"], 269)
-            self.assertEqual(payload["summary"]["routing_precision_intervention_total"], 269)
+            self.assertEqual(payload["summary"]["routing_precision_intervention_passing"], 272)
+            self.assertEqual(payload["summary"]["routing_precision_intervention_total"], 272)
             self.assertEqual(payload["summary"]["routing_precision_missed_intervention_count"], 0)
             self.assertEqual(payload["summary"]["localized_chat_copy_passing"], 8)
             self.assertEqual(payload["summary"]["localized_chat_copy_total"], 8)
@@ -4853,8 +4853,8 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(payload["summary"]["router_fast_path_passing"], 11)
             self.assertEqual(payload["summary"]["router_fast_path_total"], 11)
             self.assertEqual(payload["summary"]["router_fast_path_missing_marker_count"], 0)
-            self.assertEqual(payload["summary"]["common_request_coverage_passing"], 91)
-            self.assertEqual(payload["summary"]["common_request_coverage_total"], 91)
+            self.assertEqual(payload["summary"]["common_request_coverage_passing"], 92)
+            self.assertEqual(payload["summary"]["common_request_coverage_total"], 92)
             self.assertEqual(payload["summary"]["common_request_coverage_percent"], 100.0)
             self.assertEqual(payload["summary"]["common_request_coverage_target"], 95.0)
             self.assertEqual(payload["summary"]["common_request_generic_ack_count"], 0)
