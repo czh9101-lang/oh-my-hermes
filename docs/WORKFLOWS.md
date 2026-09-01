@@ -4471,8 +4471,11 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Why: The request lacks the required inputs or would overclaim work that Hermes did not observe.
 - Quality bar:
   - Lock current behavior with regression checks before non-trivial cleanup.
+  - Classify before deleting: every finding names one category from the slop taxonomy - duplication, dead code, needless abstraction, boundary violation, missing tests, or templated defaults - so the pass order below can own it.
+  - Run single-smell passes in fixed order, re-verifying between passes and never bundling categories: dead-code deletion, then duplicate removal, then naming and error handling, then test reinforcement; the full contract is `omh-ai-slop-cleaner/references/cleanup-passes.md`.
+  - When the user names no target smell, run detection first and hand back the inventory: prepared linter and dead-code commands are named per stack in the reference and stay prepared_not_observed until run.
   - Prefer deletion, reuse, and boundary repair over new abstractions.
-  - Rerun verification after cleanup before claiming behavior is preserved.
+  - Rerun verification after cleanup before claiming behavior is preserved, and close with the four-part report: changed files, simplifications, behavior lock, remaining risks.
 - Completion checklist:
   - The selected coding or runtime owner is named before any implementation claim.
   - Prepared handoff, dispatch, execution, verification, review, CI, and merge states are separated.
@@ -4483,19 +4486,21 @@ These surfaces are generated command references, not installed Hermes workflow s
   - If the selected executor is unavailable, ask for Codex, Claude Code, Hermes, or another runtime before retrying.
   - If dispatch or result evidence is missing, keep the handoff prepared_not_observed and expose the next observable action.
 - Required inputs:
-  - target smell
+  - target smell, or a scoped file list when the user has not named one
   - current behavior
   - regression checks
 - Expected outputs:
-  - small cleanup diff
+  - smell inventory naming each finding's category before any edit
+  - small cleanup diff, one pass at a time
   - before/after verification
-  - residual risk
+  - closing report: changed files, simplifications, behavior lock, remaining risks
 - Artifact expectations:
   - cleanup plan and regression evidence for non-trivial work
 - Safety rules:
   - Lock behavior with tests before risky cleanup.
   - Prefer deletion and existing utilities over new layers.
   - Do not add dependencies for cleanup unless explicitly requested.
+  - A scoped file list is a boundary: never widen it silently; out-of-scope findings are reported, not edited.
 
 ### best-practice-research
 
