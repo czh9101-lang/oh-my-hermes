@@ -204,7 +204,12 @@ class EfficiencyContractTests(unittest.TestCase):
         # (src/maintenance/release.py) -- this is the coarser standing gate, not the
         # per-commit ratchet.
         self.assertLess(core["skill_body"]["bytes"], 68_000)
-        self.assertLess(full["skill_body"]["bytes"], 815_000)
+        # 815,000 -> 825,000: one new installable body (`web-research`) plus the
+        # sentence that split `best-practice-research`'s boundary in two. Set to
+        # restore the ~10k headroom this gate is meant to carry rather than to
+        # clear the measured 815,057 by a hair; the exact value stays ratcheted
+        # in FULL_PROFILE_SKILL_BODY_CHAR_LIMIT.
+        self.assertLess(full["skill_body"]["bytes"], 825_000)
         self.assertLess(full["repeated"]["share_percent"], 38.0)
 
         # References are progressive disclosure, counted outside the always-loaded body.

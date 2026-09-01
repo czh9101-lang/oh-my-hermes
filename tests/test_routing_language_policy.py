@@ -169,7 +169,13 @@ FROZEN_HANGUL_TRIGGERS_BY_SKILL: dict[str, int] = {
     # 딥 리서치, 심층 리서치, 레퍼런스 구현, 오픈소스 깊게 참고); the other Korean
     # deep phrases were left out because they contain the existing `조사`
     # trigger and route here already.
-    "research": 20,
+    # 2026-09: the lookup half of the table moved to `web-research` when that
+    # lane split off. Ten phrases left and ten stayed, so the catalog's Hangul
+    # total is unchanged -- a partition, not growth. Both halves are frozen at
+    # what they hold now, which is stricter than leaving the new skill under the
+    # "new skills may carry their own Korean triggers" exemption.
+    "research": 10,
+    "web-research": 10,
     "websearch-setup": 4,
     "wiki": 7,
     "workflow-learning": 11,

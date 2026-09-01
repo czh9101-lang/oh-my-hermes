@@ -284,7 +284,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             ),
             (
                 "웹서치해서 최신 자료 정리해줘",
-                "research",
+                "web-research",
                 "run_hermes_research",
                 None,
             ),
@@ -791,7 +791,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             ("このテーマの論文PDFとデータセットを探して", "source-finder", "locale:ja:source_finder"),
             ("帮我找这个主题的论文PDF和数据集", "source-finder", "locale:zh:source_finder"),
             ("इस विषय के शोध पत्र PDF और डेटा सेट ढूंढो", "source-finder", "locale:hi:source_finder"),
-            ("वेब पर खोजकर ताज़ा स्रोतों के साथ सारांश दो", "research", "locale:hi:web_research"),
+            ("वेब पर खोजकर ताज़ा स्रोतों के साथ सारांश दो", "web-research", "locale:hi:web_research"),
             ("इस issue को PR के लिए तैयार करो", "github-event-ops", "locale:hi:issue_to_pr"),
             ("convierte este PDF en una presentación", "materials-package", "trigger:pdf"),
             ("transforme ce PDF en présentation", "materials-package", "trigger:pdf"),
@@ -2773,7 +2773,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             ),
             (
                 "자료 찾아줘",
-                "research",
+                "web-research",
                 "run_hermes_research",
                 "operator_surface_fast_path:web_research",
             ),
@@ -2954,7 +2954,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertEqual(recurring["selected_harness"], "research-department")
 
         citation_check = route_chat_message("explain this paper and verify citations", source="discord")
-        self.assertEqual(citation_check["selected_skill"], "research")
+        self.assertEqual(citation_check["selected_skill"], "web-research")
         self.assertEqual(citation_check["selected_harness"], "research")
 
         file_export = route_chat_message("PDF를 PPT로 바꿔줘", source="discord")
@@ -3014,7 +3014,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                 self.assertEqual(decision["confidence"], "high")
 
         citation_check = route_chat_message("find current citations for this claim", source="discord")
-        self.assertEqual(citation_check["selected_skill"], "research")
+        self.assertEqual(citation_check["selected_skill"], "web-research")
         self.assertEqual(citation_check["selected_harness"], "research")
 
         paper_explanation = route_chat_message("explain this paper at expert level", source="discord")
@@ -3303,7 +3303,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
 
     def test_issue_251_representative_routes_stay_compact_and_correct(self) -> None:
         cases = (
-            ("웹서치해서 최신 자료 정리해줘", "research", None),
+            ("웹서치해서 최신 자료 정리해줘", "web-research", None),
             ("PDF를 PPT로 바꿔줘", "materials-package", None),
             ("이미지 요약 카드 만들어줘", "img-summary", None),
             ("OMH 업데이트해줘", "oh-my-hermes", "omh_cli_maintenance"),
@@ -3916,44 +3916,51 @@ selected_workflow=ultraprocess
                 self.assertEqual(decision["recommendations"][0]["next_action"], "prepare_connector_operator_card")
 
     def test_live_info_operator_does_not_steal_research_connector_or_toolbelt(self) -> None:
-        research = route_chat_message("web search current weather API best practices with citations", source="discord")
+        lookup = route_chat_message("web search current weather API best practices with citations", source="discord")
         connector = route_chat_message("create a calendar event for tomorrow's weather review", source="discord")
         readiness = route_chat_message("weather plugin is missing, check provider setup", source="discord")
 
-        self.assertEqual(research["selected_skill"], "research")
+        self.assertEqual(lookup["selected_skill"], "web-research")
         self.assertEqual(connector["selected_skill"], "connector-operator")
         self.assertEqual(readiness["selected_skill"], "toolbelt-readiness")
-        self.assertNotEqual(research["selected_skill"], "live-info-operator")
+        self.assertNotEqual(lookup["selected_skill"], "live-info-operator")
         self.assertNotEqual(connector["selected_skill"], "live-info-operator")
         self.assertNotEqual(readiness["selected_skill"], "live-info-operator")
 
     def test_content_operator_does_not_steal_research_connector_or_materials(self) -> None:
-        research = route_chat_message("web search latest newsletter benchmarks with citations", source="discord")
+        lookup = route_chat_message("web search latest newsletter benchmarks with citations", source="discord")
         connector = route_chat_message("send this customer update email after approval", source="discord")
         materials = route_chat_message("turn these notes into a PDF and PPT handout", source="discord")
 
-        self.assertEqual(research["selected_skill"], "research")
+        self.assertEqual(lookup["selected_skill"], "web-research")
         self.assertEqual(connector["selected_skill"], "connector-operator")
         self.assertEqual(materials["selected_skill"], "materials-package")
-        self.assertNotEqual(research["selected_skill"], "content-operator")
+        self.assertNotEqual(lookup["selected_skill"], "content-operator")
         self.assertNotEqual(connector["selected_skill"], "content-operator")
         self.assertNotEqual(materials["selected_skill"], "content-operator")
 
-    def test_web_search_chat_dispatches_to_research_harness(self) -> None:
+    def test_web_search_chat_dispatches_to_the_matching_research_lane(self) -> None:
+        # A cited lookup and a comparison that has to be grounded are different
+        # sizes of request, and the split is what lets them be answered
+        # differently. Both stay Hermes-owned and carry the same freshness and
+        # retrieval boundaries.
         cases = (
-            "웹서치해서 최신 자료와 출처 정리해줘",
-            "search the web for current sources and citations",
-            "Search the web for current best practices on Python packaging.",
-            "查一下最新资料和来源",
-            "research로 Hermes Agent와 Oh My Codex/OpenCode 계열을 비교해서 OMHM 포지셔닝 근거를 찾아줘.",
+            ("웹서치해서 최신 자료와 출처 정리해줘", "web-research"),
+            ("search the web for current sources and citations", "web-research"),
+            ("Search the web for current best practices on Python packaging.", "web-research"),
+            ("查一下最新资料和来源", "web-research"),
+            (
+                "research로 Hermes Agent와 Oh My Codex/OpenCode 계열을 비교해서 OMHM 포지셔닝 근거를 찾아줘.",
+                "research",
+            ),
         )
 
-        for message in cases:
+        for message, expected in cases:
             with self.subTest(message=message):
                 decision = route_chat_message(message, source="discord")
 
                 self.assertEqual(decision["action"], "dispatch")
-                self.assertEqual(decision["selected_skill"], "research")
+                self.assertEqual(decision["selected_skill"], expected)
                 self.assertEqual(decision["selected_harness"], "research")
                 self.assertEqual(decision["confidence"], "high")
                 top = decision["recommendations"][0]

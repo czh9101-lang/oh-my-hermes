@@ -2772,7 +2772,7 @@ class RouterContentTests(unittest.TestCase):
                 "fresh links, citations, or current facts",
                 "source types, candidates, or acquisition state",
             ),
-            "best-practice-research": ("multi-source current evidence",),
+            "best-practice-research": ("market or literature comparison",),
             "ralph": ("survive sessions as a ledger",),
             "ultragoal": (
                 "already-scoped task only needs one owner",
@@ -3783,7 +3783,7 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("`deep-interview`, `ralplan`, `loop`", docs_readme)
         # Retired engines must not be presented as current planning skills.
         self.assertNotIn("`ultragoal`", docs_readme)
-        self.assertIn("**109 installable skills**", docs_readme)
+        self.assertIn("**110 installable skills**", docs_readme)
         self.assertIn("**Retain knowledge**", docs_readme)
         self.assertIn("python -m unittest discover -s tests", ci)
         self.assertIn("python -m compileall src", ci)

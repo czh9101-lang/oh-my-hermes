@@ -742,7 +742,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The user asks for recurring monitoring, a source inbox, or Scout/Analyst/Briefer operations; use `research-department`.
   - Correctness is a bounded, versioned official or upstream guidance question; use `best-practice-research`.
   - One cited retrieval round settles the question and no reference implementation needs reading; use `web-research`.
-- Strong routing signals: `research plan`, `literature review`, `research literature`, `review recent papers`, `deep research`, `deep-research`, `exhaustive research`, `saturation research`, `pre-spec research`, `research before spec`, `research before planning`, `reference implementation`, `reference implementations`, `reference implementation study`, `prior art`, `prior art research`, `study existing implementations`, `comparable implementations`, `compare open source implementations`, `decision-grounding research`, `ディープリサーチ`, `深く調査`, `出典付きで調査`, `OSS実装を調査`, `웹서치`, `웹 서치`, `웹 검색`, `인터넷 검색`, `검색해줘`, `검색해서`, `최신 자료`, `최신 출처`, `자료 찾아`, `조사`, `근거`, `출처`, `고객 피드백`, `문헌 검토`, `논문들 검토`, `딥리서치`, `딥 리서치`, `심층 리서치`, `레퍼런스 구현`, `오픈소스 깊게 참고`, `深度调研`, `深入调研`, `带出处的调研`, `调研开源实现`
+- Strong routing signals: `research plan`, `literature review`, `research literature`, `review recent papers`, `deep research`, `deep-research`, `exhaustive research`, `saturation research`, `pre-spec research`, `research before spec`, `research before planning`, `reference implementation`, `reference implementations`, `reference implementation study`, `prior art`, `prior art research`, `study existing implementations`, `comparable implementations`, `compare open source implementations`, `decision-grounding research`, `ディープリサーチ`, `深く調査`, `出典付きで調査`, `OSS実装を調査`, `조사`, `근거`, `고객 피드백`, `문헌 검토`, `논문들 검토`, `딥리서치`, `딥 리서치`, `심층 리서치`, `레퍼런스 구현`, `오픈소스 깊게 참고`, `深度调研`, `深入调研`, `带出处的调研`, `调研开源实现`
 - Good example:
   - Prompt: 딥리서치로 다른 오픈소스 구현들을 깊게 보고 스펙 잡기 전에 근거를 만들어줘.
   - Expected behavior: Run the Hermes research lane at depth: decompose axes, study the most relevant reference implementations with pinned refs, verify contested claims, then distill a decision-grounding dossier for the planning step.
@@ -837,7 +837,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The user wants recurring monitoring, a source inbox, or Scout/Analyst/Briefer operations; use `research-department`.
   - The user wants to configure or cheapen web search itself, such as a scraper API key or an auxiliary extract model; use `websearch-setup`.
   - The study target is this repository rather than the open web; use `codebase-onboarding`.
-- Strong routing signals: `web-research`, `web research`, `web search`, `search the web`, `internet search`, `look up`, `look up sources`, `latest sources`, `fresh sources`, `current sources`, `current web evidence`, `source-backed research`, `source search`, `find sources`, `find citations`, `citation check`, `evidence scan`, `source diversity`, `retrieval gap`
+- Strong routing signals: `web-research`, `web research`, `web search`, `search the web`, `internet search`, `look up`, `look up sources`, `latest sources`, `fresh sources`, `current sources`, `current web evidence`, `source-backed research`, `source search`, `find sources`, `find citations`, `citation check`, `evidence scan`, `source diversity`, `retrieval gap`, `웹서치`, `웹 서치`, `웹 검색`, `인터넷 검색`, `검색해줘`, `검색해서`, `최신 자료`, `최신 출처`, `자료 찾아`, `출처`
 - Good example:
   - Prompt: 이번 주 기준으로 그 API 요금제 어떻게 바뀌었는지 웹서치해서 알려줘.
   - Expected behavior: Retrieve current pricing from the vendor's own page, cite it with the retrieval date, and name what the page does not state.
@@ -4507,7 +4507,8 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Why this exists: `best-practice-research` exists to keep `research` work explicit, evidence-backed, and inside the Hermes/executor boundary instead of relying on ad hoc chat narration.
 - Use when: Use when correctness depends on current official or upstream guidance.
 - Do not use when:
-  - The work needs multi-source current evidence, a market or literature comparison, or a business brief rather than one technology's upstream guidance; use `research`.
+  - The work needs a market or literature comparison, or a decision-grounding dossier, rather than one technology's upstream guidance; use `research`.
+  - The question is a current-facts lookup one cited retrieval round settles rather than a versioned guidance question; use `web-research`.
 - Strong routing signals: `best-practice-research`, `best practice`, `official docs`, `upstream guidance`, `what do the docs say`, `check the docs`
 - Good example:
   - Prompt: best-practice-research: check official docs and upstream examples before we choose the plugin packaging pattern.

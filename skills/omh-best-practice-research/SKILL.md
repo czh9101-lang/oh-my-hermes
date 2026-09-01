@@ -20,7 +20,8 @@ This is a Hermes-native `best-practice-research` workflow skill.
 
 ## Do Not Use When
 
-- The work needs multi-source current evidence, a market or literature comparison, or a business brief rather than one technology's upstream guidance; use `research`.
+- The work needs a market or literature comparison, or a decision-grounding dossier, rather than one technology's upstream guidance; use `research`.
+- The question is a current-facts lookup one cited retrieval round settles rather than a versioned guidance question; use `web-research`.
 
 ## Examples
 

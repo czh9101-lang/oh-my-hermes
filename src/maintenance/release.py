@@ -477,7 +477,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # paying the engine's declared depth budget and reference-implementation
 # study. One body for one new workflow, not per-body padding;
 # the engine's own body shrank by the triggers that left it.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 814951
+# 814951 -> 815057: `best-practice-research`'s single boundary statement
+# became two once the lookup half of it stopped belonging to the engine.
+# The split is what removed a deference inversion the policy test had been
+# carrying; 106 chars is the sentence that did it.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 815057
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

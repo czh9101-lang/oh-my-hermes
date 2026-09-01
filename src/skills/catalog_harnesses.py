@@ -3185,6 +3185,7 @@ _PRIMARY_HARNESSES = {
     "jit-learn": "jit-learn",
     "ultrawork": "goal-execution",
     "research": "research",
+    "web-research": "research",
     "research-brief": "business-research",
     "strategy-brief": "strategy-synthesis",
     "meeting-brief": "meeting-facilitation",
