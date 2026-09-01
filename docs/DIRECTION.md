@@ -139,12 +139,16 @@ OMH is not:
 ## Routing Language Policy
 
 OMH targets a global audience with English as the primary language. Its
-deterministic trigger tables, however, only ever grew in two scripts: of the
-catalog's routing triggers, Latin and Hangul hold effectively all of them,
-against single-digit Han and Kana entries and none at all in Devanagari,
-Arabic, or Cyrillic. `src/routing/localization.py` meanwhile renders chat copy
-in ko/ja/zh/hi. OMH therefore answers in four non-English languages while the
-router recognises two.
+deterministic trigger tables, however, grew unevenly: Latin dominates the
+catalog's routing triggers, Hangul is the next largest by a wide margin, the
+shipped `ja` and `zh` trigger packs put Han and Kana behind it, and Devanagari,
+Arabic, and Cyrillic have none at all. Chat copy is a separate surface --
+`src/wrapper/localized_copy.py` renders it, and `SUPPORTED_COPY_LOCALES` covers
+six non-English locales including Spanish, French, and German, which no trigger
+pack recognises. (`src/routing/localization.py` is input-side folding --
+normalization, tokens, and locale aliases -- and renders no copy at all.) OMH
+therefore answers in more languages than its router recognises, and that
+asymmetry is what the policy below is about.
 
 Per-language trigger tables are not the fix. Matching the Korean table for one
 more language means hundreds of hand-maintained entries, the work is unbounded
@@ -159,8 +163,9 @@ The policy:
   change, and a non-English routing miss is never fixed by adding tokens.
 - Input script is an explicit routing input, not an implicit accident.
   `src/routing/input_language.py` classifies it and states whether the trigger
-  tables carry that script, so a zero score on a Japanese or Hindi request reads
-  as missing coverage rather than missing intent.
+  tables carry that script, so a zero score on a Hindi or Arabic request reads
+  as missing coverage rather than missing intent. Japanese and Chinese left that
+  category when their packs shipped.
 - Non-English intent resolution belongs to model selection. Hermes already
   understands every language OMH would target; OMH supplies candidates,
   reasons, and evidence boundaries and lets the model choose.

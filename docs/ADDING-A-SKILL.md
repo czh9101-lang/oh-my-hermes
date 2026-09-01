@@ -6,10 +6,12 @@ the file and structure to edit.
 
 ## 1. Define the skill (single registration point)
 
-- Add the `SkillDefinition` to `src/skills/catalog.py`.
+- Add the `SkillDefinition` to `src/skills/catalog_definitions.py`, which is
+  where the definitions moved when the catalog was split; `src/skills/catalog.py`
+  keeps the derivations that read them.
 - Set `capability_family` **only** when the skill's user-facing family differs
-  from its awareness-lane default (rare — 5 of 88 skills today). Leave it
-  empty otherwise; the lane default governs.
+  from its awareness-lane default, which is rare — a handful of skills set it.
+  Leave it empty otherwise; the lane default governs.
 - If the skill needs a recommendation policy, add its `_SKILL_POLICIES` entry
   in `src/routing/recommend.py`.
 - Author `triggers` in English only. Every other language reaches the skill
