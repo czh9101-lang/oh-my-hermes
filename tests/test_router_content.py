@@ -334,8 +334,11 @@ class RouterContentTests(unittest.TestCase):
         # workflow, so the `web-research` split and the `codebase-uml` row
         # together took it past the old ceiling; one row per new skill, and
         # the ceiling keeps ~2% headroom.
+        # 25,300 -> 26,000: workflow-registry.md carries one row per routable
+        # workflow (25,456 measured with the `inference-serving` row); one row
+        # per new skill, ~2% headroom kept.
         for template in builtin_skill_reference_templates():
-            self.assertLess(len(template.content.encode("utf-8")), 25_300, template.relative_path)
+            self.assertLess(len(template.content.encode("utf-8")), 26_000, template.relative_path)
 
         schemas = (
             OMH_CAPABILITIES_SCHEMA,
@@ -3785,7 +3788,7 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("`deep-interview`, `ralplan`, `loop`", docs_readme)
         # Retired engines must not be presented as current planning skills.
         self.assertNotIn("`ultragoal`", docs_readme)
-        self.assertIn("**113 installable skills**", docs_readme)
+        self.assertIn("**114 installable skills**", docs_readme)
         self.assertIn("**Retain knowledge**", docs_readme)
         self.assertIn("python -m unittest discover -s tests", ci)
         self.assertIn("python -m compileall src", ci)

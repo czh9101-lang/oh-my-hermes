@@ -925,6 +925,18 @@ _SKILL_POLICIES = {
             "claiming any runtime or AI-token efficiency improvement."
         ),
     ),
+    "inference-serving": RecommendationPolicy(
+        next_action="prepare_inference_serving",
+        evidence_boundary=(
+            "An engine verdict, runbook, or benchmark plan is prepared_not_observed; it is not a running server, "
+            "rollout evidence, a measured capacity claim, review, CI, or merge evidence."
+        ),
+        wrapper_guidance=(
+            "Decide engine and quantization from the tables, prepare the gated deployment runbook with its "
+            "verification commands, and design the benchmark with metrics, load shape, SLO, and metadata; report "
+            "every step prepared or observed."
+        ),
+    ),
     "model-optimization": RecommendationPolicy(
         next_action="run_hermes_research",
         evidence_boundary=(
@@ -1816,6 +1828,26 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     # ...), which the +6 phrase match already covers.
     "model-optimization": frozenset(
         {"calibrate", "calibration", "model", "new", "onboard", "optimization", "optimize"}
+    ),
+    # `inference-serving` names its work with ordinary infra words --
+    # "serve", "serving", "deploy", "endpoint", "benchmark", "quantization".
+    # Credited as bare tokens they claimed API-serving and web-deploy chat.
+    # Complete phrases and the engine names (`vllm`, `llama.cpp`) carry the
+    # intent.
+    "inference-serving": frozenset(
+        {
+            "benchmark",
+            "deploy",
+            "endpoint",
+            "inference",
+            "model",
+            "quantization",
+            "serve",
+            "serving",
+            "the",
+            "this",
+            "which",
+        }
     ),
     # `refactor-plan` names its work with the two most ordinary words in the
     # catalog -- "refactor" and "plan" -- plus "phases", "restructure", and
