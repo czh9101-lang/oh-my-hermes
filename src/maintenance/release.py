@@ -145,7 +145,11 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # 358092 -> 358305: the code-review capability section grew its two-axis
 # (correctness/spec) and checked-and-clean closing rules; instruction lines on
 # one existing skill, not padding; warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 358305
+# 358305 -> 362620: `codebase-uml` is a new installable skill (the
+# interface-level PlantUML diagram workflow over `omh codegraph uml`); one new
+# capability section for one new workflow, not per-section padding; warranted
+# growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 362620
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -157,7 +161,9 @@ FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # paying the engine's declared depth budget and reference-implementation
 # study. One row for one new workflow, not per-row padding;
 # the engine's own row shrank by the triggers that left it.
-STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 103952
+# 103952 -> 104866: one standalone capability row for the new `codebase-uml`
+# skill; warranted growth.
+STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 104866
 STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ULW fold context ceiling (issue #954, PR D). The limit is the pre-D measured
 # value of the full profile's `skill_body` chars on `main` @ acb9a060, in the
@@ -507,7 +513,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # smell-baseline pointer, and the checked-and-clean / could-not-assess closing
 # contract; the twelve-smell table itself lives in an on-demand reference
 # outside this body count; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 819169
+# 819169 -> 827737: `codebase-uml` is one new installable skill body (the
+# interface-level diagram workflow: scope, generate from the tree, render with
+# the plan's command, read the omissions legend back), plus its lane name on
+# the intent_to_plan skills' Workflow Lane lines; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 827737
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

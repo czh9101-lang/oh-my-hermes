@@ -16,6 +16,7 @@
    "ralplan",
    "codebase-onboarding",
    "codegraph-refresh",
+   "codebase-uml",
    "loop",
    "strategy-brief",
    "oh-my-hermes",
@@ -31,7 +32,7 @@
    "ambitious goal -> loopability check -> loop or ultrawork delivery cycle -> verification status",
    "new repo -> codebase-onboarding -> reading path -> first-task runway",
    "stale code index -> codegraph-refresh -> summary or task-scoped handoff",
-   "fuzzy feature request -> deep-interview -> ralplan -> accepted plan"
+   "show me the codebase -> codebase-uml -> one rendered package or focus diagram -> legend read back"
   ],
   "source_lanes": [
    "intent_to_plan"

@@ -37,6 +37,7 @@ NEXT_ACTION_LABELS: dict[str, str] = {
     "prepare_recorded_owner_handoff": "preparing the handoff for the recorded coding owner",
     "prepare_codebase_onboarding": "preparing a codebase onboarding pack",
     "prepare_codegraph_refresh": "preparing a codegraph refresh",
+    "prepare_codebase_uml": "drawing the codebase diagram",
     "prepare_context_budget_review": "preparing a context budget review",
     "prepare_deliverable_package": "preparing a deliverable package",
     "prepare_deploy_monitor_plan": "preparing a deploy-and-monitor plan",
