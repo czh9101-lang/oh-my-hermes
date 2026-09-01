@@ -149,7 +149,10 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # interface-level PlantUML diagram workflow over `omh codegraph uml`); one new
 # capability section for one new workflow, not per-section padding; warranted
 # growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 362620
+# 362620 -> 366626: `frontend-refactor` is a new installable skill (the
+# behavior-preserving UI refactor workflow); one new capability section for
+# one new workflow, not per-section padding; warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 366626
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -163,7 +166,9 @@ FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # the engine's own row shrank by the triggers that left it.
 # 103952 -> 104866: one standalone capability row for the new `codebase-uml`
 # skill; warranted growth.
-STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 104866
+# 104866 -> 105813: one standalone capability row for the new
+# `frontend-refactor` skill; warranted growth.
+STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 105813
 STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ULW fold context ceiling (issue #954, PR D). The limit is the pre-D measured
 # value of the full profile's `skill_body` chars on `main` @ acb9a060, in the
@@ -517,7 +522,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # interface-level diagram workflow: scope, generate from the tree, render with
 # the plan's command, read the omissions legend back), plus its lane name on
 # the intent_to_plan skills' Workflow Lane lines; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 827737
+# 827737 -> 838981: `frontend-refactor` is one new installable skill body
+# (preview-first, impact-ordered, behavior-locked UI refactor), plus its lane
+# name on the coding-handoff skills' Workflow Lane lines; the pass and
+# state-discipline tables live in two on-demand references outside this
+# count; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 838981
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

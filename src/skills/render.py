@@ -4023,6 +4023,190 @@ verification, and a cleanup diff is never review, CI, or merge evidence.
 """
 
 
+def frontend_refactor_reference_templates() -> list[SkillReferenceTemplate]:
+    return list(_frontend_refactor_reference_templates_cached())
+
+
+@lru_cache(maxsize=1)
+def _frontend_refactor_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
+    return (
+        SkillReferenceTemplate(
+            "frontend-refactor",
+            "references/refactor-passes.md",
+            _frontend_refactor_passes_reference(),
+        ),
+        SkillReferenceTemplate(
+            "frontend-refactor",
+            "references/state-discipline.md",
+            _frontend_state_discipline_reference(),
+        ),
+    )
+
+
+def _frontend_refactor_passes_reference() -> str:
+    return """# Refactor Passes
+
+The pass contract for behavior-preserving UI refactors. Preview is the default
+mode: analyze the whole target, emit the structured change plan, touch nothing.
+Apply is a second, explicit step - and a change that cannot be applied safely
+in isolation (a rename that spans files, a moved export) is reported under
+Notes, never half-applied.
+
+## Behavior invariants (every pass, every change)
+
+- Outputs, return values, and side effects stay identical.
+- No error handling is removed or weakened, and no branch is silently dropped.
+- No public surface - exports, props, emitted events, URL contract - is renamed
+  without flagging a breaking change; cross-file renames go to Notes.
+- Never refactor: export names, signatures or parameter order, file merges or
+  splits, async execution models (a `.then` chain expressing parallelism stays),
+  algorithmic logic that would merely get shorter, or test files.
+
+## Preview output, per change
+
+Category, `[line N]`, before/after snippet, and one sentence on why it is safe.
+Close with a per-category count table, omit empty categories, and say plainly
+when nothing was found.
+
+## The micro pass — single file, fixed order
+
+Run categories in this order and finish one before starting the next:
+
+1. **DEAD** - unused imports, bindings, and unexported functions; commented-out
+   blocks of two or more lines (version control preserves history); unreachable
+   code after return/throw/break/continue.
+2. **NAMING** - cryptic names (loop `i`/`j`/`k` exempt); booleans without an
+   `is`/`has`/`should`/`can` prefix; magic numbers and strings to named
+   constants (`0`, `1`, `-1` exempt).
+3. **SIMPLIFY** - guard clauses over nested precondition `if`s; early returns
+   over inverted pyramids; `flag === true` to `flag`; an if/else assigning one
+   variable to a conditional expression.
+4. **MODERN** - `var` to `const`/`let`; `.then` chains to async/await except
+   where the chain expresses parallelism or fire-and-forget; spread over
+   `Object.assign({}, ...)`; arrows for callbacks that use neither `this` nor
+   `arguments`.
+
+## The macro pass — architecture, ordered by impact
+
+Take these in impact order; stop at the first tier the diff budget allows.
+
+1. **Component architecture** - props explosion to composition; render props to
+   hooks; container/presentational split; compound components over config-object
+   props; client-boundary directives pushed to leaf components.
+2. **State architecture** - the whole of `references/state-discipline.md`; run
+   it before any naming or style work, because a state fix usually deletes the
+   code the style pass would have polished.
+3. **Hook patterns** - extract when the behavior is nameable; one
+   responsibility per hook; compose hooks instead of nesting them; stabilize
+   dependencies instead of silencing the linter.
+4. **Decomposition** - the scroll test: a component you must scroll to read is
+   the entry point; extract along independent change reasons, completely - a
+   half-extracted component is two coupled ones; inline a premature abstraction
+   before re-extracting it properly.
+5. **Coupling** - break circular imports with an intermediate module; import
+   from public surfaces, not sibling internals.
+
+## The safety gate
+
+Before any macro change: characterization tests on the current behavior - what
+it renders for known props/state, what it calls when interacted with. Snapshot
+tests do not count; they lock markup, not behavior. Prefer behavior-level
+integration tests over implementation-detail unit tests, and write them BEFORE
+the refactor, not after.
+
+## Boundary
+
+A preview plan and a pass report are prepared context; behavior preservation
+is claimed only from the observed test runs before and after apply, and a pass
+report is never review, CI, or merge evidence.
+"""
+
+
+def _frontend_state_discipline_reference() -> str:
+    return """# State Discipline
+
+The state-management review ladder for UI code. Work the sections in order:
+an impossible-state fix or a derive-don't-store fix usually deletes the code a
+later section would have restyled.
+
+## 1. Make impossible states unrepresentable
+
+Boolean flags multiply: four booleans is sixteen combinations, and most are
+impossible. Replace flag clusters with one discriminated union -
+`{status:'idle'} | {status:'loading'} | {status:'success', data} |
+{status:'error', error}` - or a reducer whose one dispatch yields one valid
+state. Escalate to an explicit state machine only when transitions carry
+retries, resets, or concurrent-request races; the ladder is
+`useState` -> reducer with a union -> machine, never machine-first.
+
+## 2. Colocate, lift late, keep context slow
+
+State lives with its consumers; wrap the consumers in a feature component that
+owns it - check this before reaching for memoization. Lift state only when a
+second component actually reads it. Context carries slow-changing values
+(theme, locale, flags); a frequently-updated value in context re-renders every
+consumer on every change. Shareable view state (filters, tabs, selection worth
+a link) belongs in the URL.
+
+## 3. Derive, don't sync
+
+Never store what can be computed: a stored total beside its items drifts, and
+an effect that copies props into state is a render cycle pretending to be
+data flow. Compute during render; memoize only measured-expensive derivations.
+
+## 4. Effects synchronize with the outside; they are not lifecycle
+
+Gate question: is this effect syncing with an EXTERNAL system (socket, browser
+API, third-party widget, DOM measurement, timer)? Props, state, derived
+values, and user events are not external. If not external, in order:
+
+- Deriving data -> compute inline during render.
+- Responding to a user event -> the event handler, never an effect.
+- Resetting state when a prop changes -> a `key` on the component.
+- Fetching -> the query cache (section 5); an unavoidable fetch effect carries
+  a stale-response guard in its cleanup.
+- Notifying a parent -> call the callback in the same handler as the setState.
+- An effect that sets state to trigger another effect -> one handler plus
+  derivation; each chained effect is another full render pass.
+- Subscribing to an external store -> the store-subscription hook, not manual
+  listeners.
+
+A correct effect has a nameable purpose, a cleanup, and a complete dependency
+list.
+
+## 5. Server state is not UI state
+
+Remote data is asynchronous, shared, and stale-able; it belongs in a query
+cache (keyed queries, stale times, retry policy), not in per-component
+fetch effects or a global store. Every mutation names the query keys it
+invalidates. Sibling components fetching the same data independently is the
+red flag that the cache is missing.
+
+## 6. The optimistic-update contract
+
+Optimistic writes come as one triple: before the request, cancel in-flight
+reads, snapshot the current data, apply the optimistic value; on error,
+restore the snapshot and surface the error; on settle, invalidate so the
+server answer wins. An optimistic update without its rollback path, or one
+that swallows the error it rolls back from, fails review.
+
+## 7. Closing checks
+
+- Ephemeral UI state in a global store -> local state.
+- The same fact stored in two places -> one owner, derive the rest.
+- Prop drilling four levels or more -> context (if slow-changing) or a store
+  slice.
+- No state reset on logout -> a root reset action plus cache clear; shared-
+  device data leaks are a finding, not a nit.
+
+## Boundary
+
+A state-discipline review is prepared analysis of the code as written; it is
+not a performance measurement, an executed migration, review approval, CI, or
+merge evidence.
+"""
+
+
 def design_reference_templates() -> list[SkillReferenceTemplate]:
     return list(_design_reference_templates_cached())
 

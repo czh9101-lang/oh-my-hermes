@@ -190,6 +190,7 @@
    "rust",
    "native-debugging",
    "ai-slop-cleaner",
+   "frontend-refactor",
    "request-to-handoff",
    "executor selection",
    "coding runtime handoff"

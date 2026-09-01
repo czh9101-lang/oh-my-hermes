@@ -763,6 +763,17 @@ _SKILL_POLICIES = {
             "render with the plan's exact command, attach the PNG, and read the omissions legend back."
         ),
     ),
+    "frontend-refactor": RecommendationPolicy(
+        next_action="present_plan",
+        evidence_boundary=(
+            "A preview change plan or pass selection is prepared_not_observed; it is not an applied refactor, "
+            "preserved behavior, test evidence, review, CI, or merge evidence."
+        ),
+        wrapper_guidance=(
+            "Preview first: emit the impact-ordered change plan with per-change safety reasons and the "
+            "characterization-test gate; apply is a separate explicit step for the selected executor lane."
+        ),
+    ),
     "codegraph-refresh": RecommendationPolicy(
         next_action="prepare_codegraph_refresh",
         evidence_boundary=(
@@ -1818,6 +1829,24 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
             "visualize",
         }
     ),
+    # `frontend-refactor` shares its vocabulary with every coding request --
+    # "refactor", "component", "state", "hook", "split". Credited as bare
+    # tokens they made "refactor this function" and "what is state management"
+    # name the workflow as a candidate. The intent lives in the complete
+    # phrases, which the +6 phrase match already covers.
+    "frontend-refactor": frozenset(
+        {
+            "cleanup",
+            "component",
+            "hook",
+            "management",
+            "refactor",
+            "split",
+            "state",
+            "the",
+            "this",
+        }
+    ),
     # `memory-sync` gained natural interview phrases ("your memories",
     # "memories still true", "memory interview"); their loose tokens are
     # everyday words that made "how do computers store memories" name this
@@ -2869,6 +2898,36 @@ def _codebase_uml_offers_itself(normalized_query: str, query_tokens: set[str]) -
     if code_target and {"visualize", "visualise", "visualization", "visualisation"} & query_tokens:
         return True
     return bool({"architecture", "codebase"} & query_tokens) and bool({"draw", "picture"} & query_tokens)
+def _frontend_refactor_offers_itself(normalized_query: str, query_tokens: set[str]) -> bool:
+    """Keep generic refactor talk from offering the UI refactor workflow.
+
+    "Refactor", "state", and "split" are every coding request's words; the
+    skill offers itself only when the message is UI-shaped - a component/hook
+    vocabulary token, a UI framework name, or the skill's own name. Explicit
+    invocation overrides this, as `_score_definition` already exempts.
+    """
+    ui_tokens = {
+        "component",
+        "components",
+        "hook",
+        "hooks",
+        "useeffect",
+        "useeffects",
+        "usestate",
+        "react",
+        "vue",
+        "svelte",
+        "frontend",
+        "front-end",
+        "ui",
+        "props",
+        "prop",
+        "jsx",
+        "tsx",
+        "컴포넌트",
+        "프론트엔드",
+    }
+    return bool(ui_tokens & query_tokens)
 
 
 def _jit_learn_offers_itself(normalized_query: str, query_tokens: set[str]) -> bool:
@@ -2895,6 +2954,7 @@ def _jit_learn_offers_itself(normalized_query: str, query_tokens: set[str]) -> b
 _SKILL_OFFERS_ITSELF: dict[str, Callable[[str, set[str]], bool]] = {
     "codebase-uml": _codebase_uml_offers_itself,
     "context": _context_alignment_offers_itself,
+    "frontend-refactor": _frontend_refactor_offers_itself,
     "jit-learn": _jit_learn_offers_itself,
     "ops-observability-card": _ops_observability_card_offers_itself,
     "harness-session-inventory": _harness_session_inventory_recommendation_applies,
