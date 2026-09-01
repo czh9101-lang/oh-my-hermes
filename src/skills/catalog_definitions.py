@@ -3234,6 +3234,103 @@ _DEFINITIONS = [
         ),
     ),
     SkillDefinition(
+        "frontend-refactor",
+        "Hermes frontend refactor workflow: behavior-preserving refactor of UI code - preview the full change plan first, apply as a second explicit step, and work impact-ordered from state architecture down to naming polish.",
+        (
+            "frontend-refactor",
+            "front-refactor",
+            "frontend refactor",
+            "refactor this component",
+            "refactor the component",
+            "refactor my component",
+            "component refactor",
+            "react refactor",
+            "refactor this hook",
+            "split this component",
+            "split the component",
+            "this component is too big",
+            "component is too large",
+            "state management review",
+            "state management",
+            "state colocation",
+            "too many useeffects",
+            "useeffect cleanup",
+            "clean up useeffect",
+            "prop drilling",
+        ),
+        (
+            "Use when existing UI code needs restructuring without behavior change - an oversized component, "
+            "boolean-flag state, effect chains, prop drilling - and the user wants a previewed, pass-ordered "
+            "refactor plan rather than a new build or a verdict-only review."
+        ),
+        category="maintenance",
+        phase="frontend-refactor",
+        hermes_role="handoff-guide",
+        handoff_policy=(
+            "Hermes prepares the preview plan, pass order, and characterization-test gate; the apply step is "
+            "coding work for the selected executor lane, and behavior preservation is claimed only from observed "
+            "test runs before and after apply."
+        ),
+        required_inputs=(
+            "the target files or component, and the framework in use",
+            "current behavior evidence: tests, or the characterization checks to write first",
+            "the diff budget: micro pass only, one macro tier, or full ladder",
+        ),
+        expected_outputs=(
+            "preview change plan with per-change line refs, before/after, safety reason, and category counts",
+            "impact-ordered pass selection naming what is deferred and why",
+            "characterization-test gate verdict before any macro change",
+            "apply-step handoff with the unsafe-in-isolation changes listed under notes, never half-applied",
+        ),
+        safety_rules=(
+            "Preview is the default: analyze the whole target and emit the plan before touching any file.",
+            "Outputs, side effects, and error handling stay identical; a dropped branch or weakened handler is a defect, not a simplification.",
+            "Never rename exports, change signatures, merge or split files, or alter async execution models without flagging a breaking change; cross-file renames are notes, not silent edits.",
+            "Do not refactor test files, and do not claim behavior preservation without the before/after test evidence.",
+        ),
+        quality_tier="behavior-lock-gated",
+        quality_bar=(
+            "Work the ladder impact-first: state architecture before hook patterns before decomposition before naming and style - a state fix usually deletes the code a style pass would have polished.",
+            "Make impossible states unrepresentable before memoizing anything: flag clusters become one discriminated union or reducer, and a state machine only when transitions carry retries, resets, or races.",
+            "Treat effects as synchronization with external systems: deriving, event responses, prop-change resets, parent notification, and effect chains each have a non-effect form named in `omh-frontend-refactor/references/state-discipline.md`.",
+            "Run the micro pass in fixed order - dead code, naming, simplification, modernization - finishing one category before the next; the full contract is `omh-frontend-refactor/references/refactor-passes.md`.",
+            "Gate macro changes on characterization tests written before the refactor; snapshot tests lock markup, not behavior, and do not count.",
+            "The scroll test picks the decomposition entry point, and extraction follows independent change reasons completely - a half-extracted component is two coupled ones.",
+        ),
+        why_this_exists=(
+            "`frontend-refactor` exists so UI restructuring runs as a previewed, behavior-locked, impact-ordered "
+            "process instead of ad-hoc rewrites: the plan comes before any edit, state fixes come before polish, "
+            "and every change carries its safety reason."
+        ),
+        do_not_use_when=(
+            "The target is not UI code, or the smell is generic slop, duplication, or dead code outside a component tree; use `ai-slop-cleaner`.",
+            "The user wants new UI built or redesigned rather than restructured; use `frontend`.",
+            "The user wants findings and a verdict without changing the code; use `code-review`.",
+            "The restructuring crosses module boundaries or changes architecture beyond the component tree; use `ralplan`.",
+        ),
+        good_example=SkillExample(
+            prompt="This dashboard component is 800 lines and has six useState booleans - refactor it without changing behavior.",
+            expected="Preview first: characterization-test gate, then a plan that folds the booleans into one state union, extracts along change reasons found by the scroll test, and lists per-change line refs with safety reasons; apply only as the explicit second step.",
+            why="Oversized component plus flag-cluster state is exactly the impact-ordered, behavior-locked restructuring this workflow owns.",
+        ),
+        bad_example=SkillExample(
+            prompt="Refactor and also add the dark-mode feature while you are in there.",
+            expected="Split the request: the behavior-preserving refactor runs under this workflow, and the dark-mode feature is new `frontend` work planned separately.",
+            why="A refactor that changes behavior cannot claim behavior preservation; mixing the two hides the feature from review.",
+        ),
+        final_checklist=(
+            "The preview plan was emitted before any file changed, and the apply step was an explicit second decision.",
+            "Behavior evidence exists on both sides of apply, and unsafe-in-isolation changes are listed as notes, not half-applied.",
+            "Pass order was impact-first and each finding names its category and safety reason.",
+            "Out-of-scope smells were routed: generic slop to `ai-slop-cleaner`, new UI to `frontend`, verdict-only review to `code-review`.",
+        ),
+        recovery_notes=(
+            "If no tests exist, write the characterization checks first or hand the user the smallest set to approve; do not start the macro pass on unlocked behavior.",
+            "If a change turns out to alter behavior mid-apply, revert that change, record it as a finding, and keep the rest of the pass.",
+            "If the component resists extraction because state is tangled, run the state ladder first and re-attempt decomposition after.",
+        ),
+    ),
+    SkillDefinition(
         "backend",
         "Hermes backend workflow: prepare server, API, and data-layer contracts — auth boundary, error paths, response shape, and schema/migration discipline — before implementation.",
         (

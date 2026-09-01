@@ -213,7 +213,10 @@ class EfficiencyContractTests(unittest.TestCase):
         # bytes - one new body plus its lane name on the intent_to_plan skills'
         # Workflow Lane lines. The ceiling restores ~12k headroom; the exact
         # value is ratcheted in `FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`.
-        self.assertLess(full["skill_body"]["bytes"], 838_000)
+        # 838,000 -> 850,000: `frontend-refactor` took the full profile to
+        # 838,981 bytes on the merged tree. The ceiling restores ~11k headroom;
+        # the exact value is ratcheted in `FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`.
+        self.assertLess(full["skill_body"]["bytes"], 850_000)
         self.assertLess(full["repeated"]["share_percent"], 38.0)
 
         # References are progressive disclosure, counted outside the always-loaded body.

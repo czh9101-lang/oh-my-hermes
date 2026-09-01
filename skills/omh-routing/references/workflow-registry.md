@@ -23,7 +23,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 ## Role Registry
 
 - `guide`: `oh-my-hermes`, `meta-router`, `model-setup`, `parallel-tools`, `websearch-setup`, `morning-brief`, `gateway-intent-card`, `voice-operator`, `browser-operator`, `workspace-file-operator`, `command-operator`, `connector-operator`, `live-info-operator`, `external-connector-readiness`, `prompt-import-readiness`, `content-operator`, `media-input-operator`, `data-analysis`
-- `handoff-guide`: `ultrawork`, `maestro`, `ai-slop-cleaner`, `executor-runtime-readiness`
+- `handoff-guide`: `ultrawork`, `maestro`, `frontend-refactor`, `ai-slop-cleaner`, `executor-runtime-readiness`
 - `memory-keeper`: `rules-distill`, `wiki`, `memory-new`, `memory-sync`, `decision-recall`
 - `operator`: `strategy-brief`, `meeting-brief`, `feedback-triage`, `finance-analysis`, `people-ops`, `support-operations`, `sales-development`, `ops-review`, `operating-rhythm`, `report-package`, `materials-package`, `img-summary`, `design-orchestration`, `design-quality-gate`, `frontend`, `visual-qa`, `workspace-audit`, `agent-evaluation`, `automation-blueprint`, `reliability-review`, `idea-to-deploy`, `llm-app-dev`, `cto-loop`, `deploy-and-monitor`, `github-event-ops`, `deliverable-package`, `physical-device-readiness`, `agent-debug`, `skill-scout`, `skill-health`, `provider-profile-posture`
 - `planner`: `loop`, `context`, `deep-interview`, `curriculum-design`, `product-brief`, `backend`, `rust`, `codebase-onboarding`, `codegraph-refresh`, `codebase-uml`, `plan`, `ralplan`, `adversarial-consensus`
@@ -68,6 +68,7 @@ When Hermes exposes installed skill descriptions to the model, use this registry
 - `design-orchestration`: `design-orchestration`, `design orchestration`, `design ownership`, `handle this product design`, `take on the design`, `デザインを任せる`, `デザイン全体を任せ`, `プロダクトデザインを任せ`, `디자인 맡겨`
 - `design-quality-gate`: `design-quality-gate`, `design quality gate`, `ui ux pro max`, `design pro max`, `frontend pro max`, `visual qa pro`, `premium design`, `high quality design`, `beautiful website`
 - `frontend`: `frontend`, `front-end`, `front end`, `frontend skill`, `web ui`, `ui ux`, `ui/ux`, `landing page`, `web app layout`
+- `frontend-refactor`: `frontend-refactor`, `front-refactor`, `frontend refactor`, `refactor this component`, `refactor the component`, `refactor my component`, `component refactor`, `react refactor`, `refactor this hook`
 - `backend`: `backend`, `back-end`, `back end`, `backend skill`, `server side`, `server-side`, `api design`, `api contract`, `rest api`
 - `rust`: `rust`, `rust code`, `rust skill`, `rustlang`, `borrow checker`, `lifetime error`, `ownership error`, `trait bound`, `cargo build`
 - `native-debugging`: `native-debugging`, `native debugging`, `native binary`, `segfault`, `segmentation fault`, `core dump`, `stack corruption`, `memory corruption`, `heap corruption`

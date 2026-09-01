@@ -2596,6 +2596,71 @@ These surfaces are generated command references, not installed Hermes workflow s
   - For Korean/CJK text, clipped glyphs, awkward line breaks, orphan particles, tiny copy, and overflow block visual QA.
   - Do not call external design, image, browser, LLM, or network services from OMH core.
 
+### frontend-refactor
+
+[omh] Hermes frontend refactor workflow: behavior-preserving refactor of UI code - preview the full change plan first, apply as a second explicit step, and work impact-ordered from state architecture down to naming polish.
+
+- Category: `maintenance`
+- Phase: `frontend-refactor`
+- Hermes role: `handoff-guide`
+- Quality tier: `behavior-lock-gated`
+- Reasoning demand: `heavy`
+- Exposure: `direct_skill`
+- Install visibility: `true`
+- Docs visibility: `primary_workflow_skill`
+- Compatibility alias: `false`
+- Lifecycle stage: `canonical`
+- Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
+- Handoff policy: Hermes prepares the preview plan, pass order, and characterization-test gate; the apply step is coding work for the selected executor lane, and behavior preservation is claimed only from observed test runs before and after apply.
+- Why this exists: `frontend-refactor` exists so UI restructuring runs as a previewed, behavior-locked, impact-ordered process instead of ad-hoc rewrites: the plan comes before any edit, state fixes come before polish, and every change carries its safety reason.
+- Use when: Use when existing UI code needs restructuring without behavior change - an oversized component, boolean-flag state, effect chains, prop drilling - and the user wants a previewed, pass-ordered refactor plan rather than a new build or a verdict-only review.
+- Do not use when:
+  - The target is not UI code, or the smell is generic slop, duplication, or dead code outside a component tree; use `ai-slop-cleaner`.
+  - The user wants new UI built or redesigned rather than restructured; use `frontend`.
+  - The user wants findings and a verdict without changing the code; use `code-review`.
+  - The restructuring crosses module boundaries or changes architecture beyond the component tree; use `ralplan`.
+- Strong routing signals: `frontend-refactor`, `front-refactor`, `frontend refactor`, `refactor this component`, `refactor the component`, `refactor my component`, `component refactor`, `react refactor`, `refactor this hook`, `split this component`, `split the component`, `this component is too big`, `component is too large`, `state management review`, `state management`, `state colocation`, `too many useeffects`, `useeffect cleanup`, `clean up useeffect`, `prop drilling`, `컴포넌트 리팩터링`, `컴포넌트 리팩토링`, `컴포넌트 분리`, `컴포넌트가 너무 커`, `상태 관리 정리`, `상태 관리 리뷰`, `프론트 리팩터링`, `프론트엔드 리팩터링`, `useEffect 정리`
+- Good example:
+  - Prompt: This dashboard component is 800 lines and has six useState booleans - refactor it without changing behavior.
+  - Expected behavior: Preview first: characterization-test gate, then a plan that folds the booleans into one state union, extracts along change reasons found by the scroll test, and lists per-change line refs with safety reasons; apply only as the explicit second step.
+  - Why: Oversized component plus flag-cluster state is exactly the impact-ordered, behavior-locked restructuring this workflow owns.
+- Bad example:
+  - Prompt: Refactor and also add the dark-mode feature while you are in there.
+  - Expected behavior: Split the request: the behavior-preserving refactor runs under this workflow, and the dark-mode feature is new `frontend` work planned separately.
+  - Why: A refactor that changes behavior cannot claim behavior preservation; mixing the two hides the feature from review.
+- Quality bar:
+  - Work the ladder impact-first: state architecture before hook patterns before decomposition before naming and style - a state fix usually deletes the code a style pass would have polished.
+  - Make impossible states unrepresentable before memoizing anything: flag clusters become one discriminated union or reducer, and a state machine only when transitions carry retries, resets, or races.
+  - Treat effects as synchronization with external systems: deriving, event responses, prop-change resets, parent notification, and effect chains each have a non-effect form named in `omh-frontend-refactor/references/state-discipline.md`.
+  - Run the micro pass in fixed order - dead code, naming, simplification, modernization - finishing one category before the next; the full contract is `omh-frontend-refactor/references/refactor-passes.md`.
+  - Gate macro changes on characterization tests written before the refactor; snapshot tests lock markup, not behavior, and do not count.
+  - The scroll test picks the decomposition entry point, and extraction follows independent change reasons completely - a half-extracted component is two coupled ones.
+- Completion checklist:
+  - The preview plan was emitted before any file changed, and the apply step was an explicit second decision.
+  - Behavior evidence exists on both sides of apply, and unsafe-in-isolation changes are listed as notes, not half-applied.
+  - Pass order was impact-first and each finding names its category and safety reason.
+  - Out-of-scope smells were routed: generic slop to `ai-slop-cleaner`, new UI to `frontend`, verdict-only review to `code-review`.
+- Recovery notes:
+  - If no tests exist, write the characterization checks first or hand the user the smallest set to approve; do not start the macro pass on unlocked behavior.
+  - If a change turns out to alter behavior mid-apply, revert that change, record it as a finding, and keep the rest of the pass.
+  - If the component resists extraction because state is tangled, run the state ladder first and re-attempt decomposition after.
+- Required inputs:
+  - the target files or component, and the framework in use
+  - current behavior evidence: tests, or the characterization checks to write first
+  - the diff budget: micro pass only, one macro tier, or full ladder
+- Expected outputs:
+  - preview change plan with per-change line refs, before/after, safety reason, and category counts
+  - impact-ordered pass selection naming what is deferred and why
+  - characterization-test gate verdict before any macro change
+  - apply-step handoff with the unsafe-in-isolation changes listed under notes, never half-applied
+- Artifact expectations:
+  - metadata-only runtime record when a wrapper or shell is available
+- Safety rules:
+  - Preview is the default: analyze the whole target and emit the plan before touching any file.
+  - Outputs, side effects, and error handling stay identical; a dropped branch or weakened handler is a defect, not a simplification.
+  - Never rename exports, change signatures, merge or split files, or alter async execution models without flagging a breaking change; cross-file renames are notes, not silent edits.
+  - Do not refactor test files, and do not claim behavior preservation without the before/after test evidence.
+
 ### backend
 
 [omh] Hermes backend workflow: prepare server, API, and data-layer contracts — auth boundary, error paths, response shape, and schema/migration discipline — before implementation.
