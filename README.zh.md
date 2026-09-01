@@ -77,6 +77,35 @@
 > <p align="center">
 >   <img src="assets/friren-agent-omh-callout.png" alt="Friren Agent explaining OMH in Art&Engine" width="720">
 > </p>
+
+> [!TIP]
+> 加入我们！
+>
+> <table>
+>   <tr>
+>     <td width="124"><a href="https://x.com/rlaope"><img alt="X link" src="https://img.shields.io/badge/Follow-%40rlaope-00CED1?style=flat-square&logo=x&labelColor=black" width="112" /></a></td>
+>     <td><code>oh-my-hermes</code> 的更新会在 X 上的 <a href="https://x.com/rlaope">@rlaope</a> 分享，包括发布说明和项目动态。</td>
+>   </tr>
+>   <tr>
+>     <td width="124"><a href="https://github.com/rlaope"><img alt="GitHub Follow" src="https://img.shields.io/github/followers/rlaope?style=flat-square&logo=github&labelColor=black&color=24292f" width="112" /></a></td>
+>     <td>在 GitHub 上关注 <a href="https://github.com/rlaope">@rlaope</a>，了解更多项目、发布和进行中的工作。</td>
+>   </tr>
+>   <tr>
+>     <td width="124"><a href="https://discord.gg/6EjTP3cWM"><img alt="Discord invite" src="https://img.shields.io/badge/Join-Discord-5865F2?style=flat-square&logo=discord&logoColor=white&labelColor=black" width="112" /></a></td>
+>     <td>加入 Discord 上的 <a href="https://discord.gg/6EjTP3cWM">Oh-My-Hermes Community</a>，提问、分享工作流，并与其他用户交流。</td>
+>   </tr>
+>   <tr>
+>     <td width="124"><a href="https://github.com/rlaope/oh-my-hermes/graphs/contributors"><img alt="AI agent collaborators" src="https://img.shields.io/badge/With-AI%20agents-6f42c1?style=flat-square&labelColor=black" width="112" /></a></td>
+>     <td>与帮助交付 <code>oh-my-hermes</code> 的 AI 智能体协作者 <a href="https://github.com/frirenai"><strong>Friren</strong></a> 和 <a href="https://github.com/sionic-khope"><strong>Killua</strong></a> 一同构建。</td>
+>   </tr>
+>   <tr>
+>     <td width="124"><a href="https://nousresearch.com/"><img alt="Thanks to Nous Research" src="https://img.shields.io/badge/Thanks-Nous%20Research-4B2E83?style=flat-square&labelColor=black" width="112" /></a></td>
+>     <td>感谢 <a href="https://nousresearch.com/">Nous Research</a> 创造了 Hermes Agent。</td>
+>   </tr>
+> </table>
+
+<br>
+
 ## 快速开始
 > **状态：** Homebrew、Bun 与 npm 包管理器安装方式已随 v1.0.6 正式公开。
 

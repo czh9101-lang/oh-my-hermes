@@ -79,6 +79,35 @@
 > <p align="center">
 >   <img src="assets/friren-agent-omh-callout.png" alt="Friren Agent explaining OMH in Art&Engine" width="720">
 > </p>
+
+> [!TIP]
+> 함께해요!
+>
+> <table>
+>   <tr>
+>     <td width="124"><a href="https://x.com/rlaope"><img alt="X link" src="https://img.shields.io/badge/Follow-%40rlaope-00CED1?style=flat-square&logo=x&labelColor=black" width="112" /></a></td>
+>     <td><code>oh-my-hermes</code> 업데이트는 릴리스 노트, 프로젝트 소식과 함께 X의 <a href="https://x.com/rlaope">@rlaope</a>에서 공유됩니다.</td>
+>   </tr>
+>   <tr>
+>     <td width="124"><a href="https://github.com/rlaope"><img alt="GitHub Follow" src="https://img.shields.io/github/followers/rlaope?style=flat-square&logo=github&labelColor=black&color=24292f" width="112" /></a></td>
+>     <td>더 많은 프로젝트, 릴리스, 진행 중인 작업은 GitHub에서 <a href="https://github.com/rlaope">@rlaope</a>를 팔로우하세요.</td>
+>   </tr>
+>   <tr>
+>     <td width="124"><a href="https://discord.gg/6EjTP3cWM"><img alt="Discord invite" src="https://img.shields.io/badge/Join-Discord-5865F2?style=flat-square&logo=discord&logoColor=white&labelColor=black" width="112" /></a></td>
+>     <td>Discord의 <a href="https://discord.gg/6EjTP3cWM">Oh-My-Hermes Community</a>에 참여해 질문하고, 워크플로를 공유하고, 다른 사용자들과 이야기해 보세요.</td>
+>   </tr>
+>   <tr>
+>     <td width="124"><a href="https://github.com/rlaope/oh-my-hermes/graphs/contributors"><img alt="AI agent collaborators" src="https://img.shields.io/badge/With-AI%20agents-6f42c1?style=flat-square&labelColor=black" width="112" /></a></td>
+>     <td><code>oh-my-hermes</code> 출시를 함께 돕는 AI 에이전트 <a href="https://github.com/frirenai"><strong>Friren</strong></a>, <a href="https://github.com/sionic-khope"><strong>Killua</strong></a>와 함께 만들어졌습니다.</td>
+>   </tr>
+>   <tr>
+>     <td width="124"><a href="https://nousresearch.com/"><img alt="Thanks to Nous Research" src="https://img.shields.io/badge/Thanks-Nous%20Research-4B2E83?style=flat-square&labelColor=black" width="112" /></a></td>
+>     <td>Hermes Agent를 만들어 준 <a href="https://nousresearch.com/">Nous Research</a>에 감사드립니다.</td>
+>   </tr>
+> </table>
+
+<br>
+
 ## 빠른 시작
 > **상태:** Homebrew, Bun, npm 패키지 관리자 설치가 v1.0.6부터 공개되었습니다.
 
