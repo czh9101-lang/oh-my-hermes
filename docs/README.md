@@ -40,6 +40,7 @@ references rather than normal user steps.
 | Inspect the runtime-readable capability map | [Capabilities](CAPABILITIES.md) |
 | Understand measured and unproven impact claims | [Capability Impact](CAPABILITY_IMPACT.md) |
 | Browse all generated skills and harness metadata | [Workflow Reference](WORKFLOWS.md) |
+| Track the external skill sources our skills reconstruct | [Skill Upstream Sources](SKILL-SOURCES.md) |
 | Prepare coding work for a selected executor | [Delegation-First Completeness](DELEGATION_FIRST_COMPLETENESS.md) |
 | Integrate OMH into a Hermes wrapper | [Hermes Agent Integration Runbook](HERMES_AGENT_INTEGRATION_RUNBOOK.md) |
 | Capture and recall reviewed project context | [Project Memory](MEMORY.md) |
