@@ -190,7 +190,10 @@ class RouterContentTests(unittest.TestCase):
         # catalog row each added one index line; one name-and-hook line per
         # new skill is the growth this index is supposed to have, and the
         # ceiling keeps ~3% headroom.
-        self.assertLess(len(rendered.encode("utf-8")), 20_800)
+        # 20,800 -> 21,400: the `refactor-plan` catalog row (20,831 measured)
+        # joined the index; one name-and-hook line per new skill, ~2.6%
+        # headroom kept.
+        self.assertLess(len(rendered.encode("utf-8")), 21_400)
         for line in rendered.splitlines():
             self.assertLess(len(line.encode("utf-8")), 400, line)
 
@@ -3782,7 +3785,7 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("`deep-interview`, `ralplan`, `loop`", docs_readme)
         # Retired engines must not be presented as current planning skills.
         self.assertNotIn("`ultragoal`", docs_readme)
-        self.assertIn("**112 installable skills**", docs_readme)
+        self.assertIn("**113 installable skills**", docs_readme)
         self.assertIn("**Retain knowledge**", docs_readme)
         self.assertIn("python -m unittest discover -s tests", ci)
         self.assertIn("python -m compileall src", ci)

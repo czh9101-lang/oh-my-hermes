@@ -23,6 +23,7 @@
    "meta-router",
    "plan",
    "adversarial-consensus",
+   "refactor-plan",
    "performance-goal",
    "ultraperf",
    "product-brief"

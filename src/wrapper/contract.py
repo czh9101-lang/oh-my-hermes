@@ -361,6 +361,8 @@ VISIBLE_ACTIONS = (
     "record_first_task_runway",
     "prepare_codegraph_refresh",
     "show_codegraph_refresh",
+    "prepare_refactor_plan",
+    "show_refactor_plan",
     "prepare_codebase_uml",
     "show_codebase_uml",
     "record_codegraph_build",
@@ -769,6 +771,11 @@ _HUMAN_ACK_BODY_BY_SKILL = {
         "I will prepare a codebase onboarding pack: observed repo map, reading path, glossary, risks, unknowns, "
         "and first-task runway. Setup, code edits, executor dispatch, and verification stay separate."
     ),
+    "refactor-plan": (
+        "I will shape the decided refactor into phases: reconnaissance from observed repo evidence, the "
+        "contracts-first phase order with per-phase verification and rollback, the files table, and a stop at "
+        "the approval gate. No phase is implemented until you approve the plan."
+    ),
     "codegraph-refresh": (
         "I will prepare a codegraph refresh: repo root, build/summary/handoff command choices, staleness scope, "
         "file-write policy, and observed-only codegraph summary or handoff evidence. Command execution and "
@@ -944,6 +951,7 @@ _ACK_PRIMARY_ACTIONS_BY_NEXT_ACTION = {
     "prepare_rules_distillation": ("prepare_rules_distillation", "Distill rules"),
     "prepare_codebase_onboarding": ("prepare_codebase_onboarding", "Prepare onboarding"),
     "prepare_codegraph_refresh": ("prepare_codegraph_refresh", "Refresh codegraph"),
+    "prepare_refactor_plan": ("prepare_refactor_plan", "Plan refactor"),
     "prepare_codebase_uml": ("prepare_codebase_uml", "Draw codebase"),
     "prepare_agent_debug": ("prepare_agent_debug", "Prepare agent debug"),
     "prepare_failure_signal_audit": ("prepare_failure_signal_audit", "Audit failure signals"),
@@ -2410,6 +2418,37 @@ _WORKFLOW_OPERATIONS_CHAT_CARDS: dict[str, dict[str, object]] = {
             "render command result",
             "image attachment",
             "complete architecture",
+            "review",
+            "CI",
+        ],
+    },
+    "refactor-plan": {
+        "kind": "refactor_plan",
+        "headline": "I can shape this refactor into phases.",
+        "body": (
+            "I will map affected files, boundaries, coupling, and blast radius from observed evidence, order the "
+            "contracts-first phases with per-phase verification and rollback, ship the files table, and stop at "
+            "the approval gate. No phase is implemented until the plan is approved."
+        ),
+        "phase": "refactor_plan_prepared",
+        "next_action": "prepare_refactor_plan",
+        "artifact_schema": "refactor_phase_plan/v1",
+        "claim_boundary_suffix": "It is not implementation, migration, verification, review, CI, or merge evidence, and plan approval proves no phase ran.",
+        "actions": [
+            {"id": "prepare_refactor_plan", "label": "Plan refactor", "style": "primary"},
+            {"id": "prepare_codegraph_refresh", "label": "Refresh codegraph", "style": "secondary"},
+            {"id": "show_status", "label": "Show status", "style": "secondary"},
+        ],
+        "recommended_flow": [
+            "map_recon_from_observed_evidence",
+            "order_contracts_first_phases_with_rollback",
+            "ship_files_table",
+            "stop_at_approval_gate",
+        ],
+        "evidence_not_observed": [
+            "implementation",
+            "migration",
+            "verification",
             "review",
             "CI",
         ],

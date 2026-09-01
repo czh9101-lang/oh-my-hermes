@@ -322,6 +322,14 @@ CHAT_CARD_COVERAGE_CASES: tuple[ChatCardCoverageCase, ...] = (
         "prepare_codebase_onboarding",
     ),
     ChatCardCoverageCase(
+        "refactor-plan",
+        "Refactor Plan",
+        "refactor-plan",
+        "refactor-plan",
+        "refactor_plan",
+        "prepare_refactor_plan",
+    ),
+    ChatCardCoverageCase(
         "codegraph-refresh",
         "Codegraph Refresh",
         "codegraph-refresh",

@@ -124,9 +124,9 @@ NON_SKILL_BACKTICKS = frozenset(
 # `websearch-setup`; `research` points back at it; and
 # `best-practice-research`'s single statement became two when the lookup half
 # of its boundary stopped belonging to the engine.
-EXPECTED_DEFERENCE_CASES = 172
-EXPECTED_DEFERENCE_PAIRS = 182
-EXPECTED_DEFERRING_OWNERS = 56
+EXPECTED_DEFERENCE_CASES = 175
+EXPECTED_DEFERENCE_PAIRS = 185
+EXPECTED_DEFERRING_OWNERS = 57
 
 # The ratchet. Recording a new inversion must be a visible edit to this number,
 # not one more dict line with a plausible sentence attached.
