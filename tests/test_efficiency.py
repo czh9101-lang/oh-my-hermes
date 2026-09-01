@@ -1485,7 +1485,7 @@ class EfficiencyContractTests(unittest.TestCase):
             ("논문 요약해줘", "paper-learning"),
             ("이 PDF 논문 초보자도 이해하게 풀어줘", "paper-learning"),
             ("첨부한 paper를 쉬운 난이도로 설명해줘", "paper-learning"),
-            ("웹서치해서 최신 자료 정리해줘", "research"),
+            ("웹서치해서 최신 자료 정리해줘", "web-research"),
             ("이미지 생성해줘. 회의록을 세로 카드로 요약해줘", "img-summary"),
             ("PPT 만들어줘", "materials-package"),
             ("codex로 열어줘", "executor-runtime-readiness"),
