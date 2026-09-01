@@ -1160,6 +1160,9 @@ _DEFINITIONS = [
         handoff_policy="Run as a Hermes-side research lane when web or repository access is available; Hermes and its delegated readers study sources, distill evidence or the dossier before any planning or coding handoff, and never treat research as implementation.",
         required_inputs=(
             "research question",
+            "output audience - a human reader or a coding agent - asked before retrieval and never inferred",
+            "output format when the reader is human - markdown, a print-ready page, or both",
+            "output language when the reader is human - declared, never inferred from the request",
             "target user/task if usability matters",
             "usability/quality dimension if applicable",
             "source boundaries",
@@ -1177,6 +1180,7 @@ _DEFINITIONS = [
             "confidence and residual uncertainty",
             "product_evidence_loop/v1",
             "deep_research_dossier/v1",
+            "research_briefing/v1 with its markdown and print-ready page when the reader is human",
         ),
         artifact_expectations=("research notes with source URLs, retrieval dates, source-quality notes, and per-reference mechanism, tradeoff, license, and pinned-ref notes when the wrapper captures them",),
         safety_rules=(
@@ -1192,10 +1196,14 @@ _DEFINITIONS = [
             "State retrieval limits, dates, and missing-source gaps for unstable facts.",
             "product_evidence_loop/v1 is prepared-only opaque references, not observed evidence or execution.",
             "deep_research_dossier/v1 is prepared decision context, not observed evidence, execution, review, CI, or merge evidence.",
+            "research_briefing/v1 is prepared decision context; a rendered page is a page, and calling it a PDF needs observed file evidence.",
         ),
         quality_tier="source-gated",
         quality_bar=(
             "Ask for the research question, source boundaries, freshness, jurisdiction, and version assumptions before retrieval.",
+            "Ask who the output is for before retrieval and never infer it: a human reader gets a briefing document, a coding agent gets the dense handoff of findings, exact symbols, and file paths. The answer changes what the run records, not only how it is written up.",
+            "On the human branch ask the output format (markdown, a print-ready page, or both) and the output language before writing, then hold the document to `references/briefing-format.md` - noun-phrase titles carrying a role label from its closed vocabulary, cause before effect, terms defined at first use, figures drawn in code blocks, and the fixed chapter-and-appendix structure.",
+            "Keep the coding-agent branch dense: findings, exact symbols, file paths, and the plan-feed block, with no narrative framing and no briefing structure.",
             "Use official or primary sources first when current or external facts matter, then add source diversity when the topic is contested.",
             "Revise the search plan when new evidence exposes a gap or contradiction instead of stopping at the first pass.",
             "Gate contested claims: require at least two independent source domains, one counter-search for disconfirming evidence, and a primary source, or move the claim to the unresolved annex.",
@@ -1239,6 +1247,7 @@ _DEFINITIONS = [
             "If the evidence stays thin or contested, lower the stated confidence and keep the unresolved claims in the annex rather than flattening them.",
             "If leads keep expanding past the declared budget, stop, record open leads in the dossier, and ask whether to extend the budget.",
             "If enough evidence already exists and the real request is planning, hand off to ralplan with the recorded dossier.",
+            "If the audience answer arrives after retrieval started, keep the evidence and re-render rather than re-running: the dossier feeds both branches.",
         ),
     ),
     SkillDefinition(

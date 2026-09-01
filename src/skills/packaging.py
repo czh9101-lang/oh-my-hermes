@@ -25,6 +25,7 @@ from .render import (
     maestro_reference_templates,
     memory_new_skill,
     memory_sync_skill,
+    research_reference_templates,
     router_reference_templates,
     router_skill,
     structural_search_skill,
@@ -63,6 +64,7 @@ def builtin_skill_reference_templates() -> list[SkillReferenceTemplate]:
             for definition in workflow_reference_definitions()
             if definition.procedure_steps
         ],
+        *research_reference_templates(),
         *design_reference_templates(),
         *domain_engineering_reference_templates(),
     ]

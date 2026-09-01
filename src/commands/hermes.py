@@ -15,6 +15,11 @@ from ..hermes_planning import (
 )
 from ..hermes_readiness import build_hermes_agent_readiness
 from ..workflows.hermes_retained_context import build_hermes_retained_context
+from ..workflows.research_briefing import (
+    render_research_briefing_markdown,
+    render_research_briefing_page,
+    research_briefing_errors,
+)
 from ..workflows.plan_variants import (
     PLAN_VARIANT_DELTA_DIMENSIONS,
     build_plan_variant,
@@ -222,6 +227,53 @@ def cmd_hermes_retained_context(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def _write_briefing_document(path: str, document: str) -> str:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # newline="" so the artifact is byte-identical on Windows; a rendered
+    # document that differs by platform cannot be compared or regenerated.
+    with target.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(document)
+    return str(target)
+
+
+def cmd_hermes_briefing(args: argparse.Namespace) -> int:
+    """Render a research_briefing/v1 payload as Markdown, a page, or both."""
+    try:
+        raw = sys.stdin.read() if args.input == "-" else Path(args.input).read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        raise OmhError(str(exc)) from exc
+    issues = research_briefing_errors(payload)
+    if issues:
+        raise OmhError("; ".join(issues[:5]))
+    written: dict[str, str] = {}
+    try:
+        if args.markdown:
+            written["markdown"] = _write_briefing_document(
+                args.markdown, render_research_briefing_markdown(payload)
+            )
+        if args.page:
+            written["page"] = _write_briefing_document(args.page, render_research_briefing_page(payload))
+    except (OSError, ValueError) as exc:
+        raise OmhError(str(exc)) from exc
+    _print_json(
+        {
+            "schema_version": payload["schema_version"],
+            "audience": payload["audience"],
+            "output_formats": payload["output_formats"],
+            "language": payload["language"],
+            "written": written,
+            # Writing the file is observed; a PDF is not, and OMH never opens
+            # the page it wrote.
+            "export": {name: ("rendered_observed" if name in written else "prepared") for name in payload["export"]},
+            "pdf": "handoff_prepared: print the page, or hand the format to a generation owner",
+            "claim_boundary": payload["claim_boundary"],
+        }
+    )
+    return 0
+
 def _add_hermes_commands(sub) -> None:
     hermes = sub.add_parser("hermes", help="Build Hermes-facing plan and readiness scaffolds for natural-language work.")
     hermes_sub = hermes.add_subparsers(dest="hermes_command", required=True)
@@ -237,6 +289,15 @@ def _add_hermes_commands(sub) -> None:
         help="Inspect Hermes and OMH retained-context channels for memory, learning, loop, and wiki readiness.",
     )
     retained_context.set_defaults(func=cmd_hermes_retained_context)
+
+    briefing = hermes_sub.add_parser(
+        "briefing",
+        help="Render a research_briefing/v1 payload as Markdown and a print-ready page.",
+    )
+    briefing.add_argument("--input", required=True, help="Path to a research_briefing/v1 JSON payload, or '-' for stdin.")
+    briefing.add_argument("--markdown", default="", help="Write the Markdown briefing to this path.")
+    briefing.add_argument("--page", default="", help="Write the self-contained print-ready HTML page to this path.")
+    briefing.set_defaults(func=cmd_hermes_briefing)
 
     plan = hermes_sub.add_parser("plan")
     plan.add_argument("message", nargs="*", help="Task description to turn into a Hermes-facing planning scaffold.")
