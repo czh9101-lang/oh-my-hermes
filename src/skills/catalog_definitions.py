@@ -5152,6 +5152,8 @@ _DEFINITIONS = [
             "For retrieval, fix chunking and citation grounding first and evaluate retrieval before evaluating generation: a generation score on top of unmeasured retrieval cannot tell a bad answer from a bad document set.",
             f"Ship the eval suite as a deliverable, not a follow-up: {', '.join(LLM_APP_DEV_EVAL_DELIVERABLES)}, with deterministic validators wherever the task allows one. Load `references/eval-harness.md` for the golden-set shape, the validator ladder, and the comparison record.",
             "Run the regression before a prompt or model swap, not after, and compare baseline against candidate on the same golden set with token and cost capture. Report only what the run reported; a metric the harness did not emit stays null.",
+            "Give every agentic loop its budgets as product features, not prompt advice: step, time, token, cost, and tool-call budgets each with a recorded termination reason, and for recursive delegation the budgets bind the whole tree, not each node separately.",
+            "Separate draft from commit for risky side effects: reads and drafts may run autonomously when scoped and labeled, but external writes, deletions, and communications need an approval record outside the prompt - a model's stated intention is never the authorization.",
             "Keep design and evidence separate: a prepared schema, prompt layout, or eval plan is not implementation, an observed eval run, review, CI, or merge evidence.",
         ),
         why_this_exists=(

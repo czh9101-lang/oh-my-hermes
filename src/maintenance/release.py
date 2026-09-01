@@ -158,7 +158,11 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # 370598 -> 375067: `inference-serving` is a new installable skill (engine
 # decision, gated deploy runbooks, benchmark protocol); one new capability
 # section for one new workflow, not per-section padding; warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 375067
+# 375067 -> 375623: agent-ops-review, ops-observability-card, and
+# llm-app-dev grew instrumentation-ladder, span-vocabulary, and
+# budget-discipline rules; instruction lines on three existing skills, not
+# padding; warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 375623
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -546,7 +550,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # research_and_ops skills' Workflow Lane lines; the runbook and benchmark
 # tables live in two on-demand references outside this count; warranted
 # growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 854431
+# 854431 -> 856342: the observability extension adds the tier-audit,
+# span-vocabulary, and harness-budget quality-bar rules to three existing
+# skills; the ladder, audit rubric, and anti-pattern tables live in the new
+# on-demand instrumentation-ladder reference outside this count; warranted
+# growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 856342
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

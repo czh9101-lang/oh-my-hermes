@@ -203,7 +203,10 @@ class EfficiencyContractTests(unittest.TestCase):
         # value is ratcheted in `FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`
         # (src/maintenance/release.py) -- this is the coarser standing gate, not the
         # per-commit ratchet.
-        self.assertLess(core["skill_body"]["bytes"], 68_000)
+        # 68,000 -> 70,000: agent-ops-review is a core-profile skill and gained
+        # the three instrumentation-audit quality-bar rules (68,394 measured);
+        # the ladder itself is an on-demand reference outside this count.
+        self.assertLess(core["skill_body"]["bytes"], 70_000)
         # 815,000 -> 825,000: one new installable body (`web-research`) plus the
         # sentence that split `best-practice-research`'s boundary in two. Set to
         # restore the ~10k headroom this gate is meant to carry rather than to
