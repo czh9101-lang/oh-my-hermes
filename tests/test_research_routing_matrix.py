@@ -23,8 +23,8 @@ from omh.routing.chat import route_chat_message
 
 DISPATCH_CASES: tuple[tuple[str, str], ...] = (
     ("이 문제 해결을 위해 참고할만한 데이터 찾아줘", "source-finder"),
-    ("자료 찾아줘", "research"),
-    ("참고자료 찾아줘", "research"),
+    ("자료 찾아줘", "web-research"),
+    ("참고자료 찾아줘", "web-research"),
     ("이 논문 PDF를 쉽게 설명해줘", "paper-learning"),
     ("이 주제의 논문과 데이터셋을 찾아줘", "source-finder"),
     ("find datasets for browser agent benchmarks", "source-finder"),

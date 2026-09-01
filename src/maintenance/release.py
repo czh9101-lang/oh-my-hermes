@@ -128,14 +128,24 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # capability section truncates safety rules and caps triggers, so the delta
 # here is truncation-boundary jitter from those rewordings, not the full
 # sentence growth; measured live, warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 353787
+# 353787 -> 356826: `web-research` is a new installable skill -- the web lookup
+# lane split out of the `research` engine so a cited one-round lookup stops
+# paying the engine's declared depth budget and reference-implementation
+# study. One section for one new workflow, not per-section padding;
+# the engine's own section shrank by the triggers that left it.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 356826
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
 # new workflows.
 # 102070 -> 103020: one standalone capability row for the new
 # `model-optimization` skill; warranted growth.
-STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 103020
+# 103020 -> 103952: `web-research` is a new installable skill -- the web lookup
+# lane split out of the `research` engine so a cited one-round lookup stops
+# paying the engine's declared depth budget and reference-implementation
+# study. One row for one new workflow, not per-row padding;
+# the engine's own row shrank by the triggers that left it.
+STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 103952
 STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ULW fold context ceiling (issue #954, PR D). The limit is the pre-D measured
 # value of the full profile's `skill_body` chars on `main` @ acb9a060, in the
@@ -462,7 +472,16 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # sentences across the pack now name who applies an approved diff. Protocol
 # and boundary text that change the interview's verdict and completion, not
 # padding; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 808826
+# 808826 -> 814951: `web-research` is a new installable skill -- the web lookup
+# lane split out of the `research` engine so a cited one-round lookup stops
+# paying the engine's declared depth budget and reference-implementation
+# study. One body for one new workflow, not per-body padding;
+# the engine's own body shrank by the triggers that left it.
+# 814951 -> 815057: `best-practice-research`'s single boundary statement
+# became two once the lookup half of it stopped belonging to the engine.
+# The split is what removed a deference inversion the policy test had been
+# carrying; 106 chars is the sentence that did it.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 815057
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

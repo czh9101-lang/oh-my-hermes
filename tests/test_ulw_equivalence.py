@@ -395,7 +395,13 @@ class RoutingInertnessTests(unittest.TestCase):
         forbade re-pinning; the retirement PR (#954 stage 5, window=0)
         deliberately rerouted the retiring engines' cues and edited their
         corpus rows, so the digest was re-pinned once in that PR and is a
-        hard pin again from here on."""
+        hard pin again from here on.
+
+        Re-pinned a third time for the web-research split: the lookup half of
+        `research`'s triggers became its own skill, so the four pinned cases
+        whose messages are lookups move with them. A re-pin is only ever this
+        -- a routing change the PR body names, with the moved rows enumerated
+        in the fixture -- never a way to absorb an unexplained digest change."""
         fixture = json.loads(
             (FIXTURES / "routing_precision_subset_at_c.json").read_text(encoding="utf-8")
         )

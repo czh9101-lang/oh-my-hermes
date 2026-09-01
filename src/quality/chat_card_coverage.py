@@ -242,9 +242,17 @@ CHAT_CARD_COVERAGE_CASES: tuple[ChatCardCoverageCase, ...] = (
         "prepare_source_finder_plan",
     ),
     ChatCardCoverageCase(
+        "web-research",
+        "Web lookup",
+        "web research with citations about current AI agent market trends",
+        "web-research",
+        "web_research",
+        "run_hermes_research",
+    ),
+    ChatCardCoverageCase(
         "research",
         "Research",
-        "web research with citations about current AI agent market trends",
+        "deep research on comparable open source implementations before the spec",
         "research",
         "web_research",
         "run_hermes_research",

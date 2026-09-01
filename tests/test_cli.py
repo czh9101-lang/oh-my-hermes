@@ -4748,12 +4748,12 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(gates["chat_card_coverage"]["status"], "passed")
             self.assertIn("generic ack 0", gates["chat_card_coverage"]["summary"])
             self.assertEqual(gates["route_hint_alignment"]["status"], "passed")
-            self.assertIn("196/196 route hints aligned", gates["route_hint_alignment"]["summary"])
+            self.assertIn("197/197 route hints aligned", gates["route_hint_alignment"]["summary"])
             self.assertEqual(gates["context_brief_coverage"]["status"], "passed")
             self.assertIn("10/10 context brief cases passing", gates["context_brief_coverage"]["summary"])
             self.assertEqual(gates["routing_precision"]["status"], "passed")
-            self.assertIn("139/139 negative-control cases", gates["routing_precision"]["summary"])
-            self.assertIn("269/269 interventions", gates["routing_precision"]["summary"])
+            self.assertIn("141/141 negative-control cases", gates["routing_precision"]["summary"])
+            self.assertIn("272/272 interventions", gates["routing_precision"]["summary"])
             self.assertIn("overroutes 0", gates["routing_precision"]["summary"])
             self.assertIn("missed interventions 0", gates["routing_precision"]["summary"])
             self.assertEqual(gates["localized_chat_copy"]["status"], "passed")
@@ -4763,13 +4763,13 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertIn("11/11 fast-path cases", gates["router_fast_path"]["summary"])
             self.assertIn("missing markers 0", gates["router_fast_path"]["summary"])
             self.assertEqual(gates["common_request_coverage"]["status"], "passed")
-            self.assertIn("91/91 common request cases", gates["common_request_coverage"]["summary"])
+            self.assertIn("92/92 common request cases", gates["common_request_coverage"]["summary"])
             self.assertIn("coverage 100.0%", gates["common_request_coverage"]["summary"])
             self.assertIn("popular plugin families 10/10 (100.0%)", gates["common_request_coverage"]["summary"])
             self.assertEqual(gates["hermes_ux_quality"]["status"], "passed")
             self.assertIn("9/9 UX gates passing", gates["hermes_ux_quality"]["summary"])
             self.assertIn("fast paths 11/11", gates["hermes_ux_quality"]["summary"])
-            self.assertIn("common requests 91/91", gates["hermes_ux_quality"]["summary"])
+            self.assertIn("common requests 92/92", gates["hermes_ux_quality"]["summary"])
             self.assertEqual(gates["parity_contracts"]["status"], "passed")
             self.assertIn("not run the release checklist", payload["boundary"])
 
@@ -4804,16 +4804,16 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertIn("Status: ready", stdout)
             self.assertIn("Written: no", stdout)
             self.assertIn("Grounded score: 50/50 (avg 10.0)", stdout)
-            self.assertIn("Chat card coverage: 76/76 (generic ack 0)", stdout)
+            self.assertIn("Chat card coverage: 77/77 (generic ack 0)", stdout)
             self.assertIn("Context brief coverage: 10/10 (route hints 9, catalog hints 1)", stdout)
             self.assertIn(
-                "Routing precision: 139/139 negative controls, 269/269 interventions "
+                "Routing precision: 141/141 negative controls, 272/272 interventions "
                 "(overroutes 0, catalog pickers 0, generic ack 0, missed interventions 0)",
                 stdout,
             )
             self.assertIn("Localized chat copy: 8/8 (locales 6)", stdout)
             self.assertIn(
-                "Common request coverage: 91/91 "
+                "Common request coverage: 92/92 "
                 "(100.0%; target 95.0%; generic ack 0; popular plugin families 10/10 at 100.0%)",
                 stdout,
             )
@@ -4835,17 +4835,17 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(payload["summary"]["product_readiness_status"], "ready")
             self.assertEqual(payload["summary"]["grounded_score_perfect"], 50)
             self.assertEqual(payload["summary"]["grounded_score_average"], 10.0)
-            self.assertEqual(payload["summary"]["chat_card_coverage_passing"], 76)
+            self.assertEqual(payload["summary"]["chat_card_coverage_passing"], 77)
             self.assertEqual(payload["summary"]["chat_card_generic_ack_count"], 0)
-            self.assertEqual(payload["summary"]["route_hint_alignment_aligned"], 196)
+            self.assertEqual(payload["summary"]["route_hint_alignment_aligned"], 197)
             self.assertEqual(payload["summary"]["route_hint_mismatch_count"], 0)
             self.assertEqual(payload["summary"]["context_brief_coverage_passing"], 10)
             self.assertEqual(payload["summary"]["context_brief_coverage_total"], 10)
-            self.assertEqual(payload["summary"]["routing_precision_passing"], 139)
-            self.assertEqual(payload["summary"]["routing_precision_total"], 139)
+            self.assertEqual(payload["summary"]["routing_precision_passing"], 141)
+            self.assertEqual(payload["summary"]["routing_precision_total"], 141)
             self.assertEqual(payload["summary"]["routing_precision_overroute_count"], 0)
-            self.assertEqual(payload["summary"]["routing_precision_intervention_passing"], 269)
-            self.assertEqual(payload["summary"]["routing_precision_intervention_total"], 269)
+            self.assertEqual(payload["summary"]["routing_precision_intervention_passing"], 272)
+            self.assertEqual(payload["summary"]["routing_precision_intervention_total"], 272)
             self.assertEqual(payload["summary"]["routing_precision_missed_intervention_count"], 0)
             self.assertEqual(payload["summary"]["localized_chat_copy_passing"], 8)
             self.assertEqual(payload["summary"]["localized_chat_copy_total"], 8)
@@ -4853,8 +4853,8 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(payload["summary"]["router_fast_path_passing"], 11)
             self.assertEqual(payload["summary"]["router_fast_path_total"], 11)
             self.assertEqual(payload["summary"]["router_fast_path_missing_marker_count"], 0)
-            self.assertEqual(payload["summary"]["common_request_coverage_passing"], 91)
-            self.assertEqual(payload["summary"]["common_request_coverage_total"], 91)
+            self.assertEqual(payload["summary"]["common_request_coverage_passing"], 92)
+            self.assertEqual(payload["summary"]["common_request_coverage_total"], 92)
             self.assertEqual(payload["summary"]["common_request_coverage_percent"], 100.0)
             self.assertEqual(payload["summary"]["common_request_coverage_target"], 95.0)
             self.assertEqual(payload["summary"]["common_request_generic_ack_count"], 0)
@@ -6379,7 +6379,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             ("trouve le dépôt GitHub et le PDF public", "source-finder", "locale:fr:source_finder"),
             ("finde paper und dataset zu diesem thema", "source-finder", "locale:de:source_finder"),
             ("इस विषय के शोध पत्र PDF और डेटा सेट ढूंढो", "source-finder", "locale:hi:source_finder"),
-            ("वेब पर खोजकर ताज़ा स्रोतों के साथ सारांश दो", "research", "locale:hi:web_research"),
+            ("वेब पर खोजकर ताज़ा स्रोतों के साथ सारांश दो", "web-research", "locale:hi:web_research"),
         )
 
         for message, expected_skill, locale_match in cases:
@@ -6516,7 +6516,11 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                 self.assertIn("draft plan", recommendations[0]["evidence_boundary"])
 
     def test_recommend_web_research_stays_hermes_owned(self) -> None:
-        cases = (
+        # Both halves of the split stay Hermes-owned; what changes across the
+        # boundary is which lane answers, not who runs it. A cited lookup goes
+        # to `web-research`; deep grounding and the missed-OMH recovery stay on
+        # the engine.
+        lookup_cases = (
             ["latest", "web", "research", "official", "sources"],
             ["웹서치", "해줘"],
             ["검색해서", "최신", "자료와", "출처", "정리해줘"],
@@ -6524,19 +6528,24 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             ["ウェブ検索して最新の出典をまとめて"],
             ["查一下最新资料和来源"],
             ["buscar", "en", "la", "web", "fuentes", "actuales"],
+        )
+        engine_cases = (
+            ["deep", "research", "on", "comparable", "open", "source", "implementations"],
             ["리서치 요청했는데 OMH를 안 썼어"],
         )
 
-        for args in cases:
+        for args, expected in (
+            *((case, "web-research") for case in lookup_cases),
+            *((case, "research") for case in engine_cases),
+        ):
             with self.subTest(args=args):
                 status, stdout, stderr = run_cli(["recommend", *args, "--limit", "3"])
 
                 self.assertEqual(stderr, "")
                 self.assertEqual(status, 0)
                 recommendations = json.loads(stdout)["recommendations"]
-                self.assertEqual(recommendations[0]["skill"], "research")
+                self.assertEqual(recommendations[0]["skill"], expected)
                 self.assertEqual(recommendations[0]["hermes_role"], "researcher")
-                self.assertIn("citation discipline", recommendations[0]["description"].lower())
                 self.assertIn("retrieval", recommendations[0]["evidence_boundary"].lower())
                 self.assertIn("freshness", recommendations[0]["wrapper_guidance"].lower())
 
@@ -9566,8 +9575,8 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertEqual(status, 0)
         payload = json.loads(stdout)
         self.assertEqual(payload["schema_version"], "chat_card_coverage/v1")
-        self.assertEqual(payload["summary"]["case_count"], 76)
-        self.assertEqual(payload["summary"]["passing_count"], 76)
+        self.assertEqual(payload["summary"]["case_count"], 77)
+        self.assertEqual(payload["summary"]["passing_count"], 77)
         self.assertEqual(payload["summary"]["generic_ack_count"], 0)
         self.assertTrue(payload["summary"]["all_passing"])
         self.assertIn("not live Hermes chat", payload["claim_boundary"])
@@ -9591,7 +9600,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         with self.assertRaises(json.JSONDecodeError):
             json.loads(stdout)
         self.assertIn("OMH chat card coverage", stdout)
-        self.assertIn("Result: 76/76 workflow cards dedicated (all passing)", stdout)
+        self.assertIn("Result: 77/77 workflow cards dedicated (all passing)", stdout)
         self.assertIn("Generic ack responses: 0", stdout)
         self.assertIn(
             "Scheduled ops blueprint: ok; "
@@ -9610,9 +9619,9 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertEqual(status, 0)
         payload = json.loads(stdout)
         self.assertEqual(payload["schema_version"], "route_hint_alignment/v1")
-        self.assertEqual(payload["summary"]["case_count"], 196)
-        self.assertEqual(payload["summary"]["hinted_count"], 196)
-        self.assertEqual(payload["summary"]["aligned_count"], 196)
+        self.assertEqual(payload["summary"]["case_count"], 197)
+        self.assertEqual(payload["summary"]["hinted_count"], 197)
+        self.assertEqual(payload["summary"]["aligned_count"], 197)
         self.assertEqual(payload["summary"]["missing_hint_count"], 0)
         self.assertEqual(payload["summary"]["mismatch_count"], 0)
         self.assertTrue(payload["summary"]["all_aligned"])
@@ -9643,7 +9652,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertEqual(status, 0)
         explicit_payload = json.loads(stdout)
         self.assertEqual(explicit_payload["schema_version"], "route_hint_alignment/v1")
-        self.assertEqual(explicit_payload["summary"]["case_count"], 196)
+        self.assertEqual(explicit_payload["summary"]["case_count"], 197)
 
     def test_demo_route_hint_alignment_summary_is_human_readable(self) -> None:
         status, stdout, stderr = run_cli(["demo", "route-hint-alignment", "--summary"])
@@ -9653,8 +9662,8 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         with self.assertRaises(json.JSONDecodeError):
             json.loads(stdout)
         self.assertIn("OMH route hint alignment", stdout)
-        self.assertIn("Result: 196/196 route hints aligned (all passing)", stdout)
-        self.assertIn("Hints present: 196/196; missing hints: 0; mismatches: 0", stdout)
+        self.assertIn("Result: 197/197 route hints aligned (all passing)", stdout)
+        self.assertIn("Hints present: 197/197; missing hints: 0; mismatches: 0", stdout)
         self.assertIn(
             "AI agent product QA: ok; "
             "route=ultraqa hint=ultraqa next=opening the selected workflow",

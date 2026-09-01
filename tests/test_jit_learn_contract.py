@@ -62,7 +62,7 @@ JIT_LEARN_NEGATIVE_WORKFLOWS = {
     "jit-learn-negative-korean-curriculum-learning-objective": "curriculum-design",
     "jit-learn-negative-paper-learning": "paper-learning",
     "jit-learn-negative-source-finder": "source-finder",
-    "jit-learn-negative-research": "research",
+    "jit-learn-negative-research": "web-research",
     "jit-learn-negative-plan": "plan",
     "jit-learn-negative-incident-postmortem-rollback": "reliability-review",
     "jit-learn-negative-postmortem-report-rollback": "reliability-review",

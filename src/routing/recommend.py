@@ -933,6 +933,18 @@ _SKILL_POLICIES = {
         evidence_boundary="A reliability review is not SLO pass, healthy error-budget, incident closure, remediation completion, verification, review, CI, or merge evidence.",
         wrapper_guidance="Collect service, SLO, incident, metric, and reference boundaries; create remediation handoffs only after an accepted fix direction exists.",
     ),
+    "web-research": RecommendationPolicy(
+        next_action="run_hermes_research",
+        evidence_boundary=(
+            "A web lookup route is not observed retrieval, page reading, claim verification, or coding handoff "
+            "evidence; web_research_brief/v1 is prepared context."
+        ),
+        wrapper_guidance=(
+            "Keep this in Hermes as one cited retrieval round: ask for the freshness window and version or "
+            "jurisdiction scope, cite the source behind each claim with its retrieval date, and name the retrieval "
+            "gap rather than answering a current-facts question from recall."
+        ),
+    ),
     "research": RecommendationPolicy(
         next_action="run_hermes_research",
         evidence_boundary=(

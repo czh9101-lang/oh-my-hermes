@@ -204,7 +204,12 @@ class EfficiencyContractTests(unittest.TestCase):
         # (src/maintenance/release.py) -- this is the coarser standing gate, not the
         # per-commit ratchet.
         self.assertLess(core["skill_body"]["bytes"], 68_000)
-        self.assertLess(full["skill_body"]["bytes"], 815_000)
+        # 815,000 -> 825,000: one new installable body (`web-research`) plus the
+        # sentence that split `best-practice-research`'s boundary in two. Set to
+        # restore the ~10k headroom this gate is meant to carry rather than to
+        # clear the measured 815,057 by a hair; the exact value stays ratcheted
+        # in FULL_PROFILE_SKILL_BODY_CHAR_LIMIT.
+        self.assertLess(full["skill_body"]["bytes"], 825_000)
         self.assertLess(full["repeated"]["share_percent"], 38.0)
 
         # References are progressive disclosure, counted outside the always-loaded body.
@@ -1485,7 +1490,7 @@ class EfficiencyContractTests(unittest.TestCase):
             ("논문 요약해줘", "paper-learning"),
             ("이 PDF 논문 초보자도 이해하게 풀어줘", "paper-learning"),
             ("첨부한 paper를 쉬운 난이도로 설명해줘", "paper-learning"),
-            ("웹서치해서 최신 자료 정리해줘", "research"),
+            ("웹서치해서 최신 자료 정리해줘", "web-research"),
             ("이미지 생성해줘. 회의록을 세로 카드로 요약해줘", "img-summary"),
             ("PPT 만들어줘", "materials-package"),
             ("codex로 열어줘", "executor-runtime-readiness"),
@@ -1667,7 +1672,7 @@ class EfficiencyContractTests(unittest.TestCase):
             ("회의록 정리해줘", "operating-rhythm", "operator_surface_fast_path:operating"),
             ("논문 링크 찾아줘", "source-finder", "operator_surface_fast_path:source"),
             ("paper pdf를 찾아서 쉽게 설명해줘", "source-finder", "operator_surface_fast_path:source"),
-            ("자료 찾아줘", "research", "operator_surface_fast_path:research"),
+            ("자료 찾아줘", "web-research", "operator_surface_fast_path:web_research"),
             ("성능 최적화해줘", "performance-goal", "operator_surface_fast_path:performance"),
             ("omh update 했는데 잘 된건지 모르겠어", "doctor", "operator_surface_fast_path:doctor"),
             ("PR 열렸는데 CI 실패했어 정리해줘", "github-event-ops", "operator_surface_fast_path:github_event"),

@@ -93,10 +93,10 @@ CONTEXT_BRIEF_COVERAGE_CASES: tuple[ContextBriefCoverageCase, ...] = (
         "present_plan",
     ),
     ContextBriefCoverageCase(
-        "research",
-        "Source-backed web research",
+        "web-research",
+        "Cited web lookup",
         "web research with citations about current AI agent market trends",
-        "research",
+        "web-research",
         "run_hermes_research",
     ),
 )
