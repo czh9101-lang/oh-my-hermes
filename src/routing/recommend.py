@@ -774,6 +774,18 @@ _SKILL_POLICIES = {
             "characterization-test gate; apply is a separate explicit step for the selected executor lane."
         ),
     ),
+    "refactor-plan": RecommendationPolicy(
+        next_action="prepare_refactor_plan",
+        evidence_boundary=(
+            "A phase plan, files table, or reconnaissance map is prepared_not_observed; it is not implementation, "
+            "migration, verification, review, CI, or merge evidence, and approval of the plan proves no phase ran."
+        ),
+        wrapper_guidance=(
+            "Map affected files, boundaries, coupling, and blast radius from observed evidence, order the five "
+            "contracts-first phases with per-phase verification and rollback, ship the files table, and stop at "
+            "the approval gate."
+        ),
+    ),
     "codegraph-refresh": RecommendationPolicy(
         next_action="prepare_codegraph_refresh",
         evidence_boundary=(
@@ -1804,6 +1816,13 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     # ...), which the +6 phrase match already covers.
     "model-optimization": frozenset(
         {"calibrate", "calibration", "model", "new", "onboard", "optimization", "optimize"}
+    ),
+    # `refactor-plan` names its work with the two most ordinary words in the
+    # catalog -- "refactor" and "plan" -- plus "phases", "restructure", and
+    # "blast". Credited as bare tokens they claimed every planning and
+    # cleanup message. Complete phrases carry the intent.
+    "refactor-plan": frozenset(
+        {"blast", "module", "phased", "phases", "plan", "planning", "radius", "refactor", "restructure", "rollback", "the", "this"}
     ),
     # `codebase-uml` names its picture with the vocabulary of every code
     # question -- "draw", "diagram", "architecture", "package", "module",
@@ -2930,6 +2949,21 @@ def _frontend_refactor_offers_itself(normalized_query: str, query_tokens: set[st
     return bool(ui_tokens & query_tokens)
 
 
+def _refactor_plan_offers_itself(normalized_query: str, query_tokens: set[str]) -> bool:
+    """Keep single-word refactor or plan talk from offering the phase planner.
+
+    The skill offers itself only when the message carries both halves of its
+    intent - restructuring vocabulary AND planning vocabulary - or the
+    unambiguous "phased". Explicit invocation overrides this, as
+    `_score_definition` already exempts.
+    """
+    restructure = {"refactor", "refactoring", "restructure", "restructuring", "리팩터링", "리팩토링"}
+    planning = {"plan", "planning", "phases", "phase", "phased", "rollback", "계획", "단계"}
+    if "phased" in query_tokens:
+        return True
+    return bool(restructure & query_tokens) and bool(planning & query_tokens)
+
+
 def _jit_learn_offers_itself(normalized_query: str, query_tokens: set[str]) -> bool:
     """Keep a bare "learn" from carrying the just-in-time learning route.
 
@@ -2954,6 +2988,7 @@ def _jit_learn_offers_itself(normalized_query: str, query_tokens: set[str]) -> b
 _SKILL_OFFERS_ITSELF: dict[str, Callable[[str, set[str]], bool]] = {
     "codebase-uml": _codebase_uml_offers_itself,
     "context": _context_alignment_offers_itself,
+    "refactor-plan": _refactor_plan_offers_itself,
     "frontend-refactor": _frontend_refactor_offers_itself,
     "jit-learn": _jit_learn_offers_itself,
     "ops-observability-card": _ops_observability_card_offers_itself,
