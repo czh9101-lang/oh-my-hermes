@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import threading
+from contextlib import contextmanager
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from _local_package import load_local_package
 from _platform_support import requires_posix, requires_posix_permissions
@@ -1125,6 +1127,154 @@ class ProjectMemoryRevisionReviewTests(unittest.TestCase):
             self.assertTrue(captured["auto_approved"])
             self.assertEqual(captured["candidate"]["status"], "approved")
             self.assertEqual(captured["record"]["schema_version"], "project_memory_record/v2")
+
+    def test_replacement_between_check_and_write_cannot_slip_through(self) -> None:
+        # Given: a reviewer approving with the revision their card showed, and
+        # a concurrent recapture that replaces the payload under the same id.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(
+                paths, "Run the byte gates before every release", record_type="procedure"
+            )
+            candidate_id = str(captured["candidate"]["candidate_id"])
+            reviewed_revision = str(self._card(paths, candidate_id)["review_revision"])
+            candidate_path = paths.memory_dir / "candidates" / f"{candidate_id}.json"
+            replacement = {
+                **json.loads(candidate_path.read_text(encoding="utf-8")),
+                "summary": "Skip the byte gates when in a hurry",
+            }
+            # The recapture is a real mutator: it takes the store lock, as
+            # every mutating memory path does. It is released at the door of
+            # the approval's critical section and completes before the
+            # approval acquires the lock, so the payload is already replaced
+            # when the decision's protected section begins. A decision that
+            # validated its revision before that point is working from a read
+            # the store has since invalidated, and would approve text the
+            # reviewer never saw; a decision that reads and validates inside
+            # the lock sees the replacement and must refuse.
+            approval_reached_lock = threading.Event()
+            replacement_written = threading.Event()
+            failures: list[BaseException] = []
+
+            def replace_candidate() -> None:
+                try:
+                    self.assertTrue(approval_reached_lock.wait(timeout=10))
+                    with file_lock(paths.memory_index_path, private=True):
+                        candidate_path.write_text(json.dumps(replacement), encoding="utf-8")
+                except BaseException as error:  # surfaced in the main thread
+                    failures.append(error)
+                finally:
+                    replacement_written.set()
+
+            real_lock = memory_workflow.file_lock
+
+            @contextmanager
+            def lock_once_the_replacement_is_durable(lock_path, **kwargs):
+                approval_reached_lock.set()
+                self.assertTrue(replacement_written.wait(timeout=10))
+                with real_lock(lock_path, **kwargs) as held:
+                    yield held
+
+            writer = threading.Thread(target=replace_candidate)
+            writer.start()
+            try:
+                # When: the approval submits the revision its card showed.
+                with patch.object(
+                    memory_workflow, "file_lock", lock_once_the_replacement_is_durable
+                ):
+                    with self.assertRaises(StaleMemoryReviewError) as approving:
+                        approve_project_memory_candidate(
+                            paths, candidate_id, expected_revision=reviewed_revision
+                        )
+            finally:
+                approval_reached_lock.set()
+                writer.join(timeout=10)
+                self.assertFalse(writer.is_alive())
+                self.assertEqual(failures, [])
+
+            # Then: the decision is refused, and no record, review decision, or
+            # candidate mutation was written on the payload nobody reviewed.
+            self.assertIn("stale_review", str(approving.exception))
+            self.assertFalse((paths.memory_dir / "records").exists())
+            self.assertFalse((paths.memory_dir / "reviews").exists())
+            stored = json.loads(candidate_path.read_text(encoding="utf-8"))
+            self.assertEqual(stored["status"], "pending_review")
+            self.assertEqual(stored["summary"], replacement["summary"])
+
+    def test_displayed_time_sensitivity_change_moves_the_revision(self) -> None:
+        # Given: a candidate whose card displays a time-sensitivity warning --
+        # the reviewer reads `detail` and `next_action` to decide whether the
+        # relative-time phrase is acceptable, so both are decision inputs.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(paths, "The contract expires in 3 weeks")
+            candidate_id = str(captured["candidate"]["candidate_id"])
+            candidate_path = paths.memory_dir / "candidates" / f"{candidate_id}.json"
+            before_card = self._card(paths, candidate_id)
+            self.assertIn("time_sensitivity", before_card)
+
+            # When: only the displayed time-sensitivity guidance is rewritten
+            # under the same candidate id, leaving every other field alone.
+            stored = json.loads(candidate_path.read_text(encoding="utf-8"))
+            stored["time_sensitivity"] = {
+                **stored["time_sensitivity"],
+                "detail": "Superseded guidance: this deadline already passed and the fact now reads wrong.",
+                "next_action": "Reject this candidate; do not approve it as-is.",
+            }
+            candidate_path.write_text(json.dumps(stored), encoding="utf-8")
+            after_card = self._card(paths, candidate_id)
+
+            # Then: the card shows different guidance, so the revision that
+            # fingerprints it must have moved -- and the old card must be stale.
+            self.assertNotEqual(after_card["time_sensitivity"], before_card["time_sensitivity"])
+            self.assertNotEqual(after_card["review_revision"], before_card["review_revision"])
+            with self.assertRaises(StaleMemoryReviewError):
+                approve_project_memory_candidate(
+                    paths, candidate_id, expected_revision=str(before_card["review_revision"])
+                )
+
+    def test_every_displayed_candidate_field_is_bound_to_the_revision(self) -> None:
+        # Given: a rendered card and the exact set of fields it displays that
+        # come from the candidate. Static labels (schema, actions, boundary)
+        # are not candidate-derived, so they are not revision inputs.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(
+                paths, "The audit window closes in 2 days", record_type="procedure", tags=["audit"]
+            )
+            candidate = dict(captured["candidate"])
+            baseline_card = memory_workflow.build_project_memory_review_card(candidate)
+            baseline_revision = memory_workflow.project_memory_review_revision(candidate)
+            mutations: dict[str, dict] = {
+                "summary": {"summary": "The audit window never closes"},
+                "record_type": {"record_type": "constraint"},
+                "scope": {"scope": {"kind": "project", "ref": "other-project"}},
+                "tags": {"tags": ["unaudited"]},
+                "created_at": {"created_at": "2999-12-31T23:59:59Z"},
+                "duplicate_of": {"duplicate_of": "rec_previously_stored"},
+                "safety.status": {"safety": {**candidate["safety"], "status": "blocked"}},
+                "safety.extra": {"safety": {**candidate["safety"], "safe_to_auto_approve": True}},
+                "time_sensitivity.detail": {
+                    "time_sensitivity": {**candidate["time_sensitivity"], "detail": "different guidance"}
+                },
+                "time_sensitivity.next_action": {
+                    "time_sensitivity": {**candidate["time_sensitivity"], "next_action": "reject it"}
+                },
+            }
+
+            # When: each displayed field is mutated one at a time.
+            unbound = []
+            for name, patch in mutations.items():
+                mutated = {**candidate, **patch}
+                card_moved = memory_workflow.build_project_memory_review_card(mutated) != baseline_card
+                revision_moved = (
+                    memory_workflow.project_memory_review_revision(mutated) != baseline_revision
+                )
+                if card_moved and not revision_moved:
+                    unbound.append(name)
+
+            # Then: no field the card displays can change without the revision.
+            self.assertEqual(unbound, [])
 
     def test_revision_is_metadata_only_and_never_carries_sensitive_content(self) -> None:
         with TemporaryDirectory() as tmp:
