@@ -7,6 +7,7 @@ from typing import Mapping
 from ..ingress import CHAT_SOURCES
 from ..plugin_bundle.omh.awareness import awareness_route_hint
 from ..routing.action_copy import next_action_label
+from ..routing.route_plan import public_workflow_identifier
 from ..routing.coding_route_actions import CODING_ROUTE_LANE_NEXT_ACTION, CODING_ROUTE_NEXT_ACTIONS
 from ..wrapper.contract import build_chat_interaction_payload
 from .chat_card_coverage import CHAT_CARD_COVERAGE_CASES
@@ -762,8 +763,15 @@ def _evaluate_alignment_case(
         issues.append(f"expected route next action {case.expected_next_action}, observed {observed['route_next_action']}")
     if observed["hint_status"] != "hinted":
         issues.append("missing awareness route hint")
-    if observed["hint_workflow"] != case.expected_workflow:
-        issues.append(f"expected hint workflow {case.expected_workflow}, observed {observed['hint_workflow'] or 'none'}")
+    # The two surfaces speak different vocabularies by design: `route_workflow`
+    # is the internal catalog key every harness and task-card lookup resolves
+    # against, while the hint emits the identifier the installed skills answer
+    # to (#1249). The case pins one expected workflow and each side is compared
+    # in its own vocabulary, so this gate keeps proving agreement instead of
+    # flagging the canonicalization as a mismatch.
+    expected_hint_workflow = public_workflow_identifier(case.expected_workflow)
+    if observed["hint_workflow"] != expected_hint_workflow:
+        issues.append(f"expected hint workflow {expected_hint_workflow}, observed {observed['hint_workflow'] or 'none'}")
     if coding_delivery_lane:
         if observed["hint_next_action"] != CODING_ROUTE_LANE_NEXT_ACTION:
             issues.append(
@@ -780,7 +788,7 @@ def _evaluate_alignment_case(
             issues.append(f"expected hint next action {case.expected_next_action}, observed {observed['hint_next_action'] or 'none'}")
         if observed["hint_next_action"] != observed["route_next_action"]:
             issues.append(f"route/hint next-action mismatch: {observed['route_next_action']} != {observed['hint_next_action']}")
-    if observed["hint_workflow"] != observed["route_workflow"]:
+    if observed["hint_workflow"] != public_workflow_identifier(str(observed["route_workflow"] or "")):
         issues.append(f"route/hint mismatch: {observed['route_workflow']} != {observed['hint_workflow']}")
     if not observed["hint_context_card"]:
         issues.append("missing hint workflow context card")

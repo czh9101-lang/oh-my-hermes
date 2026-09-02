@@ -10,6 +10,7 @@ from omh.plugin_bundle.omh.awareness import awareness_route_hint
 from omh.routing.chat import route_chat_message
 from omh.routing.localization import normalized_phrase, prepare_routing_text, routing_tokens
 from omh.routing.policy import named_coding_agent_delivery_requested
+from omh.routing.route_plan import public_workflow_identifier
 from omh.wrapper.contract import build_chat_interaction_payload
 
 
@@ -17,22 +18,29 @@ CODING_HANDOFF_SKILL = "ultrawork"
 EXECUTOR_READINESS_SKILL = "executor-runtime-readiness"
 CODING_LANES = frozenset({CODING_HANDOFF_SKILL, EXECUTOR_READINESS_SKILL})
 
+# The awareness surface emits the identifier the installed skill answers to,
+# while the chat decision keeps the catalog key (#1249). The matrix therefore
+# carries the public spelling in its awareness column and the lane membership
+# check below is done in the matching vocabulary.
+PUBLIC_CODING_HANDOFF_WORKFLOW = public_workflow_identifier(CODING_HANDOFF_SKILL)
+PUBLIC_CODING_LANES = frozenset(public_workflow_identifier(skill) for skill in CODING_LANES)
+
 # One shared message set for both public routing surfaces. Each entry is
 # (language, message, expected chat skill, expected awareness workflow). The
 # "have codex" row keeps its existing delegation-phrasing owner on the chat side;
 # both surfaces still stay on a coding lane instead of advisor or feedback triage.
 NAMED_EXECUTOR_DELIVERY_MATRIX: tuple[tuple[str, str, str, str], ...] = (
-    ("ko", "claude code로 이 이슈 해결해줘", CODING_HANDOFF_SKILL, CODING_HANDOFF_SKILL),
-    ("ko", "codex로 이 버그 고쳐줘", CODING_HANDOFF_SKILL, CODING_HANDOFF_SKILL),
-    ("ko", "헤르메스 코딩으로 이 이슈 구현해줘", CODING_HANDOFF_SKILL, CODING_HANDOFF_SKILL),
-    ("en", "use claude code to fix this issue", CODING_HANDOFF_SKILL, CODING_HANDOFF_SKILL),
-    ("en", "use codex to fix the login bug", CODING_HANDOFF_SKILL, CODING_HANDOFF_SKILL),
-    ("en", "get codex to open a pr for this fix", CODING_HANDOFF_SKILL, CODING_HANDOFF_SKILL),
-    ("en", "have codex implement this fix", EXECUTOR_READINESS_SKILL, CODING_HANDOFF_SKILL),
-    ("ja", "codexでこの問題を修正して", CODING_HANDOFF_SKILL, CODING_HANDOFF_SKILL),
-    ("ja", "claude codeでこのissueを解決して", CODING_HANDOFF_SKILL, CODING_HANDOFF_SKILL),
-    ("zh", "用 codex 修复这个问题", CODING_HANDOFF_SKILL, CODING_HANDOFF_SKILL),
-    ("zh", "用 claude code 实现这个功能", CODING_HANDOFF_SKILL, CODING_HANDOFF_SKILL),
+    ("ko", "claude code로 이 이슈 해결해줘", CODING_HANDOFF_SKILL, PUBLIC_CODING_HANDOFF_WORKFLOW),
+    ("ko", "codex로 이 버그 고쳐줘", CODING_HANDOFF_SKILL, PUBLIC_CODING_HANDOFF_WORKFLOW),
+    ("ko", "헤르메스 코딩으로 이 이슈 구현해줘", CODING_HANDOFF_SKILL, PUBLIC_CODING_HANDOFF_WORKFLOW),
+    ("en", "use claude code to fix this issue", CODING_HANDOFF_SKILL, PUBLIC_CODING_HANDOFF_WORKFLOW),
+    ("en", "use codex to fix the login bug", CODING_HANDOFF_SKILL, PUBLIC_CODING_HANDOFF_WORKFLOW),
+    ("en", "get codex to open a pr for this fix", CODING_HANDOFF_SKILL, PUBLIC_CODING_HANDOFF_WORKFLOW),
+    ("en", "have codex implement this fix", EXECUTOR_READINESS_SKILL, PUBLIC_CODING_HANDOFF_WORKFLOW),
+    ("ja", "codexでこの問題を修正して", CODING_HANDOFF_SKILL, PUBLIC_CODING_HANDOFF_WORKFLOW),
+    ("ja", "claude codeでこのissueを解決して", CODING_HANDOFF_SKILL, PUBLIC_CODING_HANDOFF_WORKFLOW),
+    ("zh", "用 codex 修复这个问题", CODING_HANDOFF_SKILL, PUBLIC_CODING_HANDOFF_WORKFLOW),
+    ("zh", "用 claude code 实现这个功能", CODING_HANDOFF_SKILL, PUBLIC_CODING_HANDOFF_WORKFLOW),
 )
 
 # Overroute guards: advisor requests that name Claude without any coding-delivery
@@ -70,7 +78,7 @@ class NamedExecutorPrecedenceTests(unittest.TestCase):
                 self.assertEqual(route["confidence"], "high")
                 self.assertEqual(hint["selected_workflow"], hint_workflow)
                 self.assertIn(route["selected_skill"], CODING_LANES)
-                self.assertIn(hint["selected_workflow"], CODING_LANES)
+                self.assertIn(hint["selected_workflow"], PUBLIC_CODING_LANES)
 
     def test_named_executor_delivery_never_selects_advisor_or_feedback_lanes(self) -> None:
         for language, message, _chat_skill, _hint_workflow in NAMED_EXECUTOR_DELIVERY_MATRIX:
@@ -83,8 +91,11 @@ class NamedExecutorPrecedenceTests(unittest.TestCase):
         route = route_chat_message(message)
         hint = awareness_route_hint(message)
 
-        self.assertEqual(route["selected_skill"], hint["selected_workflow"])
+        # Same lane, two vocabularies: the route keeps the catalog key and the
+        # hint emits the installed-skill identifier (#1249).
+        self.assertEqual(public_workflow_identifier(route["selected_skill"]), hint["selected_workflow"])
         self.assertEqual(route["selected_skill"], CODING_HANDOFF_SKILL)
+        self.assertEqual(hint["selected_workflow"], PUBLIC_CODING_HANDOFF_WORKFLOW)
         self.assertIn("guard:named_coding_agent_delivery", route["recommendations"][0]["matched"])
         self.assertEqual(hint["primary_next_action"], "prepare_one_cycle_delivery")
         self.assertNotEqual(hint["hints"][0]["id"], "customer_signal")

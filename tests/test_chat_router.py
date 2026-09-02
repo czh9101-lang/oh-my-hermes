@@ -28,6 +28,7 @@ from omh.routing.candidate_handoff import build_candidate_handoff
 from omh.routing.domain_signals import specialist_domain_route_signal
 from omh.routing.localization import normalized_phrase
 from omh.routing.recommend import recommend_skills
+from omh.routing.route_plan import public_workflow_identifier
 from omh.plugin_bundle.omh.awareness import awareness_route_hint, awareness_route_hint_context
 from omh.skills.catalog import primary_harness_for_skill, routable_definitions
 
@@ -558,7 +559,10 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                 self.assertEqual(decision["action"], "dispatch")
                 self.assertEqual(decision["selected_skill"], selected_skill)
                 self.assertEqual(hint["status"], "hinted")
-                self.assertEqual(hint["primary_workflow"], selected_skill)
+                # The decision keeps the internal catalog key; the hint emits
+                # the identifier the installed skill answers to (#1249), so
+                # each side is asserted in its own vocabulary.
+                self.assertEqual(hint["primary_workflow"], public_workflow_identifier(selected_skill))
                 self.assertEqual(hint["primary_next_action"], hint_action)
                 if task_type is None:
                     self.assertIsNone(decision["task_card"])
@@ -4913,7 +4917,10 @@ selected_workflow=ultraprocess
                 decision = route_chat_message(message, source="discord")
                 self.assertEqual(decision["selected_skill"], expected_skill)
                 self.assertEqual(decision["action"], "dispatch")
-                self.assertEqual(awareness_route_hint(message)["primary_workflow"], expected_skill)
+                self.assertEqual(
+                    awareness_route_hint(message)["primary_workflow"],
+                    public_workflow_identifier(expected_skill),
+                )
 
     def test_specialist_domain_descriptive_and_negated_actions_stay_retained(self) -> None:
         cases = (

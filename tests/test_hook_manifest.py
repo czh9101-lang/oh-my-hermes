@@ -640,13 +640,16 @@ class HookManifestTests(unittest.TestCase):
         self.assertEqual(payload["primary_workflow"], "workflow-learning")
         self.assertEqual(payload["selected_workflow"], "workflow-learning")
         self.assertIn(payload["intent_class"], {"meta_discussion", "feedback_signal"})
-        self.assertIn("ultraprocess", payload["mentioned_workflows"])
+        # The legacy spelling is accepted as input and reported under the name
+        # the installed skill answers to (#1249); the runtime term is
+        # engine-agnostic and passes through verbatim.
+        self.assertIn("ulw-process", payload["mentioned_workflows"])
         self.assertIn("Codex", payload["mentioned_runtime_terms"])
-        self.assertIn("ultraprocess", payload["not_executed"])
+        self.assertIn("ulw-process", payload["not_executed"])
         self.assertIn("Codex", payload["not_executed"])
         self.assertIn("selected=workflow-learning", context)
-        self.assertIn("mentioned_workflows=ultraprocess", context)
-        self.assertIn("not_executed=ultraprocess, Codex", context)
+        self.assertIn("mentioned_workflows=ulw-process", context)
+        self.assertIn("not_executed=ulw-process, Codex", context)
         self.assertNotIn("selected=ultraprocess", context)
         self.assertNotIn(message, context)
 
@@ -661,13 +664,13 @@ class HookManifestTests(unittest.TestCase):
         self.assertEqual(payload["primary_workflow"], "workflow-learning")
         self.assertEqual(payload["selected_workflow"], "workflow-learning")
         self.assertIn(payload["intent_class"], {"meta_discussion", "feedback_signal"})
-        self.assertIn("ultraprocess", payload["mentioned_workflows"])
+        self.assertIn("ulw-process", payload["mentioned_workflows"])
         self.assertIn("Codex", payload["mentioned_runtime_terms"])
-        self.assertIn("ultraprocess", payload["not_executed"])
+        self.assertIn("ulw-process", payload["not_executed"])
         self.assertIn("Codex", payload["not_executed"])
         self.assertEqual(payload["hints"][0]["workflow"], "workflow-learning")
         self.assertIn("selected=workflow-learning", context)
-        self.assertIn("not_executed=ultraprocess, Codex", context)
+        self.assertIn("not_executed=ulw-process, Codex", context)
         self.assertNotIn("selected=ultraprocess", context)
         self.assertNotIn(message, context)
 

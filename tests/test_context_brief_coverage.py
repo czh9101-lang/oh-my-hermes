@@ -34,7 +34,7 @@ class ContextBriefCoverageTests(unittest.TestCase):
         self.assertEqual(catalog["observed"]["catalog_recommended_tool"], "omh_capabilities")
 
         coding_status = cases["coding-progress-status"]
-        self.assertEqual(coding_status["observed"]["primary_workflow"], "ultrawork")
+        self.assertEqual(coding_status["observed"]["primary_workflow"], "ulw-work")
         self.assertEqual(coding_status["observed"]["primary_next_action"], "show_coding_handoff_status")
         self.assertTrue(coding_status["observed"]["prompt_context_has_route_hint"])
 

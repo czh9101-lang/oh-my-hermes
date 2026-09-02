@@ -19,6 +19,7 @@ from omh.quality.routing_precision import ROUTING_INTERVENTION_CASES, build_rout
 from omh.plugin_bundle.omh.awareness import awareness_route_hint
 from omh.plugin_bundle.omh.hooks.llm_hooks import pre_llm_call
 from omh.routing.localization import normalized_phrase, routing_tokens
+from omh.routing.route_plan import public_workflow_identifier
 from omh.routing.policy import (
     JIT_LEARN_CURRICULUM_EXCLUSION_PHRASES,
     jit_learn_guard_applies,
@@ -376,7 +377,9 @@ class JitLearnRoutingAndCardContractTests(unittest.TestCase):
                 hint = awareness_route_hint(message)
                 self.assertEqual(interaction.get("route", {}).get("selected_skill"), workflow)
                 self.assertEqual(interaction.get("next_action"), route_action)
-                self.assertEqual(hint.get("selected_workflow"), workflow)
+                # The hint emits the installed-skill identifier (#1249); the
+                # interaction above keeps the catalog key.
+                self.assertEqual(hint.get("selected_workflow"), public_workflow_identifier(workflow))
                 self.assertEqual(hint.get("primary_next_action"), hint_action)
 
         with tempfile.TemporaryDirectory() as omh_home:

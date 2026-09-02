@@ -398,7 +398,7 @@ for message, expected_action, expected_label in cases:
             "label": payload.get("primary_next_action_label"),
         }
     )
-    assert payload.get("primary_workflow") == "loop", observed[-1]
+    assert payload.get("primary_workflow") == "ulw-loop", observed[-1]
     assert payload.get("primary_next_action") == expected_action, observed[-1]
     assert payload.get("primary_next_action_label") == expected_label, observed[-1]
 print(json.dumps(observed, ensure_ascii=False))
@@ -1204,9 +1204,9 @@ print(json.dumps(observed, ensure_ascii=False))
             )
             self.assertIsNotNone(loop_route_context)
             loop_route_hint = loop_route_context["omh_context_brief"]["route_hint"]
-            self.assertEqual(loop_route_hint["primary_workflow"], "loop")
+            self.assertEqual(loop_route_hint["primary_workflow"], "ulw-loop")
             self.assertEqual(loop_route_hint["primary_next_action"], "reframe_north_star")
-            self.assertIn("selected=loop", loop_route_context["context"])
+            self.assertIn("selected=ulw-loop", loop_route_context["context"])
             self.assertIn("next_action=reframe_north_star", loop_route_context["context"])
             self.assertNotIn("next_action=assess_loopability", loop_route_context["context"])
             self.assertNotIn("Make this a 100k-star OSS", loop_route_context["context"])
@@ -1456,13 +1456,16 @@ class UltraperfInstalledAwarenessTests(unittest.TestCase):
         ):
             with self.subTest(message=message):
                 hint = awareness_route_hint(message)
-                self.assertEqual(hint["primary_workflow"], "ultraperf")
+                # The bundle emits the identifier the installed skill answers
+                # to; `ultraperf` stays the internal catalog key (#1249).
+                self.assertEqual(hint["primary_workflow"], "ulw-perf")
 
     def test_ultraperf_display_pair_resolves_in_installed_bundle(self) -> None:
         from omh.plugin_bundle.omh.awareness import awareness_route_hint
 
+        # The display label round-trips: accepted as input, emitted unchanged.
         hint = awareness_route_hint("run ulw-perf on the api and worker")
-        self.assertEqual(hint["primary_workflow"], "ultraperf")
+        self.assertEqual(hint["primary_workflow"], "ulw-perf")
 
 
 class HermesProfileSyncTests(unittest.TestCase):
