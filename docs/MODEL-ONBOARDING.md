@@ -116,7 +116,10 @@ omh model-chains set architect "claude-fable-5-1:xhigh, claude-mythos-5-1:xhigh,
 ```
 
 `dispatch-models.json` (the Claude Code profile's `--model`) is gated on the
-CLI's own account, not on any provider. Record which lane got the new id.
+CLI's own account, not on any provider; `providers.json` (the setup
+interview's record of held providers and subscriptions) reorders chains per
+machine, so a new id whose family no confirmed provider serves lands behind
+the served entries automatically. Record which lane got the new id.
 An id the resolving provider does not serve is not an error to hide: the
 provider's rejection comes back as a normal result and the chain falls
 through, which is exactly why the older generation stays behind the new one.

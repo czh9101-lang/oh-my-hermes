@@ -14,6 +14,7 @@ from ..hermes_delegation import (
     mixture_chain_overrides_path,
     model_provider_routes_path,
     resolve_provider_model,
+    effective_mixture_category_chains,
 )
 from ..host_observation import OBSERVATION_SCHEMA, attach_public_observation, observe_plugin_tool_call
 
@@ -151,12 +152,12 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
     hermes_home = str(args.get("hermes_home", "") or "") or None
     omh_home = str(args.get("omh_home", "") or "") or None
     # Every chain read below honors the user's routing/model-chains.json
-    # overrides; the category vocabulary itself stays the shipped closed set.
-    overrides, override_status = load_mixture_chain_overrides(omh_home)
-    chains = {
-        name: overrides.get(name, chain)
-        for name, chain in HERMES_MIXTURE_CATEGORY_CHAINS.items()
-    }
+    # overrides and the provider-entitlement reorder (routing/providers.json);
+    # the category vocabulary itself stays the shipped closed set. One
+    # function owns that composition so `omh model-chains show`, the HUD
+    # label projection, and this dispatch path never disagree on a head.
+    _overrides, override_status = load_mixture_chain_overrides(omh_home)
+    chains = effective_mixture_category_chains(omh_home)
     # Chains name models the way a person says them. A host that reaches
     # models through a provider needs a provider id and that provider's own
     # (often namespaced) model string; routing/model-providers.json supplies

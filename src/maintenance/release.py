@@ -580,7 +580,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # and supersession rules, the decision-recall wiring); the file convention,
 # lifecycle table, and review checklists live in the new on-demand
 # decision-records reference outside this count; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 865332
+# 865332 -> 865700: `model-setup` names the provider-entitlement document the
+# interactive setup writes (~/.omh/routing/providers.json) and the one rule
+# it implies — served entries lead, nothing is removed, a CLI subscription
+# only seeds the Maestro lane — so Hermes explains the reordered chains it
+# will see instead of calling them drift; one sentence, warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 865700
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

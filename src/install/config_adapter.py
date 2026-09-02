@@ -169,6 +169,34 @@ def plugin_enablement(config_text: str) -> dict[str, list[str]]:
     return lists
 
 
+def configured_provider_ids(config_text: str) -> list[str]:
+    """The provider ids Hermes config names: `providers.<id>` keys plus `model.provider`.
+
+    Read-only and line-shaped like `plugin_enablement`; the core stays
+    dependency-free. Order is config order with `model.provider` first when
+    it is not already a `providers:` key, and never contains a value — only
+    the ids the `omh setup` provider interview asks about.
+    """
+    ids: list[str] = []
+    in_providers = False
+    for line in config_text.splitlines():
+        stripped = line.strip()
+        if not line.startswith(" ") and stripped:
+            in_providers = stripped == "providers:"
+            continue
+        if not in_providers or not stripped or stripped.startswith("#"):
+            continue
+        if line.startswith("  ") and not line.startswith("    "):
+            key, separator, _rest = stripped.partition(":")
+            key = key.strip().strip("\"'")
+            if separator and key and key not in ids:
+                ids.append(key)
+    default_provider = model_scalar_selection(config_text, "provider")
+    if default_provider and default_provider not in ids:
+        ids.insert(0, default_provider)
+    return ids
+
+
 def plugin_is_enabled(config_text: str, name: str) -> bool:
     listed = plugin_enablement(config_text)
     return name in listed["enabled"] and name not in listed["disabled"]

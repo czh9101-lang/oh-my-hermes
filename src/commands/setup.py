@@ -40,6 +40,7 @@ from ..config_adapter import (
     ConfigChange,
     activate_omh_skin,
     activate_tui_interface,
+    configured_provider_ids,
     display_interface_selection,
     display_skin_selection,
     ensure_external_dir,
@@ -2355,6 +2356,252 @@ def _ask_maestro_delegation_choice(args: argparse.Namespace, paths: OmhPaths, la
         category_maestro_interview(paths)
 
 
+# Env-key hints for Hermes' builtin providers. Hermes reaches these through a
+# key in `$HERMES_HOME/.env` (or the process environment) rather than through
+# a `providers:` block, so config keys alone never surface them. Only the
+# variable NAME is read — never its value — and every hint is still confirmed
+# by the operator before it is recorded. Kinds are the entitlement vocabulary.
+_ENV_KEY_PROVIDER_HINTS: dict[str, tuple[str, str]] = {
+    "ANTHROPIC_API_KEY": ("anthropic", "anthropic"),
+    "OPENAI_API_KEY": ("openai", "openai"),
+    "OPENROUTER_API_KEY": ("openrouter", "openrouter"),
+    "OPENGATEWAY_API_KEY": ("opengateway", "gateway"),
+    "ZAI_API_KEY": ("zai", "zai"),
+    "DEEPSEEK_API_KEY": ("deepseek", "deepseek"),
+    "XAI_API_KEY": ("xai", "xai"),
+    "GEMINI_API_KEY": ("gemini", "gemini"),
+    "GOOGLE_API_KEY": ("google", "google"),
+    "MOONSHOT_API_KEY": ("kimi-coding", "kimi-coding"),
+    "QWEN_API_KEY": ("qwen", "qwen-oauth"),
+}
+# `model.provider: auto` is Hermes' resolution mode, not an account.
+_NON_PROVIDER_IDS = frozenset({"auto"})
+
+
+def _env_key_names(paths: OmhPaths) -> set[str]:
+    """Variable NAMES present in `$HERMES_HOME/.env` or the environment; no values."""
+    names = {name for name in os.environ if name in _ENV_KEY_PROVIDER_HINTS}
+    env_path = paths.hermes_home / ".env"
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return names
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].lstrip()
+        name, separator, _value = stripped.partition("=")
+        if separator and name.strip() in _ENV_KEY_PROVIDER_HINTS:
+            names.add(name.strip())
+    return names
+
+
+def _provider_candidates(paths: OmhPaths) -> list[tuple[str, str]]:
+    """Provider ids worth asking about, each with its default kind, in ask order.
+
+    Config keys first (`providers.<id>`, `model.provider`) with `gateway` as
+    the default kind, then env-key hints with their vendor kind. Ids that the
+    entitlement document would reject (non-token keys such as YAML merge
+    markers) and Hermes' `auto` mode are skipped rather than asked.
+    """
+    from ..plugin_bundle.omh.hermes_delegation import PROVIDER_KIND_GATEWAY, is_provider_id_token
+
+    config_text = read_config(paths.hermes_config_path) if paths.hermes_config_path.exists() else ""
+    candidates: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for provider_id in configured_provider_ids(config_text):
+        if provider_id in _NON_PROVIDER_IDS or not is_provider_id_token(provider_id) or provider_id in seen:
+            continue
+        seen.add(provider_id)
+        candidates.append((provider_id, PROVIDER_KIND_GATEWAY))
+    for name in sorted(_env_key_names(paths)):
+        provider_id, kind = _ENV_KEY_PROVIDER_HINTS[name]
+        if provider_id in seen:
+            continue
+        seen.add(provider_id)
+        candidates.append((provider_id, kind))
+    return candidates
+
+
+def _ask_provider_entitlements(args: argparse.Namespace, paths: OmhPaths, language: str) -> None:
+    """Ask, at most once, which providers and subscription CLIs this machine holds.
+
+    Every account is different, and the shipped chains cannot know which of
+    their entries this operator can actually reach. The answer is recorded as
+    `~/.omh/routing/providers.json` (provider id -> kind, plus the confirmed
+    subscription CLIs); `effective_mixture_category_chains` then reorders each
+    chain so the reachable entries lead, without dropping anything. Only the
+    interactive wizard reaches this: `--yes`, `--no-interactive`, `--json`,
+    and runs without `--interactive` on a non-TTY ask nothing and write
+    nothing. Detection is read-only (config keys, env-key names, PATH
+    presence); no provider or CLI is invoked.
+
+    A confirmed Claude Code subscription is a Maestro-lane entitlement: the
+    Hermes lane cannot spend it (Hermes needs an API provider), so the only
+    routing consequence is the Claude Code `--model` preference, seeded to the
+    Claude chain head when the operator has not set one.
+    """
+    if hasattr(args, "_provider_entitlements"):
+        return
+    from ..plugin_bundle.omh.hermes_delegation import (
+        MULTI_VENDOR_PROVIDER_KINDS,
+        PROVIDER_ENTITLEMENTS_SCHEMA_VERSION,
+        PROVIDER_FAMILY_VOCABULARY,
+        PROVIDER_KIND_GATEWAY,
+        PROVIDER_KIND_UNKNOWN,
+        SUBSCRIPTION_CLI_PROFILES,
+        is_provider_id_token,
+        load_provider_entitlements,
+        provider_entitlements_path,
+    )
+
+    existing, existing_status = load_provider_entitlements(paths.omh_home)
+    candidates = _provider_candidates(paths)
+    detected = _detect_external_cli_profiles()
+    detected_profiles = [
+        profile
+        for profile in SUBSCRIPTION_CLI_PROFILES
+        if detected.get(profile, {}).get("binary_present")
+    ]
+    if not candidates and not detected_profiles:
+        args._provider_entitlements = None
+        return
+    use_color = _use_color()
+    if existing_status.startswith("invalid:"):
+        print(_color(tr(language, "provider_entitlements_invalid", status=existing_status), "33", use_color))
+    if not _ask_yes_no(
+        tr(language, "provider_entitlements_prompt"),
+        default=existing_status != "applied",
+        use_color=use_color,
+        note=tr(language, "provider_entitlements_note"),
+        language=language,
+    ):
+        args._provider_entitlements = None
+        return
+
+    previous_providers = dict(existing.get("providers", {})) if existing else {}
+    previous_clis = list(existing.get("subscription_clis", [])) if existing else []
+    kinds = (PROVIDER_KIND_GATEWAY, *PROVIDER_FAMILY_VOCABULARY, PROVIDER_KIND_UNKNOWN)
+    kind_options = [
+        {
+            "choice": str(index + 1),
+            "value": kind,
+            "label": kind,
+            "description": tr(language, "provider_kind_relay") if kind in MULTI_VENDOR_PROVIDER_KINDS else "",
+        }
+        for index, kind in enumerate(kinds)
+    ]
+
+    def ask_kind(provider_id: str, default_kind: str) -> str:
+        default_choice = next(option["choice"] for option in kind_options if option["value"] == default_kind)
+        return _ask_single_choice(
+            tr(language, "provider_kind_title", provider=provider_id),
+            [tr(language, "provider_kind_intro")],
+            kind_options,
+            default_choice=default_choice,
+            use_color=use_color,
+            language=language,
+        )
+
+    providers: dict[str, str] = {}
+    for provider_id, hinted_kind in candidates:
+        if _ask_yes_no(
+            tr(language, "provider_hold_prompt", provider=provider_id),
+            default=provider_id in previous_providers or not previous_providers,
+            use_color=use_color,
+            language=language,
+        ):
+            providers[provider_id] = ask_kind(provider_id, previous_providers.get(provider_id, hinted_kind))
+    # Providers Hermes reaches some other way (a builtin with a key OMH does
+    # not recognize, a gateway named only in a route) can be added by name.
+    while True:
+        extra = _ask(tr(language, "provider_add_prompt"), default="", use_color=use_color).strip()
+        if not extra:
+            break
+        if extra in providers or not is_provider_id_token(extra):
+            print(_color(tr(language, "provider_add_rejected", provider=extra), "31", use_color))
+            continue
+        providers[extra] = ask_kind(extra, previous_providers.get(extra, PROVIDER_KIND_GATEWAY))
+    subscription_clis: list[str] = []
+    for profile in detected_profiles:
+        if _ask_yes_no(
+            tr(language, "subscription_cli_prompt", cli=profile),
+            default=profile in previous_clis or not previous_clis,
+            use_color=use_color,
+            note=tr(language, "subscription_cli_note"),
+            language=language,
+        ):
+            subscription_clis.append(profile)
+
+    document = {
+        "schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION,
+        "providers": providers,
+        "subscription_clis": subscription_clis,
+    }
+    path = provider_entitlements_path(paths.omh_home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps(document, indent=2, sort_keys=True) + "\n")
+    args._provider_entitlements = document
+    print(tr(language, "provider_entitlements_recorded", path=str(path)))
+    if "claude-code" in subscription_clis:
+        seed = _seed_claude_code_dispatch_head(paths)
+        status = str(seed.get("status", ""))
+        if status == "seeded":
+            print(tr(language, "claude_code_dispatch_seeded", model=str(seed.get("model", "")), path=str(seed.get("path", ""))))
+        elif status == "already_present":
+            print(tr(language, "claude_code_dispatch_kept", path=str(seed.get("path", ""))))
+        else:
+            print(_color(tr(language, "claude_code_dispatch_unreadable", path=str(seed.get("path", ""))), "33", use_color))
+
+
+def _seed_claude_code_dispatch_head(paths: OmhPaths) -> dict[str, object]:
+    """Point the Claude Code profile's `--model` at the Claude chain head, once.
+
+    Only a confirmed Claude Code subscription reaches here. An existing
+    `claude-code` entry, whatever its value, is never overwritten; an existing
+    file without one gains the entry. A file the dispatch reader would not
+    accept (wrong or missing `schema_version`, `profiles` not an object,
+    unparsable) is left alone and reported as `unreadable`, so the seed is
+    never a write the reader ignores. The value is the head of the Maestro
+    lane's Claude chain, so it moves with the shipped chain rather than being
+    a second place to maintain.
+    """
+    from ..coding.model_routing import CLAUDE_FRONTIER_CHAIN_MODELS
+
+    path = dispatch_model_preferences_path(paths.omh_home)
+    payload: dict[str, object] = {"path": str(path), "model": CLAUDE_FRONTIER_CHAIN_MODELS[0]}
+    document: dict[str, object] = {
+        "schema_version": DISPATCH_MODEL_PREFERENCE_SCHEMA_VERSION,
+        "profiles": {},
+    }
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            payload["status"] = "unreadable"
+            return payload
+        if (
+            not isinstance(loaded, dict)
+            or loaded.get("schema_version") != DISPATCH_MODEL_PREFERENCE_SCHEMA_VERSION
+            or not isinstance(loaded.get("profiles"), dict)
+        ):
+            payload["status"] = "unreadable"
+            return payload
+        document = loaded
+    profiles = document["profiles"]
+    assert isinstance(profiles, dict)
+    if str(profiles.get("claude-code", "") or "").strip():
+        payload["status"] = "already_present"
+        return payload
+    profiles["claude-code"] = CLAUDE_FRONTIER_CHAIN_MODELS[0]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps(document, indent=2, sort_keys=True) + "\n")
+    payload["status"] = "seeded"
+    return payload
+
+
 def _seed_dispatch_model_preferences_result(paths: OmhPaths, *, dry_run: bool) -> dict[str, object]:
     """Seed the optional per-owner dispatch-model preference document, if absent.
 
@@ -2495,6 +2742,7 @@ def _run_setup_wizard(args: argparse.Namespace, paths, language: str) -> None:
     print(f"{tr(language, 'managed_skills')}: {_color(str(paths.skills_dir), '36', use_color)}")
     _ask_tui_identity_choice(args, paths, language)
     _ask_maestro_delegation_choice(args, paths, language)
+    _ask_provider_entitlements(args, paths, language)
 
     if not args.profile and not getattr(args, "default_executor", None):
         # No upfront coding-owner question: safety-first records "choose" so
