@@ -145,6 +145,7 @@ _NEVER_SPAWNED_STATUSES = frozenset(
         "interrupted",
         "model_choice_required",
         "spawn_ceiling_reached",
+        "review_dispatch_budget_exhausted",
         # A cooldown veto refuses the spawn before the worktree exists, so the
         # unit left nothing behind and a later resume — by which time the
         # window may have reset or the credential been repaired — re-attempts
