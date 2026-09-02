@@ -18,6 +18,11 @@ Rules:
 - When a tracker issue is resolved (folded in or rejected), update
   `reviewed_ref` and `reviewed_on` in the same PR that resolves it.
 - This file is hand-written; no generator owns it.
+- A license read from the GitHub API can be a false negative: the API answers
+  `other` for `Effeilo/claude-code-frontend-skills` because its `LICENSE.md`
+  opens with a logo block above the MIT text. That repository is MIT across
+  every row that cites it, and a tracker run must not "correct" those rows to
+  unlicensed off the API field.
 
 ## Shipped skills
 
@@ -38,12 +43,12 @@ Rules:
 | `llm-app-dev` harness budgets (PR #1246) | delivery | https://github.com/DenisSergeevitch/agents-best-practices | `SKILL.md` + budget/permission references | MIT | 2026-09-01 | dace8b70c563 |
 | `tech-debt-audit` (issue #1235) | maintenance | https://github.com/ksimback/tech-debt-skill | none — no license published, so link-only reference; content built from OMH's own audit spec | none | 2026-09-02 | 5a15c1ca4a92 |
 | `strategy-brief` decision records (issue #1236) | strategy | https://github.com/wshobson/agents | `plugins/documentation-generation/skills/architecture-decision-records/SKILL.md` | MIT | 2026-09-02 | a30778f8c4e6 |
+| `accessibility-audit` rule IDs + fix partition (issue #1261) | accessibility | https://github.com/Effeilo/claude-code-frontend-skills | `front-a11y/front-a11y-rules.md` (rule-ID scheme, severity split, auto-fixable partition) | MIT (see the API false-negative rule above) | 2026-09-02 | 3c9d5a0501ff |
 
 ## Candidate rows (researched, not yet shipped — see the open issues)
 
 | Proposed OMH unit | Upstream repo | Paths | License | Issue |
 | --- | --- | --- | --- | --- |
-| `accessibility-audit` rule IDs + auto-fixable partition | https://github.com/Effeilo/claude-code-frontend-skills | `front-a11y/front-a11y-rules.md` plus the per-syntax sub-files | MIT (see the detection note below) | [#1261](https://github.com/rlaope/oh-my-hermes/issues/1261) |
 | `frontend` Core Web Vitals thresholds + budget contract | https://github.com/rohitg00/awesome-claude-code-toolkit | `skills/frontend-excellence/SKILL.md` (CWV target table, `web-vitals` instrumentation) | Apache-2.0 | [#1262](https://github.com/rlaope/oh-my-hermes/issues/1262) |
 | `agent-evaluation` self-critique / evaluator-optimizer / judge stop rules | https://github.com/github/awesome-copilot | `skills/agentic-eval/SKILL.md` | MIT | [#1263](https://github.com/rlaope/oh-my-hermes/issues/1263) |
 
@@ -56,7 +61,3 @@ Notes on these rows:
   (see the `refactor-plan` row). An index stays a discovery pointer; the row
   names the repository the content actually lives in, because that is what
   the tracker can diff.
-- **Effeilo's license detection is a false negative.** GitHub's license API
-  reports `other` for that repository because `LICENSE.md` opens with a logo
-  block above the MIT text. The license is MIT; a future tracker run that
-  reads the API field should not "correct" this row to unlicensed.
