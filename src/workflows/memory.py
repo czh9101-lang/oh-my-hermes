@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import unicodedata
@@ -863,7 +864,15 @@ def capture_project_memory_candidate(
     # review path even under auto-safe: derived content is a curation act,
     # not a captured observation.
     if bool(policy.get("auto_approve_safe")) and candidate.get("safety", {}).get("status") == "safe" and not duplicate_of and not force_review and not relative_phrase:
-        approved = approve_project_memory_candidate(paths, str(candidate["candidate_id"]), approved_by="auto-safe")
+        # Auto-safe binds to the candidate it just wrote: the revision comes
+        # from that object, so this path proves the same payload it approved
+        # rather than skipping the guard it asks reviewers to carry.
+        approved = approve_project_memory_candidate(
+            paths,
+            str(candidate["candidate_id"]),
+            approved_by="auto-safe",
+            expected_revision=project_memory_review_revision(candidate),
+        )
         record = approved.get("record", {}) if isinstance(approved.get("record"), dict) else {}
         candidate = approved.get("candidate", candidate) if isinstance(approved.get("candidate"), dict) else candidate
         auto_approved = True
@@ -904,12 +913,61 @@ def build_project_memory_review(
     }
 
 
-def build_project_memory_review_card(candidate: dict[str, Any]) -> dict[str, object]:
+def project_memory_review_revision(candidate: dict[str, Any]) -> str:
+    """Fingerprint the candidate payload a review card displays.
+
+    A candidate id is a stable file name, not a version: a recapture, an
+    overwrite, or a supersession leaves the id resolvable while the payload
+    underneath it changed, so a card held open across that change could
+    approve text its reviewer never read. The revision is derived from the
+    displayed projection only -- summary, scope, tags, type, safety verdict,
+    status, creation time, and the content digest that already stands in for
+    the raw content -- so it moves exactly when what the reviewer saw moves,
+    and it stays metadata-only: no raw content ever reaches the digest.
+
+    Deliberately NOT named candidate_revision: that name is already taken
+    repo-wide for the integer record revision on v2 lifecycle candidates and
+    batch items. This is a content fingerprint of one rendered card, not a
+    revision counter, and the two must not be read as the same field.
+
+    The projection is derived FROM the rendered card rather than re-listed
+    here. A hand-maintained field list is the bug this shape removes: it
+    already drifted once -- `time_sensitivity` (the warning that tells a
+    reviewer a fact has a hidden expiry, and what to do about it) was
+    displayed on every card while the fingerprint ignored it, so rewriting
+    that guidance under a candidate id left the revision frozen and a stale
+    card still passed the guard. Building from the card makes "displayed"
+    and "bound" the same set by construction, so a field added to the card
+    tomorrow is covered without anyone remembering this function.
+    """
+    card = _project_memory_review_card_projection(candidate)
+    content_ref = candidate.get("content_ref", {}) if isinstance(candidate.get("content_ref"), dict) else {}
+    projection = {
+        "card": card,
+        # Not displayed, but part of what approval will store, and the digest
+        # already stands in for raw content the card never shows.
+        "schema_version": str(candidate.get("schema_version", "")),
+        "status": str(candidate.get("status", "")),
+        "source_ref": str(candidate.get("source_ref", "")),
+        "retention_class": str(candidate.get("retention_class", "")),
+        "content_sha256": str(content_ref.get("sha256", "")),
+        "content_length": int(content_ref.get("length", 0) or 0),
+    }
+    canonical = json.dumps(projection, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return "rev_" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
+
+
+def _project_memory_review_card_projection(candidate: dict[str, Any]) -> dict[str, object]:
+    """The candidate-derived half of a review card: everything a reviewer reads.
+
+    Static scaffolding -- schema version, the action list, the redaction and
+    claim-boundary labels, and `recommended_action`, which is a pure function
+    of the safety status already here -- is excluded on purpose: those cannot
+    differ between two cards for the same candidate, so binding them would
+    add noise to the fingerprint without adding any guarantee.
+    """
     safety = candidate.get("safety", {}) if isinstance(candidate.get("safety"), dict) else {}
-    safety_status = str(safety.get("status", "needs_review"))
-    recommended_action = "reject" if safety_status == "blocked" else "approve_or_reject"
     return {
-        "schema_version": PROJECT_MEMORY_REVIEW_CARD_SCHEMA_VERSION,
         "candidate_id": str(candidate.get("candidate_id", "")),
         "record_type": str(candidate.get("record_type", "")),
         "summary": str(candidate.get("summary", "")),
@@ -923,6 +981,20 @@ def build_project_memory_review_card(candidate: dict[str, Any]) -> dict[str, obj
             else {}
         ),
         "safety": safety,
+    }
+
+
+def build_project_memory_review_card(candidate: dict[str, Any]) -> dict[str, object]:
+    # The displayed fields come from the same projection the revision hashes,
+    # so a card cannot show a candidate-derived value the fingerprint missed.
+    displayed = _project_memory_review_card_projection(candidate)
+    safety = displayed["safety"] if isinstance(displayed["safety"], dict) else {}
+    safety_status = str(safety.get("status", "needs_review"))
+    recommended_action = "reject" if safety_status == "blocked" else "approve_or_reject"
+    return {
+        "schema_version": PROJECT_MEMORY_REVIEW_CARD_SCHEMA_VERSION,
+        "review_revision": project_memory_review_revision(candidate),
+        **displayed,
         "recommended_action": recommended_action,
         "actions": [
             {"id": "approve_memory", "enabled": safety_status != "blocked"},
@@ -941,46 +1013,92 @@ class LifecycleCandidateError(ValueError):
     """A v2 lifecycle candidate reached the plain approval path."""
 
 
+class StaleMemoryReviewError(ValueError):
+    """A review decision named a candidate revision the store no longer holds."""
+
+
+def candidate_is_review_card_backed(candidate: dict[str, Any]) -> bool:
+    """True when `memory review` renders a card for this candidate.
+
+    Only card-backed candidates can carry a review revision, because the
+    revision IS the card's fingerprint. v2 lifecycle candidates (correction,
+    restore) are staged by the lifecycle path and approved by id without a
+    card ever being rendered, so demanding a revision for them would ask for
+    a value no surface produces.
+    """
+    return (
+        str(candidate.get("schema_version", "")) == PROJECT_MEMORY_CANDIDATE_SCHEMA_VERSION
+        and not str(candidate.get("lifecycle", "") or "")
+    )
+
+
+def _require_review_revision(candidate: dict[str, Any], expected_revision: str) -> None:
+    """Refuse a decision whose card no longer describes the stored candidate.
+
+    Called before any write, and only when the caller supplied a revision:
+    an omitted revision keeps the in-process API working for callers that
+    never rendered a card (auto-safe capture, lifecycle paths, wrappers that
+    predate the field). The CLI is where the revision is required, so an
+    interactive reviewer cannot approve unproven text.
+    """
+    actual = project_memory_review_revision(candidate)
+    if expected_revision != actual:
+        raise StaleMemoryReviewError(
+            f"stale_review: candidate {candidate.get('candidate_id', '')} is now revision {actual}, "
+            f"not the reviewed revision {expected_revision}; re-read the card with "
+            "`omh memory review --candidate <id>` and decide again on what it shows now"
+        )
+
+
 def approve_project_memory_candidate(
     paths: OmhPaths,
     candidate_id: str,
     *,
     approved_by: str = "operator",
     retention_class: str | None = None,
+    expected_revision: str = "",
 ) -> dict[str, object]:
-    candidate = _read_project_memory_candidate(paths, candidate_id)
-    if not candidate:
-        raise FileNotFoundError(candidate_id)
-    # Fail closed on correction/restore candidates: their payload lives under
-    # "replacement", so the plain path would mint a record with an empty
-    # summary and revision 1 -- and that garbage record then blocks the real
-    # reapproval with newer_live_revision_conflict. The CLI catches this and
-    # routes to the lifecycle reapproval executor instead.
-    if str(candidate.get("schema_version", "")) == "project_memory_candidate/v2" or str(candidate.get("lifecycle", "") or ""):
-        raise LifecycleCandidateError(
-            f"candidate {candidate_id} is a lifecycle ({candidate.get('lifecycle', 'v2')}) candidate; "
-            "it must be reapproved through the lifecycle path, not plain approval"
-        )
-    safety = candidate.get("safety", {}) if isinstance(candidate.get("safety"), dict) else {}
-    if safety.get("status") == "blocked":
-        raise ValueError("blocked memory candidates must be rejected or recaptured without protected raw content")
-    approved_at = utc_now()
-    review_id = f"review_{candidate_id}"
-    admission_state = "approved_auto_safe" if approved_by == "auto-safe" else "approved_manual"
-    record = _record_from_candidate(
-        candidate,
-        approved_by=approved_by,
-        approved_at=approved_at,
-        review_id=review_id,
-        admission_state=admission_state,
-        retention_class=retention_class,
-        default_stale_after_days=_cadence_value(read_project_memory_policy(paths), "stale_after_days_default"),
-    )
-    review = _project_memory_review_record(record, review_id=review_id, reviewer=approved_by, decision=admission_state)
-    # The whole mutate sequence holds the store lock so a concurrent retirement
-    # cannot observe a half-written approval. Candidate writes go through the
-    # unlocked helper: the public wrapper acquires this same non-reentrant lock.
+    # Read, validate, and write under ONE hold of the store lock. Reading the
+    # candidate outside the lock made the guard advisory: a recapture landing
+    # between the revision check and the record write would be approved on the
+    # reviewer's behalf, with the stale check having already passed. The
+    # guarantee is "no write on a stale card", and only a read-check-write that
+    # cannot be interleaved can offer it. Everything derived from the candidate
+    # is derived in here too, so nothing is computed from a payload the write
+    # will not match. Candidate writes go through the unlocked helper: the
+    # public wrapper acquires this same non-reentrant lock.
     with file_lock(paths.memory_index_path, private=True):
+        candidate = _read_project_memory_candidate(paths, candidate_id)
+        if not candidate:
+            raise FileNotFoundError(candidate_id)
+        if expected_revision:
+            _require_review_revision(candidate, expected_revision)
+        # Fail closed on correction/restore candidates: their payload lives under
+        # "replacement", so the plain path would mint a record with an empty
+        # summary and revision 1 -- and that garbage record then blocks the real
+        # reapproval with newer_live_revision_conflict. The CLI catches this and
+        # routes to the lifecycle reapproval executor instead.
+        if str(candidate.get("schema_version", "")) == "project_memory_candidate/v2" or str(candidate.get("lifecycle", "") or ""):
+            raise LifecycleCandidateError(
+                f"candidate {candidate_id} is a lifecycle ({candidate.get('lifecycle', 'v2')}) candidate; "
+                "it must be reapproved through the lifecycle path, not plain approval"
+            )
+        safety = candidate.get("safety", {}) if isinstance(candidate.get("safety"), dict) else {}
+        if safety.get("status") == "blocked":
+            raise ValueError("blocked memory candidates must be rejected or recaptured without protected raw content")
+        approved_at = utc_now()
+        review_id = f"review_{candidate_id}"
+        admission_state = "approved_auto_safe" if approved_by == "auto-safe" else "approved_manual"
+        record = _record_from_candidate(
+            candidate,
+            approved_by=approved_by,
+            approved_at=approved_at,
+            review_id=review_id,
+            admission_state=admission_state,
+            retention_class=retention_class,
+            default_stale_after_days=_cadence_value(read_project_memory_policy(paths), "stale_after_days_default"),
+        )
+        review = _project_memory_review_record(record, review_id=review_id, reviewer=approved_by, decision=admission_state)
         _write_project_memory_record(paths, record)
         candidate = {
             **candidate,
@@ -1009,13 +1127,18 @@ def reject_project_memory_candidate(
     *,
     rejected_by: str = "operator",
     reason: str = "",
+    expected_revision: str = "",
 ) -> dict[str, object]:
-    candidate = _read_project_memory_candidate(paths, candidate_id)
-    if not candidate:
-        raise FileNotFoundError(candidate_id)
-    now = utc_now()
-    candidate = {**candidate, "status": "rejected", "reviewed_at": now, "reviewed_by": rejected_by, "rejection_reason": _redact(str(reason or ""))[:300]}
+    # Same single-hold read-check-write as approval: a rejection that races a
+    # recapture must refuse rather than reject text the reviewer never read.
     with file_lock(paths.memory_index_path, private=True):
+        candidate = _read_project_memory_candidate(paths, candidate_id)
+        if not candidate:
+            raise FileNotFoundError(candidate_id)
+        if expected_revision:
+            _require_review_revision(candidate, expected_revision)
+        now = utc_now()
+        candidate = {**candidate, "status": "rejected", "reviewed_at": now, "reviewed_by": rejected_by, "rejection_reason": _redact(str(reason or ""))[:300]}
         _write_project_memory_candidate_unlocked(paths, candidate)
         review = _write_project_memory_review_decision(
             paths,

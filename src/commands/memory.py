@@ -29,6 +29,8 @@ from ..plugin_bundle.omh.metadata import MEMORY_PROVIDER_NAME
 from ..memory import (
     LifecycleCandidateError,
     RejectedDecisionRecallRequest,
+    StaleMemoryReviewError,
+    candidate_is_review_card_backed,
     apply_approved_memory_update_batch,
     apply_memory_attention_change,
     apply_memory_retirement,
@@ -132,15 +134,63 @@ def cmd_memory_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def _review_revision_refusal(candidate_id: str, reason_code: str, detail: str) -> dict[str, object]:
+    """One refused review decision, shaped like every other memory control result."""
+    return {
+        "schema_version": "project_memory_review_refusal/v1",
+        "applied": False,
+        "candidate_id": candidate_id,
+        "reason_code": reason_code,
+        "detail": detail,
+        "next_action": (
+            "Re-read the card with `omh memory review --candidate "
+            f"{candidate_id}` and pass its review_revision with --candidate-revision."
+        ),
+        "claim_boundary": (
+            "A refused project-memory review changed no OMH-local candidate, record, or review decision, "
+            "and never touched Hermes global or internal memory."
+        ),
+    }
+
+
+def _missing_review_revision(paths, args: argparse.Namespace) -> dict[str, object] | None:
+    """Refuse an unproven decision on a candidate the review queue renders a card for.
+
+    Scoped to card-backed candidates on purpose. A v2 correction/restore
+    candidate never gets a card, so requiring a revision there would demand a
+    value no surface produces and break the one approve verb the operator has;
+    those keep their existing lifecycle guard. An unreadable or missing
+    candidate falls through to the workflow call, which owns that error.
+    """
+    if str(getattr(args, "candidate_revision", "") or ""):
+        return None
+    candidate, error = read_json_object_result(paths.memory_dir / "candidates" / f"{args.candidate_id}.json")
+    if candidate is None or error is not None or not candidate_is_review_card_backed(candidate):
+        return None
+    return _review_revision_refusal(
+        str(args.candidate_id),
+        "review_revision_required",
+        "An interactive review decision must name the review revision of the card it read.",
+    )
+
+
 def cmd_memory_approve(args: argparse.Namespace) -> int:
     paths = _paths(args)
+    refusal = _missing_review_revision(paths, args)
+    if refusal is not None:
+        _print_json(refusal)
+        return 1
     try:
         payload = approve_project_memory_candidate(
             paths,
             args.candidate_id,
             approved_by=args.approved_by,
             retention_class=args.retention_class,
+            expected_revision=args.candidate_revision,
         )
+    except StaleMemoryReviewError as exc:
+        _print_json(_review_revision_refusal(str(args.candidate_id), "stale_review", str(exc)))
+        return 1
     except LifecycleCandidateError:
         if args.retention_class is not None:
             raise OmhError(
@@ -168,13 +218,22 @@ def cmd_memory_approve(args: argparse.Namespace) -> int:
 
 
 def cmd_memory_reject(args: argparse.Namespace) -> int:
+    paths = _paths(args)
+    refusal = _missing_review_revision(paths, args)
+    if refusal is not None:
+        _print_json(refusal)
+        return 1
     try:
         payload = reject_project_memory_candidate(
-            _paths(args),
+            paths,
             args.candidate_id,
             rejected_by=args.rejected_by,
             reason=args.reason,
+            expected_revision=args.candidate_revision,
         )
+    except StaleMemoryReviewError as exc:
+        _print_json(_review_revision_refusal(str(args.candidate_id), "stale_review", str(exc)))
+        return 1
     except FileNotFoundError as exc:
         raise OmhError(f"memory candidate not found: {args.candidate_id}") from exc
     except (OSError, ValueError) as exc:

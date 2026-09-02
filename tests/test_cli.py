@@ -5239,7 +5239,21 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(review["cards"][0]["candidate_id"], candidate_id)
             self.assertIn("not execution", review["claim_boundary"])
 
-            status, stdout, stderr = run_cli(base + ["memory", "approve", candidate_id, "--approved-by", "user"])
+            # The interactive review verbs carry the revision of the card they
+            # acted on, so an approval cannot land on a payload the reviewer
+            # never saw.
+            status, stdout, stderr = run_cli(
+                base
+                + [
+                    "memory",
+                    "approve",
+                    candidate_id,
+                    "--approved-by",
+                    "user",
+                    "--candidate-revision",
+                    review["cards"][0]["review_revision"],
+                ]
+            )
             self.assertEqual(stderr, "")
             self.assertEqual(status, 0)
             approved = json.loads(stdout)
@@ -5264,7 +5278,22 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(blocked["candidate"]["status"], "blocked_review_required")
             self.assertNotIn("token-secret", stdout)
 
-            status, stdout, stderr = run_cli(base + ["memory", "reject", blocked_id, "--reason", "unsafe raw content"])
+            status, stdout, stderr = run_cli(base + ["memory", "review", "--candidate", blocked_id])
+            self.assertEqual(status, 0)
+            blocked_revision = json.loads(stdout)["cards"][0]["review_revision"]
+
+            status, stdout, stderr = run_cli(
+                base
+                + [
+                    "memory",
+                    "reject",
+                    blocked_id,
+                    "--reason",
+                    "unsafe raw content",
+                    "--candidate-revision",
+                    blocked_revision,
+                ]
+            )
             self.assertEqual(stderr, "")
             self.assertEqual(status, 0)
             rejected = json.loads(stdout)

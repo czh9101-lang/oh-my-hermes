@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import threading
+from contextlib import contextmanager
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from _local_package import load_local_package
 from _platform_support import requires_posix, requires_posix_permissions
@@ -18,6 +20,7 @@ from omh.coding_lifecycle import start_codex_delegation_lifecycle
 from omh.plugin_bundle.omh import memory_governance
 from omh.workflows import memory as memory_workflow
 from omh.memory import (
+    StaleMemoryReviewError,
     apply_approved_memory_update_batch,
     apply_memory_update_batch,
     approve_project_memory_candidate,
@@ -1006,6 +1009,287 @@ class MemoryContractTests(unittest.TestCase):
             self.assertFalse(apply_result["applied"])
             self.assertFalse((paths.memory_dir / "scopes").exists())
             self.assertNotIn(staged["items"][0]["item_id"], {item["item_id"] for item in handoff["included_context"]})
+
+
+class ProjectMemoryRevisionReviewTests(unittest.TestCase):
+    """Review actions bind to the candidate revision the reviewer actually saw."""
+
+    @staticmethod
+    def _card(paths, candidate_id: str) -> dict:
+        review = build_project_memory_review(paths, candidate_id=candidate_id)
+        return review["cards"][0]
+
+    @staticmethod
+    def _store_bytes(paths) -> dict[str, bytes]:
+        """Every candidate, record, and review-decision file, byte for byte."""
+        return {
+            str(path.relative_to(paths.memory_dir)): path.read_bytes()
+            for name in ("candidates", "records", "reviews")
+            for path in sorted((paths.memory_dir / name).glob("*.json"))
+        }
+
+    def _recapture_same_candidate_id(self, paths, candidate_id: str, summary: str) -> dict:
+        """Overwrite one candidate id with a new payload, as a recapture does."""
+        superseded = capture_project_memory_candidate(paths, summary, record_type="procedure")["candidate"]
+        (paths.memory_dir / "candidates" / f"{superseded['candidate_id']}.json").unlink()
+        replacement = {**superseded, "candidate_id": candidate_id}
+        (paths.memory_dir / "candidates" / f"{candidate_id}.json").write_text(
+            json.dumps(replacement), encoding="utf-8"
+        )
+        return replacement
+
+    def test_stale_review_card_is_rejected_without_writes(self) -> None:
+        # Given: a reviewer holding a card for a candidate that was recaptured
+        # underneath them, so the id still resolves but the payload moved.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(
+                paths, "Run the byte gates before every release", record_type="procedure"
+            )
+            candidate_id = str(captured["candidate"]["candidate_id"])
+            stale_card = self._card(paths, candidate_id)
+            self._recapture_same_candidate_id(paths, candidate_id, "Skip the byte gates when in a hurry")
+            before = self._store_bytes(paths)
+
+            # When: the held card's revision is submitted with the approval.
+            with self.assertRaises(StaleMemoryReviewError) as approving:
+                approve_project_memory_candidate(
+                    paths, candidate_id, expected_revision=str(stale_card["review_revision"])
+                )
+
+            # Then: the review is refused as stale and nothing on disk moved.
+            self.assertIn("stale_review", str(approving.exception))
+            self.assertEqual(self._store_bytes(paths), before)
+            self.assertFalse((paths.memory_dir / "records").exists())
+
+    def test_matching_revision_approves_and_rejects(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            approving = capture_project_memory_candidate(paths, "Deploys go through staging first")["candidate"]
+            rejecting = capture_project_memory_candidate(paths, "Deploys skip staging on Fridays")["candidate"]
+
+            approved = approve_project_memory_candidate(
+                paths,
+                str(approving["candidate_id"]),
+                expected_revision=str(self._card(paths, str(approving["candidate_id"]))["review_revision"]),
+            )
+            rejected = reject_project_memory_candidate(
+                paths,
+                str(rejecting["candidate_id"]),
+                reason="contradicts the staging rule",
+                expected_revision=str(self._card(paths, str(rejecting["candidate_id"]))["review_revision"]),
+            )
+
+            self.assertEqual(approved["decision"], "approved_manual")
+            self.assertEqual(approved["candidate"]["status"], "approved")
+            self.assertTrue((paths.memory_dir / "records" / f"{approved['record']['record_id']}.json").exists())
+            self.assertEqual(rejected["decision"], "rejected")
+            self.assertEqual(rejected["candidate"]["status"], "rejected")
+
+    def test_recaptured_candidate_gets_a_new_revision_and_the_new_one_works(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(
+                paths, "Run the byte gates before every release", record_type="procedure"
+            )
+            candidate_id = str(captured["candidate"]["candidate_id"])
+            first_revision = str(self._card(paths, candidate_id)["review_revision"])
+            self._recapture_same_candidate_id(paths, candidate_id, "Skip the byte gates when in a hurry")
+
+            second_revision = str(self._card(paths, candidate_id)["review_revision"])
+            approved = approve_project_memory_candidate(
+                paths, candidate_id, expected_revision=second_revision
+            )
+
+            self.assertNotEqual(first_revision, second_revision)
+            self.assertEqual(approved["record"]["summary"], "Skip the byte gates when in a hurry")
+
+    def test_omitted_revision_still_approves_for_non_interactive_callers(self) -> None:
+        # Migration safety: the in-process API keeps working without a revision;
+        # only the interactive CLI path requires one.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(paths, "Deploys go through staging first")
+
+            approved = approve_project_memory_candidate(paths, str(captured["candidate"]["candidate_id"]))
+
+            self.assertEqual(approved["decision"], "approved_manual")
+
+    def test_auto_safe_approval_binds_to_the_candidate_it_just_created(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            write_setup_profile(paths, memory_mode="auto-safe")
+
+            captured = capture_project_memory_candidate(
+                paths, "Prefer docs workflow checks for generated workflow docs", record_type="procedure"
+            )
+
+            self.assertTrue(captured["auto_approved"])
+            self.assertEqual(captured["candidate"]["status"], "approved")
+            self.assertEqual(captured["record"]["schema_version"], "project_memory_record/v2")
+
+    def test_replacement_between_check_and_write_cannot_slip_through(self) -> None:
+        # Given: a reviewer approving with the revision their card showed, and
+        # a concurrent recapture that replaces the payload under the same id.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(
+                paths, "Run the byte gates before every release", record_type="procedure"
+            )
+            candidate_id = str(captured["candidate"]["candidate_id"])
+            reviewed_revision = str(self._card(paths, candidate_id)["review_revision"])
+            candidate_path = paths.memory_dir / "candidates" / f"{candidate_id}.json"
+            replacement = {
+                **json.loads(candidate_path.read_text(encoding="utf-8")),
+                "summary": "Skip the byte gates when in a hurry",
+            }
+            # The recapture is a real mutator: it takes the store lock, as
+            # every mutating memory path does. It is released at the door of
+            # the approval's critical section and completes before the
+            # approval acquires the lock, so the payload is already replaced
+            # when the decision's protected section begins. A decision that
+            # validated its revision before that point is working from a read
+            # the store has since invalidated, and would approve text the
+            # reviewer never saw; a decision that reads and validates inside
+            # the lock sees the replacement and must refuse.
+            approval_reached_lock = threading.Event()
+            replacement_written = threading.Event()
+            failures: list[BaseException] = []
+
+            def replace_candidate() -> None:
+                try:
+                    self.assertTrue(approval_reached_lock.wait(timeout=10))
+                    with file_lock(paths.memory_index_path, private=True):
+                        candidate_path.write_text(json.dumps(replacement), encoding="utf-8")
+                except BaseException as error:  # surfaced in the main thread
+                    failures.append(error)
+                finally:
+                    replacement_written.set()
+
+            real_lock = memory_workflow.file_lock
+
+            @contextmanager
+            def lock_once_the_replacement_is_durable(lock_path, **kwargs):
+                approval_reached_lock.set()
+                self.assertTrue(replacement_written.wait(timeout=10))
+                with real_lock(lock_path, **kwargs) as held:
+                    yield held
+
+            writer = threading.Thread(target=replace_candidate)
+            writer.start()
+            try:
+                # When: the approval submits the revision its card showed.
+                with patch.object(
+                    memory_workflow, "file_lock", lock_once_the_replacement_is_durable
+                ):
+                    with self.assertRaises(StaleMemoryReviewError) as approving:
+                        approve_project_memory_candidate(
+                            paths, candidate_id, expected_revision=reviewed_revision
+                        )
+            finally:
+                approval_reached_lock.set()
+                writer.join(timeout=10)
+                self.assertFalse(writer.is_alive())
+                self.assertEqual(failures, [])
+
+            # Then: the decision is refused, and no record, review decision, or
+            # candidate mutation was written on the payload nobody reviewed.
+            self.assertIn("stale_review", str(approving.exception))
+            self.assertFalse((paths.memory_dir / "records").exists())
+            self.assertFalse((paths.memory_dir / "reviews").exists())
+            stored = json.loads(candidate_path.read_text(encoding="utf-8"))
+            self.assertEqual(stored["status"], "pending_review")
+            self.assertEqual(stored["summary"], replacement["summary"])
+
+    def test_displayed_time_sensitivity_change_moves_the_revision(self) -> None:
+        # Given: a candidate whose card displays a time-sensitivity warning --
+        # the reviewer reads `detail` and `next_action` to decide whether the
+        # relative-time phrase is acceptable, so both are decision inputs.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(paths, "The contract expires in 3 weeks")
+            candidate_id = str(captured["candidate"]["candidate_id"])
+            candidate_path = paths.memory_dir / "candidates" / f"{candidate_id}.json"
+            before_card = self._card(paths, candidate_id)
+            self.assertIn("time_sensitivity", before_card)
+
+            # When: only the displayed time-sensitivity guidance is rewritten
+            # under the same candidate id, leaving every other field alone.
+            stored = json.loads(candidate_path.read_text(encoding="utf-8"))
+            stored["time_sensitivity"] = {
+                **stored["time_sensitivity"],
+                "detail": "Superseded guidance: this deadline already passed and the fact now reads wrong.",
+                "next_action": "Reject this candidate; do not approve it as-is.",
+            }
+            candidate_path.write_text(json.dumps(stored), encoding="utf-8")
+            after_card = self._card(paths, candidate_id)
+
+            # Then: the card shows different guidance, so the revision that
+            # fingerprints it must have moved -- and the old card must be stale.
+            self.assertNotEqual(after_card["time_sensitivity"], before_card["time_sensitivity"])
+            self.assertNotEqual(after_card["review_revision"], before_card["review_revision"])
+            with self.assertRaises(StaleMemoryReviewError):
+                approve_project_memory_candidate(
+                    paths, candidate_id, expected_revision=str(before_card["review_revision"])
+                )
+
+    def test_every_displayed_candidate_field_is_bound_to_the_revision(self) -> None:
+        # Given: a rendered card and the exact set of fields it displays that
+        # come from the candidate. Static labels (schema, actions, boundary)
+        # are not candidate-derived, so they are not revision inputs.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(
+                paths, "The audit window closes in 2 days", record_type="procedure", tags=["audit"]
+            )
+            candidate = dict(captured["candidate"])
+            baseline_card = memory_workflow.build_project_memory_review_card(candidate)
+            baseline_revision = memory_workflow.project_memory_review_revision(candidate)
+            mutations: dict[str, dict] = {
+                "summary": {"summary": "The audit window never closes"},
+                "record_type": {"record_type": "constraint"},
+                "scope": {"scope": {"kind": "project", "ref": "other-project"}},
+                "tags": {"tags": ["unaudited"]},
+                "created_at": {"created_at": "2999-12-31T23:59:59Z"},
+                "duplicate_of": {"duplicate_of": "rec_previously_stored"},
+                "safety.status": {"safety": {**candidate["safety"], "status": "blocked"}},
+                "safety.extra": {"safety": {**candidate["safety"], "safe_to_auto_approve": True}},
+                "time_sensitivity.detail": {
+                    "time_sensitivity": {**candidate["time_sensitivity"], "detail": "different guidance"}
+                },
+                "time_sensitivity.next_action": {
+                    "time_sensitivity": {**candidate["time_sensitivity"], "next_action": "reject it"}
+                },
+            }
+
+            # When: each displayed field is mutated one at a time.
+            unbound = []
+            for name, patch in mutations.items():
+                mutated = {**candidate, **patch}
+                card_moved = memory_workflow.build_project_memory_review_card(mutated) != baseline_card
+                revision_moved = (
+                    memory_workflow.project_memory_review_revision(mutated) != baseline_revision
+                )
+                if card_moved and not revision_moved:
+                    unbound.append(name)
+
+            # Then: no field the card displays can change without the revision.
+            self.assertEqual(unbound, [])
+
+    def test_revision_is_metadata_only_and_never_carries_sensitive_content(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            captured = capture_project_memory_candidate(
+                paths,
+                "Deploy runbook lives in the ops repo",
+                content="password=hunter2-not-persisted",
+            )
+            candidate_id = str(captured["candidate"]["candidate_id"])
+
+            card = self._card(paths, candidate_id)
+
+            self.assertNotIn("hunter2-not-persisted", json.dumps(card))
+            self.assertRegex(str(card["review_revision"]), r"^rev_[0-9a-f]{32}$")
 
 
 class RetirementApplyTests(unittest.TestCase):
