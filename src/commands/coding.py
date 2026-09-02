@@ -2075,6 +2075,9 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
             resume_journal=resume_journal,
+            goal_attempt_id=args.goal_attempt_id,
+            goal_attempt_progressed=bool(args.goal_attempt_progressed),
+            review_dispatch_budget=args.review_dispatch_budget,
             **recovery_kwargs,
         )
         _print_json(summary)
@@ -2110,6 +2113,9 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
             resume_journal=resume_journal,
+            goal_attempt_id=args.goal_attempt_id,
+            goal_attempt_progressed=bool(args.goal_attempt_progressed),
+            review_dispatch_budget=args.review_dispatch_budget,
             **recovery_kwargs,
         )
     except ValueError as exc:
@@ -2594,6 +2600,22 @@ def _add_coding_commands(sub) -> None:
         "--run-verification",
         action="store_true",
         help="Run each unit's contract verification_commands in its worktree after its sidecar validates.",
+    )
+    fanout_dispatch.add_argument(
+        "--goal-attempt-id",
+        default="attempt-1",
+        help="Stable identity for the current goal attempt (default: attempt-1).",
+    )
+    fanout_dispatch.add_argument(
+        "--goal-attempt-progressed",
+        action="store_true",
+        help="Allow a new attempt id to reset review allowances after concrete progress.",
+    )
+    fanout_dispatch.add_argument(
+        "--review-dispatch-budget",
+        type=int,
+        default=1,
+        help="Maximum eligible dispatches per normalized reviewer role and goal attempt.",
     )
     fanout_dispatch.add_argument(
         "--resume-journal",

@@ -60,6 +60,11 @@ def fanout_run_journal_path(paths: OmhPaths, fanout_id: str) -> Path:
     return _managed_fanout_dir(paths, _validated_fanout_id(fanout_id)) / "run_journal.json"
 
 
+def fanout_review_dispatch_budget_path(paths: OmhPaths, fanout_id: str) -> Path:
+    """Validated durable review-dispatch budget path for one fanout goal."""
+    return _managed_fanout_dir(paths, _validated_fanout_id(fanout_id)) / "review_dispatch_budget.json"
+
+
 def fanout_contract_provenance_path(paths: OmhPaths, fanout_id: str) -> Path:
     return _managed_fanout_dir(
         paths,

@@ -27,6 +27,7 @@ from .executor_capability_snapshots import (
     complete_executor_capability_snapshot,
     prepared_executor_capability_snapshot,
 )
+from .fanout_review_budget import normalized_review_role
 from .model_routing import MODEL_CATEGORIES, canonical_model_category, model_route_for_unit
 
 _UNIT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -388,7 +389,11 @@ def _normalized_unit(unit: Mapping[str, object], index: int) -> dict[str, object
         "depends_on": sorted(set(depends_on)),
         "model": str(unit.get("model", "") or "").strip(),
         "reasoning_effort": str(unit.get("reasoning_effort", "") or "").strip(),
-        "role": str(unit.get("role", "") or "").strip(),
+        "role": (
+            "review"
+            if normalized_review_role(str(unit.get("role", "") or ""))
+            else str(unit.get("role", "") or "").strip()
+        ),
         # `category` accepts the OMO/ULW ulw-* aliases the resolver already
         # normalizes; validate_fanout_units rejects unknown vocabulary so a
         # typo fails the freeze instead of silently routing by role only.

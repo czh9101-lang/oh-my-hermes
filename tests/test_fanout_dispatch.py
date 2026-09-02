@@ -628,6 +628,277 @@ class FanoutDispatchEngineTests(unittest.TestCase):
         contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, _UNITS))
         return paths, repo, sha, contract
 
+    def test_review_dispatch_budget_is_attempt_scoped(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            by_unit = {entry["unit_id"]: entry for entry in contract["units"]}
+            by_unit["core"]["handoff"]["model_route"] = {
+                "status": "routed",
+                "role": "code-review",
+                "selected_model": "",
+                "selected_reasoning_effort": "",
+            }
+            by_unit["docs"]["handoff"]["model_route"] = {
+                "status": "routed",
+                "role": "manual-qa",
+                "selected_model": "",
+                "selected_reasoning_effort": "",
+            }
+
+            first = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                concurrency=1,
+                only_units=["core", "docs"],
+                runner=_agent_runner(),
+                readiness=_ready,
+                goal_attempt_id="attempt-1",
+                review_dispatch_budget=1,
+            )
+            second_runner = _agent_runner()
+            second = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                concurrency=1,
+                only_units=["core", "docs"],
+                runner=second_runner,
+                readiness=_ready,
+                goal_attempt_id="attempt-1",
+                review_dispatch_budget=1,
+            )
+
+            first_statuses = [entry["status"] for entry in first["units"]]
+            second_by_unit = {entry["unit_id"]: entry for entry in second["units"]}
+            self.assertEqual(first_statuses.count("completed"), 1)
+            self.assertEqual(first_statuses.count("review_dispatch_budget_exhausted"), 1)
+            self.assertEqual(second_by_unit["docs"]["status"], "review_dispatch_budget_exhausted")
+            self.assertEqual(second_by_unit["docs"]["reason_code"], "review_dispatch_no_progress")
+            self.assertEqual(second_runner.spawned, [])
+
+    def test_review_dispatch_budget_reservation_is_atomic(self) -> None:
+        import threading as _threading
+
+        goal = "atomically reserve one review dispatch"
+        units = [
+            {
+                "unit_id": unit_id,
+                "title": unit_id,
+                "owner": "codex",
+                "file_scope": [f"review/{unit_id}/"],
+                "role": role,
+            }
+            for unit_id, role in (("review-a", "review-gate"), ("review-b", "final-gate"))
+        ]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(goal, units))
+            ready_barrier = _threading.Barrier(2)
+            runner = _agent_runner()
+
+            def both_ready(paths_, profile, **kwargs):
+                ready_barrier.wait(timeout=2)
+                return {"status": "ready", "profile": profile}
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=goal,
+                repo_root=repo,
+                base_sha=sha,
+                concurrency=2,
+                runner=runner,
+                readiness=both_ready,
+                goal_attempt_id="attempt-atomic",
+                review_dispatch_budget=1,
+            )
+
+            statuses = [entry["status"] for entry in summary["units"]]
+            self.assertEqual(statuses.count("completed"), 1)
+            self.assertEqual(statuses.count("review_dispatch_budget_exhausted"), 1)
+            self.assertEqual(len(runner.spawned), 1)
+
+    def test_review_dispatch_budget_normalizes_review_role_aliases(self) -> None:
+        goal = "normalize review lane aliases"
+        aliases = ("review", "code-review", "manual-qa", "final-gate")
+        units = [
+            {
+                "unit_id": f"lane-{index}",
+                "title": alias,
+                "owner": "codex",
+                "file_scope": [f"review/{index}/"],
+                "role": alias,
+            }
+            for index, alias in enumerate(aliases)
+        ]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(goal, units))
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=goal,
+                repo_root=repo,
+                base_sha=sha,
+                concurrency=1,
+                runner=_agent_runner(),
+                readiness=_ready,
+                goal_attempt_id="attempt-aliases",
+                review_dispatch_budget=1,
+            )
+
+            statuses = [entry["status"] for entry in summary["units"]]
+            self.assertEqual(statuses.count("completed"), 1)
+            self.assertEqual(statuses.count("review_dispatch_budget_exhausted"), 3)
+
+    def test_review_dispatch_budget_charges_only_after_readiness(self) -> None:
+        goal = "charge only review lanes that pass readiness"
+        units = [
+            {
+                "unit_id": "denied-review",
+                "title": "Denied review",
+                "owner": "codex",
+                "file_scope": ["review/denied/"],
+                "role": "review",
+            },
+            {
+                "unit_id": "ready-review",
+                "title": "Ready review",
+                "owner": "claude-code",
+                "file_scope": ["review/ready/"],
+                "role": "review",
+            },
+        ]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(goal, units))
+
+            def owner_readiness(paths_, profile, **kwargs):
+                return {"status": "missing" if profile == "codex" else "ready", "profile": profile}
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=goal,
+                repo_root=repo,
+                base_sha=sha,
+                concurrency=1,
+                runner=_agent_runner(),
+                readiness=owner_readiness,
+                goal_attempt_id="attempt-readiness",
+                review_dispatch_budget=1,
+            )
+
+            by_unit = {entry["unit_id"]: entry for entry in summary["units"]}
+            self.assertEqual(by_unit["denied-review"]["status"], "executor_not_ready")
+            self.assertEqual(by_unit["ready-review"]["status"], "completed")
+
+    def test_review_dispatch_budget_does_not_charge_non_review_lanes(self) -> None:
+        goal = "leave implementation lanes outside review accounting"
+        units = [
+            {
+                "unit_id": f"build-{index}",
+                "title": f"Build {index}",
+                "owner": "codex",
+                "file_scope": [f"src/{index}/"],
+                "role": "implementation",
+            }
+            for index in range(2)
+        ]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(goal, units))
+            runner = _agent_runner()
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=goal,
+                repo_root=repo,
+                base_sha=sha,
+                concurrency=2,
+                runner=runner,
+                readiness=_ready,
+                goal_attempt_id="attempt-build",
+                review_dispatch_budget=1,
+            )
+
+            self.assertTrue(all(entry["status"] == "completed" for entry in summary["units"]))
+            self.assertEqual(len(runner.spawned), 2)
+
+    def test_review_dispatch_budget_resets_only_for_progressed_new_attempt(self) -> None:
+        goal = "reset review budget only after progress"
+        units = [
+            {
+                "unit_id": f"review-{index}",
+                "title": f"Review {index}",
+                "owner": "codex",
+                "file_scope": [f"review/{index}/"],
+                "role": "review",
+            }
+            for index in range(2)
+        ]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(goal, units))
+            common = {
+                "goal_text": goal,
+                "repo_root": repo,
+                "base_sha": sha,
+                "concurrency": 1,
+                "readiness": _ready,
+                "review_dispatch_budget": 1,
+            }
+            dispatch_fanout(
+                paths,
+                contract,
+                runner=_agent_runner(),
+                goal_attempt_id="attempt-1",
+                **common,
+            )
+
+            denied_runner = _agent_runner()
+            denied = dispatch_fanout(
+                paths,
+                contract,
+                runner=denied_runner,
+                goal_attempt_id="attempt-2",
+                **common,
+            )
+            progressed_runner = _agent_runner()
+            progressed = dispatch_fanout(
+                paths,
+                contract,
+                runner=progressed_runner,
+                goal_attempt_id="attempt-2",
+                goal_attempt_progressed=True,
+                **common,
+            )
+
+            denied_by_unit = {entry["unit_id"]: entry for entry in denied["units"]}
+            progressed_by_unit = {entry["unit_id"]: entry for entry in progressed["units"]}
+            self.assertEqual(denied_by_unit["review-1"]["status"], "review_dispatch_budget_exhausted")
+            self.assertEqual(denied_by_unit["review-1"]["reason_code"], "review_dispatch_attempt_not_progressed")
+            self.assertEqual(denied_runner.spawned, [])
+            self.assertEqual(progressed_by_unit["review-1"]["status"], "completed")
+            self.assertEqual(len(progressed_runner.spawned), 1)
+
     def test_summary_discloses_how_the_pool_width_was_chosen(self) -> None:
         # The command layer resolves the parallelism policy and hands the
         # resolution in; the dispatch record must answer "why did only N run

@@ -89,6 +89,10 @@ from .fanout_journal import (
     resume_counts,
     write_fanout_run_journal,
 )
+from .fanout_review_budget import (
+    ReviewDispatchBudget,
+    normalized_review_role,
+)
 from .inflight import InflightMarkerError, clear_inflight_marker, write_inflight_marker
 from .parallelism_policy import FANOUT_MAX_DEPTH_DEFAULT, FANOUT_RUN_SPAWN_CEILING_DEFAULT
 from .fanout_retry import (
@@ -1232,6 +1236,9 @@ def dispatch_fanout(
     write_line: Callable[[str], None] | None = None,
     hermes_routing: Mapping[str, Any] | None = None,
     hermes_child: Callable[..., Mapping[str, Any]] | None = None,
+    goal_attempt_id: str = "attempt-1",
+    goal_attempt_progressed: bool = False,
+    review_dispatch_budget: int = 1,
 ) -> dict[str, Any]:
     # The spawn guard runs before every other check, including the two
     # boundary re-checks below: it is the only one whose whole job is that no
@@ -1288,6 +1295,13 @@ def dispatch_fanout(
     # Resolved up here rather than beside the summary write below: the dispatch
     # loop needs it to write per-unit in-flight markers while units are running.
     fanout_id = str(contract.get("fanout_id", "") or "")
+    review_budget = ReviewDispatchBudget(
+        paths=paths,
+        fanout_id=fanout_id,
+        attempt_id=goal_attempt_id,
+        limit=review_dispatch_budget,
+        progressed=goal_attempt_progressed,
+    )
     # Observed once per distinct owner, here at the dispatch boundary rather
     # than inside the prompt builder: `build_unit_prompt` stays a pure function
     # of its arguments, so a prompt built without discovery is byte-identical
@@ -1436,6 +1450,7 @@ def dispatch_fanout(
         "rng": rng,
         "sleep": sleep,
         "ignore_limit_signal": ignore_limit_signal,
+        "review_budget": review_budget,
     }
 
     def _dispatch_with_owner_gate(unit: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
@@ -1624,6 +1639,14 @@ def dispatch_fanout(
         ),
         "base_sha": base_sha,
         "claim_boundary": f"{DISPATCH_CLAIM_BOUNDARY} {FANOUT_CLAIM_BOUNDARY}",
+    }
+    summary["review_dispatch_budget"] = {
+        "schema_version": "fanout_review_dispatch_budget/v1",
+        "attempt_id": review_budget.attempt_id,
+        "limit_per_role": review_budget.limit,
+        "progressed": review_budget.progressed,
+        "state_path": str(review_budget.path),
+        "claim_boundary": "Budget accounting is not review, verification, CI, or merge evidence.",
     }
     if concurrency_policy:
         # How the pool width was chosen (policy default vs flag, any clamp)
@@ -2494,6 +2517,7 @@ def _dispatch_unit(
     rng: Callable[[], float] = random.random,
     sleep: Callable[[float], None] = time.sleep,
     ignore_limit_signal: bool = False,
+    review_budget: ReviewDispatchBudget,
 ) -> dict[str, Any]:
     from .model_inventory import catalog_fingerprint_note
 
@@ -2665,6 +2689,35 @@ def _dispatch_unit(
                 else:
                     planned["skill_sequence_source"] = "none"
         return planned
+    review_role = normalized_review_role(_unit_role(unit))
+    if review_role is not None:
+        reservation = review_budget.reserve(review_role, unit_id)
+        if not reservation.granted:
+            reason_codes = {
+                "attempt_not_progressed": "review_dispatch_attempt_not_progressed",
+                "configuration_mismatch": "review_dispatch_budget_configuration_mismatch",
+                "exhausted": "review_dispatch_no_progress",
+            }
+            reason_code = reason_codes.get(reservation.status, "review_dispatch_no_progress")
+            reasons = {
+                "attempt_not_progressed": (
+                    "a new goal attempt was named without explicitly confirming concrete progress"
+                ),
+                "configuration_mismatch": (
+                    "the requested review dispatch budget differs from the durable attempt budget"
+                ),
+                "exhausted": "the normalized reviewer role has no dispatch allowance left in this goal attempt",
+            }
+            return {
+                "unit_id": unit_id,
+                "run_ref": run_ref,
+                "owner": owner,
+                "status": "review_dispatch_budget_exhausted",
+                "reason_code": reason_code,
+                "reason": reasons.get(reservation.status, "review dispatch made no progress"),
+                "review_dispatch_budget": reservation.as_dict(),
+                **_dispatch_status_ladder(),
+            }
     # Claimed here, after the dry-run return and BEFORE the worktree is
     # created: a run that has spent its whole spawn budget must not leave a
     # trail of empty worktrees for units it was never going to start.
@@ -3774,6 +3827,7 @@ def _dependency_failed(result: dict[str, Any] | None) -> bool:
         "unsupported_for_local_dispatch",
         "worktree_failed",
         "not_selected",
+        "review_dispatch_budget_exhausted",
         # A vetoed spawn never ran, so a dependent must block on it exactly as
         # it would on an unready executor -- admitting the dependent would run
         # it against work that does not exist.
