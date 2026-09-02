@@ -44,12 +44,12 @@ Rules:
 | `tech-debt-audit` (issue #1235) | maintenance | https://github.com/ksimback/tech-debt-skill | none — no license published, so link-only reference; content built from OMH's own audit spec | none | 2026-09-02 | 5a15c1ca4a92 |
 | `strategy-brief` decision records (issue #1236) | strategy | https://github.com/wshobson/agents | `plugins/documentation-generation/skills/architecture-decision-records/SKILL.md` | MIT | 2026-09-02 | a30778f8c4e6 |
 | `accessibility-audit` rule IDs + fix partition (issue #1261) | accessibility | https://github.com/Effeilo/claude-code-frontend-skills | `front-a11y/front-a11y-rules.md` (rule-ID scheme, severity split, auto-fixable partition) | MIT (see the API false-negative rule above) | 2026-09-02 | 3c9d5a0501ff |
+| `frontend` web-vitals budgets (issue #1262) | frontend | https://github.com/rohitg00/awesome-claude-code-toolkit | `skills/frontend-excellence/SKILL.md` (CWV threshold table, field-vs-lab note) | Apache-2.0 | 2026-09-02 | ebdf1d596d2c |
 
 ## Candidate rows (researched, not yet shipped — see the open issues)
 
 | Proposed OMH unit | Upstream repo | Paths | License | Issue |
 | --- | --- | --- | --- | --- |
-| `frontend` Core Web Vitals thresholds + budget contract | https://github.com/rohitg00/awesome-claude-code-toolkit | `skills/frontend-excellence/SKILL.md` (CWV target table, `web-vitals` instrumentation) | Apache-2.0 | [#1262](https://github.com/rlaope/oh-my-hermes/issues/1262) |
 | `agent-evaluation` self-critique / evaluator-optimizer / judge stop rules | https://github.com/github/awesome-copilot | `skills/agentic-eval/SKILL.md` | MIT | [#1263](https://github.com/rlaope/oh-my-hermes/issues/1263) |
 
 Notes on these rows:
