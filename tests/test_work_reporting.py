@@ -10,6 +10,12 @@ from _local_package import load_local_package
 load_local_package()
 from omh.external_effect_receipts import read_external_effect_receipts
 from omh.paths import resolve_paths
+from omh.surfaces.work_artifact_copy import (
+    WORK_ARTIFACT_COPY_MANIFEST_SCHEMA_VERSION,
+    build_work_artifact_copy_manifest,
+    select_work_artifact,
+)
+from omh.wrapper.briefing import build_coding_briefing
 from omh.work_reporting import (
     build_background_completion_report,
     build_markdown_export,
@@ -1018,6 +1024,109 @@ class WorkReportingTests(CheckRollupCitationHonestyMixin, unittest.TestCase):
         self.assertNotIn("[OMH Awareness]", rendered)
         self.assertNotIn("Native bridge status context", rendered)
         self.assertNotIn("Evidence boundary: prepared handoffs", rendered)
+
+
+class WorkArtifactCopyTests(unittest.TestCase):
+    """The copy/export manifest lists what exists and hands back only source text.
+
+    Selecting a block is a read: it must return the exact persisted text, keep
+    the prepared boundary attached, report a missing source as unavailable, and
+    never upgrade a prepared artifact into an observed claim.
+    """
+
+    PROMPT_TEMPLATE = "Implement the copy/export surface for {message}."
+
+    def _session(self) -> dict[str, object]:
+        return {
+            "session_id": "wsession-1245",
+            "thread_key": "discord:1245",
+            "source": "discord",
+            "status": "prompt_handoff_prepared",
+            "selected_executor_profile": "claude-code",
+            "plan": {"status": "accepted", "recommended_workflow": "ultrawork"},
+            "prompt_handoff": {
+                "schema_version": "coding_prompt_handoff/v1",
+                "selected_executor_profile": "claude-code",
+                "prompt_template": self.PROMPT_TEMPLATE,
+                "acceptance_criteria": ["Stable ids list", "Exact selected text"],
+                "verification": ["PYTHONPATH=tests uv run python -m unittest tests/test_work_reporting.py"],
+            },
+        }
+
+    def _briefing(self, **overrides: object) -> dict[str, object]:
+        briefing = build_coding_briefing(self._session())
+        briefing.update(overrides)
+        return briefing
+
+    def test_manifest_selects_exact_artifact_with_boundary(self) -> None:
+        # Given a prepared wrapper briefing carrying a prompt handoff.
+        briefing = self._briefing()
+
+        # When the manifest is built and the handoff prompt is selected by id.
+        manifest = build_work_artifact_copy_manifest(briefing, prompt_handoff=self._session()["prompt_handoff"])
+        selection = select_work_artifact(manifest, "handoff_prompt")
+
+        # Then the entry ids are stable and the selection is exact source text.
+        self.assertEqual(manifest["schema_version"], WORK_ARTIFACT_COPY_MANIFEST_SCHEMA_VERSION)
+        self.assertEqual(
+            [str(entry["artifact_id"]) for entry in manifest["artifacts"]],
+            [
+                "handoff_prompt",
+                "acceptance_and_verification",
+                "status_brief",
+                "evidence_gaps",
+                "next_action",
+                "issue_pr_followup",
+            ],
+        )
+        self.assertEqual(selection["availability"], "available")
+        self.assertEqual(selection["boundary"], "prepared_not_observed")
+        self.assertEqual(selection["text"], self.PROMPT_TEMPLATE)
+        self.assertEqual(
+            selection["claim_boundary"],
+            "Copying this artifact is not dispatch, execution, verification, review, CI, "
+            "merge-readiness, or merge evidence.",
+        )
+
+    def test_missing_source_is_unavailable_and_never_synthesized(self) -> None:
+        # Given a briefing with no prompt handoff and no recorded evidence gaps.
+        briefing = self._briefing(work_summary={}, pending_gaps=[])
+
+        # When the manifest is built.
+        manifest = build_work_artifact_copy_manifest(briefing)
+        prompt = select_work_artifact(manifest, "handoff_prompt")
+        gaps = select_work_artifact(manifest, "evidence_gaps")
+
+        # Then missing sources report unavailable with empty text.
+        self.assertEqual(prompt["availability"], "unavailable")
+        self.assertEqual(prompt["text"], "")
+        self.assertEqual(gaps["availability"], "unavailable")
+        self.assertEqual(gaps["text"], "")
+
+    def test_unknown_artifact_id_is_unavailable_not_an_error(self) -> None:
+        # Given a manifest built from a prepared briefing.
+        manifest = build_work_artifact_copy_manifest(self._briefing(), prompt_handoff=self._session()["prompt_handoff"])
+
+        # When an id outside the stable set is selected.
+        selection = select_work_artifact(manifest, "chat_transcript")
+
+        # Then the surface reports it unavailable rather than inventing content.
+        self.assertEqual(selection["availability"], "unavailable")
+        self.assertEqual(selection["reason"], "unknown_artifact_id")
+        self.assertEqual(selection["text"], "")
+
+    def test_copying_never_introduces_an_observed_claim(self) -> None:
+        # Given a prepared-only briefing whose evidence gaps are unobserved.
+        briefing = self._briefing()
+
+        # When every listed artifact is selected.
+        manifest = build_work_artifact_copy_manifest(briefing, prompt_handoff=self._session()["prompt_handoff"])
+        selections = [select_work_artifact(manifest, str(entry["artifact_id"])) for entry in manifest["artifacts"]]
+
+        # Then no selection claims observed evidence.
+        for selection in selections:
+            self.assertEqual(selection["boundary"], "prepared_not_observed")
+            self.assertNotIn("observed_evidence", selection)
 
 
 if __name__ == "__main__":
