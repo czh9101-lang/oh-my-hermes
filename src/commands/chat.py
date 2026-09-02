@@ -31,6 +31,7 @@ from ..wrapper.executor_sessions import (
 )
 from ..wrapper.native_commands import NATIVE_COMMAND_SOURCES, build_native_command_surface
 from ..wrapper.route_hints import build_chat_route_hint_payload
+from ..wrapper.work_artifact_actions import build_work_artifact_copy_action
 from ..wrapper.sessions import (
     WrapperSessionError,
     build_wrapper_session_status,
@@ -764,6 +765,15 @@ def cmd_chat_session_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_chat_session_artifacts(args: argparse.Namespace) -> int:
+    try:
+        status = build_wrapper_session_status(_paths(args), args.session_id)
+    except FileNotFoundError as exc:
+        raise OmhError(f"wrapper session not found: {args.session_id}") from exc
+    _print_json(build_work_artifact_copy_action(status, artifact_id=args.artifact_id or ""))
+    return 0
+
+
 def cmd_chat_session_mission_control(args: argparse.Namespace) -> int:
     try:
         _print_json(build_mission_control(_paths(args), args.session_id))
@@ -1302,6 +1312,21 @@ def _add_chat_commands(sub) -> None:
     session_status = session_sub.add_parser("status")
     session_status.add_argument("session_id")
     session_status.set_defaults(func=cmd_chat_session_status)
+
+    session_artifacts = session_sub.add_parser(
+        "artifacts",
+        help=(
+            "List the copyable work artifacts for one session under stable ids, or print the exact text of "
+            "one with --artifact-id. Prepared metadata only; copying is not dispatch or evidence."
+        ),
+    )
+    session_artifacts.add_argument("session_id")
+    session_artifacts.add_argument(
+        "--artifact-id",
+        default="",
+        help="Return the exact text of one listed artifact instead of the id listing.",
+    )
+    session_artifacts.set_defaults(func=cmd_chat_session_artifacts)
 
     mission_control = session_sub.add_parser(
         "mission-control",

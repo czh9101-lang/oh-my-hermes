@@ -14361,5 +14361,118 @@ class RuntimeTodoCliTests(unittest.TestCase):
             self.assertFalse((Path(omh_home) / "runtime" / "todo.json").exists())
 
 
+class ChatSessionArtifactsCliTests(unittest.TestCase):
+    """The copy/export manifest has to be reachable from an operator command.
+
+    `work_artifact_copy_manifest/v1` and its wrapper action are only a contract
+    until something a person can run lists the stable ids and hands back one
+    exact block. `omh chat session artifacts` is that surface: the group that
+    already owns wrapper sessions.
+    """
+
+    def _base(self, root: Path) -> list[str]:
+        return ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+
+    def _prepared_session(self, base: list[str]) -> str:
+        message = "risky refactor with private-token-123"
+        status, stdout, stderr = run_cli(
+            base + ["chat", "session", "start", "--source", "discord", "--source-event-id", "m1", "--channel-ref", "c1", message]
+        )
+        self.assertEqual((status, stderr), (0, ""))
+        session_id = str(json.loads(stdout)["session"]["session_id"])
+        for argv in (
+            ["chat", "session", "accept-plan", session_id],
+            ["chat", "session", "select-executor", session_id, "claude-code"],
+            ["chat", "session", "prepare-handoff", session_id, message],
+        ):
+            status, _, stderr = run_cli(base + argv)
+            self.assertEqual((status, stderr), (0, ""))
+        return session_id
+
+    def test_artifacts_command_lists_stable_ids_without_body_text(self) -> None:
+        # Given a wrapper session with a prepared handoff.
+        with TemporaryDirectory() as tmp:
+            base = self._base(Path(tmp))
+            session_id = self._prepared_session(base)
+
+            # When an operator lists the session's copyable artifacts.
+            status, stdout, stderr = run_cli(base + ["chat", "session", "artifacts", session_id])
+
+            # Then the stable ids come back and no block body leaks into the listing.
+            self.assertEqual((status, stderr), (0, ""))
+            listing = json.loads(stdout)
+            self.assertEqual(listing["schema_version"], "work_artifact_copy_manifest/v1")
+            self.assertEqual(listing["action"], "list_work_artifacts")
+            self.assertEqual(
+                [str(entry["artifact_id"]) for entry in listing["artifacts"]],
+                [
+                    "handoff_prompt",
+                    "acceptance_and_verification",
+                    "status_brief",
+                    "evidence_gaps",
+                    "next_action",
+                    "issue_pr_followup",
+                ],
+            )
+            for entry in listing["artifacts"]:
+                self.assertNotIn("text", entry)
+
+    def test_artifacts_command_prints_one_exact_block_with_boundary(self) -> None:
+        # Given the same prepared session.
+        with TemporaryDirectory() as tmp:
+            base = self._base(Path(tmp))
+            session_id = self._prepared_session(base)
+
+            # When the operator selects one artifact id.
+            status, stdout, stderr = run_cli(
+                base + ["chat", "session", "artifacts", session_id, "--artifact-id", "status_brief"]
+            )
+
+            # Then exactly that block comes back, prepared-only, with its boundary.
+            self.assertEqual((status, stderr), (0, ""))
+            selection = json.loads(stdout)
+            self.assertEqual(selection["action"], "select_work_artifact")
+            self.assertEqual(selection["artifact"]["artifact_id"], "status_brief")
+            self.assertEqual(selection["artifact"]["availability"], "available")
+            self.assertEqual(selection["artifact"]["boundary"], "prepared_not_observed")
+            self.assertTrue(str(selection["artifact"]["text"]).strip())
+            self.assertIn("not dispatch, execution, verification", selection["artifact"]["claim_boundary"])
+            self.assertEqual(selection["next_action"], "show_status")
+            # The raw task message is never persisted, so it cannot be exported.
+            self.assertNotIn("private-token-123", stdout)
+
+    def test_artifacts_command_reports_unknown_id_as_unavailable(self) -> None:
+        # Given the same prepared session.
+        with TemporaryDirectory() as tmp:
+            base = self._base(Path(tmp))
+            session_id = self._prepared_session(base)
+
+            # When an id outside the stable set is selected.
+            status, stdout, stderr = run_cli(
+                base + ["chat", "session", "artifacts", session_id, "--artifact-id", "chat_transcript"]
+            )
+
+            # Then the command succeeds and reports unavailable instead of inventing text.
+            self.assertEqual((status, stderr), (0, ""))
+            selection = json.loads(stdout)
+            self.assertEqual(selection["artifact"]["availability"], "unavailable")
+            self.assertEqual(selection["artifact"]["reason"], "unknown_artifact_id")
+            self.assertEqual(selection["artifact"]["text"], "")
+
+    def test_artifacts_command_errors_when_no_such_session_exists(self) -> None:
+        # Given an OMH home with no wrapper session of that id.
+        with TemporaryDirectory() as tmp:
+            base = self._base(Path(tmp))
+
+            # When the operator asks for its artifacts.
+            status, stdout, stderr = run_cli(base + ["chat", "session", "artifacts", "ws-missing"])
+
+            # Then it fails as a not-found session rather than printing an empty manifest.
+            # OmhError is the repo's operator-error exit (2), per commands/main.py.
+            self.assertEqual(status, 2)
+            self.assertIn("wrapper session not found", stderr)
+            self.assertEqual(stdout, "")
+
+
 if __name__ == "__main__":
     unittest.main()
