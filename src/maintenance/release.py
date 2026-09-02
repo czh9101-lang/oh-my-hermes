@@ -589,7 +589,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # boundary lines (frontend-refactor, ai-slop-cleaner) and adds one to
 # ralplan, so each side of the phase-planning boundary names the other;
 # three boundary sentences, not new prose; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 866062
+# 866062 -> 867189: `accessibility-audit` gains the rule-ID, fix-partition,
+# and report-shape rules plus the fix-class safety line; four instruction
+# lines on one existing skill, with the rule table and its WCAG mappings in
+# a new on-demand reference outside this count; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 867189
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
