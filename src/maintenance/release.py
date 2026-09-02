@@ -593,7 +593,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # and report-shape rules plus the fix-class safety line; four instruction
 # lines on one existing skill, with the rule table and its WCAG mappings in
 # a new on-demand reference outside this count; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 867189
+# 867189 -> 868268: `frontend` gains the web-vitals budget, attribution, and
+# field-vs-lab rules plus the measurement-conditions safety line; four
+# instruction lines on one existing skill, with the threshold and
+# attribution tables in a new on-demand reference outside this count;
+# warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 868268
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
