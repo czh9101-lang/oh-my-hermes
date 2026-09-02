@@ -585,7 +585,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # it implies — served entries lead, nothing is removed, a CLI subscription
 # only seeds the Maestro lane — so Hermes explains the reordered chains it
 # will see instead of calling them drift; one sentence, warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 865700
+# 865700 -> 866062: the refactor-plan repointing lengthens two existing
+# boundary lines (frontend-refactor, ai-slop-cleaner) and adds one to
+# ralplan, so each side of the phase-planning boundary names the other;
+# three boundary sentences, not new prose; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 866062
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
