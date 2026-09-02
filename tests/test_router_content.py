@@ -11,6 +11,7 @@ from unittest.mock import patch
 from _local_package import load_local_package
 
 load_local_package()
+from omh.chat_router import public_route_payload, route_chat_message
 from omh.routing import recommend as recommend_module
 from omh.routing import chat as chat_module
 from omh.routing import policy as policy_module
@@ -50,6 +51,7 @@ from omh.skills.catalog import (
     primary_harness_for_skill,
     retained_delegation_skill_names,
 )
+from omh.skills.catalog_types import ULW_ENGINE_SKILL_NAMES
 from omh.skills.expert_question_rendering import (
     expert_question_reference_lines,
     expert_questions_markdown,
@@ -112,6 +114,92 @@ FEATURE_SURFACE_EXPOSURES = {
     "skill-health": ("workflow_skill", True),
     "workflow-learning": ("workflow_skill", True),
 }
+
+
+# The internal catalog keys whose public identifier is a `ulw-` label. A legacy
+# key surfacing in public routing output is exactly the #1249 defect.
+LEGACY_ULW_KEYS = frozenset(
+    name for name in ULW_ENGINE_SKILL_NAMES if omh_skill_display_name(name) != name
+)
+
+# One message per legacy input spelling the issue names, plus the bare `ulw`
+# alias. Each must stay routable; none may produce a legacy identifier.
+LEGACY_INPUT_MESSAGES = (
+    "use ralplan to plan this rollout",
+    "ultraqa the setup wizard with hostile install paths",
+    "ultrawork this refactor until the tests pass",
+    "ulw this refactor until the tests pass",
+)
+
+# The shape that builds a full research -> plan -> deliver -> review plan, so
+# more than one ULW engine lands in the same emitted payload.
+MULTI_STAGE_MESSAGE = (
+    "Research current install friction, make a reviewed plan, implement with Codex, "
+    "run code review, and sync docs for a PR."
+)
+
+
+def _canonical_ulw_route_plan(message: str) -> dict[str, object] | None:
+    decision = route_chat_message(message, source="discord", limit=8)
+    plan = public_route_payload(decision).get("workflow_route_plan")
+    return plan if isinstance(plan, dict) else None
+
+
+def _public_selected_workflow(message: str) -> str:
+    """Return the workflow identifier the public route explanation exposes."""
+    decision = route_chat_message(message, source="discord", limit=8)
+    return str(public_route_payload(decision)["route_explanation"]["selected_workflow"])
+
+
+def _canonical_ulw_plan_identifiers(plan: dict[str, object]) -> list[str]:
+    """Return every workflow identifier exposed by a public route plan."""
+    steps = plan.get("steps", [])
+    identifiers = [str(step["skill"]) for step in steps if isinstance(step, dict)]
+    identifiers.append(str(plan.get("primary_skill", "")))
+    next_action = str(plan.get("next_action", ""))
+    identifiers.append(next_action.removeprefix("start_with_"))
+    return [value for value in identifiers if value]
+
+
+class CanonicalUlwWorkflowNameTests(unittest.TestCase):
+    """Canonical ULW identifiers on the public routing surface (issue #1249)."""
+
+    def test_route_plan_emits_only_canonical_ulw_names(self) -> None:
+        plan = _canonical_ulw_route_plan(MULTI_STAGE_MESSAGE)
+        self.assertIsNotNone(plan, "the multi-stage request must build a route plan")
+        assert plan is not None
+
+        identifiers = _canonical_ulw_plan_identifiers(plan)
+        stage_by_skill = {
+            str(step["stage"]): str(step["skill"])
+            for step in plan["steps"]  # type: ignore[index]
+            if isinstance(step, dict)
+        }
+        self.assertEqual(stage_by_skill.get("plan"), "ulw-plan")
+        self.assertEqual(stage_by_skill.get("deliver"), "ulw-work")
+        self.assertEqual(plan["primary_skill"], "ulw-work")
+        for identifier in identifiers:
+            self.assertNotIn(
+                identifier,
+                LEGACY_ULW_KEYS,
+                f"public route plan emitted legacy ULW name {identifier!r}",
+            )
+
+    def test_legacy_ulw_names_stay_accepted_as_input(self) -> None:
+        for message in LEGACY_INPUT_MESSAGES:
+            with self.subTest(message=message):
+                selected = _public_selected_workflow(message)
+                self.assertTrue(
+                    selected.startswith("ulw-"),
+                    f"{message!r} resolved to {selected!r}, not a canonical ULW name",
+                )
+                self.assertNotIn(selected, LEGACY_ULW_KEYS)
+
+    def test_verify_stage_emits_the_canonical_qa_name(self) -> None:
+        selected = _public_selected_workflow(
+            "ultraqa the setup wizard with hostile install paths and stale config"
+        )
+        self.assertEqual(selected, "ulw-qa")
 
 
 class RouterContentTests(unittest.TestCase):
