@@ -3310,7 +3310,7 @@ _DEFINITIONS = [
             "The target is not UI code, or the smell is generic slop, duplication, or dead code outside a component tree; use `ai-slop-cleaner`.",
             "The user wants new UI built or redesigned rather than restructured; use `frontend`.",
             "The user wants findings and a verdict without changing the code; use `code-review`.",
-            "The restructuring crosses module boundaries or changes architecture beyond the component tree; use `ralplan`.",
+            "The restructuring crosses module boundaries or changes architecture beyond the component tree; use `refactor-plan` for the phased execution shape, or `ralplan` first when the direction itself is still contested.",
         ),
         good_example=SkillExample(
             prompt="This dashboard component is 800 lines and has six useState booleans - refactor it without changing behavior.",
@@ -5415,6 +5415,7 @@ _DEFINITIONS = [
             "The request is still too ambiguous to name requirements, non-goals, or acceptance criteria; use `deep-interview` first.",
             "The user asks for one full research-plan-implementation-review-PR cycle; use `ultrawork` (its `delivery_boundary` capability) and keep ralplan as the planning stage.",
             "The change is a small local refactor or cleanup with no architectural or regression risk; use `ultrawork`, or `ai-slop-cleaner` when observable behavior must stay identical.",
+            "The refactor's direction is already decided and what is missing is its execution shape - which files move in which phase, what verifies each phase, where each phase rolls back to; use `refactor-plan`.",
             "The user wants a pure source lookup, citation check, or paper explanation with no implementation plan.",
             "The unresolved work is repository terminology alignment or a project-language decision frontier; use `context` before planning.",
         ),
@@ -5652,7 +5653,7 @@ _DEFINITIONS = [
         phase="cleanup",
         do_not_use_when=(
             "The goal is new or changed behavior rather than removing existing code; a plain refactor, feature, or fix request belongs to `ultrawork`.",
-            "The cleanup would change architecture, module boundaries, or carry regression risk that needs a reviewed plan first; use `ralplan`.",
+            "The cleanup would change architecture or module boundaries and needs its execution shaped into phases first; use `refactor-plan`, or `ralplan` when the direction itself is still contested.",
             "The user wants existing code judged rather than changed; use `code-review` for a bug-first review and `failure-signal-audit` for swallowed failures.",
         ),
         hermes_role="runtime-handoff-guidance",

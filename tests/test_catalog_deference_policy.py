@@ -128,8 +128,14 @@ NON_SKILL_BACKTICKS = frozenset(
 # `code-review`, deletion-first cleanup to `ai-slop-cleaner`, phased execution
 # of a big fix to `refactor-plan`, and release risk to `production-audit`.
 # Four cases, four new pairs, one new deferring owner.
-EXPECTED_DEFERENCE_CASES = 183
-EXPECTED_DEFERENCE_PAIRS = 194
+# The `refactor-plan` repointing gives the phase planner the deference edges
+# its own boundaries already claimed: `frontend-refactor` and
+# `ai-slop-cleaner` hand a boundary-crossing restructure to it (keeping
+# `ralplan` for a contested direction), and `ralplan` hands back a decided
+# refactor that only needs its execution shape. One new case (ralplan's new
+# statement), three new pairs; the two rewritten statements already counted.
+EXPECTED_DEFERENCE_CASES = 184
+EXPECTED_DEFERENCE_PAIRS = 197
 EXPECTED_DEFERRING_OWNERS = 59
 
 # The ratchet. Recording a new inversion must be a visible edit to this number,
