@@ -40,6 +40,7 @@ from ..config_adapter import (
     ConfigChange,
     activate_omh_skin,
     activate_tui_interface,
+    configured_provider_ids,
     display_interface_selection,
     display_skin_selection,
     ensure_external_dir,
@@ -2355,6 +2356,145 @@ def _ask_maestro_delegation_choice(args: argparse.Namespace, paths: OmhPaths, la
         category_maestro_interview(paths)
 
 
+def _ask_provider_entitlements(args: argparse.Namespace, paths: OmhPaths, language: str) -> None:
+    """Ask, at most once, which providers and subscription CLIs this machine holds.
+
+    Every account is different, and the shipped chains cannot know which of
+    their entries this operator can actually reach. The answer is recorded as
+    `~/.omh/routing/providers.json` (provider id -> kind, plus the confirmed
+    subscription CLIs); `effective_mixture_category_chains` then reorders each
+    chain so the reachable entries lead, without dropping anything. Only the
+    interactive wizard reaches this: `--yes`, `--no-interactive`, `--json`,
+    and non-TTY runs ask nothing and write nothing. Detection is read-only
+    (config.yaml keys and PATH presence); no provider or CLI is invoked.
+
+    A confirmed Claude Code subscription is a Maestro-lane entitlement: the
+    Hermes lane cannot spend it (Hermes needs an API provider), so the only
+    routing consequence is the Claude Code `--model` preference, seeded to the
+    Claude chain head when the operator has not set one.
+    """
+    if hasattr(args, "_provider_entitlements"):
+        return
+    from ..plugin_bundle.omh.hermes_delegation import (
+        PROVIDER_ENTITLEMENTS_SCHEMA_VERSION,
+        PROVIDER_KIND_GATEWAY,
+        PROVIDER_KIND_UNKNOWN,
+        PROVIDER_FAMILY_VOCABULARY,
+        load_provider_entitlements,
+        provider_entitlements_path,
+    )
+
+    existing, existing_status = load_provider_entitlements(paths.omh_home)
+    config_text = read_config(paths.hermes_config_path) if paths.hermes_config_path.exists() else ""
+    provider_ids = configured_provider_ids(config_text)
+    detected = _detect_external_cli_profiles()
+    detected_profiles = [profile for profile in EXTERNAL_CLI_PROFILES if detected[profile]["binary_present"]]
+    if not provider_ids and not detected_profiles:
+        args._provider_entitlements = None
+        return
+    use_color = _use_color()
+    if not _ask_yes_no(
+        tr(language, "provider_entitlements_prompt"),
+        default=existing_status == "absent",
+        use_color=use_color,
+        note=tr(language, "provider_entitlements_note"),
+        language=language,
+    ):
+        args._provider_entitlements = None
+        return
+
+    previous_providers = dict(existing.get("providers", {})) if existing else {}
+    previous_clis = list(existing.get("subscription_clis", [])) if existing else []
+    kind_options = [
+        {"choice": str(index + 1), "value": kind, "label": kind}
+        for index, kind in enumerate((PROVIDER_KIND_GATEWAY, *PROVIDER_FAMILY_VOCABULARY, PROVIDER_KIND_UNKNOWN))
+    ]
+    providers: dict[str, str] = {}
+    for provider_id in provider_ids:
+        if _ask_yes_no(
+            tr(language, "provider_hold_prompt", provider=provider_id),
+            default=provider_id in previous_providers or not previous_providers,
+            use_color=use_color,
+            language=language,
+        ):
+            previous_kind = previous_providers.get(provider_id, PROVIDER_KIND_GATEWAY)
+            default_choice = next(
+                option["choice"] for option in kind_options if option["value"] == previous_kind
+            )
+            providers[provider_id] = _ask_single_choice(
+                tr(language, "provider_kind_title", provider=provider_id),
+                [tr(language, "provider_kind_intro")],
+                kind_options,
+                default_choice=default_choice,
+                use_color=use_color,
+                language=language,
+            )
+    subscription_clis: list[str] = []
+    for profile in detected_profiles:
+        if _ask_yes_no(
+            tr(language, "subscription_cli_prompt", cli=profile),
+            default=profile in previous_clis or not previous_clis,
+            use_color=use_color,
+            note=tr(language, "subscription_cli_note"),
+            language=language,
+        ):
+            subscription_clis.append(profile)
+
+    document = {
+        "schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION,
+        "providers": providers,
+        "subscription_clis": subscription_clis,
+    }
+    path = provider_entitlements_path(paths.omh_home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps(document, indent=2, sort_keys=True) + "\n")
+    args._provider_entitlements = document
+    print(tr(language, "provider_entitlements_recorded", path=str(path)))
+    if "claude-code" in subscription_clis:
+        seed = _seed_claude_code_dispatch_head(paths)
+        if seed.get("status") == "seeded":
+            print(tr(language, "claude_code_dispatch_seeded", model=str(seed.get("model", "")), path=str(seed.get("path", ""))))
+
+
+def _seed_claude_code_dispatch_head(paths: OmhPaths) -> dict[str, object]:
+    """Point the Claude Code profile's `--model` at the Claude chain head, once.
+
+    Only a confirmed Claude Code subscription reaches here. An existing
+    `claude-code` entry, whatever its value, is never overwritten; an existing
+    file without one gains the entry. The value is the head of the Maestro
+    lane's Claude chain, so it moves with the shipped chain rather than being a
+    second place to maintain.
+    """
+    from ..coding.model_routing import CLAUDE_FRONTIER_CHAIN_MODELS
+
+    path = dispatch_model_preferences_path(paths.omh_home)
+    payload: dict[str, object] = {"path": str(path), "model": CLAUDE_FRONTIER_CHAIN_MODELS[0]}
+    document: dict[str, object] = {
+        "schema_version": DISPATCH_MODEL_PREFERENCE_SCHEMA_VERSION,
+        "profiles": {},
+    }
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            payload["status"] = "unreadable"
+            return payload
+        if not isinstance(loaded, dict) or not isinstance(loaded.get("profiles"), dict):
+            payload["status"] = "unreadable"
+            return payload
+        document = loaded
+    profiles = document["profiles"]
+    assert isinstance(profiles, dict)
+    if str(profiles.get("claude-code", "") or "").strip():
+        payload["status"] = "already_present"
+        return payload
+    profiles["claude-code"] = CLAUDE_FRONTIER_CHAIN_MODELS[0]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps(document, indent=2, sort_keys=True) + "\n")
+    payload["status"] = "seeded"
+    return payload
+
+
 def _seed_dispatch_model_preferences_result(paths: OmhPaths, *, dry_run: bool) -> dict[str, object]:
     """Seed the optional per-owner dispatch-model preference document, if absent.
 
@@ -2495,6 +2635,7 @@ def _run_setup_wizard(args: argparse.Namespace, paths, language: str) -> None:
     print(f"{tr(language, 'managed_skills')}: {_color(str(paths.skills_dir), '36', use_color)}")
     _ask_tui_identity_choice(args, paths, language)
     _ask_maestro_delegation_choice(args, paths, language)
+    _ask_provider_entitlements(args, paths, language)
 
     if not args.profile and not getattr(args, "default_executor", None):
         # No upfront coding-owner question: safety-first records "choose" so

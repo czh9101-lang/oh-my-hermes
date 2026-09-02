@@ -325,7 +325,34 @@ namespaced like `vendor/model-name`. Which provider serves which model, and
 under what name, belongs to one account — so OMH ships no routes and hardcodes
 no provider.
 
-Supply them in `~/.omh/routing/model-providers.json`
+Which providers and subscriptions a machine holds is a third, separate
+question. The interactive `omh setup` asks it — for each provider id in
+Hermes' config (`providers.<id>` and `model.provider`): do you hold it, and
+is it a vendor provider or a multi-vendor gateway; for each detected coding
+CLI: do you have a subscription — and records the answers in
+`~/.omh/routing/providers.json` (`provider_entitlements/v1`):
+
+```json
+{
+  "schema_version": "provider_entitlements/v1",
+  "providers": {"og": "gateway", "zai": "zai"},
+  "subscription_clis": ["claude-code"]
+}
+```
+
+With that document present, every chain is reordered so the entries a
+confirmed provider can serve lead and the rest follow; nothing is removed, so
+a wrong answer costs one rejected fall-through, never a missing model. A
+gateway or `unknown` kind serves every family; a vendor kind serves only the
+models whose editorial candidates name it; an explicit route in
+`model-providers.json` decides before either. `omh model-chains show` marks a
+reordered chain. A confirmed Claude Code subscription is a Maestro-lane
+entitlement: Hermes cannot spend it, so its only effect is seeding the Claude
+Code `--model` preference in `dispatch-models.json` when none is set. `--yes`,
+`--json`, and non-TTY runs ask nothing and write nothing; rerun `omh setup`
+interactively to answer again or edit the file.
+
+Supply wire-id routes in `~/.omh/routing/model-providers.json`
 (`model_provider_routes/v1`), a sibling of the chain document:
 
 ```json

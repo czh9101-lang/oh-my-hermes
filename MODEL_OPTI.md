@@ -551,6 +551,14 @@ gate requires a completed paired run on the intended execution surface.
 - **Mixture chains** — per-category ordered model chains (see the README
   model-routing section), user-editable via
   `~/.omh/routing/model-chains.json` (`mixture_chain_overrides/v1`).
+- **Provider entitlements** — `~/.omh/routing/providers.json`
+  (`provider_entitlements/v1`, written by the interactive `omh setup`)
+  records which provider ids the machine holds and of what kind, plus the
+  confirmed coding-CLI subscriptions. `effective_mixture_category_chains`
+  reorders every chain so served entries lead (explicit route first, then a
+  gateway serves everything, then a vendor serves the families that name
+  it; unknown aliases are served). Reordering only — never removal — and
+  the Maestro lane consumes the subscription entitlement separately.
 - **Speed tiers are not a separate family** — `kimi-k3-ultrafast` and
   `glm-5.2-ultrafast` are the same base models served on OpenGateway's speed
   tier, and Z.ai serves its own `glm-5.3-highspeed` (gateways also use a

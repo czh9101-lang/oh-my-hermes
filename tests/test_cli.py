@@ -2869,18 +2869,23 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                 # declining the interview keeps this test's surface to the
                 # seeding + pointers the name promises.
                 "omh.commands.setup._ask_yes_no",
-                side_effect=[True, True, False],
+                # TUI yes, maestro yes, category walk no, provider entitlements no.
+                side_effect=[True, True, False, False],
             ) as yes_no:
                 status, stdout, stderr = run_cli(base + ["setup", "--interactive"], output_json=False)
 
             self.assertEqual(status, 0, stderr)
-            # TUI identity choice, the maestro-delegation question, then the
-            # category-maestro interview offer.
-            self.assertEqual(yes_no.call_count, 3)
+            # TUI identity choice, the maestro-delegation question, the
+            # category-maestro interview offer, then the provider-entitlement
+            # question (declined here; tests/test_provider_entitlements.py
+            # covers the accepted path).
+            self.assertEqual(yes_no.call_count, 4)
             second_prompt = yes_no.call_args_list[1].args[0]
             self.assertIn("claude-code", second_prompt)
             third_prompt = yes_no.call_args_list[2].args[0]
             self.assertIn("category", third_prompt)
+            fourth_prompt = yes_no.call_args_list[3].args[0]
+            self.assertIn("provider", fourth_prompt)
             dispatch_models_path = omh_home / "routing" / "dispatch-models.json"
             self.assertTrue(dispatch_models_path.exists())
             seeded = json.loads(dispatch_models_path.read_text(encoding="utf-8"))
@@ -2902,12 +2907,14 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                     "claude-code": {"binary_present": False, "login_marker": "absent"},
                     "codex": {"binary_present": True, "login_marker": "absent"},
                 },
-            ), patch("omh.commands.setup._ask_yes_no", side_effect=[True, False]) as yes_no:
+            ), patch("omh.commands.setup._ask_yes_no", side_effect=[True, False, False]) as yes_no:
                 status, stdout, stderr = run_cli(base + ["setup", "--interactive"], output_json=False)
 
             self.assertEqual(status, 0, stderr)
-            self.assertEqual(yes_no.call_count, 2)
+            # TUI, maestro delegation (no), provider entitlements (no).
+            self.assertEqual(yes_no.call_count, 3)
             self.assertFalse((omh_home / "routing" / "dispatch-models.json").exists())
+            self.assertFalse((omh_home / "routing" / "providers.json").exists())
             self.assertNotIn("dispatch-models.json", stdout)
 
     def test_setup_interactive_maestro_delegation_never_clobbers_existing_preferences(self) -> None:

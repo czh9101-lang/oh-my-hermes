@@ -189,14 +189,206 @@ def parse_mixture_chain_overrides(
 def effective_mixture_category_chains(
     omh_home: str | Path | None = None,
 ) -> dict[str, tuple[tuple[str, str], ...]]:
-    """Shipped chains with the user's per-category replacements applied."""
+    """Shipped chains with the user's per-category replacements applied.
+
+    When the operator has recorded provider entitlements (`omh setup` asks;
+    see `load_provider_entitlements`), every chain is additionally shaped so
+    the entries no confirmed provider can serve sit behind the ones that can.
+    Shaping reorders; it never drops an entry, so a wrong answer costs one
+    rejected fall-through, never a missing model.
+    """
     overrides, _ = load_mixture_chain_overrides(omh_home)
-    if not overrides:
-        return dict(HERMES_MIXTURE_CATEGORY_CHAINS)
-    return {
+    chains = {
         name: overrides.get(name, chain)
         for name, chain in HERMES_MIXTURE_CATEGORY_CHAINS.items()
     }
+    entitlements, _status = load_provider_entitlements(omh_home)
+    if entitlements is None:
+        return chains
+    routes, _ = load_model_provider_routes(omh_home)
+    return {
+        name: entitlement_shaped_chain(chain, entitlements, routes)
+        for name, chain in chains.items()
+    }
+
+
+# Provider entitlements: what the operator said they hold, recorded once by
+# the `omh setup` interview (and editable by hand). Chains stay provider-
+# neutral alias lists; this document is the one place the machine's own
+# accounts are described, and it only reorders the chains it is applied to.
+#
+#   {"schema_version": "provider_entitlements/v1",
+#    "providers": {"og": "gateway", "zai": "zai"},
+#    "subscription_clis": ["claude-code"]}
+#
+# `providers` maps a Hermes provider id (the key under `providers:` in
+# config.yaml, or `model.provider`) to its KIND: one of the provider families
+# the editorial catalog names for its candidates, or `gateway` for a
+# multi-vendor relay that serves models of every family, or `unknown` when
+# the operator declined to say (treated as a gateway, so nothing is demoted
+# on a guess). `subscription_clis` lists the external coding CLIs whose
+# subscription the operator confirmed — those are Maestro-lane entitlements
+# and never touch the Hermes-lane chains.
+PROVIDER_ENTITLEMENTS_SCHEMA_VERSION = "provider_entitlements/v1"
+PROVIDER_KIND_GATEWAY = "gateway"
+PROVIDER_KIND_UNKNOWN = "unknown"
+# Mirrors the union of `preferred_provider_families` across
+# SHIPPED_MODEL_RECOMMENDATIONS in src/coding/model_recommendations.py (the
+# plugin bundle cannot import src/coding); the parity gate lives in
+# tests/test_plugin_hermes_delegation.py.
+PROVIDER_FAMILY_VOCABULARY: tuple[str, ...] = (
+    "anthropic",
+    "apitopia",
+    "ccapi",
+    "deepseek",
+    "gemini",
+    "google",
+    "kimi-coding",
+    "openai",
+    "openai-codex",
+    "opencode",
+    "openrouter",
+    "qwen-oauth",
+    "xai",
+    "zai",
+)
+PROVIDER_KIND_VOCABULARY: tuple[str, ...] = (
+    *PROVIDER_FAMILY_VOCABULARY,
+    PROVIDER_KIND_GATEWAY,
+    PROVIDER_KIND_UNKNOWN,
+)
+# Kinds that relay every model family. `openrouter` and `opencode` are named
+# families in the catalog AND multi-vendor relays, so they serve everything.
+MULTI_VENDOR_PROVIDER_KINDS: frozenset[str] = frozenset(
+    {"openrouter", "opencode", PROVIDER_KIND_GATEWAY, PROVIDER_KIND_UNKNOWN}
+)
+SUBSCRIPTION_CLI_PROFILES: tuple[str, ...] = ("claude-code", "codex")
+
+# Mirrors each shipped candidate's `preferred_provider_families` (same
+# parity gate as the chains above). An alias absent here is served by every
+# provider — the honest default for an id the catalog has never described.
+HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
+    "kimi-k3": ("apitopia", "kimi-coding", "openrouter", "opencode"),
+    "claude-opus-5": ("ccapi", "anthropic", "openrouter"),
+    "claude-fable-5": ("ccapi", "anthropic", "openrouter"),
+    "claude-fable-5-1": ("ccapi", "anthropic", "openrouter"),
+    "claude-mythos-5-1": ("ccapi", "anthropic", "openrouter"),
+    "gpt-5.6-sol": ("openai-codex", "openai"),
+    "gpt-5.6-terra": ("openai-codex", "openai"),
+    "gpt-5.6-luna": ("openai-codex", "openai"),
+    "deepseek-v3.2": ("deepseek", "openrouter", "opencode"),
+    "glm-5.2": ("zai", "openrouter", "opencode"),
+    "glm-5.2-ultrafast": ("zai", "openrouter", "opencode"),
+    "glm-5.3": ("zai", "openrouter", "opencode"),
+    "glm-5.3-flash": ("zai", "openrouter", "opencode"),
+    "grok-code-fast": ("xai", "openrouter"),
+    "gemini-3.1-pro": ("google", "gemini", "openrouter"),
+    "qwen3-coder": ("qwen-oauth", "openrouter", "opencode"),
+}
+
+
+def provider_entitlements_path(omh_home: str | Path | None = None) -> Path:
+    root = Path(omh_home).expanduser() if omh_home else Path.home() / ".omh"
+    return root / "routing" / "providers.json"
+
+
+def load_provider_entitlements(
+    omh_home: str | Path | None = None,
+) -> tuple[dict[str, Any] | None, str]:
+    """Read the operator's provider-entitlement document.
+
+    Returns ``(entitlements, status)`` where status is ``absent``,
+    ``applied``, or ``invalid: <reason>``; an absent or invalid document
+    yields ``None`` so callers apply no shaping rather than half a document.
+    """
+    path = provider_entitlements_path(omh_home)
+    try:
+        raw = _strict_json_loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, "absent"
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None, "invalid: unreadable JSON"
+    return parse_provider_entitlements(raw)
+
+
+def parse_provider_entitlements(raw: object) -> tuple[dict[str, Any] | None, str]:
+    """Validate one already-parsed entitlement document (strict, atomic)."""
+    if not isinstance(raw, dict):
+        return None, "invalid: document must be a JSON object"
+    if raw.get("schema_version") != PROVIDER_ENTITLEMENTS_SCHEMA_VERSION:
+        return None, f"invalid: schema_version must be {PROVIDER_ENTITLEMENTS_SCHEMA_VERSION}"
+    unknown = sorted(set(raw) - {"schema_version", "providers", "subscription_clis"})
+    if unknown:
+        return None, f"invalid: unsupported fields {unknown}"
+    providers = raw.get("providers", {})
+    if not isinstance(providers, dict):
+        return None, "invalid: providers must be an object"
+    normalized_providers: dict[str, str] = {}
+    for provider_id, kind in providers.items():
+        if not isinstance(provider_id, str) or not _CHAIN_TOKEN_RE.fullmatch(provider_id):
+            return None, f"invalid: provider id {provider_id!r} is not a plain identifier"
+        if not isinstance(kind, str) or kind not in PROVIDER_KIND_VOCABULARY:
+            return None, (
+                f"invalid: provider {provider_id!r} kind must be one of "
+                + ", ".join(PROVIDER_KIND_VOCABULARY)
+            )
+        normalized_providers[provider_id] = kind
+    clis = raw.get("subscription_clis", [])
+    if not isinstance(clis, list):
+        return None, "invalid: subscription_clis must be a list"
+    normalized_clis: list[str] = []
+    for profile in clis:
+        if not isinstance(profile, str) or profile not in SUBSCRIPTION_CLI_PROFILES:
+            return None, (
+                f"invalid: subscription_clis entry {profile!r} must be one of "
+                + ", ".join(SUBSCRIPTION_CLI_PROFILES)
+            )
+        if profile not in normalized_clis:
+            normalized_clis.append(profile)
+    return {"providers": normalized_providers, "subscription_clis": normalized_clis}, "applied"
+
+
+def alias_is_served(
+    alias: str,
+    entitlements: Mapping[str, Any],
+    routes: Mapping[str, tuple[str, str]] | None = None,
+) -> bool:
+    """Whether a confirmed provider can serve ``alias``. Fails open.
+
+    An explicit route in model-providers.json decides first: the alias is
+    served when its provider is one the operator confirmed, and unserved when
+    the route names a provider they did not. Without a route, a multi-vendor
+    provider serves every alias, a vendor provider serves the aliases whose
+    catalog families name it, and an alias the catalog never described (or a
+    machine with no providers recorded at all) is served — nothing is
+    demoted on a guess.
+    """
+    providers = entitlements.get("providers", {})
+    if not isinstance(providers, Mapping) or not providers:
+        return True
+    key = str(alias or "").strip().casefold()
+    if routes:
+        route = routes.get(key) or routes.get(alias)
+        if route:
+            return route[0] in providers
+    kinds = set(str(kind) for kind in providers.values())
+    if kinds & MULTI_VENDOR_PROVIDER_KINDS:
+        return True
+    families = HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES.get(key)
+    if families is None:
+        return True
+    return bool(kinds & set(families))
+
+
+def entitlement_shaped_chain(
+    chain: tuple[tuple[str, str], ...],
+    entitlements: Mapping[str, Any],
+    routes: Mapping[str, tuple[str, str]] | None = None,
+) -> tuple[tuple[str, str], ...]:
+    """Stable-partition ``chain``: served entries first, unserved behind them."""
+    served = tuple(entry for entry in chain if alias_is_served(entry[0], entitlements, routes))
+    unserved = tuple(entry for entry in chain if not alias_is_served(entry[0], entitlements, routes))
+    return served + unserved
 
 
 # User-editable alias -> (provider, wire model) routes.

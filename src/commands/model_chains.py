@@ -28,9 +28,14 @@ from ..plugin_bundle.omh.hermes_delegation import (
     APPROX_PRICE_PER_MTOK,
     HERMES_MIXTURE_CATEGORY_CHAINS,
     MIXTURE_CHAIN_OVERRIDES_SCHEMA_VERSION,
+    alias_is_served,
+    entitlement_shaped_chain,
     load_mixture_chain_overrides,
+    load_model_provider_routes,
+    load_provider_entitlements,
     mixture_chain_overrides_path,
     parse_mixture_chain_overrides,
+    provider_entitlements_path,
 )
 from .common import _paths
 
@@ -97,23 +102,40 @@ def _write_document(omh_home, document: dict[str, object]) -> str:
 
 def _state(omh_home) -> dict[str, object]:
     overrides, status = load_mixture_chain_overrides(omh_home)
+    entitlements, entitlement_status = load_provider_entitlements(omh_home)
+    routes, _ = load_model_provider_routes(omh_home)
     categories = []
     for name, default_chain in HERMES_MIXTURE_CATEGORY_CHAINS.items():
         chain = overrides.get(name, default_chain)
+        shaped = chain
+        if entitlements is not None:
+            shaped = entitlement_shaped_chain(chain, entitlements, routes)
         categories.append(
             {
                 "category": name,
                 "chain": [
-                    {"model": model, "reasoning_effort": effort} for model, effort in chain
+                    {
+                        "model": model,
+                        "reasoning_effort": effort,
+                        "served": (
+                            alias_is_served(model, entitlements, routes)
+                            if entitlements is not None
+                            else True
+                        ),
+                    }
+                    for model, effort in shaped
                 ],
-                "chain_text": _chain_text(chain),
+                "chain_text": _chain_text(shaped),
                 "origin": "override" if name in overrides else "default",
+                "entitlement_shaped": shaped != chain,
             }
         )
     return {
         "schema_version": "model_chain_state/v1",
         "path": str(mixture_chain_overrides_path(omh_home)),
         "document_status": status,
+        "entitlements_path": str(provider_entitlements_path(omh_home)),
+        "entitlements_status": entitlement_status,
         "categories": categories,
     }
 
@@ -122,8 +144,11 @@ def _print_state(state: dict[str, object]) -> None:
     print("Current model chains (category -> effective order):")
     for row in state["categories"]:
         marker = " (override)" if row["origin"] == "override" else ""
+        if row.get("entitlement_shaped"):
+            marker += " (reordered by provider entitlements)"
         print(f"  {row['category']}: {row['chain_text']}{marker}")
     print(f"Overrides file: {state['path']} [{state['document_status']}]")
+    print(f"Provider entitlements: {state['entitlements_path']} [{state['entitlements_status']}]")
     print("Edit a category with `omh model-chains set <category> \"model[:effort], ...\"`,")
     print("walk all of them with `omh model-chains interview`, or edit the JSON directly.")
 

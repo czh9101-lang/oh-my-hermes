@@ -316,6 +316,14 @@ When an alias uses a provider-specific wire ID, map it once in
 complete alias/provider/wire-model route. OMH stores only provider IDs, never
 provider credentials.
 
+Every account differs, so the interactive `omh setup` also asks which
+providers and coding-CLI subscriptions the machine holds and records the
+answer in `~/.omh/routing/providers.json` (`provider_entitlements/v1`). Each
+chain is then reordered so the entries a confirmed provider can serve lead;
+nothing is removed, nothing is invoked to check, and a confirmed Claude Code
+subscription only seeds the Claude Code `--model` preference for the Maestro
+lane, because Hermes itself cannot spend a CLI subscription.
+
 Ask Hermes to **set up my models** to review or change them. These are editable
 preferences, not benchmark results. See
 [Guided Model Setup](docs/INSTALLATION.md#guided-model-setup) for the detailed
