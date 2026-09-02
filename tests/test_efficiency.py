@@ -367,6 +367,8 @@ class EfficiencyContractTests(unittest.TestCase):
         self.assertIn("instinct-ledger", cards["automation_and_status"]["representative_workflows"])
         self.assertIn("skill-scout", cards["automation_and_status"]["representative_workflows"])
         self.assertIn("skill-health", cards["automation_and_status"]["representative_workflows"])
+        # The primer's raw context cards are the internal catalog table, not the
+        # route-hint projection, so they keep the catalog key here.
         self.assertIn("ultrawork", cards["coding_handoff"]["representative_workflows"])
         self.assertIn("build-failure-triage", cards["coding_handoff"]["representative_workflows"])
         self.assertIn("not_evidence_until_observed", cards["intent_to_plan"])
@@ -374,8 +376,10 @@ class EfficiencyContractTests(unittest.TestCase):
         tool_routes = {route["tool_family"]: route for route in payload["generic_tool_checkpoint_routes"]}
         self.assertEqual(tool_routes["image_tools"]["primary_workflow"], "img-summary")
         self.assertEqual(tool_routes["file_tools"]["primary_workflow"], "materials-package")
-        self.assertEqual(tool_routes["search_tools"]["primary_workflow"], "research")
-        self.assertEqual(tool_routes["coding_tools"]["primary_workflow"], "ultrawork")
+        # The checkpoint card names workflows a reader is told to prefer, so it
+        # emits the installed-skill identifiers rather than catalog keys (#1249).
+        self.assertEqual(tool_routes["search_tools"]["primary_workflow"], "ulw-research")
+        self.assertEqual(tool_routes["coding_tools"]["primary_workflow"], "ulw-work")
         self.assertIn("visual QA", tool_routes["image_tools"]["not_evidence_yet"])
         self.assertEqual(
             awareness_generic_tool_checkpoint_payload()["schema_version"],
@@ -585,7 +589,7 @@ class EfficiencyContractTests(unittest.TestCase):
         )
         cache_info = awareness_module._awareness_route_hint_cached.cache_info()
 
-        self.assertEqual(payload["route_hint"]["primary_workflow"], "ultrawork")
+        self.assertEqual(payload["route_hint"]["primary_workflow"], "ulw-work")
         self.assertEqual(payload["route_hint"]["primary_next_action"], "show_coding_handoff_status")
         self.assertIn("next_action=show_coding_handoff_status", payload["prompt_context"])
         self.assertEqual(cache_info.misses, 1)
@@ -601,7 +605,7 @@ class EfficiencyContractTests(unittest.TestCase):
         )
         cache_info = awareness_module._awareness_route_hint_cached.cache_info()
 
-        self.assertEqual(payload["route_hint"]["primary_workflow"], "ultrawork")
+        self.assertEqual(payload["route_hint"]["primary_workflow"], "ulw-work")
         self.assertEqual(payload["route_hint"]["primary_next_action"], "show_coding_handoff_status")
         self.assertIn("next_action=show_coding_handoff_status", payload["prompt_context"])
         self.assertEqual(cache_info.misses, 1)
@@ -621,7 +625,7 @@ class EfficiencyContractTests(unittest.TestCase):
 
         self.assertIsNotNone(payload)
         assert payload is not None
-        self.assertEqual(payload["omh_context_brief"]["route_hint"]["primary_workflow"], "ultrawork")
+        self.assertEqual(payload["omh_context_brief"]["route_hint"]["primary_workflow"], "ulw-work")
         self.assertEqual(
             payload["omh_context_brief"]["route_hint"]["primary_next_action"],
             "show_coding_handoff_status",

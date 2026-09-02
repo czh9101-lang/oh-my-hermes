@@ -5314,6 +5314,13 @@ def _awareness_route_hint_cached(message: str, max_hints: int) -> dict[str, obje
                 del hints[hint_limit:]
     hints = [_route_hint_with_coding_route_decision(hint, routing_normalized) for hint in hints]
     hints = [_route_hint_with_action_labels(hint) for hint in hints]
+    # Emission boundary (#1249): every consumer above keys off the catalog name
+    # (rule tables, retired-engine folding, context-card lookup, the coding
+    # owner decision), so the catalog vocabulary survives until exactly here.
+    # Everything derived below -- primary workflow, adjacent set, the payload's
+    # own workflow lists -- reads the public names, so no field can reintroduce
+    # a legacy key after this line.
+    hints = [_route_hint_with_public_workflow_names(hint) for hint in hints]
     primary_workflow = str(hints[0]["workflow"]) if hints else ""
     primary_next_action = str(hints[0]["next_action"]) if hints else ""
     primary_coding_route_decision = hints[0].get("coding_route_decision") if hints else None
@@ -5330,10 +5337,13 @@ def _awareness_route_hint_cached(message: str, max_hints: int) -> dict[str, obje
         "message_length": len(message),
         "intent_class": intent.intent_class,
         "selected_workflow": primary_workflow,
-        "mentioned_workflows": list(intent.mentioned_workflows),
+        "mentioned_workflows": _public_workflow_names(intent.mentioned_workflows),
         "mentioned_runtime_terms": list(intent.mentioned_runtime_terms),
         "adjacent_workflows": adjacent_workflows,
-        "not_executed": list(intent.not_executed),
+        # `not_executed` concatenates the mentioned workflows with the runtime
+        # terms, so its workflow half needs the same projection; the runtime
+        # terms are engine-agnostic and pass through untouched.
+        "not_executed": _public_workflow_names(intent.not_executed),
         "primary_workflow": primary_workflow,
         "primary_next_action": primary_next_action,
         "primary_next_action_label": _next_action_label(primary_next_action) if primary_next_action else "",
@@ -6045,13 +6055,21 @@ def awareness_generic_tool_checkpoint_payload() -> dict[str, object]:
 
 
 def generic_tool_checkpoint_routes() -> list[dict[str, object]]:
-    """Return compact OMH-first route hints for common generic tool families."""
+    """Return compact OMH-first route hints for common generic tool families.
+
+    This is the emission boundary for the checkpoint card, so the workflow
+    fields are projected to the identifiers the installed skills answer to
+    (#1249). `GENERIC_TOOL_CHECKPOINT_ROUTES` keeps the catalog keys: the
+    constant is matched against catalog names elsewhere, and the tool-family
+    and action fields are the contract wrappers dispatch on, so only the two
+    workflow-naming fields are rewritten here.
+    """
     return [
         {
             "tool_family": str(route["tool_family"]),
             "applies_before": list(route["applies_before"]),
-            "primary_workflow": str(route["primary_workflow"]),
-            "preferred_workflows": list(route["preferred_workflows"]),
+            "primary_workflow": _public_workflow_name(str(route["primary_workflow"])),
+            "preferred_workflows": _public_workflow_names(route["preferred_workflows"]),
             "primary_next_action": str(route["primary_next_action"]),
             "primary_next_action_label": _next_action_label(str(route["primary_next_action"])),
             "fallback_action": str(route["fallback_action"]),
@@ -6510,6 +6528,82 @@ def _canonical_workflow_by_display_name() -> dict[str, str]:
 
 def _with_canonical_display_names(value: str) -> str:
     return _canonical_display_mentions(value, _canonical_workflow_by_display_name())
+
+
+@lru_cache(maxsize=1)
+def _public_workflow_names_by_catalog_key() -> dict[str, str]:
+    """Map each renamed ULW catalog key to the identifier a user can invoke.
+
+    Inverted from `_canonical_workflow_by_display_name()` rather than written
+    out again: that table is already the input direction (display label ->
+    catalog key) and is locked against `omh_skill_display_name()` by
+    `tests/test_display_names.py`, so deriving the output direction from it
+    means a later relabel moves both directions at once instead of leaving a
+    stale second copy.
+
+    Only the `ulw-` family is included. Historical `omh-<engine>` aliases and
+    the pre-rename mechanical labels also resolve to these keys on input, so
+    the shortest current `ulw-` label wins to keep the emitted name stable.
+    """
+    public_names: dict[str, str] = {}
+    for display, workflow in _canonical_workflow_by_display_name().items():
+        if not display.startswith("ulw-") or display == workflow:
+            continue
+        current = public_names.get(workflow)
+        if current is None or len(display) < len(current):
+            public_names[workflow] = display
+    return public_names
+
+
+def _public_workflow_name(workflow: str) -> str:
+    """Return the public identifier for one workflow name, or it unchanged.
+
+    The catalog keys (`ralplan`, `ultraqa`, `ultrawork`, ...) stay load-bearing
+    internally: rules, context-card lookups, retired-engine folding, and the
+    scoring tables all resolve against them. This is the emission boundary
+    where the internal key becomes the name the installed skills answer to
+    (issue #1249). Non-ULW workflows are returned untouched, because their
+    catalog key already is the public name.
+    """
+    return _public_workflow_names_by_catalog_key().get(workflow, workflow)
+
+
+def _public_workflow_names(values: object) -> list[str]:
+    """Canonicalize a list of emitted workflow identifiers, order preserved."""
+    if not isinstance(values, list | tuple):
+        return []
+    return [_public_workflow_name(str(item)) for item in values]
+
+
+def _route_hint_with_public_workflow_names(hint: dict[str, object]) -> dict[str, object]:
+    """Rewrite one hint's workflow identifiers to their public form.
+
+    Applied after rule matching, retired-engine folding, context-card lookup,
+    and the coding-route decision have all consumed the catalog key, so this
+    is the last point where the two vocabularies are still separable. The
+    card's own `id`/`label` are lane identifiers, not workflow names, and stay
+    as they are; only `representative_workflows` names engines.
+
+    `matched_cues` is deliberately untouched: it echoes the words the message
+    actually matched, so rewriting a user's `loop` into `ulw-loop` there would
+    misreport what was observed rather than canonicalize an emitted name.
+    """
+    public_hint = dict(hint)
+    public_hint["workflow"] = _public_workflow_name(str(hint.get("workflow", "")))
+    public_hint["adjacent_workflows"] = _public_workflow_names(hint.get("adjacent_workflows", []))
+    # The vocabulary-reference hint repeats the payload's workflow lists inside
+    # the hint, so they need the same projection as their top-level twins.
+    for key in ("mentioned_workflows", "not_executed"):
+        if key in hint:
+            public_hint[key] = _public_workflow_names(hint.get(key, []))
+    card = hint.get("workflow_context_card")
+    if isinstance(card, dict):
+        public_card = dict(card)
+        public_card["representative_workflows"] = _public_workflow_names(
+            card.get("representative_workflows", [])
+        )
+        public_hint["workflow_context_card"] = public_card
+    return public_hint
 
 
 def _direct_workflow_prefix(routing_normalized: str) -> str:

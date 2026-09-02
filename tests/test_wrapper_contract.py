@@ -620,9 +620,12 @@ class WrapperContractTests(unittest.TestCase):
         }
         self.assertEqual(checkpoint_routes["image_tools"]["primary_workflow"], "img-summary")
         self.assertEqual(checkpoint_routes["file_tools"]["primary_workflow"], "materials-package")
-        self.assertEqual(checkpoint_routes["search_tools"]["primary_workflow"], "research")
+        # The checkpoint card names workflows the reader is told to prefer over
+        # a generic tool, so it emits installed-skill identifiers (#1249).
+        # Non-ULW entries like `source-finder` are unchanged.
+        self.assertEqual(checkpoint_routes["search_tools"]["primary_workflow"], "ulw-research")
         self.assertIn("source-finder", checkpoint_routes["search_tools"]["preferred_workflows"])
-        self.assertEqual(checkpoint_routes["coding_tools"]["primary_workflow"], "ultrawork")
+        self.assertEqual(checkpoint_routes["coding_tools"]["primary_workflow"], "ulw-work")
         self.assertIn("prep/status/learning", payload["chat_response"]["body"])
         self.assertNotIn("generic_tool_checkpoint", payload["chat_response"]["state"])
         self.assertEqual(payload["chat_response"]["messenger_rendering"]["profile"], "discord")

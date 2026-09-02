@@ -7,6 +7,7 @@ from typing import Any
 from ..context import build_context_brief
 from ..ingress import CHAT_SOURCES
 from ..routing.action_copy import next_action_label
+from ..routing.route_plan import public_workflow_identifier
 
 
 CONTEXT_BRIEF_COVERAGE_SCHEMA_VERSION = "context_brief_coverage/v1"
@@ -241,8 +242,12 @@ def _evaluate_context_brief_case(case: ContextBriefCoverageCase, *, source: str)
     else:
         if observed["route_hint_status"] != "hinted":
             issues.append(f"expected hinted route, observed {observed['route_hint_status']}")
-        if observed["primary_workflow"] != case.expected_workflow:
-            issues.append(f"expected workflow {case.expected_workflow}, observed {observed['primary_workflow']}")
+        # The brief renders the public route-hint payload, so the case's
+        # catalog-key expectation is compared against its public projection
+        # (#1249) rather than against the internal name.
+        expected_workflow = public_workflow_identifier(case.expected_workflow)
+        if observed["primary_workflow"] != expected_workflow:
+            issues.append(f"expected workflow {expected_workflow}, observed {observed['primary_workflow']}")
         if observed["primary_next_action"] != case.expected_next_action:
             issues.append(
                 f"expected next action {case.expected_next_action}, observed {observed['primary_next_action']}"
@@ -253,7 +258,7 @@ def _evaluate_context_brief_case(case: ContextBriefCoverageCase, *, source: str)
             issues.append("missing workflow context card")
         if not observed["prompt_context_has_route_hint"]:
             issues.append("missing message-specific route hint prompt context")
-        if f"selected={case.expected_workflow}" not in prompt_context:
+        if f"selected={public_workflow_identifier(case.expected_workflow)}" not in prompt_context:
             issues.append("prompt context does not name selected workflow")
 
     return {

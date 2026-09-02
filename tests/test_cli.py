@@ -727,10 +727,10 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(stderr, "")
                 payload = json.loads(stdout)
                 route_hint = payload["route_hint"]
-                self.assertEqual(route_hint["primary_workflow"], "ultrawork")
+                self.assertEqual(route_hint["primary_workflow"], "ulw-work")
                 self.assertEqual(route_hint["primary_next_action"], "prepare_one_cycle_delivery")
                 self.assertNotEqual(route_hint["hints"][0]["workflow"], "feedback-triage")
-                self.assertIn("selected=ultrawork", payload["prompt_context"])
+                self.assertIn("selected=ulw-work", payload["prompt_context"])
                 self.assertIn("not workflow execution", route_hint["claim_boundary"])
                 self.assertFalse(payload["message"]["raw_prompt_echoed"])
                 self.assertFalse(payload["message"]["raw_prompt_stored"])
@@ -6260,12 +6260,13 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertEqual(len(payload["recommendations"]), 2)
         route_plan = payload["workflow_route_plan"]
         self.assertEqual(route_plan["schema_version"], "workflow_route_plan/v1")
+        # Canonical public labels, not the internal catalog keys (#1249).
         self.assertEqual(
             [(step["stage"], step["skill"]) for step in route_plan["steps"]],
             [
-                ("research", "research"),
-                ("plan", "ralplan"),
-                ("deliver", "ultrawork"),
+                ("research", "ulw-research"),
+                ("plan", "ulw-plan"),
+                ("deliver", "ulw-work"),
                 ("review", "code-review"),
             ],
         )
@@ -7704,9 +7705,9 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertEqual(stderr, "")
         self.assertEqual(status, 0)
         self.assertIn("Status: hinted", stdout)
-        self.assertIn("Workflow: loop", stdout)
+        self.assertIn("Workflow: ulw-loop", stdout)
         self.assertIn("Next action: choosing the loop permission profile", stdout)
-        self.assertIn("- loop: choosing the loop permission profile (intent_to_plan)", stdout)
+        self.assertIn("- ulw-loop: choosing the loop permission profile (intent_to_plan)", stdout)
         self.assertNotIn("(`assess_loopability`)", stdout)
 
         status, stdout, stderr = run_cli(
@@ -9643,7 +9644,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         cases = {(case["corpus"], case["id"]): case for case in payload["cases"]}
         self.assertEqual(
             cases[("grounded_score", "ai-agent-product-qa")]["observed"]["hint_workflow"],
-            "ultraqa",
+            "ulw-qa",
         )
         self.assertEqual(
             cases[("grounded_score", "release-gate-review")]["observed"]["hint_workflow"],
@@ -9677,8 +9678,10 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertIn("Result: 201/201 route hints aligned (all passing)", stdout)
         self.assertIn("Hints present: 201/201; missing hints: 0; mismatches: 0", stdout)
         self.assertIn(
+            # The route keeps the catalog key, the hint emits the installed
+            # skill's identifier; the rollup shows both vocabularies (#1249).
             "AI agent product QA: ok; "
-            "route=ultraqa hint=ultraqa next=opening the selected workflow",
+            "route=ultraqa hint=ulw-qa next=opening the selected workflow",
             stdout,
         )
         self.assertNotIn("(`dispatch_to_workflow`)", stdout)

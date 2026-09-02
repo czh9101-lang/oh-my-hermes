@@ -169,7 +169,7 @@ class SiteDistinguishabilityTests(DegradationSignalTestCase):
             failed = awareness_route_hint(message)
 
         self.assertNotIn("degradation", absent)
-        self.assertEqual(failed["primary_workflow"], "loop")
+        self.assertEqual(failed["primary_workflow"], "ulw-loop")
         self.assertEqual(failed["primary_next_action"], absent["primary_next_action"])
         block = failed["degradation"]
         self.assertEqual(component_labels(block), [COMPONENT_LOOP_ROUTE_HINT_ASSESSMENT])
