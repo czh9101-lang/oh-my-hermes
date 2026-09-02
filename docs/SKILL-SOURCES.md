@@ -43,6 +43,20 @@ Rules:
 
 | Proposed OMH unit | Upstream repo | Paths | License | Issue |
 | --- | --- | --- | --- | --- |
-| a11y rule IDs + auto-fixable partition | https://github.com/Effeilo/claude-code-frontend-skills | `front-a11y/*` | MIT | — |
-| CWV performance budgets | https://github.com/rohitg00/awesome-claude-code-toolkit | `skills/frontend-excellence/SKILL.md` | Apache-2.0 | — |
-| agentic-eval rubrics | https://github.com/kodustech/awesome-agent-skills | agentic-eval entry | check | — |
+| `accessibility-audit` rule IDs + auto-fixable partition | https://github.com/Effeilo/claude-code-frontend-skills | `front-a11y/front-a11y-rules.md` plus the per-syntax sub-files | MIT (see the detection note below) | [#1261](https://github.com/rlaope/oh-my-hermes/issues/1261) |
+| `frontend` Core Web Vitals thresholds + budget contract | https://github.com/rohitg00/awesome-claude-code-toolkit | `skills/frontend-excellence/SKILL.md` (CWV target table, `web-vitals` instrumentation) | Apache-2.0 | [#1262](https://github.com/rlaope/oh-my-hermes/issues/1262) |
+| `agent-evaluation` self-critique / evaluator-optimizer / judge stop rules | https://github.com/github/awesome-copilot | `skills/agentic-eval/SKILL.md` | MIT | [#1263](https://github.com/rlaope/oh-my-hermes/issues/1263) |
+
+Notes on these rows:
+
+- **The agentic-eval row was repointed.** It previously credited
+  `kodustech/awesome-agent-skills`, which publishes no license and is an
+  index, not a source: its agentic-eval entry links to
+  `github/awesome-copilot` `skills/agentic-eval`, already a registry upstream
+  (see the `refactor-plan` row). An index stays a discovery pointer; the row
+  names the repository the content actually lives in, because that is what
+  the tracker can diff.
+- **Effeilo's license detection is a false negative.** GitHub's license API
+  reports `other` for that repository because `LICENSE.md` opens with a logo
+  block above the MIT text. The license is MIT; a future tracker run that
+  reads the API field should not "correct" this row to unlicensed.
