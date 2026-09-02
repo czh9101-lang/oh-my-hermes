@@ -54,7 +54,11 @@ from .policy import _hermes_setup_guide_requested
 from .policy import _github_event_ops_guard_applies
 from .policy import _invocation_token
 from .recommend import has_strong_named_catalog_owner, recommendation_for_definition, recommend_skills
-from .route_plan import build_workflow_route_plan, compact_workflow_route_plan
+from .route_plan import (
+    build_workflow_route_plan,
+    compact_workflow_route_plan,
+    public_workflow_identifier,
+)
 from .task_cards import classify_task, task_card_recommendation
 from .ulw_alias import resolve_codex_owner_choice_cue, resolve_ulw_alias
 from .visual_qa_cues import (
@@ -6218,7 +6222,11 @@ def route_explanation_payload(route: dict[str, object]) -> dict[str, object]:
     summary = _route_explanation_summary(action, selected, next_action, next_action_label, why)
     return {
         "schema_version": ROUTE_EXPLANATION_SCHEMA_VERSION,
-        "selected_workflow": selected,
+        # The public identifier, not the catalog key: `selected` still drives
+        # the harness and recommendation lookups above, which resolve against
+        # catalog names, but what a wrapper renders has to be a name the user
+        # can actually invoke (#1249).
+        "selected_workflow": public_workflow_identifier(selected),
         "selected_harness": harness,
         "action": action,
         "confidence": str(route.get("confidence", "low")),

@@ -3494,7 +3494,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertIn("learn", stages)
         self.assertIn("deliver", stages)
         self.assertLess(stages.index("learn"), stages.index("deliver"))
-        self.assertLess(skills.index("workflow-learning"), skills.index("ultrawork"))
+        self.assertLess(skills.index("workflow-learning"), skills.index("ulw-work"))
         self.assertTrue(all(step["status"] == "prepared_not_observed" for step in route_plan["steps"]))
 
     def test_workflow_intent_prefers_structural_cues_over_language_tables(self) -> None:
@@ -4095,12 +4095,14 @@ selected_workflow=ultraprocess
         self.assertEqual(decision["selected_skill"], "ultrawork")
         self.assertEqual(route_plan["schema_version"], "workflow_route_plan/v1")
         self.assertEqual(route_plan["mode"], "multi_workflow")
+        # Emitted plan steps carry the canonical public labels (#1249); the
+        # decision's own `selected_skill` above stays the catalog key.
         self.assertEqual(
             [(step["stage"], step["skill"]) for step in route_plan["steps"]],
             [
-                ("research", "research"),
-                ("plan", "ralplan"),
-                ("deliver", "ultrawork"),
+                ("research", "ulw-research"),
+                ("plan", "ulw-plan"),
+                ("deliver", "ulw-work"),
                 ("review", "code-review"),
             ],
         )
@@ -4131,7 +4133,7 @@ selected_workflow=ultraprocess
             [
                 ("triage", "feedback-triage"),
                 ("plan", "plan"),
-                ("deliver", "ultrawork"),
+                ("deliver", "ulw-work"),
                 ("review", "code-review"),
             ],
         )
@@ -4156,15 +4158,15 @@ selected_workflow=ultraprocess
         self.assertEqual(
             [(step["stage"], step["skill"]) for step in route_plan["steps"]],
             [
-                ("research", "research"),
-                ("plan", "ralplan"),
-                ("deliver", "ultrawork"),
+                ("research", "ulw-research"),
+                ("plan", "ulw-plan"),
+                ("deliver", "ulw-work"),
                 ("review", "code-review"),
             ],
         )
         self.assertLess(
-            [step["skill"] for step in route_plan["steps"]].index("ralplan"),
-            [step["skill"] for step in route_plan["steps"]].index("ultrawork"),
+            [step["skill"] for step in route_plan["steps"]].index("ulw-plan"),
+            [step["skill"] for step in route_plan["steps"]].index("ulw-work"),
         )
 
     def test_memory_context_chat_dispatches_to_curation_review(self) -> None:

@@ -6248,12 +6248,13 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertEqual(len(payload["recommendations"]), 2)
         route_plan = payload["workflow_route_plan"]
         self.assertEqual(route_plan["schema_version"], "workflow_route_plan/v1")
+        # Canonical public labels, not the internal catalog keys (#1249).
         self.assertEqual(
             [(step["stage"], step["skill"]) for step in route_plan["steps"]],
             [
-                ("research", "research"),
-                ("plan", "ralplan"),
-                ("deliver", "ultrawork"),
+                ("research", "ulw-research"),
+                ("plan", "ulw-plan"),
+                ("deliver", "ulw-work"),
                 ("review", "code-review"),
             ],
         )

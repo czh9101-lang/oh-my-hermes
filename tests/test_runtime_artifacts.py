@@ -571,12 +571,14 @@ class RuntimeArtifactTests(unittest.TestCase):
             self.assertEqual(routing["selected_skill"], "ultrawork")
             self.assertEqual(routing["source_event_id"], "m1")
             self.assertEqual(routing["workflow_route_plan"]["schema_version"], "workflow_route_plan/v1")
+            # The persisted plan records the canonical public labels (#1249);
+            # `selected_skill` above stays the catalog key the router resolved.
             self.assertEqual(
                 [(step["stage"], step["skill"]) for step in routing["workflow_route_plan"]["steps"]],
                 [
-                    ("research", "research"),
-                    ("plan", "ralplan"),
-                    ("deliver", "ultrawork"),
+                    ("research", "ulw-research"),
+                    ("plan", "ulw-plan"),
+                    ("deliver", "ulw-work"),
                     ("review", "code-review"),
                 ],
             )

@@ -5,11 +5,41 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from ..skills.catalog import routable_definitions
+from ..skills.catalog_types import omh_skill_display_name
 from ..quality.specialist_work import build_specialist_work_quality_contract
 from .localization import normalized_phrase, prepare_routing_text, routing_tokens
 
 
 SCHEMA_VERSION = "workflow_route_plan/v1"
+
+
+def public_workflow_identifier(skill: str) -> str:
+    """Return the identifier a reader can actually invoke for a catalog name.
+
+    The catalog keeps legacy internal keys (`ralplan`, `ultraqa`, `ultrawork`)
+    because triggers, capability maps, and lifecycle rows are all built from
+    them. The installed skills answer to `ulw-plan`, `ulw-qa`, and `ulw-work`,
+    so emitting the internal key hands the user a name nothing responds to
+    (issue #1249). Legacy spellings stay accepted on input and are normalized
+    to the catalog key before routing; this is the one place the catalog key
+    becomes the public name on the way out.
+    """
+    return omh_skill_display_name(skill) if skill in _ulw_public_renames() else skill
+
+
+@lru_cache(maxsize=1)
+def _ulw_public_renames() -> frozenset[str]:
+    """Catalog names whose public identifier differs from the internal key.
+
+    Derived from the display rule rather than listed, so a later relabel moves
+    this set with it instead of leaving a stale hand-copied table.
+    """
+    return frozenset(
+        definition.name
+        for definition in routable_definitions()
+        if omh_skill_display_name(definition.name).startswith("ulw-")
+        and omh_skill_display_name(definition.name) != definition.name
+    )
 CLAIM_BOUNDARY = (
     "Workflow route plans are routing guidance only. They do not prove research, planning acceptance, "
     "executor dispatch, implementation, review, CI, docs sync, PR creation, or merge evidence."
@@ -283,11 +313,16 @@ def _build_workflow_route_plan_cached(
     stages = _ordered_stages(steps_by_stage, selected_skill=selected_skill)
     if len(stages) < 2:
         return None
+    # Steps carry the public identifier from here on: `_SKILL_STAGE`, scoring,
+    # and the specialist lookup below all key off the catalog name, so this is
+    # the last point where the two vocabularies are still separable (#1249).
     steps = [steps_by_stage[stage].to_dict(index + 1) for index, stage in enumerate(stages)]
+    for step in steps:
+        step["skill"] = public_workflow_identifier(str(step["skill"]))
     plan = {
         "schema_version": SCHEMA_VERSION,
         "mode": "multi_workflow",
-        "primary_skill": selected_skill,
+        "primary_skill": public_workflow_identifier(selected_skill),
         "stages": stages,
         "steps": steps,
         "next_action": f"start_with_{steps[0]['skill']}",
