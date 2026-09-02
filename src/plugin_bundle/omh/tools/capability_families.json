@@ -193,6 +193,7 @@
    "native-debugging",
    "ai-slop-cleaner",
    "frontend-refactor",
+   "tech-debt-audit",
    "request-to-handoff",
    "executor selection",
    "coding runtime handoff"

@@ -162,7 +162,11 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # llm-app-dev grew instrumentation-ladder, span-vocabulary, and
 # budget-discipline rules; instruction lines on three existing skills, not
 # padding; warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 375623
+# 375623 -> 379709: `tech-debt-audit` is a new installable skill (the
+# severity-by-effort debt ledger with rerun reconciliation); one new
+# capability section for one new workflow, not per-section padding;
+# warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 379709
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -182,7 +186,9 @@ FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # `refactor-plan` skill; warranted growth.
 # 106730 -> 107677: one standalone capability row for the new
 # `inference-serving` skill; warranted growth.
-STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 107677
+# 107677 -> 108618: one standalone capability row for the new
+# `tech-debt-audit` skill; warranted growth.
+STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 108618
 STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ULW fold context ceiling (issue #954, PR D). The limit is the pre-D measured
 # value of the full profile's `skill_body` chars on `main` @ acb9a060, in the
@@ -560,7 +566,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # pair ahead of Fable 5 (owner decision, 2026-09-02), plus the one sentence
 # that states the Claude vendor order and why Mythos never heads a chain.
 # +354 chars of chain names and one rule, not new prose; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 856696
+# 856696 -> 864516: `tech-debt-audit` is one new installable skill body
+# (orient, nine-dimension audit, severity-by-effort ledger, rerun
+# reconciliation), plus its lane name on the coding_handoff skills' Workflow
+# Lane lines; the dimension and reconciliation tables live in one on-demand
+# reference outside this count; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 864516
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

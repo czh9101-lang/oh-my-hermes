@@ -4709,6 +4709,71 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Nothing is deleted before the cleanup phase, and cleanup starts from a tagged rollback point.
   - Do not begin implementing any phase without the user's explicit approval of the plan.
 
+### tech-debt-audit
+
+[omh] Hermes Tech Debt Audit workflow: build the severity-by-effort debt ledger from observed repo evidence - orient, audit the named dimensions with file:line citations, rank fixes and quick wins - and reconcile RESOLVED/NEW/CARRIED against the previous ledger on rerun.
+
+- Category: `maintenance`
+- Phase: `tech-debt-audit`
+- Hermes role: `reviewer`
+- Quality tier: `finding-evidence-gated`
+- Reasoning demand: `heavy`
+- Exposure: `direct_skill`
+- Install visibility: `true`
+- Docs visibility: `primary_workflow_skill`
+- Compatibility alias: `false`
+- Lifecycle stage: `canonical`
+- Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
+- Handoff policy: Hermes owns the orientation, the dimension audit, and the ledger; detection commands run through the operator's terminal and stay prepared_not_observed until their output is seen, and every fix the ledger recommends is coding work for the selected executor lane, never part of the audit.
+- Why this exists: `tech-debt-audit` exists so accumulated debt becomes a ranked, reconcilable ledger instead of a one-off complaint: findings cite file:line, severity and effort make the trade-off explicit, quick wins are separated from big fixes, and reruns mark what was resolved instead of rediscovering it.
+- Use when: Use when the codebase's accumulated debt should be measured and ranked as a ledger - findings with file:line, severity, and effort, quick wins separated from big fixes - rather than judged as a diff or cleaned up on the spot.
+- Do not use when:
+  - The target is one diff, PR, or claim rather than the codebase's accumulated state; use `code-review`.
+  - The user wants the debt removed now, behavior preserved; use `ai-slop-cleaner` for deletion-first cleanup.
+  - A boundary-changing fix from the ledger needs its execution shaped into phases; use `refactor-plan`.
+  - The question is release risk for a specific deploy rather than source quality; use `production-audit`.
+- Strong routing signals: `tech-debt-audit`, `tech debt`, `tech debt audit`, `technical debt`, `technical debt audit`, `tech debt ledger`, `debt ledger`, `audit our tech debt`, `tech debt report`, `code debt audit`, `where is our tech debt`, `기술부채`, `기술 부채`, `기술부채 감사`, `기술부채 감사해줘`, `기술부채 점검`, `기술부채 장부`, `부채 원장`
+- Good example:
+  - Prompt: Audit our tech debt and tell me what to fix first - we have maybe two weeks of cleanup budget.
+  - Expected behavior: Orientation from manifests and churn, dimension-by-dimension findings with file:line citations, the severity-by-effort ledger with top fixes and quick wins sized to the budget, and the looks-bad-but-fine list.
+  - Why: A budgeted what-to-fix-first question is exactly the ranked ledger this workflow produces.
+- Bad example:
+  - Prompt: This module is a mess, rewrite it properly.
+  - Expected behavior: Refuse the rewrite framing: audit the module into ledger findings with bounded fixes, or route a decided restructure to `refactor-plan`.
+  - Why: A rewrite recommendation is the failure mode the ledger exists to replace with bounded, ranked fixes.
+- Quality bar:
+  - Orient before auditing: read the manifests, rank churn from the git log, and name the largest and most-changed files - observed evidence, never memory of the tree.
+  - Audit dimension by dimension from the named list - architectural decay, consistency rot, type and contract gaps, test debt, dependency and configuration debt, performance and resource debt, error-handling and observability debt, security hygiene, documentation drift; the full contract is `omh-tech-debt-audit/references/debt-dimensions.md`.
+  - Every finding row carries a stable id, its dimension, a file:line citation, a severity, an effort class (S/M/L), and a bounded recommendation - never a rewrite.
+  - Close with the mandatory looks-bad-but-is-actually-fine section: deliberate patterns that pattern-match to debt stay off the ledger, with the reason recorded.
+  - On rerun, reconcile against the previous ledger before writing a new one: every prior finding is marked RESOLVED with the evidence gone, CARRIED with its age, or superseded by a NEW finding - a rerun that restarts from zero loses the ledger's point.
+- Completion checklist:
+  - Orientation evidence is observed: manifests, churn ranking, and largest files are named, not assumed.
+  - Every finding has id, dimension, file:line, severity, effort, and a bounded recommendation.
+  - Quick wins and top fixes are ranked, and the looks-bad-but-is-actually-fine section is present.
+  - On rerun, every prior finding is reconciled RESOLVED, CARRIED, or superseded - none silently dropped.
+- Recovery notes:
+  - If the stack is unrecognized, orient from the manifests first and say which dimensions lack detection commands rather than guessing.
+  - If a finding cannot be cited to file:line, demote it to an open question and keep it out of the ranked table.
+  - If the previous ledger's ids no longer match the tree, map them by dimension plus path before declaring anything RESOLVED.
+- Required inputs:
+  - the repo root or the scoped path list the audit is confined to
+  - the stack truth from manifests (package/build files), not from memory of the tree
+  - the previous ledger when one exists, so the rerun can reconcile instead of restart
+- Expected outputs:
+  - orientation summary: manifests read, churn ranking, largest files, test and CI entry points
+  - findings table per `tech_debt_ledger/v1`: id, category, file:line, severity, effort, recommendation
+  - top fixes ranked by severity and the quick wins ranked by payoff-per-effort
+  - the looks-bad-but-is-actually-fine list, and the RESOLVED/NEW/CARRIED reconciliation on rerun
+- Artifact expectations:
+  - debt ledger per `omh-tech-debt-audit/references/debt-dimensions.md`
+  - prepared detection commands named per stack, marked observed only after their output is seen
+- Safety rules:
+  - Never recommend a rewrite; the ledger names bounded fixes or it names nothing.
+  - A finding without a file:line citation is an open question, not a finding.
+  - Detection commands are prepared context until their exit status and output are observed.
+  - A scoped path list is a boundary: out-of-scope findings are reported as out of scope, never audited silently.
+
 ### best-practice-research
 
 [omh] Hermes adaptation for bounded official/upstream best-practice research.
