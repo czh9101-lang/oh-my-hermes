@@ -100,7 +100,13 @@ class TaskScaleResolutionTests(unittest.TestCase):
             "haiku",
         )
         large = resolve_model_route("claude-code", role="implementation", requested_scale="large")
-        self.assertEqual(large["selected_model"], "opus")
+        self.assertEqual(large["selected_model"], "claude-fable-5-1")
+        # The built-in Claude chain runs Fable 5.1 -> Mythos 5.1 -> opus, so
+        # the next-candidate advice after the head still ends on the alias.
+        self.assertEqual(
+            [entry["model_id"] for entry in large["chain"]][:3],
+            ["claude-fable-5-1", "claude-mythos-5-1", "opus"],
+        )
         self.assertEqual(large["selected_reasoning_effort"], "xhigh")
 
     def test_no_declared_scale_leaves_the_role_chain_untouched(self) -> None:

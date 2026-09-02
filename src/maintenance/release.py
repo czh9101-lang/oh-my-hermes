@@ -555,7 +555,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # skills; the ladder, audit rubric, and anti-pattern tables live in the new
 # on-demand instrumentation-ladder reference outside this count; warranted
 # growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 856342
+# 856342 -> 856696: `model-setup` names the shipped editorial chains verbatim,
+# and the four Claude-headed chains each gained the Fable 5.1 -> Mythos 5.1
+# pair ahead of Fable 5 (owner decision, 2026-09-02), plus the one sentence
+# that states the Claude vendor order and why Mythos never heads a chain.
+# +354 chars of chain names and one rule, not new prose; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 856696
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

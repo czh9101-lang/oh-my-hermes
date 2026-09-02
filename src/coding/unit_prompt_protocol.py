@@ -139,8 +139,18 @@ HIGH_EFFORT_CALIBRATIONS: Final[dict[str, str]] = {
     ),
     "claude": (
         "High-effort calibration: follow the numbered criteria as the complete checklist — do not grow "
-        "the checklist mid-run. Deliberate deeply only where correctness is genuinely at risk; for "
-        "mechanical steps, act directly and let the single verification pass prove them."
+        "the checklist mid-run, and once you have enough to act, act instead of gathering more context. "
+        "Deliberate deeply only where correctness is genuinely at risk; mechanical steps run directly and "
+        "the single verification pass proves them. Edit surgically rather than rewriting a file; fix "
+        "only what the criteria name and report adjacent findings instead of changing them; keep scratch "
+        "checks out of the repository, and commit tests only where a criterion asks for them or the repo "
+        "already keeps tests for this kind of change, sized like their neighbors. Add no helpers, "
+        "fallbacks, validation, flags, or shims beyond what the criteria name; when you can just change "
+        "the code, change it. Before each tool turn, privately list what you need next and request every "
+        "independent item in that one response. No one is watching this unit in real time: proceed on "
+        "every reversible action inside the boundary without asking, and if your last paragraph is a "
+        "plan, a question, or a promise, do that work now. Every progress claim points at a tool result "
+        "from this run — a failed check is reported with its output, a skipped step as skipped."
     ),
     "gemini": (
         "High-effort calibration: a claim without the tool output that proves it is not evidence — "
@@ -232,9 +242,15 @@ MAIN_AGENT_COMPOSITION_CALIBRATIONS: Final[dict[str, str]] = {
         "a worse prompt."
     ),
     "claude": (
-        "Composition calibration: split only what the goal requires — do not grow the fanout with "
-        "speculative units, and never spawn a subagent to double-check your own composition. The "
-        "criteria you write are a closed checklist: state them once, completely, and freeze."
+        "Composition calibration: split only what the goal requires — no speculative units, and no unit "
+        "whose only job is re-checking the split itself; a fresh-context review of a unit's deliverable "
+        "against its criteria is a legitimate unit. Delegate a unit when it is independent of the work "
+        "you keep and its completion can be judged from the evidence it returns; keep in line anything "
+        "that finishes in a handful of tool calls, and keep working while delegated units run. The "
+        "criteria you write are a closed checklist: state them once, completely, and freeze. If your "
+        "closing paragraph is a dispatch you could run, run it before closing. Your closing report is "
+        "the reader's first look at the run — lead with the outcome in plain sentences, drop the "
+        "working shorthand, and give the one or two things you need from them."
     ),
     "gemini": (
         "Composition calibration: compose from tool-verified facts, not recall — run the inventory "

@@ -52,7 +52,7 @@ class ResearchRoleTests(unittest.TestCase):
         self.assertEqual(shallow["selected_model"], "haiku")
         self.assertEqual(shallow["depth"], "shallow")
         deep = resolve_model_route("claude-code", role="research", requested_depth="deep")
-        self.assertEqual(deep["selected_model"], "opus")
+        self.assertEqual(deep["selected_model"], "claude-fable-5-1")
         # `deep` reads the `ultrabrain` category, which is the deepest rung and
         # is reachable only by DECLARING it -- so the escalation to xhigh costs
         # nothing until someone asks for it.
@@ -326,6 +326,10 @@ class ModelRouteResolverTests(unittest.TestCase):
     def test_claude_tier_aliases_fold_into_claude_family(self) -> None:
         self.assertEqual(model_family("opus"), "claude")
         self.assertEqual(model_family("claude-opus-5"), "claude")
+        # The bare Fable-tier names users type in chat ("use fable") and the
+        # concrete 5.1 ids both land on the claude calibration, never generic.
+        for model_id in ("fable", "mythos", "claude-fable-5-1", "claude-mythos-5-1", "anthropic/claude-fable-5-1"):
+            self.assertEqual(model_family(model_id), "claude", model_id)
 
     def test_every_role_routes_to_its_chain_head_on_both_profiles(self) -> None:
         for profile, chains in ROLE_MODEL_CHAINS.items():

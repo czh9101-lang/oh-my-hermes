@@ -603,6 +603,18 @@ class DelegateRouteToolTest(unittest.TestCase):
                     "reasoning_effort": "low",
                 },
                 {
+                    "alias": "claude-fable-5-1",
+                    "provider": "",
+                    "model": "claude-fable-5-1",
+                    "reasoning_effort": "low",
+                },
+                {
+                    "alias": "claude-mythos-5-1",
+                    "provider": "",
+                    "model": "claude-mythos-5-1",
+                    "reasoning_effort": "low",
+                },
+                {
                     "alias": "claude-fable-5",
                     "provider": "",
                     "model": "claude-fable-5",
@@ -621,10 +633,8 @@ class DelegateRouteToolTest(unittest.TestCase):
         # fallback past the end restores inheritance instead of routing one
         # more rejection.
         self._call(action="set", category="quick")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
+        for _ in range(6):
+            self._call(action="fallback", category="quick")
         result = self._call(action="fallback", category="quick")
         self.assertEqual(result["status"], "exhausted_to_inherit")
         self.assertEqual(result["category"], "quick")
@@ -635,6 +645,22 @@ class DelegateRouteToolTest(unittest.TestCase):
         result = self._call(action="fallback")
         self.assertEqual(result["status"], "error")
         self.assertIn("no active route", result["error"])
+
+    def test_a_no_thinking_effort_is_refused_for_the_fable_tier(self):
+        # Fable 5.1 / Mythos 5.1 cannot disable thinking: Mythos 400s and
+        # Fable drops the flag silently, so the route never carries it.
+        for model in ("claude-fable-5-1", "claude-mythos-5-1", "fable", "anthropic/claude-mythos-5-1"):
+            result = self._call(action="set", model=model, reasoning_effort="none")
+            self.assertEqual(result["status"], "error", model)
+            self.assertIn("always thinks", result["error"])
+        self.assertEqual(read_delegation_route(self.home), {})
+        # Opus 5 may still be asked for no thinking; the guard is tier-scoped.
+        result = self._call(action="set", model="claude-opus-5", reasoning_effort="none")
+        self.assertEqual(result["status"], "routed")
+        # A category head on the Fable tier at its declared effort is untouched.
+        result = self._call(action="set", category="architect")
+        self.assertEqual(result["status"], "routed")
+        self.assertEqual(result["applied"]["alias"], "claude-fable-5-1")
 
     def test_an_explicit_category_disambiguates_a_shared_model(self):
         # kimi-k3:medium sits in more than one chain; the caller who routed
@@ -791,10 +817,8 @@ class RouteProvenanceRecordingTest(unittest.TestCase):
     def test_set_fallback_and_exhaustion_each_record_their_origin(self):
         first = self._call(action="set", category="quick")
         self.assertEqual(first["route_provenance"], "recorded")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
+        for _ in range(6):
+            self._call(action="fallback", category="quick")
         last = self._call(action="fallback", category="quick")
         self.assertEqual(last["status"], "exhausted_to_inherit")
         self.assertEqual(last["route_provenance"], "recorded")
@@ -802,7 +826,7 @@ class RouteProvenanceRecordingTest(unittest.TestCase):
         records = load_delegation_route_provenance(self.omh_home)
         self.assertEqual(
             [record["origin"] for record in records],
-            ["head", "fallback", "fallback", "fallback", "fallback", "exhausted_to_inherit"],
+            ["head", *["fallback"] * 6, "exhausted_to_inherit"],
         )
         self.assertEqual(records[0]["alias"], "glm-5.3-flash")
         self.assertEqual(records[1]["from_alias"], "glm-5.3-flash")

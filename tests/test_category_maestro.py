@@ -261,7 +261,7 @@ class CategoryMaestroResolverTests(unittest.TestCase):
 
     def test_unconfigured_profile_keeps_the_builtin_basis(self) -> None:
         route = resolve_model_route("claude-code", role="brain", category_config=_CONFIG)
-        self.assertEqual(route["selected_model"], "opus")
+        self.assertEqual(route["selected_model"], "claude-fable-5-1")
         self.assertEqual(route["catalog_kind"], "built_in_defaults")
         self.assertNotIn("catalog_fingerprint", route)
 

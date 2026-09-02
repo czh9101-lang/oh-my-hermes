@@ -23,6 +23,23 @@ _EVIDENCE_BOUNDARY = (
     "execution, dispatch, or completion evidence."
 )
 
+
+# Anthropic's Fable-tier generation (Fable 5.x and its Mythos sibling) cannot
+# disable thinking: a thinking-off request is a 400 on Mythos 5.1 and is
+# dropped silently on Fable 5.1, so an effort that means "no thinking" never
+# reaches delegation.reasoning_effort for these models. Matched on the alias
+# and on the wire id's model segment.
+_NO_THINKING_EFFORTS = frozenset({"none", "off", "false", "disabled"})
+_ALWAYS_THINKING_CLAUDE_PREFIXES = ("claude-fable-", "claude-mythos-")
+
+
+def _always_thinking_claude(model: str) -> bool:
+    normalized = str(model or "").strip().casefold()
+    if "/" in normalized:
+        normalized = normalized.rsplit("/", 1)[1]
+    return normalized in {"fable", "mythos"} or normalized.startswith(_ALWAYS_THINKING_CLAUDE_PREFIXES)
+
+
 def _chain_entry(
     alias: str,
     effort: str,
@@ -387,6 +404,16 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
         alias, head_effort = chains[category][0]
         if not effort:
             effort = head_effort
+    always_thinking = _always_thinking_claude(alias)
+    if always_thinking and effort.casefold() in _NO_THINKING_EFFORTS:
+        payload = {
+            "status": "error",
+            "error": (
+                f"{alias} always thinks; a reasoning_effort of {effort!r} asks the provider to "
+                "disable thinking, which this generation rejects. Route `low` instead."
+            ),
+        }
+        return json.dumps(attach_public_observation(payload, observation), sort_keys=True)
     if provider:
         wire_model = model
     else:
