@@ -2907,12 +2907,17 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                     "claude-code": {"binary_present": False, "login_marker": "absent"},
                     "codex": {"binary_present": True, "login_marker": "absent"},
                 },
-            ), patch("omh.commands.setup._ask_yes_no", side_effect=[True, False, False]) as yes_no:
+            ), patch("omh.commands.setup._env_key_names", return_value=set()), patch(
+                "omh.commands.setup._ask_yes_no", side_effect=[True, False]
+            ) as yes_no:
                 status, stdout, stderr = run_cli(base + ["setup", "--interactive"], output_json=False)
 
             self.assertEqual(status, 0, stderr)
-            # TUI, maestro delegation (no), provider entitlements (no).
-            self.assertEqual(yes_no.call_count, 3)
+            # TUI, then maestro delegation (no). The provider-entitlement
+            # question has nothing to ask here: a fresh config names no
+            # provider, no env key hints one, and Codex is not a Maestro-only
+            # subscription (Hermes' openai-codex provider spends it).
+            self.assertEqual(yes_no.call_count, 2)
             self.assertFalse((omh_home / "routing" / "dispatch-models.json").exists())
             self.assertFalse((omh_home / "routing" / "providers.json").exists())
             self.assertNotIn("dispatch-models.json", stdout)

@@ -227,15 +227,18 @@ def effective_mixture_category_chains(
 # multi-vendor relay that serves models of every family, or `unknown` when
 # the operator declined to say (treated as a gateway, so nothing is demoted
 # on a guess). `subscription_clis` lists the external coding CLIs whose
-# subscription the operator confirmed — those are Maestro-lane entitlements
-# and never touch the Hermes-lane chains.
+# subscription the operator confirmed and that only the Maestro lane can
+# spend. Claude Code is the one such CLI today: Hermes has no way to use a
+# Claude subscription, so the answer's only effect is the Claude Code
+# `--model` preference. A Codex login is spent by Hermes' own openai-codex
+# provider and therefore belongs under `providers`, not here.
 PROVIDER_ENTITLEMENTS_SCHEMA_VERSION = "provider_entitlements/v1"
 PROVIDER_KIND_GATEWAY = "gateway"
 PROVIDER_KIND_UNKNOWN = "unknown"
 # Mirrors the union of `preferred_provider_families` across
 # SHIPPED_MODEL_RECOMMENDATIONS in src/coding/model_recommendations.py (the
 # plugin bundle cannot import src/coding); the parity gate lives in
-# tests/test_plugin_hermes_delegation.py.
+# tests/test_provider_entitlements.py (ParityTests).
 PROVIDER_FAMILY_VOCABULARY: tuple[str, ...] = (
     "anthropic",
     "apitopia",
@@ -262,11 +265,12 @@ PROVIDER_KIND_VOCABULARY: tuple[str, ...] = (
 MULTI_VENDOR_PROVIDER_KINDS: frozenset[str] = frozenset(
     {"openrouter", "opencode", PROVIDER_KIND_GATEWAY, PROVIDER_KIND_UNKNOWN}
 )
-SUBSCRIPTION_CLI_PROFILES: tuple[str, ...] = ("claude-code", "codex")
+SUBSCRIPTION_CLI_PROFILES: tuple[str, ...] = ("claude-code",)
 
-# Mirrors each shipped candidate's `preferred_provider_families` (same
-# parity gate as the chains above). An alias absent here is served by every
-# provider — the honest default for an id the catalog has never described.
+# Mirrors each shipped candidate's `preferred_provider_families` (parity
+# gate: tests/test_provider_entitlements.py). An alias absent here is served
+# by every provider — the honest default for an id the catalog has never
+# described.
 HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
     "kimi-k3": ("apitopia", "kimi-coding", "openrouter", "opencode"),
     "claude-opus-5": ("ccapi", "anthropic", "openrouter"),
@@ -285,6 +289,11 @@ HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
     "gemini-3.1-pro": ("google", "gemini", "openrouter"),
     "qwen3-coder": ("qwen-oauth", "openrouter", "opencode"),
 }
+
+
+def is_provider_id_token(value: object) -> bool:
+    """Whether ``value`` is a provider id the entitlement document accepts."""
+    return isinstance(value, str) and bool(_CHAIN_TOKEN_RE.fullmatch(value))
 
 
 def provider_entitlements_path(omh_home: str | Path | None = None) -> Path:

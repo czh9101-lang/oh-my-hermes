@@ -327,10 +327,13 @@ no provider.
 
 Which providers and subscriptions a machine holds is a third, separate
 question. The interactive `omh setup` asks it — for each provider id in
-Hermes' config (`providers.<id>` and `model.provider`): do you hold it, and
-is it a vendor provider or a multi-vendor gateway; for each detected coding
-CLI: do you have a subscription — and records the answers in
-`~/.omh/routing/providers.json` (`provider_entitlements/v1`):
+Hermes' config (`providers.<id>` and `model.provider`, except `auto`) and
+for each builtin provider whose key NAME appears in `$HERMES_HOME/.env` or
+the environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...; values are never
+read): do you hold it, and is it a vendor provider or a multi-vendor
+gateway; then any further provider id you type; and, when the Claude Code
+CLI is on PATH, whether you have a Claude Code subscription — and records
+the answers in `~/.omh/routing/providers.json` (`provider_entitlements/v1`):
 
 ```json
 {
@@ -343,14 +346,18 @@ CLI: do you have a subscription — and records the answers in
 With that document present, every chain is reordered so the entries a
 confirmed provider can serve lead and the rest follow; nothing is removed, so
 a wrong answer costs one rejected fall-through, never a missing model. A
-gateway or `unknown` kind serves every family; a vendor kind serves only the
-models whose editorial candidates name it; an explicit route in
-`model-providers.json` decides before either. `omh model-chains show` marks a
-reordered chain. A confirmed Claude Code subscription is a Maestro-lane
-entitlement: Hermes cannot spend it, so its only effect is seeding the Claude
-Code `--model` preference in `dispatch-models.json` when none is set. `--yes`,
-`--json`, and non-TTY runs ask nothing and write nothing; rerun `omh setup`
-interactively to answer again or edit the file.
+gateway, `openrouter`, `opencode`, or `unknown` kind serves every family; any
+other vendor kind serves only the models whose editorial candidates name it;
+an explicit route in `model-providers.json` decides before either. The same
+reordered chains feed `omh_delegate_route`, the HUD labels, and
+`omh model-chains show`, which marks a reordered chain. A confirmed Claude
+Code subscription is a Maestro-lane entitlement: Hermes cannot spend it, so
+its only effect is seeding the Claude Code `--model` preference in
+`dispatch-models.json` when none is set (a Codex login is spent by Hermes'
+own `openai-codex` provider and belongs under providers). `--yes`, `--json`,
+and runs without `--interactive` on a non-TTY ask nothing and write nothing;
+rerun `omh setup` interactively to answer again (existing answers are the
+defaults) or edit the file.
 
 Supply wire-id routes in `~/.omh/routing/model-providers.json`
 (`model_provider_routes/v1`), a sibling of the chain document:

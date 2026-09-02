@@ -88,6 +88,8 @@ class ParseTests(unittest.TestCase):
             ({"schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION, "providers": {"og": "warp"}}, "kind must be one of"),
             ({"schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION, "subscription_clis": "claude-code"}, "must be a list"),
             ({"schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION, "subscription_clis": ["cursor"]}, "must be one of"),
+            # A Codex login is a Hermes provider (openai-codex), not a Maestro-only subscription.
+            ({"schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION, "subscription_clis": ["codex"]}, "must be one of"),
         ]
         for raw, fragment in cases:
             with self.subTest(raw=raw):
@@ -159,6 +161,58 @@ class ServingRuleTests(unittest.TestCase):
             self.assertEqual(effective_mixture_category_chains(tmp), dict(HERMES_MIXTURE_CATEGORY_CHAINS))
 
 
+class ChainSurfaceConsistencyTests(unittest.TestCase):
+    """Every chain reader sees the same head: show, the route tool, the HUD projection."""
+
+    def _home(self, tmp: str) -> Path:
+        home = Path(tmp) / ".omh"
+        _write(
+            provider_entitlements_path(home),
+            {"schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION, "providers": {"openai-codex": "openai-codex"}, "subscription_clis": []},
+        )
+        return home
+
+    def test_model_chains_show_marks_reordered_chains_in_text_and_json(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        from omh.commands.model_chains import _print_state, _state
+
+        with TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            state = _state(home)
+            self.assertEqual(state["entitlements_status"], "applied")
+            self.assertEqual(state["entitlements_path"], str(provider_entitlements_path(home)))
+            architect = next(row for row in state["categories"] if row["category"] == "architect")
+            self.assertTrue(architect["entitlement_shaped"])
+            self.assertEqual(architect["chain"][0]["model"], "gpt-5.6-sol")
+            self.assertTrue(architect["chain"][0]["served"])
+            self.assertFalse(architect["chain"][1]["served"])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                _print_state(state)
+            self.assertIn("architect: gpt-5.6-sol:xhigh", out.getvalue())
+            self.assertIn("(reordered by provider entitlements)", out.getvalue())
+            self.assertIn(f"Provider entitlements: {provider_entitlements_path(home)} [applied]", out.getvalue())
+
+    def test_route_tool_and_show_agree_on_the_head_and_the_fallback_walk(self) -> None:
+        from omh.plugin_bundle.omh.tools.delegate_route_tool import omh_delegate_route_handler
+
+        with TemporaryDirectory() as tmp:
+            home = self._home(tmp)
+            hermes_home = Path(tmp) / ".hermes"
+            hermes_home.mkdir()
+            (hermes_home / "config.yaml").write_text("model:\n  provider: openai-codex\n", encoding="utf-8")
+            common = {"omh_home": str(home), "hermes_home": str(hermes_home)}
+            routed = json.loads(omh_delegate_route_handler({"action": "set", "category": "architect", **common}))
+            self.assertEqual(routed["status"], "routed", routed)
+            self.assertEqual(routed["applied"]["alias"], "gpt-5.6-sol")
+            fallback = json.loads(omh_delegate_route_handler({"action": "fallback", "category": "architect", **common}))
+            self.assertEqual(fallback["applied"]["alias"], "claude-fable-5-1")
+            status = json.loads(omh_delegate_route_handler({"action": "status", **common}))
+            self.assertEqual(status["categories"]["architect"][0]["alias"], "gpt-5.6-sol")
+
+
 class ConfigReaderTests(unittest.TestCase):
     def test_reads_provider_keys_and_default_provider(self) -> None:
         config = (
@@ -200,14 +254,18 @@ class SetupInterviewTests(unittest.TestCase):
                 "claude-code": {"binary_present": True, "login_marker": "present"},
                 "codex": {"binary_present": True, "login_marker": "absent"},
             }
-            # record? yes; hold og? yes; hold zai? no; claude-code? yes; codex? no
-            answers = iter([True, True, False, True, False])
+            # record? yes; hold og? yes; hold zai? no; claude-code? yes. Codex
+            # is never asked: a Codex login is a Hermes provider, not a
+            # Maestro-only subscription.
+            answers = iter([True, True, False, True])
             with patch.object(setup_module, "_detect_external_cli_profiles", return_value=detected), patch.object(
                 setup_module, "_ask_yes_no", side_effect=lambda *a, **k: next(answers)
             ), patch.object(setup_module, "_ask_single_choice", return_value="gateway"), patch.object(
-                setup_module, "_use_color", return_value=False
-            ):
+                setup_module, "_ask", return_value=""
+            ), patch.object(setup_module, "_use_color", return_value=False):
                 setup_module._ask_provider_entitlements(args, paths, "en")
+            with self.assertRaises(StopIteration):
+                next(answers)
 
             document = json.loads(provider_entitlements_path(paths.omh_home).read_text(encoding="utf-8"))
             self.assertEqual(
@@ -224,6 +282,147 @@ class SetupInterviewTests(unittest.TestCase):
             with patch.object(setup_module, "_ask_yes_no") as yes_no:
                 setup_module._ask_provider_entitlements(args, paths, "en")
             yes_no.assert_not_called()
+
+    def test_rerun_defaults_come_from_the_existing_document(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._paths(root)
+            self._config(paths, "providers:\n  og:\n    base_url: x\n  zai:\n    base_url: y\n")
+            _write(
+                provider_entitlements_path(paths.omh_home),
+                {"schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION, "providers": {"zai": "zai"}, "subscription_clis": []},
+            )
+            args = argparse.Namespace()
+            yes_no_defaults: list[tuple[str, bool]] = []
+            kind_defaults: list[tuple[str, str]] = []
+
+            def yes_no(prompt, *, default, **_kwargs):
+                yes_no_defaults.append((prompt, default))
+                return True
+
+            def single_choice(title, _intro, options, *, default_choice, **_kwargs):
+                kind_defaults.append((title, next(o["value"] for o in options if o["choice"] == default_choice)))
+                return next(o["value"] for o in options if o["choice"] == default_choice)
+
+            with patch.object(
+                setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": False}, "codex": {"binary_present": False}}
+            ), patch.object(setup_module, "_ask_yes_no", side_effect=yes_no), patch.object(
+                setup_module, "_ask_single_choice", side_effect=single_choice
+            ), patch.object(setup_module, "_ask", return_value=""), patch.object(setup_module, "_use_color", return_value=False):
+                setup_module._ask_provider_entitlements(args, paths, "en")
+
+            # The top-level question defaults to No once a valid document exists;
+            # a previously recorded provider defaults to Yes, an unrecorded one to No.
+            self.assertEqual([default for _prompt, default in yes_no_defaults], [False, False, True])
+            self.assertIn("`og`", yes_no_defaults[1][0])
+            self.assertIn("`zai`", yes_no_defaults[2][0])
+            # The recorded kind seeds the kind default; a new provider defaults to gateway.
+            self.assertEqual([kind for _title, kind in kind_defaults], ["gateway", "zai"])
+
+    def test_env_key_names_surface_builtin_providers_without_reading_values(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._paths(root)
+            self._config(paths, "model:\n  provider: auto\n")
+            paths.hermes_home.mkdir(parents=True, exist_ok=True)
+            (paths.hermes_home / ".env").write_text(
+                "# keys\nexport ANTHROPIC_API_KEY=sk-secret-value\nUNRELATED=1\n", encoding="utf-8"
+            )
+            with patch.dict("os.environ", {}, clear=False):
+                import os
+
+                os.environ.pop("ANTHROPIC_API_KEY", None)
+                candidates = setup_module._provider_candidates(paths)
+            # `auto` is Hermes' resolution mode, not an account, and is never asked.
+            self.assertEqual(candidates, [("anthropic", "anthropic")])
+            args = argparse.Namespace()
+            kinds: list[str] = []
+
+            def single_choice(_title, _intro, options, *, default_choice, **_kwargs):
+                kinds.append(next(o["value"] for o in options if o["choice"] == default_choice))
+                return kinds[-1]
+
+            with patch.object(
+                setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": False}, "codex": {"binary_present": False}}
+            ), patch.object(setup_module, "_ask_yes_no", return_value=True), patch.object(
+                setup_module, "_ask_single_choice", side_effect=single_choice
+            ), patch.object(setup_module, "_ask", return_value=""), patch.object(setup_module, "_use_color", return_value=False):
+                setup_module._ask_provider_entitlements(args, paths, "en")
+            document = json.loads(provider_entitlements_path(paths.omh_home).read_text(encoding="utf-8"))
+            self.assertEqual(document["providers"], {"anthropic": "anthropic"})
+            self.assertEqual(kinds, ["anthropic"])
+            self.assertNotIn("sk-secret-value", json.dumps(document))
+
+    def test_add_loop_records_extra_providers_and_rejects_bad_ids(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._paths(root)
+            self._config(paths, "providers:\n  <<: *shared\n  og:\n    base_url: x\n")
+            args = argparse.Namespace()
+            extra = iter(["my provider", "og", "openrouter", ""])
+            with patch.object(
+                setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": False}, "codex": {"binary_present": False}}
+            ), patch.object(setup_module, "_ask_yes_no", return_value=True), patch.object(
+                setup_module, "_ask_single_choice", return_value="openrouter"
+            ), patch.object(setup_module, "_ask", side_effect=lambda *a, **k: next(extra)), patch.object(
+                setup_module, "_use_color", return_value=False
+            ):
+                setup_module._ask_provider_entitlements(args, paths, "en")
+            document = json.loads(provider_entitlements_path(paths.omh_home).read_text(encoding="utf-8"))
+            # The YAML merge key `<<` is never asked; the bad id and the duplicate are skipped.
+            self.assertEqual(document["providers"], {"og": "openrouter", "openrouter": "openrouter"})
+            parsed, status = load_provider_entitlements(paths.omh_home)
+            self.assertEqual(status, "applied")
+            self.assertIsNotNone(parsed)
+
+    def test_invalid_existing_document_is_announced_and_replaced_by_default(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._paths(root)
+            self._config(paths, "providers:\n  og:\n    base_url: x\n")
+            _write(provider_entitlements_path(paths.omh_home), {"schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION, "providers": {"og": "warp"}})
+            args = argparse.Namespace()
+            defaults: list[bool] = []
+
+            def yes_no(_prompt, *, default, **_kwargs):
+                defaults.append(default)
+                return False
+
+            import io
+            from contextlib import redirect_stdout
+
+            out = io.StringIO()
+            with patch.object(
+                setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": False}, "codex": {"binary_present": False}}
+            ), patch.object(setup_module, "_ask_yes_no", side_effect=yes_no), patch.object(
+                setup_module, "_use_color", return_value=False
+            ), redirect_stdout(out):
+                setup_module._ask_provider_entitlements(args, paths, "en")
+            self.assertEqual(defaults, [True])
+            self.assertIn("not applied", out.getvalue())
+            self.assertIn("kind must be one of", out.getvalue())
+
+    def test_unreadable_dispatch_document_is_reported_not_silently_skipped(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._paths(root)
+            self._config(paths, "")
+            path = paths.omh_home / "routing" / "dispatch-models.json"
+            path.parent.mkdir(parents=True)
+            path.write_text("{", encoding="utf-8")
+            args = argparse.Namespace()
+            import io
+            from contextlib import redirect_stdout
+
+            out = io.StringIO()
+            with patch.object(
+                setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": True}, "codex": {"binary_present": False}}
+            ), patch.object(setup_module, "_ask_yes_no", return_value=True), patch.object(
+                setup_module, "_ask", return_value=""
+            ), patch.object(setup_module, "_use_color", return_value=False), redirect_stdout(out):
+                setup_module._ask_provider_entitlements(args, paths, "en")
+            self.assertIn("Could not seed", out.getvalue())
+            self.assertEqual(path.read_text(encoding="utf-8"), "{")
 
     def test_declining_writes_nothing(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -249,6 +448,22 @@ class SetupInterviewTests(unittest.TestCase):
                 setup_module._ask_provider_entitlements(args, paths, "en")
             yes_no.assert_not_called()
             self.assertIsNone(args._provider_entitlements)
+
+    def test_claude_code_seed_refuses_a_document_the_reader_would_ignore(self) -> None:
+        from omh.coding.fanout_dispatch import _dispatch_model_preference
+
+        with TemporaryDirectory() as tmp:
+            paths = self._paths(Path(tmp))
+            path = paths.omh_home / "routing" / "dispatch-models.json"
+            for document in ({"schema_version": "omh_dispatch_model_preferences/v0", "profiles": {}}, {"profiles": {}}, {"schema_version": "omh_dispatch_model_preferences/v1", "profiles": []}):
+                with self.subTest(document=document):
+                    _write(path, document)
+                    self.assertEqual(setup_module._seed_claude_code_dispatch_head(paths)["status"], "unreadable")
+                    self.assertEqual(json.loads(path.read_text(encoding="utf-8")), document)
+            path.unlink()
+            self.assertEqual(setup_module._seed_claude_code_dispatch_head(paths)["status"], "seeded")
+            # What the seed wrote is what the dispatch reader accepts.
+            self.assertEqual(_dispatch_model_preference(paths, "claude-code"), CLAUDE_FRONTIER_CHAIN_MODELS[0])
 
     def test_claude_code_seed_never_overwrites_an_existing_value(self) -> None:
         with TemporaryDirectory() as tmp:
