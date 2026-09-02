@@ -9,6 +9,25 @@ from . import memory
 from .domain_intelligence_parser import add_domain_intelligence_commands
 
 
+def _add_candidate_revision_argument(parser: argparse.ArgumentParser, verb: str) -> None:
+    """Bind one review verb to the card revision its reviewer rendered.
+
+    Spelled and defaulted identically on both verbs so a wrapper submits the
+    same field either way. The default stays empty rather than absent: an
+    empty value means "no card was proven", which the command refuses, and a
+    caller that never rendered a card gets that refusal instead of a silent
+    decision on a payload it never read.
+    """
+    parser.add_argument(
+        "--candidate-revision",
+        default="",
+        help=(
+            f"Candidate revision from the `memory review` card being acted on; "
+            f"{verb} refuses when the stored candidate no longer matches it."
+        ),
+    )
+
+
 def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     command = sub.add_parser("memory", help="Agent/operator-only OMH memory review, migration, lifecycle, and prepared-context controls.")
     memory_sub = command.add_subparsers(dest="memory_command", required=True)
@@ -65,6 +84,7 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     approve = memory_sub.add_parser("approve", help="Approve a reviewed project-memory candidate.")
     approve.add_argument("candidate_id")
     approve.add_argument("--approved-by", default="operator")
+    _add_candidate_revision_argument(approve, "approve")
     approve.add_argument(
         "--retention-class",
         choices=("volatile", "standard", "durable"),
@@ -80,6 +100,7 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     reject.add_argument("candidate_id")
     reject.add_argument("--rejected-by", default="operator")
     reject.add_argument("--reason", default="")
+    _add_candidate_revision_argument(reject, "reject")
     reject.set_defaults(func=memory.cmd_memory_reject)
 
     recall = memory_sub.add_parser("recall", help="Recall reviewed OMH project memory for a task as prepared context.")

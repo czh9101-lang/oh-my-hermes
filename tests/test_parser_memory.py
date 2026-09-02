@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
+from _cli_harness import run_cli
 from _local_package import load_local_package
 
 load_local_package()
@@ -84,6 +88,85 @@ class MemoryParserTests(unittest.TestCase):
     def test_memory_lineage_defaults_to_three_hops(self) -> None:
         args = build_parser().parse_args(["memory", "lineage", "record-one"])
         self.assertEqual(args.depth, 3)
+
+    def test_memory_review_actions_accept_a_candidate_revision(self) -> None:
+        for argv in (
+            ["memory", "approve", "cand-one", "--candidate-revision", "rev_abc"],
+            ["memory", "reject", "cand-one", "--candidate-revision", "rev_abc"],
+        ):
+            with self.subTest(argv=argv):
+                self.assertEqual(build_parser().parse_args(argv).candidate_revision, "rev_abc")
+
+    def test_memory_review_actions_default_to_no_revision(self) -> None:
+        args = build_parser().parse_args(["memory", "approve", "cand-one"])
+        self.assertEqual(args.candidate_revision, "")
+
+
+class MemoryReviewRevisionCliTests(unittest.TestCase):
+    """The CLI review path refuses a stale or unproven card without writing."""
+
+    def _capture(self, tmp: Path) -> tuple[list[str], str]:
+        homes = ["--omh-home", str(tmp / ".omh"), "--hermes-home", str(tmp / ".hermes")]
+        status, stdout, _stderr = run_cli(
+            [*homes, "memory", "capture", "Deploys go through staging first"]
+        )
+        self.assertEqual(status, 0, stdout)
+        return homes, str(json.loads(stdout)["candidate"]["candidate_id"])
+
+    def _revision(self, homes: list[str], candidate_id: str) -> str:
+        status, stdout, _stderr = run_cli([*homes, "memory", "review", "--candidate", candidate_id])
+        self.assertEqual(status, 0, stdout)
+        return str(json.loads(stdout)["cards"][0]["review_revision"])
+
+    def test_approve_without_a_revision_refuses_and_writes_nothing(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            homes, candidate_id = self._capture(root)
+
+            status, stdout, _stderr = run_cli([*homes, "memory", "approve", candidate_id])
+
+            payload = json.loads(stdout)
+            self.assertNotEqual(status, 0)
+            self.assertEqual(payload["reason_code"], "review_revision_required")
+            self.assertFalse(payload["applied"])
+            self.assertFalse((root / ".omh" / "memory" / "records").exists())
+
+    def test_approve_with_a_stale_revision_refuses_and_writes_nothing(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            homes, candidate_id = self._capture(root)
+            self._revision(homes, candidate_id)
+
+            status, stdout, _stderr = run_cli(
+                [*homes, "memory", "approve", candidate_id, "--candidate-revision", "rev_" + "0" * 32]
+            )
+
+            payload = json.loads(stdout)
+            self.assertNotEqual(status, 0)
+            self.assertEqual(payload["reason_code"], "stale_review")
+            self.assertFalse(payload["applied"])
+            self.assertFalse((root / ".omh" / "memory" / "records").exists())
+
+    def test_approve_and_reject_with_the_displayed_revision_succeed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            homes, candidate_id = self._capture(root)
+
+            status, stdout, _stderr = run_cli(
+                [*homes, "memory", "approve", candidate_id, "--candidate-revision", self._revision(homes, candidate_id)]
+            )
+            self.assertEqual(status, 0, stdout)
+            self.assertEqual(json.loads(stdout)["decision"], "approved_manual")
+
+            status, stdout, _stderr = run_cli([*homes, "memory", "capture", "Deploys skip staging on Fridays"])
+            self.assertEqual(status, 0, stdout)
+            second = str(json.loads(stdout)["candidate"]["candidate_id"])
+            status, stdout, _stderr = run_cli(
+                [*homes, "memory", "reject", second, "--candidate-revision", self._revision(homes, second)]
+            )
+
+            self.assertEqual(status, 0, stdout)
+            self.assertEqual(json.loads(stdout)["decision"], "rejected")
 
 
 if __name__ == "__main__":

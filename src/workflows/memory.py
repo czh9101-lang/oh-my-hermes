@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import unicodedata
@@ -863,7 +864,15 @@ def capture_project_memory_candidate(
     # review path even under auto-safe: derived content is a curation act,
     # not a captured observation.
     if bool(policy.get("auto_approve_safe")) and candidate.get("safety", {}).get("status") == "safe" and not duplicate_of and not force_review and not relative_phrase:
-        approved = approve_project_memory_candidate(paths, str(candidate["candidate_id"]), approved_by="auto-safe")
+        # Auto-safe binds to the candidate it just wrote: the revision comes
+        # from that object, so this path proves the same payload it approved
+        # rather than skipping the guard it asks reviewers to carry.
+        approved = approve_project_memory_candidate(
+            paths,
+            str(candidate["candidate_id"]),
+            approved_by="auto-safe",
+            expected_revision=project_memory_review_revision(candidate),
+        )
         record = approved.get("record", {}) if isinstance(approved.get("record"), dict) else {}
         candidate = approved.get("candidate", candidate) if isinstance(approved.get("candidate"), dict) else candidate
         auto_approved = True
@@ -904,6 +913,46 @@ def build_project_memory_review(
     }
 
 
+def project_memory_review_revision(candidate: dict[str, Any]) -> str:
+    """Fingerprint the candidate payload a review card displays.
+
+    A candidate id is a stable file name, not a version: a recapture, an
+    overwrite, or a supersession leaves the id resolvable while the payload
+    underneath it changed, so a card held open across that change could
+    approve text its reviewer never read. The revision is derived from the
+    displayed projection only -- summary, scope, tags, type, safety verdict,
+    status, creation time, and the content digest that already stands in for
+    the raw content -- so it moves exactly when what the reviewer saw moves,
+    and it stays metadata-only: no raw content ever reaches the digest.
+
+    Deliberately NOT named candidate_revision: that name is already taken
+    repo-wide for the integer record revision on v2 lifecycle candidates and
+    batch items. This is a content fingerprint of one rendered card, not a
+    revision counter, and the two must not be read as the same field.
+    """
+    safety = candidate.get("safety", {}) if isinstance(candidate.get("safety"), dict) else {}
+    content_ref = candidate.get("content_ref", {}) if isinstance(candidate.get("content_ref"), dict) else {}
+    projection = {
+        "candidate_id": str(candidate.get("candidate_id", "")),
+        "schema_version": str(candidate.get("schema_version", "")),
+        "status": str(candidate.get("status", "")),
+        "record_type": str(candidate.get("record_type", "")),
+        "summary": str(candidate.get("summary", "")),
+        "scope": _normalize_scope(candidate.get("scope", _scope("project", "default"))),
+        "tags": _string_list(candidate.get("tags", [])),
+        "created_at": str(candidate.get("created_at", "")),
+        "source_ref": str(candidate.get("source_ref", "")),
+        "retention_class": str(candidate.get("retention_class", "")),
+        "duplicate_of": str(candidate.get("duplicate_of", "")),
+        "safety_status": str(safety.get("status", "")),
+        "safety_review_reasons": _string_list(safety.get("review_reasons", [])),
+        "content_sha256": str(content_ref.get("sha256", "")),
+        "content_length": int(content_ref.get("length", 0) or 0),
+    }
+    canonical = json.dumps(projection, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return "rev_" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
+
+
 def build_project_memory_review_card(candidate: dict[str, Any]) -> dict[str, object]:
     safety = candidate.get("safety", {}) if isinstance(candidate.get("safety"), dict) else {}
     safety_status = str(safety.get("status", "needs_review"))
@@ -911,6 +960,7 @@ def build_project_memory_review_card(candidate: dict[str, Any]) -> dict[str, obj
     return {
         "schema_version": PROJECT_MEMORY_REVIEW_CARD_SCHEMA_VERSION,
         "candidate_id": str(candidate.get("candidate_id", "")),
+        "review_revision": project_memory_review_revision(candidate),
         "record_type": str(candidate.get("record_type", "")),
         "summary": str(candidate.get("summary", "")),
         "scope": _normalize_scope(candidate.get("scope", _scope("project", "default"))),
@@ -941,16 +991,56 @@ class LifecycleCandidateError(ValueError):
     """A v2 lifecycle candidate reached the plain approval path."""
 
 
+class StaleMemoryReviewError(ValueError):
+    """A review decision named a candidate revision the store no longer holds."""
+
+
+def candidate_is_review_card_backed(candidate: dict[str, Any]) -> bool:
+    """True when `memory review` renders a card for this candidate.
+
+    Only card-backed candidates can carry a review revision, because the
+    revision IS the card's fingerprint. v2 lifecycle candidates (correction,
+    restore) are staged by the lifecycle path and approved by id without a
+    card ever being rendered, so demanding a revision for them would ask for
+    a value no surface produces.
+    """
+    return (
+        str(candidate.get("schema_version", "")) == PROJECT_MEMORY_CANDIDATE_SCHEMA_VERSION
+        and not str(candidate.get("lifecycle", "") or "")
+    )
+
+
+def _require_review_revision(candidate: dict[str, Any], expected_revision: str) -> None:
+    """Refuse a decision whose card no longer describes the stored candidate.
+
+    Called before any write, and only when the caller supplied a revision:
+    an omitted revision keeps the in-process API working for callers that
+    never rendered a card (auto-safe capture, lifecycle paths, wrappers that
+    predate the field). The CLI is where the revision is required, so an
+    interactive reviewer cannot approve unproven text.
+    """
+    actual = project_memory_review_revision(candidate)
+    if expected_revision != actual:
+        raise StaleMemoryReviewError(
+            f"stale_review: candidate {candidate.get('candidate_id', '')} is now revision {actual}, "
+            f"not the reviewed revision {expected_revision}; re-read the card with "
+            "`omh memory review --candidate <id>` and decide again on what it shows now"
+        )
+
+
 def approve_project_memory_candidate(
     paths: OmhPaths,
     candidate_id: str,
     *,
     approved_by: str = "operator",
     retention_class: str | None = None,
+    expected_revision: str = "",
 ) -> dict[str, object]:
     candidate = _read_project_memory_candidate(paths, candidate_id)
     if not candidate:
         raise FileNotFoundError(candidate_id)
+    if expected_revision:
+        _require_review_revision(candidate, expected_revision)
     # Fail closed on correction/restore candidates: their payload lives under
     # "replacement", so the plain path would mint a record with an empty
     # summary and revision 1 -- and that garbage record then blocks the real
@@ -1009,10 +1099,13 @@ def reject_project_memory_candidate(
     *,
     rejected_by: str = "operator",
     reason: str = "",
+    expected_revision: str = "",
 ) -> dict[str, object]:
     candidate = _read_project_memory_candidate(paths, candidate_id)
     if not candidate:
         raise FileNotFoundError(candidate_id)
+    if expected_revision:
+        _require_review_revision(candidate, expected_revision)
     now = utc_now()
     candidate = {**candidate, "status": "rejected", "reviewed_at": now, "reviewed_by": rejected_by, "rejection_reason": _redact(str(reason or ""))[:300]}
     with file_lock(paths.memory_index_path, private=True):
