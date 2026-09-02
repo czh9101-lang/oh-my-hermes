@@ -1208,7 +1208,12 @@ def read_hermes_native_subagents(
             "provider": route_provider,
             "model": child["model"],
             "effort": child["effort"],
-            "tokens": tokens_total if tokens_total else None,
+            # A terminal row's zero is observed, not missing: the failure
+            # hint above is derived from this same absence, so sending `None`
+            # here made the HUD render `--` on a row the reader had just
+            # labelled failed for having no usage. Only a still-running child
+            # that has not reported yet is honestly unknown.
+            "tokens": tokens_total if tokens_total or row_state != "running" else None,
             "elapsed_seconds": max(0.0, elapsed_until - child["started_at"]),
             "observed_at": _iso_utc(last_activity),
             "category": mixture_category_for(
