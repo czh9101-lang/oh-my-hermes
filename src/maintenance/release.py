@@ -166,7 +166,11 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # severity-by-effort debt ledger with rerun reconciliation); one new
 # capability section for one new workflow, not per-section padding;
 # warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 379709
+# 379709 -> 379904: `strategy-brief` grew the decision-record discipline
+# (three-condition trigger, docs/adr/ convention pointer, never-edit-accepted
+# lifecycle rule); instruction lines on one existing skill, not padding;
+# warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 379904
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -571,7 +575,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # reconciliation), plus its lane name on the coding_handoff skills' Workflow
 # Lane lines; the dimension and reconciliation tables live in one on-demand
 # reference outside this count; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 864516
+# 864516 -> 865332: `strategy-brief` grew the decision-record discipline
+# (three-condition trigger, record convention and approval gate, lifecycle
+# and supersession rules, the decision-recall wiring); the file convention,
+# lifecycle table, and review checklists live in the new on-demand
+# decision-records reference outside this count; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 865332
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
