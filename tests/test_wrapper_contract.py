@@ -33,7 +33,9 @@ from omh.wrapper_contract import (
     messenger_rendering_contract,
     render_profile_for_source,
 )
+from omh.wrapper.briefing import build_coding_briefing
 from omh.wrapper.continuity import build_continuity_briefing
+from omh.wrapper.work_artifact_actions import build_work_artifact_copy_action
 from omh.wrapper.localized_copy import detect_copy_locale
 from omh.wrapper.native_commands import build_native_command_surface, render_native_command_response
 from omh.wrapper.route_hints import build_chat_route_hint_payload
@@ -4446,6 +4448,84 @@ class ContinuityBriefingProjectionTests(unittest.TestCase):
 
                 self.assertEqual(briefing["resume"]["status"], "blocked")
                 self.assertEqual(briefing["next_action"], "review_runtime_evidence")
+
+
+class WorkArtifactCopyActionTests(unittest.TestCase):
+    """The wrapper action lists or selects; it never dispatches or observes."""
+
+    PROMPT_TEMPLATE = "Implement the export surface for {message}."
+
+    def _status_payload(self) -> dict[str, object]:
+        session = {
+            "session_id": "wsession-copy",
+            "thread_key": "discord:copy",
+            "source": "discord",
+            "status": "prompt_handoff_prepared",
+            "selected_executor_profile": "claude-code",
+            "plan": {"status": "accepted", "recommended_workflow": "ultrawork"},
+            "prompt_handoff": {
+                "schema_version": "coding_prompt_handoff/v1",
+                "selected_executor_profile": "claude-code",
+                "prompt_template": self.PROMPT_TEMPLATE,
+                "acceptance_criteria": ["Stable ids"],
+                "verification": ["unittest tests/test_wrapper_contract.py"],
+            },
+        }
+        return {
+            "schema_version": "wrapper_session_result/v1",
+            "session_id": "wsession-copy",
+            "session_status": "prompt_handoff_prepared",
+            "prompt_handoff": session["prompt_handoff"],
+            "coding_briefing": build_coding_briefing(session),
+        }
+
+    def test_list_action_returns_stable_ids_without_artifact_text(self) -> None:
+        # Given a prepared wrapper session status payload.
+        status = self._status_payload()
+
+        # When the copy action lists the current work artifacts.
+        listing = build_work_artifact_copy_action(status)
+
+        # Then ids are stable, the prompt is available, and no body text leaks.
+        self.assertEqual(listing["action"], "list_work_artifacts")
+        self.assertEqual(
+            [str(entry["artifact_id"]) for entry in listing["artifacts"]],
+            [
+                "handoff_prompt",
+                "acceptance_and_verification",
+                "status_brief",
+                "evidence_gaps",
+                "next_action",
+                "issue_pr_followup",
+            ],
+        )
+        prompt_entry = next(entry for entry in listing["artifacts"] if entry["artifact_id"] == "handoff_prompt")
+        self.assertEqual(prompt_entry["availability"], "available")
+        self.assertNotIn("text", prompt_entry)
+
+    def test_select_action_returns_exact_source_text_with_boundary(self) -> None:
+        # Given the same prepared status payload.
+        status = self._status_payload()
+
+        # When one artifact id is selected.
+        selection = build_work_artifact_copy_action(status, artifact_id="handoff_prompt")
+
+        # Then the exact prepared text comes back with its boundary intact.
+        self.assertEqual(selection["action"], "select_work_artifact")
+        self.assertEqual(selection["artifact"]["text"], self.PROMPT_TEMPLATE)
+        self.assertEqual(selection["artifact"]["boundary"], "prepared_not_observed")
+        self.assertEqual(selection["next_action"], "show_status")
+
+    def test_action_on_a_session_without_a_briefing_reports_unavailable(self) -> None:
+        # Given a status payload with no coding briefing recorded.
+        status = {"schema_version": "wrapper_session_result/v1", "session_id": "wsession-empty"}
+
+        # When the copy action selects the handoff prompt.
+        selection = build_work_artifact_copy_action(status, artifact_id="handoff_prompt")
+
+        # Then it reports unavailable instead of synthesizing a prompt.
+        self.assertEqual(selection["artifact"]["availability"], "unavailable")
+        self.assertEqual(selection["artifact"]["text"], "")
 
 
 if __name__ == "__main__":
