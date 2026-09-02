@@ -241,14 +241,28 @@ pairing so a benchmark claim can never mix in other prompt changes.
   deliberate deeply only where correctness is genuinely at risk and let the
   single verification pass prove the mechanical steps; edit surgically; fix
   only what the criteria name and report adjacent findings; keep scratch
-  checks out of the repo; privately list what you need next and request every
-  independent item in one response; a decided step is run, not announced;
-  every progress claim points at a tool result.
+  checks out of the repo and commit tests only where a criterion or the
+  repo's own convention asks for them; add no helpers, fallbacks,
+  validation, flags, or shims beyond what the criteria name; privately list
+  what you need next and request every independent item in one response; no
+  one is watching in real time, so proceed on reversible actions and finish
+  a last paragraph that is a plan or a promise instead of ending on it;
+  every progress claim points at a tool result, a failed check is reported
+  with its output, a skipped step as skipped. The block sits exactly on the
+  `BLOCK_MAX_CONSTRAINTS` ceiling; the 5.1 additions were phrased as
+  descriptions rather than modal directives to stay there.
 - **What OMH injects (composer):** split only what the goal requires, no
-  speculative units, no unit whose only job is re-checking your own
-  composition — but hand independent units off and keep working while they
-  run; state the criteria once and freeze; write the closing report as the
-  reader's first look (outcome first, plain sentences, no working shorthand).
+  speculative units, no unit whose only job is re-checking the split itself
+  (a fresh-context review of a unit's deliverable is a legitimate unit);
+  delegate what is independent and evidence-judgeable, keep in line what
+  finishes in a handful of tool calls, and keep working while units run;
+  state the criteria once and freeze; a closing paragraph that is a dispatch
+  gets run before closing; write the closing report as the reader's first
+  look (outcome first, plain sentences, no working shorthand).
+- **What OMH injects (throughput overlay, advanced modes):** a delegated
+  lane returns a distilled report — outcome, evidence pointers, open items —
+  never its transcript; delegated transcripts are what floods a composer's
+  context.
 - **Version rule:** the counters are written for 5.1 and are harmless on
   Fable 5 / Opus 5 (the batching and whole-file-rewrite counters simply hold
   behavior those models already had). The Opus 5 guidance to *delete*
@@ -515,7 +529,13 @@ was faster in 4/6 pairs, with median wall time 13.28 s versus 15.82 s
 (87.31 s versus 110.33 s total), and used 435,295 versus 490,034 reported
 tokens. The narrow synthetic corpus does not establish general model
 superiority, but it supports this exact prepared-guidance gate on the measured
-Claude Code surface.
+Claude Code surface. The gate has not been re-measured on Fable 5.1; the
+official migration guide reports that 5.1 batches fewer implied tool calls
+per turn than Fable 5 in long agent loops, so the gate is stale in the
+direction that favors re-running the same six-pair task at 5.1's default
+`high` effort (and, for the first time, on the `hermes` profile). Until then,
+claude on `hermes` keeps `parallel_handoff` and the batching counter rides the
+calibration block only.
 
 Kimi and Gemini stay on `parallel_handoff`. Credential-readiness probes on the
 same host completed zero live pairs: Kimi (`opengateway` and `kimi-coding`)
@@ -545,7 +565,32 @@ gate requires a completed paired run on the intended execution surface.
 - **Cost approximation** — `APPROX_PRICE_PER_MTOK` in
   `src/plugin_bundle/omh/hermes_delegation.py` supplies `~$` estimates only
   when the host recorded no cost; models absent from the table show no
-  approximation (never a fabricated number).
+  approximation (never a fabricated number). Cache reads are priced at a
+  tenth of input unless `APPROX_CACHE_READ_RATIO` names the model: Claude
+  Fable 5.1 lists $10 / $50 per MTok with cache reads at $0.25 (0.025x) and
+  cache writes at $12.50 (5-minute TTL) / $20 (1-hour TTL); Opus 5 reads at
+  the tenth. Mythos 5.1 carries the Fable figure because its cache-read rate
+  was open at launch — approximate, like every number in the table.
+- **`max_tokens` is a failure signal, not a stop** — a unit whose final turn
+  ended on `stop_reason: max_tokens` is a failed attempt: the output was cut
+  mid-thought and nothing after the cut was verified. It is never a done
+  unit, whatever the partial text claims.
+- **Claude 5.1 compatibility risks that live on the Hermes side** —
+  observed in the local Hermes Agent checkout on 2026-09-02 and recorded
+  here so nobody looks for an OMH fix: forced `tool_choice` (`any` /
+  `tool`) is a 400 on Fable 5.1 and Mythos 5.1; thinking cannot be disabled
+  (Mythos 400s, Fable drops the flag), which is why `omh_delegate_route`
+  refuses a no-thinking effort for the Fable tier and points at `low`; an
+  unset effort is sent as `medium` by Hermes while the API default is
+  `high`, which is why every Claude chain row declares its effort; a
+  safety decline arrives as `stop_reason: refusal` on HTTP 200 and Hermes
+  tries its configured `fallback_model` once; 5.1 turns can run many
+  minutes against a fixed read timeout; and the preserved-thinking
+  history-editing check rejects edited history for accounts created on or
+  after 2026-08-31, which affects any client-side compaction that rewrites
+  earlier turns. OMH can describe these in awareness and refuse the one
+  route shape it writes itself; everything else is a Hermes-side change or
+  an upstream proposal.
 - **Fanout dispatch credentials** — `_PROVIDER_ENV` in
   `src/coding/hermes_child_dispatch.py` maps providers (anthropic, openai,
   gemini/google/vertex, qwen, deepseek, upstage, zai, opengateway,

@@ -646,6 +646,22 @@ class DelegateRouteToolTest(unittest.TestCase):
         self.assertEqual(result["status"], "error")
         self.assertIn("no active route", result["error"])
 
+    def test_a_no_thinking_effort_is_refused_for_the_fable_tier(self):
+        # Fable 5.1 / Mythos 5.1 cannot disable thinking: Mythos 400s and
+        # Fable drops the flag silently, so the route never carries it.
+        for model in ("claude-fable-5-1", "claude-mythos-5-1", "fable", "anthropic/claude-mythos-5-1"):
+            result = self._call(action="set", model=model, reasoning_effort="none")
+            self.assertEqual(result["status"], "error", model)
+            self.assertIn("always thinks", result["error"])
+        self.assertEqual(read_delegation_route(self.home), {})
+        # Opus 5 may still be asked for no thinking; the guard is tier-scoped.
+        result = self._call(action="set", model="claude-opus-5", reasoning_effort="none")
+        self.assertEqual(result["status"], "routed")
+        # A category head on the Fable tier at its declared effort is untouched.
+        result = self._call(action="set", category="architect")
+        self.assertEqual(result["status"], "routed")
+        self.assertEqual(result["applied"]["alias"], "claude-fable-5-1")
+
     def test_an_explicit_category_disambiguates_a_shared_model(self):
         # kimi-k3:medium sits in more than one chain; the caller who routed
         # writing passes the category so fallback advances inside writing.

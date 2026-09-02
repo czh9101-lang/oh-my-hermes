@@ -113,9 +113,10 @@ CODING_MODEL_ROUTE_CLAIM_BOUNDARY: Final[str] = (
 # tracks the newest Opus); Codex takes vendor model ids. Both CLIs also accept
 # ids this catalog has never heard of, so requested models always pass
 # through unvalidated — the catalog is a default candidate list, not an
-# allowlist. The Fable-tier rows are concrete ids on purpose: no tier alias
-# tracks Fable, and the owner-ordered Claude chain (Fable 5.1 -> Mythos 5.1
-# -> Opus, 2026-09-02) needs the two Fable-tier ids named exactly. Mythos 5.1
+# allowlist. The Fable-tier rows are concrete ids on purpose: the CLI's
+# `fable` alias exists but cannot express the owner-ordered Claude chain
+# (Fable 5.1 -> Mythos 5.1 -> Opus, 2026-09-02), which needs the two
+# Fable-tier ids named exactly so Mythos sits behind Fable. Mythos 5.1
 # is the same model as Fable 5.1 served only to Project Glasswing-approved
 # organizations; an unapproved account gets a provider rejection and the
 # chain falls through to the next entry, which is why it never heads a chain.

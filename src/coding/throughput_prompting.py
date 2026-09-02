@@ -12,6 +12,7 @@ _ADVANCED_THROUGHPUT_RULES = (
     "While delegated lanes run, continue only non-overlapping work and merge their evidence after completion is observed.",
     "For delegated work, declare one goal, an observable stop condition, and required evidence; judge completion from that evidence.",
     "Stop as soon as decisive evidence satisfies the stated criteria; do not reopen settled work without contradictory output.",
+    "A delegated lane returns a distilled report — outcome, evidence pointers, open items — sized like a short briefing, never its transcript.",
 )
 _EVAL_BATCHING_RULE = (
     "When an eval or code-execution surface can batch independent operations, use one eval cell and run them concurrently "

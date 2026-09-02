@@ -233,6 +233,25 @@ def _write_overrides(omh_home: Path, document: object) -> Path:
     return path
 
 
+class ClaudeFableTierContractTest(unittest.TestCase):
+    def test_every_hermes_lane_claude_row_declares_an_effort(self):
+        # Hermes defaults an unset effort to medium, not the API default high,
+        # so a blank Claude row would silently run below its lane's intent.
+        for category, chain in HERMES_MIXTURE_CATEGORY_CHAINS.items():
+            for alias, effort in chain:
+                if alias.startswith("claude-"):
+                    self.assertTrue(effort, f"{category}: {alias} has no declared effort")
+
+    def test_fable_51_cache_reads_use_the_documented_lower_ratio(self):
+        from omh.plugin_bundle.omh.hermes_delegation import _approximate_cost_usd
+
+        # 1M input at $10 + 1M cache reads at $0.25 + 0 output.
+        self.assertAlmostEqual(_approximate_cost_usd("claude-fable-5-1", 1_000_000, 0, 1_000_000), 10.25)
+        self.assertAlmostEqual(_approximate_cost_usd("claude-mythos-5-1", 1_000_000, 0, 1_000_000), 10.25)
+        # The uniform tenth still applies where no rate is documented.
+        self.assertAlmostEqual(_approximate_cost_usd("claude-opus-5", 1_000_000, 0, 1_000_000), 5.5)
+
+
 class MixtureChainOverridesTest(unittest.TestCase):
     """~/.omh/routing/model-chains.json is the user's chain customization
     surface: it replaces only the categories it names, keeps the category

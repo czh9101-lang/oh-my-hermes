@@ -538,9 +538,8 @@ def _strict_json_loads(text: str) -> object:
 # cost (subscription billing bills nothing per call; the owner asked for an
 # approximation there instead of a blank). These are editable ballpark figures,
 # not billing evidence — every cost derived from them is flagged approximate
-# and rendered with a `~`. Cache reads are charged at a tenth of input, a
-# uniform ballpark: Anthropic's 5.1 generation bills cache reads at a
-# fortieth of input, so the Fable 5.1 estimate runs high on cache-heavy runs.
+# and rendered with a `~`. Cache reads are charged at a tenth of input unless
+# APPROX_CACHE_READ_RATIO names the model.
 APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "gpt-5.6-sol": (1.25, 10.0),
     "gpt-5.6-terra": (1.25, 10.0),
@@ -572,16 +571,30 @@ APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
 }
 
 
+# Cache-read price as a fraction of input price, per model, where the vendor
+# documents a rate other than the tenth above. Fable 5.1 lists cache reads at
+# $0.25/MTok against $10 input (docs.claude.com pricing, 2026-09); Mythos 5.1
+# shares Fable 5.1's per-token price and its cache-read rate was open at
+# launch, so its entry is the Fable figure, still an approximation.
+APPROX_CACHE_READ_RATIO: dict[str, float] = {
+    "claude-fable-5-1": 0.025,
+    "claude-mythos-5-1": 0.025,
+}
+_DEFAULT_CACHE_READ_RATIO = 0.1
+
+
 def _approximate_cost_usd(
     model: str, input_tokens: float, output_tokens: float, cache_read_tokens: float
 ) -> float | None:
-    prices = APPROX_PRICE_PER_MTOK.get(_text(model).casefold())
+    key = _text(model).casefold()
+    prices = APPROX_PRICE_PER_MTOK.get(key)
     if not prices or (input_tokens + output_tokens) <= 0:
         return None
     input_price, output_price = prices
+    cache_ratio = APPROX_CACHE_READ_RATIO.get(key, _DEFAULT_CACHE_READ_RATIO)
     return (
         input_tokens * input_price
-        + cache_read_tokens * input_price * 0.1
+        + cache_read_tokens * input_price * cache_ratio
         + output_tokens * output_price
     ) / 1_000_000
 
