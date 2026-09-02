@@ -598,7 +598,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # instruction lines on one existing skill, with the threshold and
 # attribution tables in a new on-demand reference outside this count;
 # warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 868268
+# 868268 -> 869354: `agent-evaluation` gains the loop-shape, stop-rule, and
+# criteria-before-generation rules plus the judge-score safety line; four
+# instruction lines on one existing skill, with the shape table and judging
+# rules in a new on-demand reference outside this count; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 869354
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

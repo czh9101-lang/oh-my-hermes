@@ -44,20 +44,22 @@ Rules:
 | `tech-debt-audit` (issue #1235) | maintenance | https://github.com/ksimback/tech-debt-skill | none — no license published, so link-only reference; content built from OMH's own audit spec | none | 2026-09-02 | 5a15c1ca4a92 |
 | `strategy-brief` decision records (issue #1236) | strategy | https://github.com/wshobson/agents | `plugins/documentation-generation/skills/architecture-decision-records/SKILL.md` | MIT | 2026-09-02 | a30778f8c4e6 |
 | `accessibility-audit` rule IDs + fix partition (issue #1261) | accessibility | https://github.com/Effeilo/claude-code-frontend-skills | `front-a11y/front-a11y-rules.md` (rule-ID scheme, severity split, auto-fixable partition) | MIT (see the API false-negative rule above) | 2026-09-02 | 3c9d5a0501ff |
+| `agent-evaluation` self-evaluation loops (issue #1263) | evaluation | https://github.com/github/awesome-copilot | `skills/agentic-eval/SKILL.md` (loop shapes, stop rules, judging strategies) | MIT | 2026-09-02 | 6a8fa297b0fe |
 | `frontend` web-vitals budgets (issue #1262) | frontend | https://github.com/rohitg00/awesome-claude-code-toolkit | `skills/frontend-excellence/SKILL.md` (CWV threshold table, field-vs-lab note) | Apache-2.0 | 2026-09-02 | ebdf1d596d2c |
 
-## Candidate rows (researched, not yet shipped — see the open issues)
+Note on the `agent-evaluation` row: the lead was found through
+`kodustech/awesome-agent-skills`, which publishes no license and is an index
+rather than a source - its agentic-eval entry links to
+`github/awesome-copilot` `skills/agentic-eval`, already a registry upstream
+via `refactor-plan`. The row names the repository the content actually lives
+in, because that is what a tracker can diff; the index stays a discovery
+pointer.
 
-| Proposed OMH unit | Upstream repo | Paths | License | Issue |
-| --- | --- | --- | --- | --- |
-| `agent-evaluation` self-critique / evaluator-optimizer / judge stop rules | https://github.com/github/awesome-copilot | `skills/agentic-eval/SKILL.md` | MIT | [#1263](https://github.com/rlaope/oh-my-hermes/issues/1263) |
+## Candidate rows (researched, not yet shipped)
 
-Notes on these rows:
+None open: every researched lead has shipped and moved to the table above.
 
-- **The agentic-eval row was repointed.** It previously credited
-  `kodustech/awesome-agent-skills`, which publishes no license and is an
-  index, not a source: its agentic-eval entry links to
-  `github/awesome-copilot` `skills/agentic-eval`, already a registry upstream
-  (see the `refactor-plan` row). An index stays a discovery pointer; the row
-  names the repository the content actually lives in, because that is what
-  the tracker can diff.
+When a new lead is researched, add a row here with the proposed OMH unit, the
+upstream repo and paths, the license (checked, not assumed), and the issue
+that owns it — then move the row up on the PR that ships it, filling in
+`reviewed_on` and `reviewed_ref`.
