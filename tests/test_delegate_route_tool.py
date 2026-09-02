@@ -603,6 +603,18 @@ class DelegateRouteToolTest(unittest.TestCase):
                     "reasoning_effort": "low",
                 },
                 {
+                    "alias": "claude-fable-5-1",
+                    "provider": "",
+                    "model": "claude-fable-5-1",
+                    "reasoning_effort": "low",
+                },
+                {
+                    "alias": "claude-mythos-5-1",
+                    "provider": "",
+                    "model": "claude-mythos-5-1",
+                    "reasoning_effort": "low",
+                },
+                {
                     "alias": "claude-fable-5",
                     "provider": "",
                     "model": "claude-fable-5",
@@ -621,10 +633,8 @@ class DelegateRouteToolTest(unittest.TestCase):
         # fallback past the end restores inheritance instead of routing one
         # more rejection.
         self._call(action="set", category="quick")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
+        for _ in range(6):
+            self._call(action="fallback", category="quick")
         result = self._call(action="fallback", category="quick")
         self.assertEqual(result["status"], "exhausted_to_inherit")
         self.assertEqual(result["category"], "quick")
@@ -791,10 +801,8 @@ class RouteProvenanceRecordingTest(unittest.TestCase):
     def test_set_fallback_and_exhaustion_each_record_their_origin(self):
         first = self._call(action="set", category="quick")
         self.assertEqual(first["route_provenance"], "recorded")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
-        self._call(action="fallback", category="quick")
+        for _ in range(6):
+            self._call(action="fallback", category="quick")
         last = self._call(action="fallback", category="quick")
         self.assertEqual(last["status"], "exhausted_to_inherit")
         self.assertEqual(last["route_provenance"], "recorded")
@@ -802,7 +810,7 @@ class RouteProvenanceRecordingTest(unittest.TestCase):
         records = load_delegation_route_provenance(self.omh_home)
         self.assertEqual(
             [record["origin"] for record in records],
-            ["head", "fallback", "fallback", "fallback", "fallback", "exhausted_to_inherit"],
+            ["head", *["fallback"] * 6, "exhausted_to_inherit"],
         )
         self.assertEqual(records[0]["alias"], "glm-5.3-flash")
         self.assertEqual(records[1]["from_alias"], "glm-5.3-flash")

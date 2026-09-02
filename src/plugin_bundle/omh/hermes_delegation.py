@@ -53,7 +53,13 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
     # low/high, so at xhigh `mixture_category_for` labels them architect;
     # Sol at xhigh stays labeled ultrabrain (its canonical head), which is
     # the honest projection when the chain falls through to it.
+    # Claude vendor order (owner decision, 2026-09-02): Fable 5.1 -> Mythos
+    # 5.1 -> Fable 5 fall-through. Mythos 5.1 is Fable 5.1 under Project
+    # Glasswing access; an unapproved account's provider rejection falls the
+    # chain through, so it never heads a chain.
     "architect": (
+        ("claude-fable-5-1", "xhigh"),
+        ("claude-mythos-5-1", "xhigh"),
         ("claude-fable-5", "xhigh"),
         ("gpt-5.6-sol", "xhigh"),
         ("kimi-k3", "xhigh"),
@@ -77,6 +83,8 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
         ("glm-5.2-ultrafast", "low"),
         ("kimi-k3", "low"),
         ("gpt-5.6-luna", "low"),
+        ("claude-fable-5-1", "low"),
+        ("claude-mythos-5-1", "low"),
         ("claude-fable-5", "low"),
     ),
     "writing": (
@@ -84,9 +92,16 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
         ("qwen3-coder", "medium"),
         ("gemini-3.1-pro", "medium"),
     ),
-    "visual-engineering": (("claude-fable-5", "high"), ("kimi-k3", "high")),
+    "visual-engineering": (
+        ("claude-fable-5-1", "high"),
+        ("claude-mythos-5-1", "high"),
+        ("claude-fable-5", "high"),
+        ("kimi-k3", "high"),
+    ),
     "artistry": (
         ("gemini-3.1-pro", "high"),
+        ("claude-fable-5-1", "high"),
+        ("claude-mythos-5-1", "high"),
         ("claude-fable-5", "high"),
         ("kimi-k3", "high"),
     ),
@@ -523,14 +538,21 @@ def _strict_json_loads(text: str) -> object:
 # cost (subscription billing bills nothing per call; the owner asked for an
 # approximation there instead of a blank). These are editable ballpark figures,
 # not billing evidence — every cost derived from them is flagged approximate
-# and rendered with a `~`. Cache reads are charged at a tenth of input.
+# and rendered with a `~`. Cache reads are charged at a tenth of input, a
+# uniform ballpark: Anthropic's 5.1 generation bills cache reads at a
+# fortieth of input, so the Fable 5.1 estimate runs high on cache-heavy runs.
 APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "gpt-5.6-sol": (1.25, 10.0),
     "gpt-5.6-terra": (1.25, 10.0),
     "gpt-5.6-luna": (0.25, 2.0),
-    "claude-opus-5": (15.0, 75.0),
-    "claude-fable-5": (25.0, 100.0),
-    "claude-sonnet-5": (3.0, 15.0),
+    # Anthropic first-party list prices (docs.claude.com pricing, 2026-09):
+    # Opus 5 5/25, Sonnet 5 2/10, Fable 5 and 5.1 10/50; Mythos 5.1 shares
+    # Fable 5.1's per-token price. Earlier entries here were stale.
+    "claude-opus-5": (5.0, 25.0),
+    "claude-fable-5": (10.0, 50.0),
+    "claude-fable-5-1": (10.0, 50.0),
+    "claude-mythos-5-1": (10.0, 50.0),
+    "claude-sonnet-5": (2.0, 10.0),
     "claude-haiku-4-5": (1.0, 5.0),
     "kimi-k3": (0.6, 2.5),
     "glm-5.2": (0.6, 2.2),

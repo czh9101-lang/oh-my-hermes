@@ -109,10 +109,16 @@ CODING_MODEL_ROUTE_CLAIM_BOUNDARY: Final[str] = (
 )
 
 # Built-in default candidates per dispatchable/prompt-handoff executor profile.
-# Claude Code accepts stable tier aliases that track the newest model in each
-# tier; Codex takes vendor model ids. Both CLIs also accept ids this catalog
-# has never heard of, so requested models always pass through unvalidated —
-# the catalog is a default candidate list, not an allowlist.
+# Claude Code accepts concrete model ids and stable tier aliases (`opus`
+# tracks the newest Opus); Codex takes vendor model ids. Both CLIs also accept
+# ids this catalog has never heard of, so requested models always pass
+# through unvalidated — the catalog is a default candidate list, not an
+# allowlist. The Fable-tier rows are concrete ids on purpose: no tier alias
+# tracks Fable, and the owner-ordered Claude chain (Fable 5.1 -> Mythos 5.1
+# -> Opus, 2026-09-02) needs the two Fable-tier ids named exactly. Mythos 5.1
+# is the same model as Fable 5.1 served only to Project Glasswing-approved
+# organizations; an unapproved account gets a provider rejection and the
+# chain falls through to the next entry, which is why it never heads a chain.
 MODEL_CATALOG_KIND: Final[str] = "built_in_defaults"
 
 # Closed vocabulary for a route's catalog basis. `local_inventory` marks a
@@ -148,8 +154,22 @@ EXECUTOR_MODEL_OPTIONS: Final[dict[str, tuple[dict[str, object], ...]]] = {
     ),
     "claude-code": (
         {
+            "model_id": "claude-fable-5-1",
+            "label": "Claude Fable 5.1 (most capable widely released tier)",
+            "tier": "frontier",
+            "recommended_roles": ("brain", "review", "design_visual"),
+            "reasoning_efforts": ("low", "medium", "high", "xhigh", "max"),
+        },
+        {
+            "model_id": "claude-mythos-5-1",
+            "label": "Claude Mythos 5.1 (Fable 5.1 weights, Project Glasswing access only)",
+            "tier": "frontier",
+            "recommended_roles": ("brain", "review", "design_visual"),
+            "reasoning_efforts": ("low", "medium", "high", "xhigh", "max"),
+        },
+        {
             "model_id": "opus",
-            "label": "Claude frontier tier alias",
+            "label": "Claude Opus tier alias",
             "tier": "frontier",
             "recommended_roles": ("brain", "review", "design_visual"),
             "reasoning_efforts": ("low", "medium", "high", "xhigh", "max"),
@@ -274,9 +294,15 @@ CATEGORY_SCALE_SOURCES: Final[dict[str, tuple[str, ...]]] = {
 }
 
 # The built-in category->model table, the fallback for a profile with no local
-# inventory. Codex takes vendor model ids; Claude Code takes stable tier aliases
-# that track the newest model in each tier, which is why the claude side needs
-# no maintenance as models ship and the codex side does.
+# inventory. Codex takes vendor model ids; Claude Code takes concrete ids for
+# the Fable tier (no alias tracks it) and the `opus` alias for the Opus tier.
+CLAUDE_FRONTIER_CHAIN_MODELS: Final[tuple[str, ...]] = ("claude-fable-5-1", "claude-mythos-5-1", "opus")
+
+
+def _CLAUDE_FRONTIER_CHAIN(effort: str) -> tuple[dict[str, str], ...]:
+    return tuple({"model_id": model_id, "reasoning_effort": effort} for model_id in CLAUDE_FRONTIER_CHAIN_MODELS)
+
+
 BUILTIN_CATEGORY_MODELS: Final[dict[str, dict[str, tuple[dict[str, str], ...]]]] = {
     # Codex: gpt-5-codex is the frontier CODING model, gpt-5 the general one.
     # Every category that means "do the work well" therefore names the coding
@@ -292,18 +318,21 @@ BUILTIN_CATEGORY_MODELS: Final[dict[str, dict[str, tuple[dict[str, str], ...]]]]
         "visual-engineering": ({"model_id": "gpt-5-codex", "reasoning_effort": ""},),
         "artistry": ({"model_id": "gpt-5", "reasoning_effort": ""},),
     },
-    # Claude Code takes stable tier aliases that track the newest model in each
-    # tier, which is why this side needs no maintenance as models ship and the
-    # codex side does.
+    # Claude Code: every frontier category runs the owner-ordered Claude chain
+    # (Fable 5.1 -> Mythos 5.1 -> Opus, 2026-09-02). Mythos 5.1 is Fable 5.1
+    # under Project Glasswing access; where the account is not approved the
+    # CLI's provider rejection falls the chain through to `opus`, so the tail
+    # keeps the previous out-of-the-box behavior. The sonnet/haiku lanes are
+    # cost-tier picks below the ordered chain and stay as they were.
     "claude-code": {
-        "ultrabrain": ({"model_id": "opus", "reasoning_effort": "xhigh"},),
-        "deep": ({"model_id": "opus", "reasoning_effort": "high"},),
-        "architect": ({"model_id": "opus", "reasoning_effort": "xhigh"},),
-        "unspecified-high": ({"model_id": "opus", "reasoning_effort": ""},),
+        "ultrabrain": _CLAUDE_FRONTIER_CHAIN("xhigh"),
+        "deep": _CLAUDE_FRONTIER_CHAIN("high"),
+        "architect": _CLAUDE_FRONTIER_CHAIN("xhigh"),
+        "unspecified-high": _CLAUDE_FRONTIER_CHAIN(""),
         "unspecified-low": ({"model_id": "sonnet", "reasoning_effort": ""},),
         "quick": ({"model_id": "haiku", "reasoning_effort": ""},),
         "writing": ({"model_id": "haiku", "reasoning_effort": ""},),
-        "visual-engineering": ({"model_id": "opus", "reasoning_effort": ""},),
+        "visual-engineering": _CLAUDE_FRONTIER_CHAIN(""),
         "artistry": ({"model_id": "sonnet", "reasoning_effort": ""},),
     },
 }
@@ -407,7 +436,10 @@ TASK_SCALE_CHAINS: Final[dict[str, dict[str, tuple[dict[str, str], ...]]]] = _de
 
 # Model-family prefixes mirror the dynamic-workflow target classifier so both
 # surfaces name families the same way; bare Claude tier aliases fold into the
-# claude family because the claude CLI resolves them to concrete claude models.
+# claude family because the claude CLI resolves them to concrete claude models,
+# and the bare Fable-tier names (`fable`, `mythos`) fold the same way because
+# users name the run that way in chat ("use fable") and the family-level
+# calibration must attach to it rather than the generic fallback.
 _MODEL_FAMILY_PREFIXES: Final[tuple[tuple[str, str], ...]] = (
     ("gpt-", "gpt"),
     ("glm-", "glm"),
@@ -428,7 +460,7 @@ _MODEL_FAMILY_ALIASES: Final[tuple[tuple[str, str], ...]] = (
     ("qwen3-", "qwen"),
 )
 _MODEL_FAMILY_ALIAS_EXCLUSIONS: Final[tuple[str, ...]] = ("openai-gpt-image-",)
-_CLAUDE_TIER_ALIASES: Final[frozenset[str]] = frozenset({"opus", "sonnet", "haiku"})
+_CLAUDE_TIER_ALIASES: Final[frozenset[str]] = frozenset({"opus", "sonnet", "haiku", "fable", "mythos"})
 
 
 def model_family(model_id: str) -> str:
