@@ -937,6 +937,18 @@ _SKILL_POLICIES = {
             "every step prepared or observed."
         ),
     ),
+    "tech-debt-audit": RecommendationPolicy(
+        next_action="prepare_tech_debt_audit",
+        evidence_boundary=(
+            "A debt ledger is prepared analysis; it is not a completed cleanup, a measured quality improvement, "
+            "observed command evidence, review, CI, or merge evidence."
+        ),
+        wrapper_guidance=(
+            "Orient from repo evidence, audit the named dimensions with file:line citations, rank findings by "
+            "severity and effort with quick wins and the looks-bad-but-fine list, and reconcile "
+            "RESOLVED/NEW/CARRIED against the previous ledger on rerun."
+        ),
+    ),
     "model-optimization": RecommendationPolicy(
         next_action="run_hermes_research",
         evidence_boundary=(
@@ -1848,6 +1860,15 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
             "this",
             "which",
         }
+    ),
+    # `tech-debt-audit` names its work with words other domains own outright
+    # -- "debt" is personal finance and loan-domain vocabulary, "audit" is
+    # code-review's trigger, "ledger" is bookkeeping. Credited as bare tokens
+    # they claimed finance chat and every review request. Complete phrases
+    # ("tech debt", "debt ledger", ...) carry the intent; no single token is
+    # unambiguous alone.
+    "tech-debt-audit": frozenset(
+        {"audit", "code", "debt", "is", "ledger", "our", "report", "tech", "technical", "where"}
     ),
     # `refactor-plan` names its work with the two most ordinary words in the
     # catalog -- "refactor" and "plan" -- plus "phases", "restructure", and

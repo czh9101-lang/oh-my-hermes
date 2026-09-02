@@ -36,13 +36,13 @@ Rules:
 | `agent-ops-review` instrumentation ladder (PR #1246) | operator | https://github.com/nexus-labs-automation/agent-observability | audit + instrument skills, tier methodology, anti-patterns | MIT | 2026-09-01 | 1714a4b38d7f |
 | `ops-observability-card` span vocabulary (PR #1246) | observability | https://github.com/nexus-labs-automation/agent-observability | llm-call-tracing, token-cost-tracking skills | MIT | 2026-09-01 | 1714a4b38d7f |
 | `llm-app-dev` harness budgets (PR #1246) | delivery | https://github.com/DenisSergeevitch/agents-best-practices | `SKILL.md` + budget/permission references | MIT | 2026-09-01 | dace8b70c563 |
+| `tech-debt-audit` (issue #1235) | maintenance | https://github.com/ksimback/tech-debt-skill | none — no license published, so link-only reference; content built from OMH's own audit spec | none | 2026-09-02 | 5a15c1ca4a92 |
 
 ## Candidate rows (researched, not yet shipped — see the open issues)
 
 | Proposed OMH unit | Upstream repo | Paths | License | Issue |
 | --- | --- | --- | --- | --- |
-| tech-debt ledger | https://github.com/ksimback/tech-debt-skill | `SKILL.md` | check before reconstruction | #1235 |
-| ADR lifecycle | https://github.com/wshobson/agents | `plugins/documentation-generation/skills/architecture-decision-records/SKILL.md` | check before reconstruction | #1236 |
+| ADR lifecycle | https://github.com/wshobson/agents | `plugins/documentation-generation/skills/architecture-decision-records/SKILL.md` | MIT | #1236 |
 | a11y rule IDs + auto-fixable partition | https://github.com/Effeilo/claude-code-frontend-skills | `front-a11y/*` | MIT | — |
 | CWV performance budgets | https://github.com/rohitg00/awesome-claude-code-toolkit | `skills/frontend-excellence/SKILL.md` | Apache-2.0 | — |
 | agentic-eval rubrics | https://github.com/kodustech/awesome-agent-skills | agentic-eval entry | check | — |

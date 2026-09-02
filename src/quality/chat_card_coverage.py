@@ -338,6 +338,14 @@ CHAT_CARD_COVERAGE_CASES: tuple[ChatCardCoverageCase, ...] = (
         "prepare_inference_serving",
     ),
     ChatCardCoverageCase(
+        "tech-debt-audit",
+        "Tech Debt Audit",
+        "audit our tech debt",
+        "tech-debt-audit",
+        "tech_debt_audit",
+        "prepare_tech_debt_audit",
+    ),
+    ChatCardCoverageCase(
         "codegraph-refresh",
         "Codegraph Refresh",
         "codegraph-refresh",

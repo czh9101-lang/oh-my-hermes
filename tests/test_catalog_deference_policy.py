@@ -124,9 +124,13 @@ NON_SKILL_BACKTICKS = frozenset(
 # `websearch-setup`; `research` points back at it; and
 # `best-practice-research`'s single statement became two when the lookup half
 # of its boundary stopped belonging to the engine.
-EXPECTED_DEFERENCE_CASES = 179
-EXPECTED_DEFERENCE_PAIRS = 190
-EXPECTED_DEFERRING_OWNERS = 58
+# `tech-debt-audit` defers on four boundaries -- diff-scoped judgement to
+# `code-review`, deletion-first cleanup to `ai-slop-cleaner`, phased execution
+# of a big fix to `refactor-plan`, and release risk to `production-audit`.
+# Four cases, four new pairs, one new deferring owner.
+EXPECTED_DEFERENCE_CASES = 183
+EXPECTED_DEFERENCE_PAIRS = 194
+EXPECTED_DEFERRING_OWNERS = 59
 
 # The ratchet. Recording a new inversion must be a visible edit to this number,
 # not one more dict line with a plausible sentence attached.

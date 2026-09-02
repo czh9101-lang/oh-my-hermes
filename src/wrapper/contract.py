@@ -363,6 +363,8 @@ VISIBLE_ACTIONS = (
     "show_codegraph_refresh",
     "prepare_inference_serving",
     "show_inference_serving",
+    "prepare_tech_debt_audit",
+    "show_tech_debt_audit",
     "prepare_refactor_plan",
     "show_refactor_plan",
     "prepare_codebase_uml",
@@ -783,6 +785,12 @@ _HUMAN_ACK_BODY_BY_SKILL = {
         "deployment runbook with its verification commands, and the benchmark protocol with metrics, load "
         "shape, and SLO. Every step stays prepared until its command result is observed."
     ),
+    "tech-debt-audit": (
+        "I will prepare the tech-debt ledger: orientation from repo evidence, dimension-by-dimension findings "
+        "with file:line citations, severity-by-effort ranking with quick wins, the looks-bad-but-fine list, and "
+        "RESOLVED/NEW/CARRIED reconciliation against the previous ledger. Detection commands stay prepared until "
+        "their results are observed."
+    ),
     "codegraph-refresh": (
         "I will prepare a codegraph refresh: repo root, build/summary/handoff command choices, staleness scope, "
         "file-write policy, and observed-only codegraph summary or handoff evidence. Command execution and "
@@ -959,6 +967,7 @@ _ACK_PRIMARY_ACTIONS_BY_NEXT_ACTION = {
     "prepare_codebase_onboarding": ("prepare_codebase_onboarding", "Prepare onboarding"),
     "prepare_codegraph_refresh": ("prepare_codegraph_refresh", "Refresh codegraph"),
     "prepare_inference_serving": ("prepare_inference_serving", "Prepare serving"),
+    "prepare_tech_debt_audit": ("prepare_tech_debt_audit", "Audit tech debt"),
     "prepare_refactor_plan": ("prepare_refactor_plan", "Plan refactor"),
     "prepare_codebase_uml": ("prepare_codebase_uml", "Draw codebase"),
     "prepare_agent_debug": ("prepare_agent_debug", "Prepare agent debug"),
@@ -2488,6 +2497,38 @@ _WORKFLOW_OPERATIONS_CHAT_CARDS: dict[str, dict[str, object]] = {
             "server rollout",
             "readiness or smoke result",
             "benchmark measurement",
+            "review",
+            "CI",
+        ],
+    },
+    "tech-debt-audit": {
+        "kind": "tech_debt_audit",
+        "headline": "I can prepare the tech-debt ledger for this codebase.",
+        "body": (
+            "I will orient from repo evidence (manifests, churn, largest files), audit the named debt "
+            "dimensions with file:line citations, and rank findings by severity and effort into the ledger - "
+            "quick wins, top fixes, and the looks-bad-but-fine list. On rerun I reconcile RESOLVED/NEW/CARRIED "
+            "against the previous ledger."
+        ),
+        "phase": "tech_debt_audit_prepared",
+        "next_action": "prepare_tech_debt_audit",
+        "artifact_schema": "tech_debt_ledger/v1",
+        "claim_boundary_suffix": "It is not a completed cleanup, a measured quality improvement, review, CI, or merge evidence.",
+        "actions": [
+            {"id": "prepare_tech_debt_audit", "label": "Audit tech debt", "style": "primary"},
+            {"id": "prepare_command_operator_card", "label": "Prepare command card", "style": "secondary"},
+            {"id": "show_status", "label": "Show status", "style": "secondary"},
+        ],
+        "recommended_flow": [
+            "orient_from_repo_evidence",
+            "audit_dimensions_from_reference",
+            "rank_findings_by_severity_and_effort",
+            "reconcile_with_prior_ledger",
+        ],
+        "evidence_not_observed": [
+            "detection command runs",
+            "cleanup or fixes",
+            "quality improvement",
             "review",
             "CI",
         ],
