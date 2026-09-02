@@ -315,10 +315,14 @@ class TuiWidgetPackTests(unittest.TestCase):
             widget,
         )
         self.assertIn("const dispatchLane = safeText(row.dispatch_lane)", widget)
+        # The identity segment is now the row's own column rather than the
+        # first droppable metadata entry, so it is bound once and rendered
+        # between the title and the measured tail.
         self.assertIn(
-            "dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route),",
+            "const routeSegment = dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route)",
             widget,
         )
+        self.assertIn("layout.routeKind === 'route-fallback' || layout.routeKind === 'maestro'", widget)
         self.assertIn("|| segment.kind === 'maestro'", widget)
 
     def test_hud_liveness_signal_drives_the_status_line_todo_and_shot_badge(self) -> None:
@@ -515,22 +519,39 @@ class TuiWidgetPackTests(unittest.TestCase):
         # token counts render per row and summed on the header, one decimal
         # with trailing .0 trimmed. The row segment sits BEFORE cost so the
         # narrow-terminal drop order sheds the dollar figure first and keeps
-        # the token count; a zero renders nothing, exactly like cost.
+        # the token count; an unreadable value renders nothing.
         self.assertIn("const tokenCountText", widget)
-        self.assertIn(".toFixed(1).replace(/\\.0$/, '')", widget)
+        # One decimal is always kept above a thousand (`77.0k`, not `77k`):
+        # trimming it made a round count change width mid-wave and broke the
+        # column's decimal alignment.
+        self.assertIn("`${amount.toFixed(1)}${unit}`", widget)
+        self.assertNotIn(".replace(/\\.0$/, '')", widget)
         # The unit break sits where one-decimal rounding lands (999,950 reads
-        # 1m, never 1000k), sub-thousand counts render bare, and a fractional
-        # or zero value renders nothing rather than a broken-looking "0 tok".
+        # 1m, never 1000k) and sub-thousand counts render bare. A recorded
+        # zero now renders `0`: the reader sends a number only once the row is
+        # terminal or has reported, so zero means the run consumed nothing --
+        # the shape of a dispatch that died before its first API call, which
+        # the old blank made indistinguishable from an unmeasured row.
         self.assertIn("value < 999_950 ?", widget)
         self.assertIn("if (value < 1000) return", widget)
-        self.assertIn("|| value < 1) return ''", widget)
-        # Claude Code-style grid ('절대위치로 … 클로드코드처럼 정렬'): a
-        # fixed right-anchored tail `state · elapsed · N tokens`, each piece
-        # padded to constant cell widths so the columns line up vertically
-        # across rows; the token count anchors the right edge ('tokens로
-        # 해주고 맨 오른쪽에') and the metadata drop loop sheds rate, cost,
-        # and turn without ever touching the tail.
+        self.assertIn("|| value < 0) return ''", widget)
+        # Claude Code-style grid ('절대위치로 … 클로드코드처럼 정렬'): fixed
+        # columns first, variable metadata after. The owner moved the measured
+        # block beside the identity it belongs to ('category 바로옆에 두고
+        # 그뒤에 캐시히트나 턴'), so the order is title, route/category, then
+        # `state · elapsed · N tokens` -- each piece padded to a constant cell
+        # width so the token figures still line up vertically down the list --
+        # and only then cache, turn, cost, and rate, which the drop loop still
+        # sheds from the right without ever touching the tail.
         self.assertIn("` · ${tokenText.padStart(6)} tokens`", widget)
+        self.assertIn("const routeCap = Math.max(10, Math.min(30, Math.floor(columns * 0.24)))", widget)
+        # The route column reserves its width per LIST, exactly like tokens:
+        # otherwise a row without a category would slide its tail left and
+        # break the very alignment this ordering exists to keep.
+        self.assertIn(
+            "const routeColumn = [...mainRows, ...rows].some(row => safeText(row.category)",
+            widget,
+        )
         self.assertIn("h(Text, { color: statusColor }, layout.tailState)", widget)
         self.assertIn("h(Text, { color: t.color.muted }, layout.tailRest)", widget)
         # The tokens column exists per LIST: a row with no observed count
@@ -541,7 +562,16 @@ class TuiWidgetPackTests(unittest.TestCase):
             "const tokensColumn = [...mainRows, ...rows].some(row => tokenCountText(row.tokens))",
             widget,
         )
-        self.assertIn("tokens: tokens > 0 ? `${tokenCountText(tokens)} tokens` : ''", widget)
+        # The header renders a summed ZERO whenever any row carried a figure:
+        # a dispatch that died before its first API call really did consume
+        # nothing, and blanking that made a failed wave read exactly like an
+        # unmeasured one. Only a wave where no row reports at all still hides
+        # the segment.
+        self.assertIn(
+            "tokens: rows.some(row => Number.isFinite(row.tokens))",
+            widget,
+        )
+        self.assertIn("if (!Number.isFinite(value) || value < 0) return ''", widget)
         # The summed count anchors the header's right edge too, and the
         # header has no drop loop, so the segment hides below 100 columns
         # instead of pushing ctx and the yolo readout past truncate-end.
@@ -553,7 +583,10 @@ class TuiWidgetPackTests(unittest.TestCase):
         # the tail: the metadata column starts aligned and the tail block
         # keeps its right anchor even on narrow terminals.
         self.assertIn("Math.min(48, Math.floor(columns * 0.4))", widget)
-        self.assertIn("Math.min(actionCap, budget - cellWidth(prefix) - tailWidth - 2)", widget)
+        self.assertIn(
+            "Math.min(actionCap, budget - cellWidth(prefix) - routeWidth - tailWidth - 2)",
+            widget,
+        )
         # The plan panel's liveness cues are the ONE sanctioned animation:
         # a colour wave through the active item's characters plus a walking
         # ellipsis on the [Plan] header, both mounted only while an active

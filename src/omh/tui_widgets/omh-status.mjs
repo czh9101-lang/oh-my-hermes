@@ -79,13 +79,19 @@ export default function register(sdk) {
       // approximation renders nothing (a constant $0.000 read as broken).
       cost: cost > 0 ? `${approximate ? '~' : ''}$${cost.toFixed(3)}` : '',
       // Summed observed subagent tokens in the host gauge's own idiom
-      // (184.8k tokens). Zero renders nothing, same as cost: this is agent
-      // consumption, not the session gauge the host statusline already owns.
+      // (184.8k tokens). A summed zero still renders (`0 tokens`) whenever any
+      // row carried a figure: that zero is observed agent consumption, and
+      // hiding it left a header that read identically whether the agents did
+      // nothing or the reader knew nothing. Absence of every figure still
+      // renders nothing -- this is agent consumption, not the session gauge
+      // the host statusline already owns.
       // Like cost, the sum covers the rows the reader projects (live and
       // lingering bindings), so it is a live figure that can shrink as rows
       // age out or fall past the reader's cap — never a monotonic session
       // total, which the metadata-only projection has no state to carry.
-      tokens: tokens > 0 ? `${tokenCountText(tokens)} tokens` : '',
+      tokens: rows.some(row => Number.isFinite(row.tokens))
+        ? `${tokenCountText(tokens)} tokens`
+        : '',
       ctx: Number.isFinite(ctx) ? `ctx ${ctx}%` : 'ctx --',
     }
   }
@@ -158,18 +164,25 @@ export default function register(sdk) {
   const truncateCells = (value, limit) => truncateTextCells(safeText(value), limit)
 
   // The host's own gauge idiom (36.4k/272k) and Claude Code's token counter
-  // (184.8k, 2.1m): one decimal, trailing .0 trimmed, bare integers under a
-  // thousand. Subagent tokens are observed usage sums (input+output), so the
+  // (184.8k, 2.1m): one decimal ALWAYS kept above a thousand, bare integers
+  // under it. The trailing .0 used to be trimmed, which made a round count
+  // change width mid-wave (77k beside 77.4k) and cost the column its decimal
+  // alignment; the owner asked for `77.0k`. Subagent tokens are observed usage sums (input+output), so the
   // count stays exact even on subscription-billed hosts where only the COST
   // is a token-derived approximation — the owner asked for tokens '근사값으로
   // 라도' there, and the honest answer is better: the real count.
   const tokenCountText = value => {
-    if (!Number.isFinite(value) || value < 1) return ''
+    // A recorded zero renders as `0`, not as nothing. The reader only sends a
+    // number once the row is terminal or has reported usage, so zero here
+    // means the run consumed nothing -- which is exactly what a dispatch that
+    // died before its first API call did. Blanking it made a failed run look
+    // like an unmeasured one.
+    if (!Number.isFinite(value) || value < 0) return ''
     if (value < 1000) return `${Math.floor(value)}`
     // Unit break sits where one-decimal rounding lands, so 999,950 reads
     // 1m, never 1000k.
     const [amount, unit] = value < 999_950 ? [value / 1000, 'k'] : [value / 1_000_000, 'm']
-    return `${amount.toFixed(1).replace(/\.0$/, '')}${unit}`
+    return `${amount.toFixed(1)}${unit}`
   }
 
   const elapsedText = value => {
@@ -189,7 +202,7 @@ export default function register(sdk) {
   const observedPercent = (label, value) =>
     Number.isFinite(value) ? `${label} ${value}%` : ''
 
-  const activityLayout = (row, columns, main, extraSeconds, tokensColumn) => {
+  const activityLayout = (row, columns, main, extraSeconds, tokensColumn, routeColumn) => {
     const state = safeText(row.state) || 'running'
     const stateText = columns < 100 ? ({ running: 'run', blocked: 'block', failed: 'fail' })[state] || state : state
     const taskId = truncateCells(safeText(row.task_id) || safeText(row.role) || 'agent', 8).padEnd(8)
@@ -228,8 +241,13 @@ export default function register(sdk) {
     const tools = Number.isFinite(row.tool_count) ? `${row.tool_count} tools` : ''
     const turnTools = turn && tools ? `${turn} (${tools})` : turn || tools
     const tokenText = tokenCountText(row.tokens)
+    // The route/category is the row's identity, so it is a COLUMN, not one
+    // of the droppable middle segments: it sits immediately left of the
+    // state/elapsed/tokens block the owner asked to move beside it, padded
+    // to a constant width so the token figures still line up vertically
+    // from row to row.
+    const routeSegment = dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route)
     const optional = [
-      dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route),
       metricSegment('fallback', Number.isFinite(row.fallback_count) && row.fallback_count > 0 ? `fallback:${row.fallback_count}` : ''),
       metricSegment('cache', observedPercent('cache', row.cache_hit_percentage)),
       metricSegment('context', observedPercent('ctx', row.context_percentage)),
@@ -277,9 +295,18 @@ export default function register(sdk) {
     const prefix = `${taskId} `
     const separator = '  ·  '
     const budget = Math.max(24, columns - 4)
+    // The route column exists per LIST, exactly like the tokens column: a
+    // row without a route holds the grid with blank cells so the tail after
+    // it stays on the same screen column, and a wave with no routes at all
+    // spends none of the width.
+    const routeCap = Math.max(10, Math.min(30, Math.floor(columns * 0.24)))
+    const routeWidth = routeColumn ? cellWidth(separator) + routeCap : 0
+    const routeCell = routeColumn
+      ? `${separator}${padCells(truncateCells(routeSegment.text, routeCap), routeCap)}`
+      : ''
     const actionCap = Math.max(10, Math.min(48, Math.floor(columns * 0.4)))
-    const actionWidth = Math.max(8, Math.min(actionCap, budget - cellWidth(prefix) - tailWidth - 2))
-    const fixedWidth = cellWidth(prefix) + actionWidth + tailWidth
+    const actionWidth = Math.max(8, Math.min(actionCap, budget - cellWidth(prefix) - routeWidth - tailWidth - 2))
+    const fixedWidth = cellWidth(prefix) + actionWidth + routeWidth + tailWidth
     const segments = [...optional]
     while (segments.length) {
       const metadata = segments.map(item => item.text).join(separator)
@@ -287,11 +314,11 @@ export default function register(sdk) {
       segments.pop()
     }
     const metadata = segments.map(segment => segment.text).join(separator)
-    const used = fixedWidth + (metadata ? cellWidth(separator) + cellWidth(metadata) : 0)
     return {
       action: padCells(truncateCells(row.action, actionWidth), actionWidth),
       metadata,
-      pad: ' '.repeat(Math.max(0, budget - used)),
+      routeCell,
+      routeKind: routeSegment.kind,
       segments,
       tailRest,
       tailState,
@@ -299,8 +326,8 @@ export default function register(sdk) {
     }
   }
 
-  function ActivityRow({ columns, extraSeconds, frame, main, row, t, tokensColumn }) {
-    const layout = activityLayout(row, columns, main, extraSeconds, tokensColumn)
+  function ActivityRow({ columns, extraSeconds, frame, main, row, routeColumn, t, tokensColumn }) {
+    const layout = activityLayout(row, columns, main, extraSeconds, tokensColumn, routeColumn)
     const blocked = row.state === 'blocked' || row.state === 'failed'
     const done = row.state === 'done'
     const marker = blocked ? '▲' : done ? '✓' : SPINNER_FRAMES[frame % SPINNER_FRAMES.length]
@@ -311,6 +338,24 @@ export default function register(sdk) {
       h(Text, { color: blocked ? t.color.error : done ? t.color.ok : t.color.warn }, `${marker} `),
       h(Text, { color: t.color.muted }, `${layout.taskId} `),
       h(Text, { color: t.color.text }, layout.action),
+      // Identity, then the measured block, then the rest. The route column
+      // and the state/elapsed/tokens tail are fixed widths, so those figures
+      // line up vertically down the list; everything after them is variable
+      // and sheds from the right when the terminal narrows.
+      h(
+        Text,
+        {
+          color: layout.routeKind === 'route'
+            ? t.color.label
+            : layout.routeKind === 'route-fallback' || layout.routeKind === 'maestro'
+              ? t.color.warn
+              : t.color.muted,
+        },
+        layout.routeCell,
+      ),
+      h(Text, {}, '  '),
+      h(Text, { color: statusColor }, layout.tailState),
+      h(Text, { color: t.color.muted }, layout.tailRest),
       ...layout.segments.map((segment, index) =>
         h(
           Text,
@@ -332,12 +377,6 @@ export default function register(sdk) {
           `  ·  ${segment.text}`,
         )
       ),
-      // The fixed tail: state keeps its status color, the elapsed and
-      // tokens columns rest muted, and the pad in front right-anchors the
-      // whole block so every row's columns line up.
-      h(Text, {}, layout.pad),
-      h(Text, { color: statusColor }, layout.tailState),
-      h(Text, { color: t.color.muted }, layout.tailRest),
     )
   }
 
@@ -347,6 +386,10 @@ export default function register(sdk) {
     // the grid holds; a wave with no counts at all drops the column instead
     // of wasting sixteen blank cells on every row.
     const tokensColumn = [...mainRows, ...rows].some(row => tokenCountText(row.tokens))
+    // Same rule for the route/category column, which now carries the grid:
+    // it is what the fixed tail is anchored against, so every row reserves
+    // it as soon as one row has a route to show.
+    const routeColumn = [...mainRows, ...rows].some(row => safeText(row.category) || safeText(row.model) || safeText(row.dispatch_lane))
     return h(
       Box,
       { flexDirection: 'column', width: '100%' },
@@ -357,6 +400,7 @@ export default function register(sdk) {
           frame,
           key: `main-${index}`,
           main: true,
+          routeColumn,
           row,
           t,
           tokensColumn,
@@ -368,6 +412,7 @@ export default function register(sdk) {
           extraSeconds,
           frame,
           key: `${safeText(row.task_id)}-${index}`,
+          routeColumn,
           row,
           t,
           tokensColumn,
