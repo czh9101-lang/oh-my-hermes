@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Mapping
 
 from ..system.local_store import locked_json_update
 from ..system.paths import OmhPaths
@@ -16,20 +16,18 @@ REVIEW_DISPATCH_BUDGET_CLAIM_BOUNDARY: Final = (
     "one explicit goal attempt. It is not review, verification, CI, merge-readiness, or merge evidence."
 )
 
-_REVIEW_ROLE_ALIASES: Final = frozenset(
-    {
-        "review",
-        "reviewer",
-        "code-review",
-        "code-reviewer",
-        "manual-qa",
-        "qa",
-        "final-gate",
-        "review-gate",
-        "hybrid-review",
-        "hybrid-verification",
-    }
-)
+_REVIEW_ROLE_ALIASES: Final[Mapping[str, str]] = {
+    "review": "code-review",
+    "reviewer": "code-review",
+    "code-review": "code-review",
+    "code-reviewer": "code-review",
+    "hybrid-review": "code-review",
+    "manual-qa": "manual-qa",
+    "qa": "manual-qa",
+    "final-gate": "final-gate",
+    "review-gate": "final-gate",
+    "hybrid-verification": "final-gate",
+}
 
 
 class ReviewDispatchBudgetError(ValueError):
@@ -149,7 +147,7 @@ class ReviewDispatchBudget:
 
 def normalized_review_role(role: str) -> str | None:
     normalized = "-".join(str(role or "").strip().casefold().replace("_", "-").split())
-    return "reviewer" if normalized in _REVIEW_ROLE_ALIASES else None
+    return _REVIEW_ROLE_ALIASES.get(normalized)
 
 
 def _validate_state(state: dict[str, Any], fanout_id: str) -> None:

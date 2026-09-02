@@ -449,6 +449,11 @@ class _SpawnLedger:
             self._claimed += 1
             return True
 
+    def release(self) -> None:
+        """Return a claim when a later admission reservation refuses the spawn."""
+        with self._lock:
+            self._claimed -= 1
+
     @property
     def claimed(self) -> int:
         with self._lock:
@@ -781,6 +786,9 @@ def unit_skill_lines(unit: Mapping[str, Any], discovery: Mapping[str, Any] | Non
 
 def _unit_role(unit: Mapping[str, Any]) -> str:
     handoff = unit.get("handoff", {}) if isinstance(unit.get("handoff"), Mapping) else {}
+    review_role = str(handoff.get("review_role", "") or "")
+    if review_role:
+        return review_role
     route = handoff.get("model_route") if isinstance(handoff.get("model_route"), Mapping) else {}
     return str(route.get("role", "") or "") if isinstance(route, Mapping) else ""
 
@@ -2689,10 +2697,30 @@ def _dispatch_unit(
                 else:
                     planned["skill_sequence_source"] = "none"
         return planned
+    # Claimed here, after the dry-run return and BEFORE either durable review
+    # accounting or worktree creation. A ceiling refusal therefore leaves both
+    # durable state and the filesystem untouched. If the review reservation
+    # refuses afterward, its claim is returned before that refusal is exposed.
+    spawn_claimed = spawn_ledger is not None and spawn_ledger.claim()
+    if spawn_ledger is not None and not spawn_claimed:
+        return {
+            "unit_id": unit_id,
+            "run_ref": run_ref,
+            "owner": owner,
+            "status": SPAWN_CEILING_STATUS,
+            **_dispatch_status_ladder(),
+            "reason": (
+                f"run spawn ceiling of {spawn_ledger.ceiling} reached before this unit started; "
+                "re-dispatch the remaining units, or raise `run_spawn_ceiling` in the setup "
+                "profile's parallelism block"
+            ),
+        }
     review_role = normalized_review_role(_unit_role(unit))
     if review_role is not None:
         reservation = review_budget.reserve(review_role, unit_id)
         if not reservation.granted:
+            if spawn_ledger is not None:
+                spawn_ledger.release()
             reason_codes = {
                 "attempt_not_progressed": "review_dispatch_attempt_not_progressed",
                 "configuration_mismatch": "review_dispatch_budget_configuration_mismatch",
@@ -2718,22 +2746,6 @@ def _dispatch_unit(
                 "review_dispatch_budget": reservation.as_dict(),
                 **_dispatch_status_ladder(),
             }
-    # Claimed here, after the dry-run return and BEFORE the worktree is
-    # created: a run that has spent its whole spawn budget must not leave a
-    # trail of empty worktrees for units it was never going to start.
-    if spawn_ledger is not None and not spawn_ledger.claim():
-        return {
-            "unit_id": unit_id,
-            "run_ref": run_ref,
-            "owner": owner,
-            "status": SPAWN_CEILING_STATUS,
-            **_dispatch_status_ladder(),
-            "reason": (
-                f"run spawn ceiling of {spawn_ledger.ceiling} reached before this unit started; "
-                "re-dispatch the remaining units, or raise `run_spawn_ceiling` in the setup "
-                "profile's parallelism block"
-            ),
-        }
     child_env = fanout_child_env(
         os.environ if base_env is None else base_env,
         depth=dispatch_depth,

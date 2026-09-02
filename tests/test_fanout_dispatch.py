@@ -640,7 +640,7 @@ class FanoutDispatchEngineTests(unittest.TestCase):
             }
             by_unit["docs"]["handoff"]["model_route"] = {
                 "status": "routed",
-                "role": "manual-qa",
+                "role": "code-reviewer",
                 "selected_model": "",
                 "selected_reasoning_effort": "",
             }
@@ -693,7 +693,7 @@ class FanoutDispatchEngineTests(unittest.TestCase):
                 "file_scope": [f"review/{unit_id}/"],
                 "role": role,
             }
-            for unit_id, role in (("review-a", "review-gate"), ("review-b", "final-gate"))
+            for unit_id, role in (("review-a", "code-review"), ("review-b", "code-reviewer"))
         ]
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -725,24 +725,41 @@ class FanoutDispatchEngineTests(unittest.TestCase):
             self.assertEqual(statuses.count("review_dispatch_budget_exhausted"), 1)
             self.assertEqual(len(runner.spawned), 1)
 
-    def test_review_dispatch_budget_normalizes_review_role_aliases(self) -> None:
-        goal = "normalize review lane aliases"
-        aliases = ("review", "code-review", "manual-qa", "final-gate")
+    def test_review_dispatch_budget_is_independent_per_normalized_role(self) -> None:
+        goal = "budget distinct review roles independently"
+        role_aliases = (
+            ("code-review", "CODE_REVIEWER"),
+            ("manual-qa", "MANUAL_QA"),
+            ("final-gate", "FINAL_GATE"),
+        )
         units = [
             {
-                "unit_id": f"lane-{index}",
+                "unit_id": f"lane-{role_index}-{alias_index}",
                 "title": alias,
                 "owner": "codex",
-                "file_scope": [f"review/{index}/"],
+                "file_scope": [f"review/{role_index}/{alias_index}/"],
                 "role": alias,
             }
-            for index, alias in enumerate(aliases)
+            for role_index, aliases in enumerate(role_aliases)
+            for alias_index, alias in enumerate(aliases)
         ]
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
             repo, sha = _make_repo(root)
-            contract = write_fanout_contract(paths, build_fanout_contract(goal, units))
+            contract = write_fanout_contract(
+                paths,
+                build_fanout_contract(
+                    goal,
+                    units,
+                    spawn_plan={
+                        "why_parallel": "Three independent review roles inspect disjoint evidence.",
+                        "why_not_single_unit": "One reviewer role cannot substitute for the other gates.",
+                        "independence": "Each role reads a separate review scope.",
+                        "expected_evidence_shape": "One result for each role and spelling alias.",
+                    },
+                ),
+            )
 
             summary = dispatch_fanout(
                 paths,
@@ -758,8 +775,59 @@ class FanoutDispatchEngineTests(unittest.TestCase):
             )
 
             statuses = [entry["status"] for entry in summary["units"]]
-            self.assertEqual(statuses.count("completed"), 1)
+            self.assertEqual(statuses.count("completed"), 3)
             self.assertEqual(statuses.count("review_dispatch_budget_exhausted"), 3)
+            exhausted_roles = {
+                entry["review_dispatch_budget"]["role"]
+                for entry in summary["units"]
+                if entry["status"] == "review_dispatch_budget_exhausted"
+            }
+            self.assertEqual(exhausted_roles, {"code-review", "manual-qa", "final-gate"})
+
+    def test_spawn_ceiling_denial_does_not_consume_durable_review_allowance(self) -> None:
+        goal = "preserve review allowance after spawn ceiling denial"
+        units = [
+            {
+                "unit_id": unit_id,
+                "title": unit_id,
+                "owner": "codex",
+                "file_scope": [f"review/{unit_id}/"],
+                "role": "code-review",
+            }
+            for unit_id in ("review-a", "review-b")
+        ]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(goal, units))
+            common = {
+                "goal_text": goal,
+                "repo_root": repo,
+                "base_sha": sha,
+                "concurrency": 1,
+                "readiness": _ready,
+                "goal_attempt_id": "attempt-ceiling",
+                "review_dispatch_budget": 2,
+                "spawn_ceiling": 1,
+            }
+
+            first = dispatch_fanout(paths, contract, runner=_agent_runner(), **common)
+            second_runner = _agent_runner()
+            second = dispatch_fanout(
+                paths,
+                contract,
+                only_units=["review-b"],
+                runner=second_runner,
+                **common,
+            )
+
+            first_by_unit = {entry["unit_id"]: entry for entry in first["units"]}
+            second_by_unit = {entry["unit_id"]: entry for entry in second["units"]}
+            self.assertEqual(first_by_unit["review-a"]["status"], "completed")
+            self.assertEqual(first_by_unit["review-b"]["status"], "spawn_ceiling_reached")
+            self.assertEqual(second_by_unit["review-b"]["status"], "completed")
+            self.assertEqual(len(second_runner.spawned), 1)
 
     def test_review_dispatch_budget_charges_only_after_readiness(self) -> None:
         goal = "charge only review lanes that pass readiness"

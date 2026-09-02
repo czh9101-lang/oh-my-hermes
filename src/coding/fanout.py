@@ -381,6 +381,8 @@ def _normalized_unit(unit: Mapping[str, object], index: int) -> dict[str, object
     file_scope = [str(path).strip() for path in unit.get("file_scope", []) or [] if str(path).strip()]
     depends_on = [str(dependency).strip() for dependency in unit.get("depends_on", []) or [] if str(dependency).strip()]
     owner = unit.get("owner")
+    raw_role = str(unit.get("role", "") or "").strip()
+    review_role = normalized_review_role(raw_role)
     return {
         "unit_id": str(unit.get("unit_id", "")).strip(),
         "title": " ".join(str(unit.get("title", "")).split()),
@@ -389,11 +391,8 @@ def _normalized_unit(unit: Mapping[str, object], index: int) -> dict[str, object
         "depends_on": sorted(set(depends_on)),
         "model": str(unit.get("model", "") or "").strip(),
         "reasoning_effort": str(unit.get("reasoning_effort", "") or "").strip(),
-        "role": (
-            "review"
-            if normalized_review_role(str(unit.get("role", "") or ""))
-            else str(unit.get("role", "") or "").strip()
-        ),
+        "role": "review" if review_role is not None else raw_role,
+        "review_role": review_role or "",
         # `category` accepts the OMO/ULW ulw-* aliases the resolver already
         # normalizes; validate_fanout_units rejects unknown vocabulary so a
         # typo fails the freeze instead of silently routing by role only.
@@ -514,6 +513,9 @@ def _contract_unit(
     }
     if model_route is not None:
         handoff["model_route"] = model_route
+    review_role = str(unit.get("review_role", "") or "")
+    if review_role:
+        handoff["review_role"] = review_role
     capability_snapshot = (capability_snapshots or {}).get(executor_target)
     if capability_snapshots is not None and executor_target != "choose":
         handoff["executor_capability_snapshot_policy"] = _FROZEN_CAPABILITY_SNAPSHOT_POLICY
