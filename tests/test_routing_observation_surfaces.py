@@ -142,22 +142,35 @@ class RoutingObservationSurfaceParityTests(unittest.TestCase):
             self.assertNotIn("tools 0", canonical_text)
             self.assertNotIn("cost $0", canonical_text)
 
-    def test_genuine_observed_zero_has_byte_parity_on_every_surface(self) -> None:
-        observation = build_routing_observation(
-            route=_route(),
-            session_observation=authenticate_executor_observation({
-                "status": "running",
-                "turn": 0,
-                "tools": 0,
-                "elapsed_seconds": 0.0,
-                "tokens": 0,
-                "cost_usd": 0.0,
-                "rate_tokens_per_second": 0.0,
-            }),
-        )
+    def test_a_zero_cost_renders_only_with_the_provenance_that_earns_it(self) -> None:
+        # A cost of exactly zero arrives from three different worlds -- the
+        # provider billed nothing, the provider reported nothing, or nothing
+        # can price the model -- and the number alone cannot say which. The
+        # figure renders only when the record carries the provenance; an
+        # unvouched zero is withheld rather than stated as a billing fact.
+        def _observation(**extra: object) -> dict[str, object]:
+            return build_routing_observation(
+                route=_route(),
+                session_observation=authenticate_executor_observation({
+                    "status": "running",
+                    "turn": 0,
+                    "tools": 0,
+                    "elapsed_seconds": 0.0,
+                    "tokens": 0,
+                    "cost_usd": 0.0,
+                    "rate_tokens_per_second": 0.0,
+                    **extra,
+                }),
+            )
+
+        unvouched = render_routing_code_block_text(_observation())
+        self.assertIn("METRICS turn 0  tools 0  elapsed 0.0s  tokens 0  rate 0.0 tok/s", unvouched)
+        self.assertNotIn("cost $", unvouched)
+
+        observation = _observation(cost_status="billed_zero")
         canonical_text = render_routing_code_block_text(observation)
         self.assertIn(
-            "METRICS turn 0  tools 0  elapsed 0.0s  tokens 0  cost $0.0  rate 0.0 tok/s",
+            "METRICS turn 0  tools 0  elapsed 0.0s  tokens 0  cost $0.0 (billed_zero)  rate 0.0 tok/s",
             canonical_text,
         )
         projection = routing_surface_projection(observation)

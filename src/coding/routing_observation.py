@@ -125,6 +125,10 @@ _PAYLOAD_FIELDS: Final[frozenset[str]] = frozenset(
         "provenance",
         "routing_provenance",
         *_METRIC_FIELDS,
+        # The provenance that says which of the three zeros a `cost_usd` of
+        # 0.0 is: billed nothing, not reported, or unpriceable.
+        "cost_status",
+        "cost_source",
         "current_action",
         "observed_at",
         "evaluation_binding",
@@ -227,6 +231,15 @@ def build_routing_observation(
         field: runtime_metrics[field] if runtime_metrics[field] is not None else child_metrics[field]
         for field in _METRIC_FIELDS
     }
+    # A cost of exactly zero means three different things -- billed nothing,
+    # not reported by the provider, or a model nothing can price -- and the
+    # figure alone cannot say which. Hermes' own usage record carries the
+    # answer in `cost_status`/`cost_source`; both travel with the number so a
+    # renderer can decline to state a zero it cannot vouch for.
+    cost_status = _first_safe(observed_session, ("cost_status",), field="cost_status") \
+        or _first_safe(child_usage, ("cost_status",), field="cost_status")
+    cost_source = _first_safe(observed_session, ("cost_source",), field="cost_source") \
+        or _first_safe(child_usage, ("cost_source",), field="cost_source")
     current_action = _first_safe(
         observed_session,
         ("current_action", "next_action"),
@@ -258,6 +271,8 @@ def build_routing_observation(
             field="selected_owner",
         )
         or _first_safe(route, ("executor_profile", "owner"), field="selected_owner"),
+        "cost_status": cost_status,
+        "cost_source": cost_source,
         "selected_provider": selected_provider,
         "selected_model": selected_model,
         "selected_reasoning": selected_reasoning,
@@ -417,7 +432,7 @@ def render_routing_status_rows(payload: Mapping[str, object]) -> tuple[str, ...]
         _metric("tools", payload.get("tools")),
         _metric("elapsed", payload.get("elapsed_seconds"), suffix="s"),
         _metric("tokens", payload.get("tokens")),
-        _metric("cost", payload.get("cost_usd"), prefix="$"),
+        _cost_metric(payload),
         _metric("rate", payload.get("rate_tokens_per_second"), suffix=" tok/s"),
     ]
     observed_metrics = [item for item in metrics if item]
@@ -684,3 +699,25 @@ def _metric(label: str, value: object, *, prefix: str = "", suffix: str = "") ->
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return ""
     return f"{label} {prefix}{value}{suffix}"
+
+
+def _cost_metric(payload: Mapping[str, object]) -> str:
+    """Render a cost only when the figure is one the record can vouch for.
+
+    A positive number speaks for itself. A zero does not: the provider may
+    have billed nothing, may not have reported at all, or may serve a model
+    nothing can price, and all three arrive here as ``0.0``. Rendering the
+    bare ``cost $0.0`` for the last two states a billing fact the record does
+    not hold -- the failure an operator hit when a gateway route reported
+    nothing and the surface printed a confident zero. A zero renders only
+    alongside the provenance that earns it.
+    """
+    value = payload.get("cost_usd")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return ""
+    if value > 0:
+        return _metric("cost", value, prefix="$")
+    provenance = payload.get("cost_status") or payload.get("cost_source")
+    if not isinstance(provenance, str) or not provenance.strip():
+        return ""
+    return f"cost ${value} ({provenance.strip()})"
