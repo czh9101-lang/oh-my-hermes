@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import os
 from pathlib import Path
 import shutil
-from typing import Any, Callable
+from typing import Any
 
 try:
     from ..core.errors import OmhError
@@ -215,27 +215,3 @@ def migrate_legacy(root: Path, state: dict[str, Any], paths: Any, platform: Self
     state["migration"] = {"status": "completed", "launcher_on_pointer": launcher, "registration_on_pointer": True, "completed_at": now()}
     record_pointer(state, root, bootstrap)
     save_state(root, state)
-
-
-def reconcile_interruption(
-    root: Path,
-    state: dict[str, Any],
-    *,
-    reenter: Callable[[Path], tuple[bool, str]],
-    platform: SelfUpdatePlatform | None = None,
-) -> tuple[str, Path | None]:
-    interrupted = interrupted_activation(root, state, platform=platform)
-    if interrupted is None:
-        return "discarded_unswitched_candidate", None
-    candidate, previous = interrupted
-    passed, _reason = reenter(candidate)
-    if passed:
-        commit_activation(root, state, candidate)
-        save_state(root, state)
-        return "completed_interrupted_activation", candidate
-    switch_current(root, previous, platform=platform)
-    reenter(previous)
-    state["activation_in_progress"] = None
-    record_pointer(state, root, previous)
-    save_state(root, state)
-    return "rolled_back_interrupted_activation", previous

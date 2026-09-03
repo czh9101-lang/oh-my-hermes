@@ -70,6 +70,13 @@ def _demo_runner(*, head_sha: str, head_time: str, compare_status: int = 200, ta
         if any("/tags" in url for url in urls):
             body = [{"name": "v0.2.0"}] if tags_status == 200 else None
             return subprocess.CompletedProcess(argv, 0, stdout=_http(tags_status, body), stderr="")
+        if any("/releases" in url for url in urls):
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout=_http(200, [{"tag_name": "v0.2.0"}]),
+                stderr="",
+            )
         head = _http(200, {"sha": head_sha, "commit": {"committer": {"date": head_time}}}, etag='"demo"')
         metadata = _http(200, {"default_branch": "main"})
         return subprocess.CompletedProcess(argv, 0, stdout=head + write_out + metadata + write_out, stderr="")
@@ -95,6 +102,7 @@ def demo_rewrite_recovery() -> dict[str, Any]:
 
         # 2. History rewritten: the head moved, the recorded cursor is
         # unreachable (compare 404), and the tags recovery source is failing.
+        # Releases are enumerated separately and cannot compensate for it.
         rewritten_runner = _demo_runner(
             head_sha=_HEAD_REWRITTEN,
             head_time="2026-01-02T01:00:00Z",

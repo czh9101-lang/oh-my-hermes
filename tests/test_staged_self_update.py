@@ -9,7 +9,11 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from _cli_harness import run_cli
+
+from omh.commands import setup as setup_commands
 from omh.commands.setup import _run_command_package_self_update
+from omh.config_adapter import external_dirs
 from omh.core.errors import OmhError
 from omh.install import self_update, self_update_state
 from omh.install.self_update import run_installer_self_update, switch_current
@@ -587,3 +591,91 @@ class StagedSelfUpdateTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn("stopped during post_activation", output.getvalue())
         self.assertNotIn("update complete", output.getvalue().lower())
+
+
+class ManagedWorkflowRegistrationTests(unittest.TestCase):
+    @staticmethod
+    def _args(root: Path) -> SimpleNamespace:
+        return SimpleNamespace(
+            omh_home=str(root / "omh"),
+            hermes_home=str(root / "hermes"),
+            scope="user",
+            dry_run=False,
+            force=False,
+            memory_mode="review-first",
+        )
+
+    def test_pre_migration_apply_registers_the_existing_legacy_skills_dir(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy_skills = root / "omh" / "skills"
+            legacy_skills.mkdir(parents=True)
+            current_skills = root / "current" / "skills"
+            args = self._args(root)
+
+            with (
+                patch.object(setup_commands, "managed_current_workflow_pack_dir", return_value=current_skills),
+                patch.object(setup_commands, "_managed_command_runtime", return_value={"managed": True}),
+            ):
+                setup_commands._apply_result(args)
+
+            registered = external_dirs((root / "hermes" / "config.yaml").read_text())
+            self.assertEqual(registered, [legacy_skills.resolve().as_posix()])
+            state = json.loads((root / "omh" / "runtime" / "state.json").read_text())
+            self.assertEqual(state["last_applied_skills_dir"], legacy_skills.resolve().as_posix())
+            self.assertNotIn(current_skills.as_posix(), registered)
+
+    def test_migrated_profile_sync_recognizes_the_current_pointer_registration(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            current_skills = root / "current" / "skills"
+            current_skills.mkdir(parents=True)
+            profile = root / "hermes" / "profiles" / "bot"
+            (profile / "plugins" / "omh").mkdir(parents=True)
+            (profile / "config.yaml").write_text(
+                f"skills:\n  external_dirs:\n  - {current_skills}\n"
+            )
+            args = self._args(root)
+
+            with (
+                patch.object(setup_commands, "managed_current_workflow_pack_dir", return_value=current_skills),
+                patch.object(setup_commands, "_managed_command_runtime", return_value={"managed": True}),
+                patch.object(setup_commands, "install_plugin_bundle"),
+                patch.object(setup_commands, "install_tui_widget"),
+                patch.object(setup_commands, "install_skin"),
+                patch.object(setup_commands, "_apply_result", return_value={}) as apply_result,
+            ):
+                results = setup_commands._sync_hermes_profiles(args)
+
+            self.assertEqual(results, [{"profile": "bot", "status": "refreshed"}])
+            apply_result.assert_called_once()
+
+    def test_migrated_uninstall_removes_current_registration_from_primary_and_profiles(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            current_skills = root / "current" / "skills"
+            current_skills.mkdir(parents=True)
+            profile = root / "hermes" / "profiles" / "bot"
+            profile.mkdir(parents=True)
+            for home in (root / "hermes", profile):
+                (home / "config.yaml").write_text(
+                    f"skills:\n  external_dirs:\n  - {current_skills}\n"
+                )
+            base = [
+                "--omh-home",
+                str(root / "omh"),
+                "--hermes-home",
+                str(root / "hermes"),
+                "uninstall",
+                "--registration-only",
+            ]
+
+            with (
+                patch.object(setup_commands, "managed_current_workflow_pack_dir", return_value=current_skills),
+                patch.object(setup_commands, "_managed_command_runtime", return_value={"managed": True}),
+            ):
+                status, _stdout, stderr = run_cli(base)
+
+            self.assertEqual((status, stderr), (0, ""))
+            for home in (root / "hermes", profile):
+                self.assertNotIn(current_skills.as_posix(), external_dirs((home / "config.yaml").read_text()))

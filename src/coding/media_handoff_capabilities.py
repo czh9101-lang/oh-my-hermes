@@ -10,9 +10,11 @@ from typing import Final
 
 try:  # Supports the registered direct-source demo import as well as omh.coding.
     from .executor_capability_snapshots import INPUT_MODALITY_CAPABILITY_NAMES
+    from .executor_local_workflow_selection import evidence_reference
     from .pre_handoff_readiness import capability_evidence_is_fresh
 except ImportError:  # pragma: no cover - exercised by the direct-source command.
     from omh.coding.executor_capability_snapshots import INPUT_MODALITY_CAPABILITY_NAMES
+    from omh.coding.executor_local_workflow_selection import evidence_reference
     from omh.coding.pre_handoff_readiness import capability_evidence_is_fresh
 
 HANDOFF_INPUT_REPRESENTATIONS: Final = (
@@ -26,6 +28,11 @@ HANDOFF_INPUT_REPRESENTATIONS: Final = (
 )
 _MEDIA_MODALITIES: Final = frozenset({"image", "audio", "video", "document"})
 _TEXT_REPRESENTATIONS: Final = frozenset({"text_only", "extracted_text", "ocr_output", "transcript", "normalized_other"})
+_TRANSFORMATION_FIELDS: Final = frozenset({"kind", "status", "evidence_ref"})
+_TRANSFORMATION_KIND_BY_REPRESENTATION: Final = {
+    "ocr_output": "ocr",
+    "transcript": "transcription",
+}
 DECISION_SCHEMA_VERSION: Final = "executor_modality_decision/v1"
 DECISION_CLAIM_BOUNDARY: Final = (
     "This route-scoped capability decision is metadata-only prepared context. It is not proof of attachment "
@@ -50,6 +57,9 @@ def normalize_input_representation(value: object) -> tuple[dict[str, str], ...]:
         if representation == "raw_media":
             if modality not in _MEDIA_MODALITIES:
                 raise ValueError("raw_media requires one of: image, audio, video, document")
+        elif representation == "local_file_reference":
+            if modality not in _MEDIA_MODALITIES | {"text"}:
+                raise ValueError("local_file_reference requires one of: text, image, audio, video, document")
         elif modality and modality != "text":
             raise ValueError("non-raw input representations may only declare text modality")
         rows.append({"representation": representation, "modality": modality or ("text" if representation in _TEXT_REPRESENTATIONS else "")})
@@ -103,9 +113,10 @@ def build_executor_modality_decision(
         "provider": requirements[0]["provider"] if requirements else "",
         "wire_model": requirements[0]["wire_model"] if requirements else "",
     }
-    transform = dict(transformation or {})
+    representations = normalize_input_representation(input_representation)
+    transform = _normalized_transformation(transformation, representations)
     transform_status = str(transform.get("status", "") or "")
-    if any(row["representation"] in {"ocr_output", "transcript"} for row in normalize_input_representation(input_representation)) and transform_status != "observed":
+    if any(row["representation"] in _TRANSFORMATION_KIND_BY_REPRESENTATION for row in representations) and transform_status != "observed":
         return _decision(requirements, normalized_route, "modality_transformation_unobserved", transformation=transform)
     entries = (snapshot or {}).get("capabilities", {})
     entries = entries if isinstance(entries, Mapping) else {}
@@ -131,6 +142,39 @@ def build_executor_modality_decision(
             verdict, fallback_reason = "modality_unknown", "fresh exact-route modality evidence is required before media dispatch"
             break
     return _decision(requirements, normalized_route, verdict, evidence_ref, observed_at, freshness, transform, fallback_reason)
+
+
+def _normalized_transformation(
+    transformation: Mapping[str, object] | None,
+    representations: Sequence[Mapping[str, str]],
+) -> dict[str, str]:
+    expected_kinds = {
+        _TRANSFORMATION_KIND_BY_REPRESENTATION[row["representation"]]
+        for row in representations
+        if row["representation"] in _TRANSFORMATION_KIND_BY_REPRESENTATION
+    }
+    if not expected_kinds:
+        return {"kind": "", "status": "not_required", "evidence_ref": ""}
+    expected_kind = next(iter(expected_kinds)) if len(expected_kinds) == 1 else ""
+    raw = transformation if isinstance(transformation, Mapping) else {}
+    kind = str(raw.get("kind", "") or "")
+    status = str(raw.get("status", "") or "")
+    raw_evidence_ref = raw.get("evidence_ref")
+    safe_evidence_ref = raw_evidence_ref if isinstance(raw_evidence_ref, str) and evidence_reference(raw_evidence_ref) else ""
+    valid = (
+        set(raw) == _TRANSFORMATION_FIELDS
+        and bool(expected_kind)
+        and kind == expected_kind
+        and status in {"observed", "prepared_not_observed"}
+        and (status != "observed" or bool(safe_evidence_ref))
+    )
+    if not valid:
+        return {"kind": expected_kind, "status": "invalid", "evidence_ref": ""}
+    return {
+        "kind": expected_kind,
+        "status": status,
+        "evidence_ref": safe_evidence_ref if status == "observed" else "",
+    }
 
 
 def _decision(

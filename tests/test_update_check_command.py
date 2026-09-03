@@ -445,6 +445,29 @@ class WatchRecoveryCliTests(unittest.TestCase):
             self.assertIn("Coverage gap: open", stdout)
             self.assertIn("accept-gap", stdout)
 
+    def test_status_never_prints_a_malformed_cached_commit_identity(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _paths(root)
+            unsafe = "\x1b]8;;file:///Users/alice/.ssh/id_rsa\x07"
+            update_check_cache_path(paths).parent.mkdir(parents=True)
+            atomic_write_json(
+                update_check_cache_path(paths),
+                {
+                    "schema_version": "omh_update_check_cache/v2",
+                    "last_checked_at": "2026-09-03T00:00:00+00:00",
+                    "outcome": "behind",
+                    "remote_commit": unsafe,
+                },
+            )
+
+            status, stdout, stderr = run_cli(_base(root) + ["update-check", "status"], output_json=False)
+
+            self.assertEqual((status, stderr), (0, ""))
+            self.assertNotIn("\x1b", stdout)
+            self.assertNotIn("/Users/alice", stdout)
+            self.assertNotIn("Remote main:", stdout)
+
     def test_accept_gap_marks_policy_acceptance(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

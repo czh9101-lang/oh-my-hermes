@@ -483,7 +483,7 @@ def _sync_hermes_profiles(args: argparse.Namespace) -> list[dict[str, object]]:
         clone = argparse.Namespace(**vars(args))
         clone.hermes_home = str(profile_dir)
         profile_paths = _paths(clone)
-        registered = profile_paths.skills_dir.as_posix() in external_dirs(
+        registered = _registered_workflow_dir(profile_paths).as_posix() in external_dirs(
             read_config(profile_paths.hermes_config_path)
         )
         if profile_paths.hermes_plugin_dir.is_dir() and not registered:
@@ -526,7 +526,7 @@ def _uninstall_hermes_profiles(args: argparse.Namespace, *, remove_all: bool) ->
         try:
             change = remove_external_dir(
                 read_config(profile_paths.hermes_config_path),
-                profile_paths.skills_dir,
+                _registered_workflow_dir(profile_paths),
             )
             if not args.dry_run and change.changed:
                 write_config(profile_paths.hermes_config_path, change.text)
@@ -578,7 +578,7 @@ def _print_hermes_profiles_line(results: list[dict[str, object]], *, language: s
 def _registered_workflow_dir(paths: OmhPaths) -> Path:
     """Keep installer consumers under the non-resolved shared pointer."""
     current = managed_current_workflow_pack_dir()
-    if current is not None and _managed_command_runtime().get("managed"):
+    if current is not None and current.is_dir() and _managed_command_runtime().get("managed"):
         return current
     return paths.skills_dir
 
@@ -1625,7 +1625,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     paths = _paths(args)
     current = read_config(paths.hermes_config_path)
     try:
-        change = remove_external_dir(current, paths.skills_dir)
+        change = remove_external_dir(current, _registered_workflow_dir(paths))
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
     if not args.dry_run and change.changed:

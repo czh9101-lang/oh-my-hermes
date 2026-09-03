@@ -5,11 +5,14 @@ from dataclasses import dataclass
 import json
 import subprocess
 
+from .update_check_state import normalize_git_sha
+
 UPDATE_CHECK_NETWORK_TIMEOUT_SECONDS = 1.5
 GITHUB_COMMITS_API_URL = "https://api.github.com/repos/rlaope/oh-my-hermes/commits/main"
 GITHUB_REPOSITORY_API_URL = "https://api.github.com/repos/rlaope/oh-my-hermes"
 GITHUB_COMPARE_API_URL_TEMPLATE = "https://api.github.com/repos/rlaope/oh-my-hermes/compare/{base}...{head}"
 GITHUB_TAGS_API_URL = "https://api.github.com/repos/rlaope/oh-my-hermes/tags?per_page=10"
+GITHUB_RELEASES_API_URL = "https://api.github.com/repos/rlaope/oh-my-hermes/releases?per_page=10"
 PROBE_RESPONSE_BOUNDARY = "--omh-update-check-probe-boundary--"
 
 
@@ -43,6 +46,13 @@ class AncestryProbeResult:
 class TagsProbeResult:
     ok: bool
     tags: tuple[str, ...]
+    error: str | None
+
+
+@dataclass(frozen=True)
+class ReleasesProbeResult:
+    ok: bool
+    releases: tuple[str, ...]
     error: str | None
 
 
@@ -80,8 +90,12 @@ def _remote_result(completed, etag: str) -> RemoteProbeResult:
         data = json.loads(body)
     except ValueError as exc:
         return RemoteProbeResult(False, None, None, False, str(exc))
-    sha = str(data.get("sha", "")) if isinstance(data, dict) else ""
-    return RemoteProbeResult(True, sha, headers.get("etag") or None, False, None) if sha else RemoteProbeResult(False, None, None, False, "missing sha in response")
+    raw_sha = data.get("sha") if isinstance(data, dict) else None
+    sha = normalize_git_sha(raw_sha)
+    if sha:
+        return RemoteProbeResult(True, sha, headers.get("etag") or None, False, None)
+    reason = "missing sha in response" if raw_sha in (None, "") else "invalid sha in response"
+    return RemoteProbeResult(False, None, None, False, reason)
 
 
 def fetch_remote_main_identity(*, etag: str = "", timeout: float = UPDATE_CHECK_NETWORK_TIMEOUT_SECONDS, runner=None) -> RemoteProbeResult:
@@ -125,9 +139,11 @@ def fetch_watched_branch_state(*, etag: str = "", timeout: float = UPDATE_CHECK_
         except ValueError as exc:
             data, suspect, head = None, True, RemoteProbeResult(False, None, None, False, str(exc))
         if not suspect:
-            sha = str(data.get("sha", "")) if isinstance(data, dict) else ""
+            raw_sha = data.get("sha") if isinstance(data, dict) else None
+            sha = normalize_git_sha(raw_sha)
             if not sha:
-                suspect, head = True, RemoteProbeResult(False, None, None, False, "missing sha in response")
+                reason = "missing sha in response" if raw_sha in (None, "") else "invalid sha in response"
+                suspect, head = True, RemoteProbeResult(False, None, None, False, reason)
             else:
                 committer = data.get("commit", {}).get("committer", {}) if isinstance(data, dict) and isinstance(data.get("commit"), dict) else {}
                 head_time, head = str(committer.get("date", "") or "") or None, RemoteProbeResult(True, sha, headers.get("etag") or None, False, None)
@@ -144,6 +160,10 @@ def fetch_watched_branch_state(*, etag: str = "", timeout: float = UPDATE_CHECK_
 
 
 def fetch_cursor_ancestry(cursor: str, head: str, *, timeout: float = UPDATE_CHECK_NETWORK_TIMEOUT_SECONDS, runner=None) -> AncestryProbeResult:
+    cursor = normalize_git_sha(cursor)
+    head = normalize_git_sha(head)
+    if not cursor or not head:
+        return AncestryProbeResult("unknown", 0, "compare requires full 40-character hexadecimal identities")
     try:
         completed = (runner or _run_curl)(_argv(GITHUB_COMPARE_API_URL_TEMPLATE.format(base=cursor, head=head), timeout=timeout), timeout=timeout + 0.5)
     except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
@@ -181,3 +201,23 @@ def fetch_recovery_tags(*, timeout: float = UPDATE_CHECK_NETWORK_TIMEOUT_SECONDS
     if not isinstance(data, list):
         return TagsProbeResult(False, (), "malformed tags response")
     return TagsProbeResult(True, tuple(str(item["name"]) for item in data if isinstance(item, dict) and item.get("name")), None)
+
+
+def fetch_recovery_releases(*, timeout: float = UPDATE_CHECK_NETWORK_TIMEOUT_SECONDS, runner=None) -> ReleasesProbeResult:
+    try:
+        completed = (runner or _run_curl)(_argv(GITHUB_RELEASES_API_URL, timeout=timeout), timeout=timeout + 0.5)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        return ReleasesProbeResult(False, (), str(exc))
+    if completed.returncode != 0:
+        return ReleasesProbeResult(False, (), (completed.stderr or "").strip() or f"curl exit {completed.returncode}")
+    status, _, body = _parse_http_response(completed.stdout or "")
+    if status != 200:
+        return ReleasesProbeResult(False, (), f"http {status}")
+    try:
+        data = json.loads(body)
+    except ValueError as exc:
+        return ReleasesProbeResult(False, (), str(exc))
+    if not isinstance(data, list):
+        return ReleasesProbeResult(False, (), "malformed releases response")
+    releases = tuple(str(item["tag_name"]) for item in data if isinstance(item, dict) and item.get("tag_name"))
+    return ReleasesProbeResult(True, releases, None)

@@ -41,6 +41,7 @@ from omh.maintenance.update_check import (
     update_check_cache_path,
     write_update_check_policy,
 )
+from omh.maintenance.update_check_state import write_update_check_cache
 from omh.paths import OmhPaths
 
 
@@ -191,6 +192,14 @@ class FetchRemoteMainIdentityTests(unittest.TestCase):
         result = fetch_remote_main_identity(runner=runner)
         self.assertFalse(result.ok)
 
+    def test_non_full_sha_is_a_clean_failure(self) -> None:
+        for sha in ("deadbeef", "g" * 40, "\x1b]8;;file:///Users/alice/.ssh/id_rsa\x07"):
+            with self.subTest(sha=sha):
+                result = fetch_remote_main_identity(runner=_ok_runner(sha))
+                self.assertFalse(result.ok)
+                self.assertIsNone(result.sha)
+                self.assertIn("invalid sha", result.error or "")
+
     def test_the_argv_invokes_curl_with_the_commits_endpoint(self) -> None:
         calls: list[object] = []
         fetch_remote_main_identity(runner=_ok_runner("a" * 40, calls=calls))
@@ -201,6 +210,25 @@ class FetchRemoteMainIdentityTests(unittest.TestCase):
 
 
 class EvaluateUpdateCheckTests(unittest.TestCase):
+    def test_cache_redacts_and_refuses_malformed_remote_commit(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            path = update_check_cache_path(paths)
+            path.parent.mkdir(parents=True)
+            unsafe = "\x1b]8;;file:///Users/alice/.ssh/id_rsa\x07"
+            atomic_write_json(
+                path,
+                {
+                    "schema_version": "omh_update_check_cache/v2",
+                    "remote_commit": unsafe,
+                    "outcome": "behind",
+                },
+            )
+
+            self.assertEqual(read_update_check_cache(paths)["remote_commit"], "")
+            with self.assertRaisesRegex(ValueError, "40-character hexadecimal"):
+                write_update_check_cache(paths, {"remote_commit": unsafe})
+
     def test_off_mode_makes_zero_network_attempts(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = _paths(Path(tmp))

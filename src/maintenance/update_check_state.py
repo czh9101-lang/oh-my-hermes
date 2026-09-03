@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import re
 from typing import Any
 
 from ..local_store import atomic_write_json, ensure_dir, file_lock, read_json_object_result
@@ -17,6 +18,7 @@ DEFAULT_UPDATE_CHECK_INTERVAL_HOURS = 24.0
 MIN_UPDATE_CHECK_INTERVAL_HOURS = 1.0
 MAX_UPDATE_CHECK_INTERVAL_HOURS = 8760.0
 WATCHED_BRANCH = "main"
+_FULL_GIT_SHA_RE = re.compile(r"[0-9a-fA-F]{40}")
 
 
 def update_check_cache_path(paths: OmhPaths) -> Path:
@@ -55,11 +57,23 @@ def write_update_check_policy(paths: OmhPaths, *, mode: str | None = None, inter
 
 def read_update_check_cache(paths: OmhPaths) -> dict[str, Any]:
     cache, _error = read_json_object_result(update_check_cache_path(paths))
-    return cache or {}
+    if not cache:
+        return {}
+    normalized = dict(cache)
+    if "remote_commit" in normalized:
+        normalized["remote_commit"] = normalize_git_sha(normalized["remote_commit"])
+    return normalized
 
 
 def write_update_check_cache(paths: OmhPaths, patch: dict[str, Any]) -> dict[str, Any]:
-    merged = {**read_update_check_cache(paths), **patch, "schema_version": UPDATE_CHECK_CACHE_SCHEMA_VERSION}
+    normalized_patch = dict(patch)
+    if "remote_commit" in normalized_patch:
+        raw_commit = normalized_patch["remote_commit"]
+        normalized_commit = normalize_git_sha(raw_commit)
+        if raw_commit not in (None, "") and not normalized_commit:
+            raise ValueError("remote commit must be a full 40-character hexadecimal identity")
+        normalized_patch["remote_commit"] = normalized_commit
+    merged = {**read_update_check_cache(paths), **normalized_patch, "schema_version": UPDATE_CHECK_CACHE_SCHEMA_VERSION}
     path = update_check_cache_path(paths)
     ensure_dir(path.parent, private=True)
     atomic_write_json(path, merged, private=True)
@@ -76,7 +90,7 @@ def read_runtime_state(paths: OmhPaths) -> dict[str, Any]:
 
 
 def local_installed_commit(paths: OmhPaths) -> str:
-    return str(read_runtime_state(paths).get("release_source_commit", "") or "")
+    return normalize_git_sha(read_runtime_state(paths).get("release_source_commit"))
 
 
 def local_installed_channel(paths: OmhPaths) -> str:
@@ -91,3 +105,9 @@ def interval_elapsed(cache: dict[str, Any], interval_hours: float, now: datetime
     if last_checked.tzinfo is None:
         last_checked = last_checked.replace(tzinfo=timezone.utc)
     return (now - last_checked) >= timedelta(hours=interval_hours)
+
+
+def normalize_git_sha(value: object) -> str:
+    if not isinstance(value, str) or not _FULL_GIT_SHA_RE.fullmatch(value):
+        return ""
+    return value.lower()

@@ -93,6 +93,8 @@ def _runner(
     compare_raises: BaseException | None = None,
     tags_status: int = 200,
     tags_payload: object = None,
+    releases_status: int = 200,
+    releases_payload: object = None,
     calls: list | None = None,
 ):
     """Fake `subprocess.run` for the watch's curl probes.
@@ -121,6 +123,10 @@ def _runner(
             payload = tags_payload if tags_payload is not None else [{"name": "v0.1.0"}]
             body = payload if tags_status == 200 else None
             return subprocess.CompletedProcess(argv, 0, stdout=_http(tags_status, body), stderr="")
+        if any("/releases" in url for url in urls):
+            payload = releases_payload if releases_payload is not None else [{"tag_name": "v0.1.0"}]
+            body = payload if releases_status == 200 else None
+            return subprocess.CompletedProcess(argv, 0, stdout=_http(releases_status, body), stderr="")
         head_body: dict[str, object] = {}
         if head_sha is not None:
             head_body["sha"] = head_sha
@@ -431,7 +437,7 @@ class ProbeBudgetTests(unittest.TestCase):
             self.assertEqual(len(partial), 1)
             self.assertEqual(partial[0]["result"], "error")
 
-    def test_compare_and_tags_never_fire_on_the_equal_sha_path(self) -> None:
+    def test_compare_and_recovery_sources_never_fire_on_the_equal_sha_path(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = _paths(Path(tmp))
             write_update_check_policy(paths, mode="notify")
@@ -441,6 +447,7 @@ class ProbeBudgetTests(unittest.TestCase):
             urls = [arg for argv, _ in calls for arg in argv if arg.startswith("http")]
             self.assertFalse(any("/compare/" in url for url in urls))
             self.assertFalse(any("/tags" in url for url in urls))
+            self.assertFalse(any("/releases" in url for url in urls))
 
 
 class AncestryProbeFailureTests(unittest.TestCase):
@@ -468,7 +475,13 @@ class AncestryProbeFailureTests(unittest.TestCase):
 
 
 class RecoveryWindowTests(unittest.TestCase):
-    def _open_rewrite_gap(self, paths: OmhPaths, *, tags_status: int) -> None:
+    def _open_rewrite_gap(
+        self,
+        paths: OmhPaths,
+        *,
+        tags_status: int,
+        releases_status: int = 200,
+    ) -> None:
         write_update_check_policy(paths, mode="notify")
         _write_local_commit(paths, "a" * 40)
         evaluate_update_check(paths, now=_T0, runner=_runner(head_sha="a" * 40))
@@ -476,10 +489,37 @@ class RecoveryWindowTests(unittest.TestCase):
             paths,
             now=_T0 + timedelta(hours=1),
             force=True,
-            runner=_runner(head_sha="b" * 40, compare_status=404, tags_status=tags_status),
+            runner=_runner(
+                head_sha="b" * 40,
+                compare_status=404,
+                tags_status=tags_status,
+                releases_status=releases_status,
+            ),
         )
         self.assertEqual(result["ancestry"], "cursor_unreachable")
         self.assertEqual(result["gap"]["status"], "open")
+
+    def test_rewrite_enumerates_tags_and_releases(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            write_update_check_policy(paths, mode="notify")
+            _write_local_commit(paths, "a" * 40)
+            evaluate_update_check(paths, now=_T0, runner=_runner(head_sha="a" * 40))
+            calls: list = []
+
+            evaluate_update_check(
+                paths,
+                now=_T0 + timedelta(hours=1),
+                force=True,
+                runner=_runner(head_sha="b" * 40, compare_status=404, calls=calls),
+            )
+
+            urls = [arg for argv, _ in calls for arg in argv if arg.startswith("http")]
+            self.assertTrue(any("/tags" in url for url in urls))
+            self.assertTrue(any("/releases" in url for url in urls))
+            cache = read_update_check_cache(paths)
+            self.assertEqual(_ledger_entries(cache, source="tags")[0]["result"], "ok")
+            self.assertEqual(_ledger_entries(cache, source="releases")[0]["result"], "ok")
 
     def test_partial_recovery_source_failure_keeps_the_gap_open(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -504,6 +544,27 @@ class RecoveryWindowTests(unittest.TestCase):
             self.assertFalse(cursor_advance_allowed(paths))
             # ...so the notice still reports the gap instead of staying silent.
             self.assertIn("coverage gap", format_notice_line(converged))
+
+    def test_release_recovery_failure_keeps_the_gap_open(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            self._open_rewrite_gap(paths, tags_status=200, releases_status=500)
+            cache = read_update_check_cache(paths)
+            releases = _ledger_entries(cache, source="releases")
+            self.assertEqual(len(releases), 1)
+            self.assertEqual(releases[0]["result"], "error")
+            self.assertFalse(cursor_advance_allowed(paths))
+            _write_local_commit(paths, "b" * 40)
+
+            converged = evaluate_update_check(
+                paths,
+                now=_T0 + timedelta(hours=2),
+                force=True,
+                runner=_runner(head_sha="b" * 40, tags_status=200, releases_status=500),
+            )
+
+            self.assertEqual(converged["gap"]["status"], "open")
+            self.assertFalse(cursor_advance_allowed(paths))
 
     def test_successful_recovery_closes_the_gap_and_advances_the_generation(self) -> None:
         with TemporaryDirectory() as tmp:

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..paths import OmhPaths
-from .update_check_probe import UPDATE_CHECK_NETWORK_TIMEOUT_SECONDS, fetch_cursor_ancestry, fetch_recovery_tags, fetch_watched_branch_state
+from .update_check_probe import UPDATE_CHECK_NETWORK_TIMEOUT_SECONDS, fetch_cursor_ancestry, fetch_recovery_releases, fetch_recovery_tags, fetch_watched_branch_state
 from .update_check_state import UPDATE_CHECK_RESULT_SCHEMA_VERSION, WATCHED_BRANCH, interval_elapsed, local_installed_channel, local_installed_commit, read_update_check_cache, read_update_check_policy, write_update_check_cache
 
 UPDATE_CHECK_ANCESTRY_CLASSES = ("fast_forward", "rewound", "rewritten", "branch_recreated", "cursor_unreachable", "default_branch_changed", "unknown")
@@ -53,12 +53,28 @@ def append_attempt(ledger: list[dict[str, Any]], *, attempted_at: str, source: s
 
 
 def recovery_covered(ledger: list[dict[str, Any]], since: str, *, head_ok_now: bool) -> bool:
-    for source in ("branch_head", "compare", "tags"):
+    for source in ("branch_head", "compare", "tags", "releases"):
         if source == "branch_head" and head_ok_now:
             continue
         if not any(entry.get("source") == source and entry.get("result") in ("ok", "not_found") and str(entry.get("attempted_at", "")) >= since for entry in ledger):
             return False
     return True
+
+
+def record_recovery_sources(
+    ledger: list[dict[str, Any]],
+    *,
+    attempted_at: str,
+    old_ref: str,
+    new_ref: str,
+    since: str,
+    runner: object,
+    timeout: float,
+) -> list[dict[str, Any]]:
+    tags = fetch_recovery_tags(timeout=timeout, runner=runner)
+    ledger = append_attempt(ledger, attempted_at=attempted_at, source="tags", result="ok" if tags.ok else "error", old_ref=old_ref, new_ref=new_ref, event_keys=[f"tags:{WATCHED_BRANCH}:{new_ref}"], uncertain_interval={"since": since, "until": attempted_at}, note=tags.error or "")
+    releases = fetch_recovery_releases(timeout=timeout, runner=runner)
+    return append_attempt(ledger, attempted_at=attempted_at, source="releases", result="ok" if releases.ok else "error", old_ref=old_ref, new_ref=new_ref, event_keys=[f"releases:{WATCHED_BRANCH}:{new_ref}"], uncertain_interval={"since": since, "until": attempted_at}, note=releases.error or "")
 
 
 def cursor_advance_allowed(paths: OmhPaths) -> bool:
@@ -133,8 +149,7 @@ def evaluate_update_check(paths: OmhPaths, *, now: datetime | None = None, force
         ancestry, outcome = "fast_forward", "up_to_date"
         if gap["status"] == "open" and gap["reason"] != "default_branch_changed":
             if not recovery_covered(ledger, gap["since"], head_ok_now=True):
-                tags = fetch_recovery_tags(timeout=timeout, runner=runner)
-                ledger = append_attempt(ledger, attempted_at=now_iso, source="tags", result="ok" if tags.ok else "error", old_ref=local_commit, new_ref=remote, event_keys=[f"tags:{WATCHED_BRANCH}:{remote}"], uncertain_interval={"since": gap["since"], "until": now_iso}, note=tags.error or "")
+                ledger = record_recovery_sources(ledger, attempted_at=now_iso, old_ref=local_commit, new_ref=remote, since=gap["since"], runner=runner, timeout=timeout)
             if recovery_covered(ledger, gap["since"], head_ok_now=True):
                 generation += 1
                 ledger = append_attempt(ledger, attempted_at=now_iso, source="branch_head", result="ok", old_ref=local_commit, new_ref=remote, event_keys=[f"gap_closed:{WATCHED_BRANCH}:{generation}:{gap['since']}"], uncertain_interval={"since": gap["since"], "until": now_iso}, note="recovery window fully enumerated; gap closed")
@@ -157,8 +172,7 @@ def evaluate_update_check(paths: OmhPaths, *, now: datetime | None = None, force
             if ancestry == "branch_recreated":
                 note += "; branch recreation heuristic matched (remote head time regressed)"
             gap = open_gap(gap, since=cutoff or now_iso, until=now_iso, reason=ancestry, note=note)
-            tags = fetch_recovery_tags(timeout=timeout, runner=runner)
-            ledger = append_attempt(ledger, attempted_at=now_iso, source="tags", result="ok" if tags.ok else "error", old_ref=local_commit, new_ref=remote, event_keys=[f"tags:{WATCHED_BRANCH}:{remote}"], uncertain_interval={"since": gap["since"], "until": now_iso}, note=tags.error or "")
+            ledger = record_recovery_sources(ledger, attempted_at=now_iso, old_ref=local_commit, new_ref=remote, since=gap["since"], runner=runner, timeout=timeout)
     resolved_default = probe.default_branch or persisted_default
     patch: dict[str, Any] = {"last_checked_at": now_iso, "remote_commit": remote, "remote_etag": etag, "outcome": outcome, "ancestry": ancestry, "watched_branch": WATCHED_BRANCH, "branch_generation": generation, "recovery_attempts": ledger, "gap": gap}
     if resolved_default:

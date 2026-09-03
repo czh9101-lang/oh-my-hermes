@@ -124,6 +124,42 @@ class MediaHandoffCapabilityContractTests(unittest.TestCase):
         self.assertEqual(unsupported["verdict"], "modality_unsupported")
         self.assertEqual(set(HANDOFF_INPUT_REPRESENTATIONS), {"text_only", "raw_media", "local_file_reference", "extracted_text", "ocr_output", "transcript", "normalized_other"})
 
+    def test_local_file_reference_requires_modality_and_route_evidence(self) -> None:
+        with self.assertRaisesRegex(ValueError, "local_file_reference requires"):
+            build_executor_modality_decision(
+                input_representation="local_file_reference",
+                snapshot=_snapshot(),
+                route=_ROUTE,
+                now="2026-09-03T01:00:00Z",
+            )
+
+        supported = build_executor_modality_decision(
+            input_representation="local_file_reference:image",
+            snapshot=_snapshot(),
+            route=_ROUTE,
+            now="2026-09-03T01:00:00Z",
+        )
+        unknown = build_executor_modality_decision(
+            input_representation="local_file_reference:image",
+            snapshot={"executor": "codex", "capabilities": {}},
+            route=_ROUTE,
+            now="2026-09-03T01:00:00Z",
+        )
+
+        self.assertEqual(supported["verdict"], "dispatch")
+        self.assertEqual(unknown["verdict"], "modality_unknown")
+        self.assertEqual(
+            supported["required_representations"],
+            [
+                {
+                    "capability": "input_modality_image",
+                    "representation": "local_file_reference",
+                    "modality": "image",
+                    **_ROUTE,
+                }
+            ],
+        )
+
     def test_primary_handoff_binds_fresh_media_evidence_to_its_selected_route(self) -> None:
         decision = _primary_handoff_decision()
 
@@ -185,6 +221,43 @@ class MediaHandoffCapabilityContractTests(unittest.TestCase):
         serialized = json.dumps(demo, sort_keys=True)
         self.assertNotIn("/Users/", serialized)
         self.assertNotIn("bytes", serialized)
+
+    def test_transformation_evidence_is_schema_bound_private_and_kind_matched(self) -> None:
+        unsafe_transformations = (
+            {
+                "kind": "ocr",
+                "status": "observed",
+                "evidence_ref": "/Users/alice/.ssh/id_rsa",
+                "api_key": "sk-live-secret",
+            },
+            {
+                "kind": "transcription",
+                "status": "observed",
+                "evidence_ref": "operator:wrong-kind",
+            },
+            {
+                "kind": "ocr",
+                "status": "observed",
+                "evidence_ref": "",
+            },
+        )
+
+        for transformation in unsafe_transformations:
+            with self.subTest(transformation=transformation):
+                decision = _primary_handoff_decision(
+                    capability="input_modality_text",
+                    input_representation="ocr_output",
+                    transformation=transformation,
+                )
+
+                self.assertEqual(decision["verdict"], "modality_transformation_unobserved")
+                self.assertEqual(set(decision["transformation"]), {"kind", "status", "evidence_ref"})
+                self.assertNotEqual(decision["transformation"]["status"], "observed")
+                self.assertEqual(decision["transformation"]["evidence_ref"], "")
+                serialized = json.dumps(decision, sort_keys=True)
+                self.assertNotIn("/Users/", serialized)
+                self.assertNotIn("sk-live-secret", serialized)
+                self.assertNotIn("api_key", serialized)
 
 
 if __name__ == "__main__":
