@@ -7,6 +7,7 @@ import sys
 from tempfile import TemporaryDirectory
 import threading
 import unittest
+from unittest.mock import patch
 
 from omh.coding.fanout import build_fanout_contract
 from omh.coding.fanout_artifacts import write_fanout_contract
@@ -359,6 +360,75 @@ class FanoutRecoveredPressureIntegrationTests(unittest.TestCase):
         self.assertEqual(pressure["status_class"], "provider_limit_pressure")
         self.assertEqual((pressure["window_before"], pressure["window_after"]), (3, 1))
         self.assertEqual(runner.attempts["b-pressure"], 2)
+
+
+class FanoutInterruptedAdmissionTests(unittest.TestCase):
+    def test_interrupt_cleanup_observes_a_collected_clean_completion_once(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed.txt"], cwd=repo, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"],
+                cwd=repo,
+                check=True,
+            )
+            base_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            contract = write_fanout_contract(
+                paths,
+                build_fanout_contract(
+                    _GOAL,
+                    [
+                        {
+                            "unit_id": "completed-during-interrupt",
+                            "title": "Completed during interrupt",
+                            "owner": "codex",
+                            "file_scope": ["src/completed-during-interrupt/"],
+                        }
+                    ],
+                ),
+            )
+
+            def interrupt_after_completion(futures, **_kwargs):
+                for future in futures:
+                    future.result(timeout=5)
+                raise KeyboardInterrupt
+
+            with patch(
+                "omh.coding.fanout_dispatch.futures_wait",
+                side_effect=interrupt_after_completion,
+            ):
+                summary = dispatch_fanout(
+                    paths,
+                    contract,
+                    goal_text=_GOAL,
+                    repo_root=repo,
+                    base_sha=base_sha,
+                    concurrency=1,
+                    adaptive_concurrency=True,
+                    runner=lambda argv, **kwargs: (
+                        subprocess.run(argv, **kwargs) if argv[0] == "git" else _FakeCompleted()
+                    ),
+                    readiness=_ready,
+                )
+
+        receipt = summary["adaptive_admission"]
+        self.assertTrue(summary["interrupted"])
+        self.assertEqual(summary["units"][0]["status"], "completed")
+        self.assertEqual(receipt["observation_status"], "observed_local_process_results")
+        self.assertEqual(receipt["observed_completion_count"], 1)
+        self.assertEqual(receipt["observed_clean_completion_count"], 1)
+        self.assertEqual(receipt["adjustment_count"], 1)
 
 
 class AdaptiveAdmissionDryRunTests(unittest.TestCase):
