@@ -314,6 +314,30 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 self.assertTrue(sentinel.exists(), "invalid marker candidate deleted an external sentinel")
                 self.assertIsInstance(error, OmhError, "invalid marker candidate was reconciled instead of refused")
 
+    def test_interrupted_current_alias_is_confined_before_identity_comparison(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy, _args, _plan = self._fixture(root, pointer=True)
+            previous = (root / "current").resolve()
+            candidate = root / "generations" / "candidate"
+            candidate.mkdir()
+            outside_alias = root / "outside-alias"
+            outside_alias.symlink_to(candidate, target_is_directory=True)
+            (root / "current").unlink()
+            (root / "current").symlink_to(outside_alias, target_is_directory=True)
+            state = json.loads((root / "self-update.json").read_text())
+            state["activation_in_progress"] = {
+                "candidate": str(candidate),
+                "previous": str(previous),
+                "phase": "post_switch",
+            }
+
+            with self.assertRaisesRegex(OmhError, "current pointer target"):
+                self_update_state.interrupted_activation(root, state)
+
+            self.assertTrue(candidate.is_dir())
+            self.assertTrue(legacy.is_dir())
+
     def test_invalid_persisted_generation_entries_never_switch_or_reenter(self):
         for name, mutate in (
             ("mismatched-id-path", lambda state, outside, link: state["active"].update(id="wrong-id")),

@@ -112,8 +112,10 @@ def interrupted_activation(
         return None
     candidate, previous = parsed
     pointed = pointer_target(root, platform=platform)
-    if pointed is not None and same_existing_path(pointed, candidate):
-        return candidate, previous
+    if pointed is not None:
+        pointed = require_generation_path(root, pointed, None, "current pointer target")
+        if same_existing_path(pointed, candidate):
+            return candidate, previous
     shutil.rmtree(candidate, ignore_errors=True)
     state["activation_in_progress"] = None
     save_state(root, state)
