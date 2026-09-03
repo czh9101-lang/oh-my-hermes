@@ -389,6 +389,74 @@ def alias_is_served(
     return bool(kinds & set(families))
 
 
+def provider_family_for(provider_id: str, entitlements: Mapping[str, Any] | None) -> str:
+    """The family a provider id belongs to, or "" when nothing records it.
+
+    The operator's own document decides first, because a provider id is
+    theirs to name -- `og`, `work-gateway`, anything. A id that is itself a
+    catalog family name (`anthropic`, `openai-codex`) resolves without a
+    document, which is what an install with no entitlements recorded has.
+    """
+    key = str(provider_id or "").strip()
+    if not key:
+        return ""
+    providers = (entitlements or {}).get("providers", {})
+    if isinstance(providers, Mapping):
+        recorded = providers.get(key)
+        if isinstance(recorded, str) and recorded:
+            return recorded
+    return key if key in PROVIDER_FAMILY_VOCABULARY else ""
+
+
+def provider_serves_alias(
+    alias: str,
+    provider_id: str,
+    entitlements: Mapping[str, Any] | None = None,
+) -> bool | None:
+    """Whether ONE named provider can serve ``alias``. None means unknown.
+
+    Distinct from `alias_is_served`, which asks whether ANY confirmed
+    provider could. That question cannot catch the failure this one exists
+    for: a dispatch that inherits its provider goes to whatever the session
+    runs on, and a multi-vendor account elsewhere in the document does not
+    make the inherited one able to serve the model.
+
+    Unknown -- not False -- whenever the provider has no recorded family, the
+    catalog never described the alias, or the family is multi-vendor and so
+    serves everything. Nothing is refused on a guess.
+    """
+    family = provider_family_for(provider_id, entitlements)
+    if not family or family in MULTI_VENDOR_PROVIDER_KINDS:
+        return None
+    families = HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES.get(str(alias or "").strip().casefold())
+    if families is None:
+        return None
+    return family in families
+
+
+def providers_serving_alias(
+    alias: str,
+    entitlements: Mapping[str, Any] | None,
+) -> tuple[str, ...]:
+    """The operator's own provider ids that could serve ``alias``.
+
+    The direction half of the guard: refusing a dispatch is only useful
+    beside the answer, and the answer can only come from what the operator
+    recorded holding.
+    """
+    providers = (entitlements or {}).get("providers", {})
+    if not isinstance(providers, Mapping):
+        return ()
+    families = HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES.get(str(alias or "").strip().casefold())
+    candidates = []
+    for provider_id, kind in providers.items():
+        if not isinstance(provider_id, str) or not isinstance(kind, str):
+            continue
+        if kind in MULTI_VENDOR_PROVIDER_KINDS or (families and kind in families):
+            candidates.append(provider_id)
+    return tuple(sorted(candidates))
+
+
 def entitlement_shaped_chain(
     chain: tuple[tuple[str, str], ...],
     entitlements: Mapping[str, Any],

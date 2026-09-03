@@ -402,6 +402,15 @@ A recorded cost from the host is never replaced by any of this — overrides
 only reach the approximation that fires when nothing was recorded, and an
 approximated figure still renders with its `~` marker.
 
+A dispatch that inherits its provider is checked before the route is written:
+if the session's own provider cannot serve the model being pinned — the
+catalog records which provider families serve each model — the route is
+refused, naming the inherited provider and which of your recorded providers
+could serve it instead. The check only refuses what is known wrong. An
+unrecorded provider, a model the catalog never described, and a multi-vendor
+relay (which serves every family) all leave the answer unknown, and unknown
+dispatches unchanged.
+
 An alias listed here dispatches as that provider's model; an alias not listed
 dispatches unchanged with no provider, which is what a direct-billing host
 wants — the file is optional and absent by default. A `provider` passed
