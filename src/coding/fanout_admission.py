@@ -9,7 +9,8 @@ FANOUT_ADMISSION_ADJUSTMENT_LIMIT = 32
 FANOUT_ADMISSION_CLAIM_BOUNDARY = (
     "Adaptive admission records only how observed local unit process results changed this dispatch's "
     "submission window. A provider-limit status class is not provider quota truth, and admission "
-    "decisions are not verification, review, CI, merge-readiness, or merge evidence."
+    "decisions are not verification, review, CI, merge-readiness, or merge evidence. Dry-run plans "
+    "are not observed execution."
 )
 
 _PROVIDER_LIMIT_FAILURE_KIND = "limit_shaped"
@@ -19,11 +20,12 @@ _PROVIDER_LIMIT_RETRY_CLASS = "transient_provider_limit"
 class AdaptiveFanoutAdmission:
     """Additive-increase, multiplicative-decrease admission state."""
 
-    def __init__(self, *, ceiling: int) -> None:
+    def __init__(self, *, ceiling: int, dry_run: bool = False) -> None:
         self.ceiling = max(1, int(ceiling))
         self.initial_window = min(2, self.ceiling)
         self.window = self.initial_window
         self.minimum_window = self.initial_window
+        self.dry_run = bool(dry_run)
         self._observed_completion_count = 0
         self._observed_clean_completion_count = 0
         self._observed_provider_pressure_count = 0
@@ -35,7 +37,7 @@ class AdaptiveFanoutAdmission:
 
     def observe(self, unit_id: str, result: Mapping[str, Any]) -> None:
         """Apply one observed unit-process result to the admission window."""
-        if not _is_observed_process_completion(result):
+        if self.dry_run or not _is_observed_process_completion(result):
             return
         self._observed_completion_count += 1
         before = self.window
@@ -74,9 +76,13 @@ class AdaptiveFanoutAdmission:
             "final_window": self.window,
             "minimum_window": self.minimum_window,
             "observation_status": (
-                "observed_local_process_results"
-                if self._observed_completion_count
-                else "no_observed_unit_results"
+                "not_observed_dry_run"
+                if self.dry_run
+                else (
+                    "observed_local_process_results"
+                    if self._observed_completion_count
+                    else "no_observed_unit_results"
+                )
             ),
             "observed_completion_count": self._observed_completion_count,
             "observed_clean_completion_count": self._observed_clean_completion_count,

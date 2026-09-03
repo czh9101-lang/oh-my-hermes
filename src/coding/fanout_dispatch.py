@@ -1418,7 +1418,7 @@ def dispatch_fanout(
 
     pending = [unit_id for unit_id in order if unit_id not in results]
     admission = (
-        AdaptiveFanoutAdmission(ceiling=concurrency)
+        AdaptiveFanoutAdmission(ceiling=concurrency, dry_run=dry_run)
         if adaptive_concurrency
         else None
     )
