@@ -121,7 +121,8 @@ def interrupted_activation(
 
 
 def record_pointer(state: dict[str, Any], root: Path, target: Path) -> None:
-    state["pointer"] = {"path": str(root / "current"), "target": os.path.relpath(target, root)}
+    relative_target = os.path.relpath(target, root).replace("\\", "/")
+    state["pointer"] = {"path": str(root / "current"), "target": relative_target}
 
 
 def commit_activation(root: Path, state: dict[str, Any], candidate: Path) -> None:

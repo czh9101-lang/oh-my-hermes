@@ -103,7 +103,7 @@ def _parse_pointer(root: Path, pointer: object, active: dict[str, Any], migratio
         if target != "":
             _invalid("generation pointer")
         return
-    if target != str(Path("generations") / str(active.get("id", ""))):
+    if not isinstance(target, str) or target.replace("\\", "/") != f"generations/{active.get('id', '')}":
         _invalid("generation pointer")
 
 

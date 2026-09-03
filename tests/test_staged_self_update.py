@@ -2,7 +2,7 @@ import contextlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import subprocess
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -18,7 +18,7 @@ from omh.core.errors import OmhError
 from omh.install import self_update, self_update_state
 from omh.install.self_update import run_installer_self_update, switch_current
 from omh.install.self_update_platform import SelfUpdatePlatform, _remove_directory_link
-from omh.install.self_update_state import STATE_SCHEMA_VERSION, collect_garbage, pointer_target
+from omh.install.self_update_state import STATE_SCHEMA_VERSION, collect_garbage, pointer_target, record_pointer
 from omh.system.local_store import atomic_write_json, file_lock
 
 
@@ -125,7 +125,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
     def _assert_pair(self, root: Path, expected: Path | None = None) -> None:
         current = (root / "current").resolve()
         config = (root / "hermes" / "config.yaml").read_text()
-        self.assertIn((root / "current" / "skills").as_posix(), config)
+        self.assertIn((root / "current" / "skills").as_posix(), config.replace("\\", "/"))
         launcher = root / "bin" / "omh"
         if launcher.exists() or launcher.is_symlink():
             self.assertIn(str(root / "current"), os.readlink(launcher))
@@ -419,7 +419,10 @@ class StagedSelfUpdateTests(unittest.TestCase):
             result = self._run(root, args, plan, self._runner())
             self.assertTrue(result["ok"])
             self.assertEqual(result["activation"]["launcher"], "absent_manual_instruction")
-            self.assertIn((root / "current" / "skills").as_posix(), (root / "hermes" / "config.yaml").read_text())
+            self.assertIn(
+                (root / "current" / "skills").as_posix(),
+                (root / "hermes" / "config.yaml").read_text().replace("\\", "/"),
+            )
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             target = root / "generations" / "candidate"
@@ -468,6 +471,89 @@ class StagedSelfUpdateTests(unittest.TestCase):
             self.assertTrue(all(call[0][:5] == ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"] for call in calls))
             self.assertTrue(all(call[1]["shell"] is False for call in calls))
             self.assertTrue(all(call[1]["timeout"] > 0 for call in calls))
+
+    def test_pointer_state_uses_cross_platform_posix_relative_target(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate = root / "generations" / "candidate"
+            state: dict[str, object] = {}
+
+            with patch.object(self_update_state.os.path, "relpath", return_value=r"generations\candidate"):
+                record_pointer(state, root, candidate)
+
+            self.assertEqual(
+                state["pointer"],
+                {"path": str(root / "current"), "target": "generations/candidate"},
+            )
+
+    def test_windows_pointer_swap_never_replaces_an_existing_junction_in_place(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            previous = root / "generations" / "previous"
+            candidate = root / "generations" / "candidate"
+            previous.mkdir(parents=True)
+            candidate.mkdir()
+
+            def junction_runner(command, **kwargs):
+                link = Path(kwargs["env"]["OMH_JUNCTION_LINK"])
+                target = link.parent / kwargs["env"]["OMH_JUNCTION_TARGET"]
+                link.symlink_to(target, target_is_directory=True)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            real_rename = os.rename
+
+            def windows_replace(source, destination):
+                destination_path = Path(destination)
+                if destination_path == root / "current" and (
+                    destination_path.exists() or destination_path.is_symlink()
+                ):
+                    raise PermissionError("Windows cannot replace an existing junction in place")
+                real_rename(source, destination)
+
+            platform = SelfUpdatePlatform.windows(junction_runner)
+            with patch("omh.install.self_update_platform.os.replace", side_effect=windows_replace):
+                platform.replace_current(root, previous)
+                platform.replace_current(root, candidate)
+
+            self.assertEqual(pointer_target(root, platform=platform).resolve(), candidate.resolve())
+            self.assertFalse(any(root.glob(".current.*")))
+
+    def test_windows_pointer_swap_restores_previous_after_second_rename_failure(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            previous = root / "generations" / "previous"
+            candidate = root / "generations" / "candidate"
+            previous.mkdir(parents=True)
+            candidate.mkdir()
+
+            def junction_runner(command, **kwargs):
+                link = Path(kwargs["env"]["OMH_JUNCTION_LINK"])
+                target = link.parent / kwargs["env"]["OMH_JUNCTION_TARGET"]
+                link.symlink_to(target, target_is_directory=True)
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            platform = SelfUpdatePlatform.windows(junction_runner)
+            platform.replace_current(root, previous)
+            real_replace = os.replace
+            moves: list[tuple[Path, Path]] = []
+
+            def fail_candidate_move(source, destination):
+                source_path = Path(source)
+                destination_path = Path(destination)
+                moves.append((source_path, destination_path))
+                if source_path.suffix == ".tmp" and destination_path == root / "current":
+                    raise PermissionError("candidate rename failed")
+                real_replace(source, destination)
+
+            with (
+                patch("omh.install.self_update_platform.os.replace", side_effect=fail_candidate_move),
+                self.assertRaisesRegex(OmhError, "candidate rename failed"),
+            ):
+                platform.replace_current(root, candidate)
+
+            self.assertTrue(any(destination.suffix == ".previous" for _source, destination in moves))
+            self.assertEqual(pointer_target(root, platform=platform).resolve(), previous.resolve())
+            self.assertFalse(any(root.glob(".current.*")))
 
     def test_windows_junction_creation_failure_keeps_the_previous_pointer(self):
         with TemporaryDirectory() as temporary:
@@ -570,7 +656,10 @@ class StagedSelfUpdateTests(unittest.TestCase):
             self.assertTrue(result["rollback"]["performed"])
             self.assertEqual(pointer_target(root, platform=platform), previous)
             self.assertIn("\\current\\venv\\Scripts\\omh.exe", shim.read_text())
-            self.assertIn((root / "current" / "skills").as_posix(), (root / "hermes" / "config.yaml").read_text())
+            self.assertIn(
+                (root / "current" / "skills").as_posix(),
+                (root / "hermes" / "config.yaml").read_text().replace("\\", "/"),
+            )
             self.assertEqual(len(junctions), 2)
 
     def test_json_and_human_results_never_claim_success_before_post_activation(self):
@@ -622,14 +711,13 @@ class ManagedWorkflowRegistrationTests(unittest.TestCase):
             registered = external_dirs((root / "hermes" / "config.yaml").read_text())
             self.assertEqual(registered, [legacy_skills.resolve().as_posix()])
             state = json.loads((root / "omh" / "runtime" / "state.json").read_text())
-            self.assertEqual(state["last_applied_skills_dir"], legacy_skills.resolve().as_posix())
+            self.assertEqual(state["last_applied_skills_dir"], str(legacy_skills.resolve()))
             self.assertNotIn(current_skills.as_posix(), registered)
 
     def test_migrated_profile_sync_recognizes_the_current_pointer_registration(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
-            current_skills = root / "current" / "skills"
-            current_skills.mkdir(parents=True)
+            current_skills = PureWindowsPath(r"C:\omh\current\skills")
             profile = root / "hermes" / "profiles" / "bot"
             (profile / "plugins" / "omh").mkdir(parents=True)
             (profile / "config.yaml").write_text(
@@ -638,8 +726,7 @@ class ManagedWorkflowRegistrationTests(unittest.TestCase):
             args = self._args(root)
 
             with (
-                patch.object(setup_commands, "managed_current_workflow_pack_dir", return_value=current_skills),
-                patch.object(setup_commands, "_managed_command_runtime", return_value={"managed": True}),
+                patch.object(setup_commands, "_registered_workflow_dir", return_value=current_skills),
                 patch.object(setup_commands, "install_plugin_bundle"),
                 patch.object(setup_commands, "install_tui_widget"),
                 patch.object(setup_commands, "install_skin"),

@@ -92,10 +92,15 @@ class SelfUpdatePlatform:
         root.mkdir(parents=True, exist_ok=True)
         current = root / "current"
         temporary = root / f".current.{os.getpid()}.tmp"
+        backup = root / f".current.{os.getpid()}.previous"
         _remove_directory_link(temporary)
+        _remove_directory_link(backup)
         try:
             self.create_directory_link(root, temporary, target)
-            os.replace(temporary, current)
+            if self.is_windows:
+                _replace_windows_pointer(temporary, current, backup)
+            else:
+                os.replace(temporary, current)
         except (OSError, OmhError) as exc:
             _remove_directory_link(temporary)
             raise OmhError(f"cannot atomically replace current generation pointer: {exc}") from exc
@@ -122,6 +127,23 @@ def _remove_directory_link(path: Path) -> None:
         path.rmdir()
     else:
         path.unlink()
+
+
+def _replace_windows_pointer(temporary: Path, current: Path, backup: Path) -> None:
+    """Switch a junction pair without replacing an existing junction in place."""
+    had_current = _is_directory_link(current)
+    if current.exists() and not had_current:
+        raise OSError(f"current generation pointer is not a directory junction: {current}")
+    if had_current:
+        os.replace(current, backup)
+    try:
+        os.replace(temporary, current)
+    except OSError:
+        if had_current and _is_directory_link(backup) and not _is_directory_link(current):
+            os.replace(backup, current)
+        raise
+    if had_current:
+        _remove_directory_link(backup)
 
 
 def _windows_spelling(path: Path) -> str:

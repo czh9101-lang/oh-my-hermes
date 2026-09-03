@@ -483,7 +483,7 @@ def _sync_hermes_profiles(args: argparse.Namespace) -> list[dict[str, object]]:
         clone = argparse.Namespace(**vars(args))
         clone.hermes_home = str(profile_dir)
         profile_paths = _paths(clone)
-        registered = _registered_workflow_dir(profile_paths).as_posix() in external_dirs(
+        registered = str(_registered_workflow_dir(profile_paths)) in external_dirs(
             read_config(profile_paths.hermes_config_path)
         )
         if profile_paths.hermes_plugin_dir.is_dir() and not registered:
@@ -598,7 +598,7 @@ def _refresh_hermes_registration(args: argparse.Namespace) -> dict[str, object] 
     put it back.
     """
     paths = _paths(args)
-    if _registered_workflow_dir(paths).as_posix() not in external_dirs(read_config(paths.hermes_config_path)):
+    if str(_registered_workflow_dir(paths)) not in external_dirs(read_config(paths.hermes_config_path)):
         return None
     try:
         return _apply_result(args)

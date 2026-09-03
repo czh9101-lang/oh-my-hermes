@@ -286,6 +286,7 @@ class ReleaseRevisionBindingCliContractTests(unittest.TestCase):
                 environment.pop("OMH_HOME", None)
                 environment.pop("HERMES_HOME", None)
                 environment["HOME"] = str(home)
+                environment["USERPROFILE"] = str(home)
                 with patch.dict(os.environ, environment, clear=True):
                     os.chdir(repo)
                     status, _, stderr = run_cli(
