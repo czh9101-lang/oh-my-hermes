@@ -36,6 +36,8 @@ ROUTABLE_KEYS = ("model", "reasoning_effort", "provider")
 
 _VALUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
 _SECTION_RE = re.compile(r"^delegation:\s*(#.*)?$")
+_MODEL_SECTION_RE = re.compile(r"^model:\s*(#.*)?$")
+_MODEL_PROVIDER_RE = re.compile(r"^\s+provider\s*:")
 def _managed_key_re(key: str, indent: int) -> re.Pattern[str]:
     return re.compile(rf"^ {{{indent}}}{re.escape(key)}\s*:")
 
@@ -83,6 +85,43 @@ def _read_delegation_route_text(text: str) -> dict[str, str]:
                 else:
                     values.pop(key, None)
     return values
+
+
+def read_session_provider(hermes_home: str | Path | None = None) -> str:
+    """The provider this session runs on, from config.yaml's own `model:` block.
+
+    A child dispatched with no `delegation.provider` inherits this value, so
+    it is the provider that will actually serve the run. Read by the same
+    text scan as the delegation keys, and empty whenever the file, the block,
+    or the key is missing -- an unknown provider must never be treated as a
+    wrong one.
+    """
+    config_path = _config_path(hermes_home)
+    text, _, error = _read_config_snapshot(config_path)
+    if error:
+        return ""
+    return _read_session_provider_text(text)
+
+
+def _read_session_provider_text(text: str) -> str:
+    lines = text.splitlines()
+    in_model = False
+    provider = ""
+    for line in lines:
+        if _MODEL_SECTION_RE.match(line):
+            in_model = True
+            continue
+        if in_model and _top_level_key(line) is not None:
+            in_model = False
+        if not in_model:
+            continue
+        if _MODEL_PROVIDER_RE.match(line):
+            _, _, raw = line.partition(":")
+            value = _yaml_string_token(raw)
+            # Last occurrence wins, mirroring YAML, and a bare empty value
+            # unsets an earlier one exactly as it does for delegation keys.
+            provider = value or ""
+    return provider
 
 
 def write_delegation_route(
