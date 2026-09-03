@@ -136,6 +136,21 @@ class FanoutAdaptiveSchedulerTests(unittest.TestCase):
 
 
 class AdaptiveAdmissionReceiptTests(unittest.TestCase):
+    def test_receipt_redacts_a_secret_shaped_unit_identifier(self) -> None:
+        from omh.coding.fanout_admission import AdaptiveFanoutAdmission
+
+        sensitive_unit_id = "sk-reviewersentinel123456"
+        admission = AdaptiveFanoutAdmission(ceiling=2)
+        admission.observe(
+            sensitive_unit_id,
+            {"status": "completed", "exit_code": 0, "process_succeeded": True},
+        )
+
+        receipt = admission.receipt()
+
+        self.assertEqual(receipt["adjustments"][0]["unit_id"], "[redacted]")
+        self.assertNotIn(sensitive_unit_id, str(receipt))
+
     def test_receipt_bounds_provider_pressure_and_recovered_retry_adjustments(self) -> None:
         from omh.coding.fanout_admission import AdaptiveFanoutAdmission
 
