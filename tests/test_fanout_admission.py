@@ -345,5 +345,66 @@ class FanoutRecoveredPressureIntegrationTests(unittest.TestCase):
         self.assertEqual(runner.attempts["b-pressure"], 2)
 
 
+class AdaptiveAdmissionDryRunTests(unittest.TestCase):
+    def test_dry_run_receipt_makes_no_observed_execution_or_pressure_claim(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed.txt"], cwd=repo, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"],
+                cwd=repo,
+                check=True,
+            )
+            base_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            contract = write_fanout_contract(
+                paths,
+                build_fanout_contract(
+                    _GOAL,
+                    [
+                        {
+                            "unit_id": "dry-run",
+                            "title": "Dry run",
+                            "owner": "codex",
+                            "file_scope": ["src/dry-run/"],
+                        }
+                    ],
+                ),
+            )
+            runner = _ControlledRunner()
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=base_sha,
+                concurrency=4,
+                adaptive_concurrency=True,
+                dry_run=True,
+                runner=runner,
+                readiness=_ready,
+            )
+
+        receipt = summary["adaptive_admission"]
+        self.assertEqual(receipt["observation_status"], "not_observed_dry_run")
+        self.assertEqual(receipt["observed_completion_count"], 0)
+        self.assertEqual(receipt["observed_provider_pressure_count"], 0)
+        self.assertEqual(receipt["adjustments"], [])
+        self.assertEqual(receipt["final_window"], receipt["initial_window"])
+        self.assertEqual(runner.started, [])
+        self.assertIn("Dry-run plans are not observed execution", receipt["claim_boundary"])
+
+
 if __name__ == "__main__":
     unittest.main()
