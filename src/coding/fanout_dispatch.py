@@ -1582,7 +1582,10 @@ def dispatch_fanout(
             if unit_id in results:
                 continue
             try:
-                results[unit_id] = future.result(timeout=UNIT_TERMINATE_GRACE_SECONDS + 5)
+                result = future.result(timeout=UNIT_TERMINATE_GRACE_SECONDS + 5)
+                results[unit_id] = result
+                if admission is not None:
+                    admission.observe(unit_id, result)
             except (
                 FuturesCancelledError,
                 FuturesTimeoutError,
