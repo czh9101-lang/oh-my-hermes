@@ -431,6 +431,51 @@ class FanoutInterruptedAdmissionTests(unittest.TestCase):
         self.assertEqual(receipt["adjustment_count"], 1)
 
 
+class AdaptiveAdmissionRecursionRefusalTests(unittest.TestCase):
+    def test_adaptive_recursion_refusal_carries_an_unobserved_receipt(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            receipts = []
+
+            with patch(
+                "omh.coding.fanout_dispatch._owner_skill_discoveries",
+                side_effect=AssertionError("depth refusal must not run discovery"),
+            ):
+                for dry_run in (False, True):
+                    summary = dispatch_fanout(
+                        paths,
+                        {"fanout_id": "fanout-depth-refusal"},
+                        goal_text="must not be validated",
+                        repo_root=root / "missing-repo",
+                        base_sha="unobserved",
+                        concurrency=4,
+                        adaptive_concurrency=True,
+                        dry_run=dry_run,
+                        max_depth=1,
+                        env={"OMH_FANOUT_DEPTH": "1"},
+                        runner=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                            AssertionError("depth refusal must not spawn")
+                        ),
+                        readiness=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                            AssertionError("depth refusal must not probe readiness")
+                        ),
+                    )
+                    self.assertTrue(summary["refused"])
+                    self.assertEqual(summary["refusal_reason"], "fanout_depth_exceeded")
+                    receipts.append(summary.get("adaptive_admission"))
+
+        for receipt in receipts:
+            self.assertIsInstance(receipt, dict)
+            self.assertEqual(receipt["schema_version"], "fanout_admission/v1")
+            self.assertEqual(receipt["observed_completion_count"], 0)
+            self.assertEqual(receipt["adjustments"], [])
+        self.assertEqual(
+            [receipt["observation_status"] for receipt in receipts],
+            ["no_observed_unit_results", "not_observed_dry_run"],
+        )
+
+
 class AdaptiveAdmissionDryRunTests(unittest.TestCase):
     def test_dry_run_receipt_makes_no_observed_execution_or_pressure_claim(self) -> None:
         with TemporaryDirectory() as tmp:
