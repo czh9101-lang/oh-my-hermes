@@ -664,6 +664,16 @@ class TuiWidgetPackTests(unittest.TestCase):
         # permanent label for hermes-native children (the host never records
         # a child's context percentage) and read as a fixable problem.
         self.assertNotIn("uncollected", widget)
+        # The HEADER follows the same rule. `ctx --` was the last permanent
+        # not-collected label, and it was permanent on EVERY session, not
+        # some: `context_percentage` has a reader projection and this render
+        # path but no production writer anywhere, and none can be derived --
+        # the host's usage table sums input tokens across calls, which is not
+        # a context size, and nothing records a model's window. The slot
+        # stays wired for a future writer; the dash is gone.
+        self.assertNotIn("ctx --", widget)
+        self.assertIn("Number.isFinite(ctx) ? `ctx ${ctx}%` : ''", widget)
+        self.assertIn("${metrics.ctx ? ` • ${metrics.ctx}` : ''}", widget)
         self.assertIn("'MAIN'", widget)
         self.assertIn("maestro.rows", widget)
         self.assertIn("fallback:", widget)

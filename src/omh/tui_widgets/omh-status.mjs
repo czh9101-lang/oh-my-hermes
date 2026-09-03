@@ -92,7 +92,18 @@ export default function register(sdk) {
       tokens: rows.some(row => Number.isFinite(row.tokens))
         ? `${tokenCountText(tokens)} tokens`
         : '',
-      ctx: Number.isFinite(ctx) ? `ctx ${ctx}%` : 'ctx --',
+      // `ctx N%` when a row reports a context reading, and NOTHING when none
+      // does. It used to render a permanent not-collected dash, which read
+      // as a broken
+      // feature rather than an absent number -- and it is absent on every
+      // session, not just some: `context_percentage` has a schema slot, a
+      // reader projection, and this render path, but no production writer
+      // anywhere in the tree (`grep -rn "context_percentage=" src/` outside
+      // tests finds none). Nor can one be derived from what OMH can reach:
+      // the host's usage table sums input tokens ACROSS calls, which is not
+      // the size of a context, and nothing records a model's window. The
+      // slot stays wired so a future writer lights it up; the dash goes.
+      ctx: Number.isFinite(ctx) ? `ctx ${ctx}%` : '',
     }
   }
 
@@ -198,7 +209,8 @@ export default function register(sdk) {
   // cache/ctx were honest but unresolvable for Hermes-native children — the
   // host never records a child's context percentage — and read as a fixable
   // problem ('서브에이전트 트리거는 다시 해야하나?'). Absence of a claim is
-  // just as honest, and the header's `ctx --` still marks the session gap.
+  // just as honest -- and the header follows the same rule now, rendering a
+  // context reading only when a row carries one.
   const observedPercent = (label, value) =>
     Number.isFinite(value) ? `${label} ${value}%` : ''
 
@@ -548,7 +560,7 @@ export default function register(sdk) {
         version ? h(Text, { color: t.color.muted }, ` v${version}`) : null,
         h(Text, { color: t.color.border }, SEPARATOR),
         h(Text, { color: active ? t.color.warn : t.color.ok }, hudStateLabel(active, agents)),
-        h(Text, { color: t.color.muted }, `${metrics.cost ? ` • ${metrics.cost}` : ''} • ${metrics.ctx}`),
+        h(Text, { color: t.color.muted }, `${metrics.cost ? ` • ${metrics.cost}` : ''}${metrics.ctx ? ` • ${metrics.ctx}` : ''}`),
         // Exact in-flight liveness, paired from pre_tool_call/post_tool_call
         // by tool_call_id: the only honest answer to "is something actually
         // running right now", as opposed to a lingering active todo item or
