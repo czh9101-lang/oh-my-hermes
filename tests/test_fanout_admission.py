@@ -134,5 +134,73 @@ class FanoutAdaptiveSchedulerTests(unittest.TestCase):
         self.assertTrue(all(unit["status"] == "completed" for unit in summary["units"]))
 
 
+class AdaptiveAdmissionReceiptTests(unittest.TestCase):
+    def test_receipt_bounds_provider_pressure_and_recovered_retry_adjustments(self) -> None:
+        from omh.coding.fanout_admission import AdaptiveFanoutAdmission
+
+        admission = AdaptiveFanoutAdmission(ceiling=4)
+        admission.observe(
+            "clean",
+            {"status": "completed", "exit_code": 0, "process_succeeded": True},
+        )
+        admission.observe(
+            "recovered-limit",
+            {
+                "status": "completed",
+                "exit_code": 0,
+                "process_succeeded": True,
+                "retry": {
+                    "decisions": [
+                        {"failure_class": "transient_provider_limit", "decision": "retrying"}
+                    ]
+                },
+            },
+        )
+        for index, failure_kind in enumerate(
+            ("auth_shaped", "timeout", "binary_missing", "crash")
+        ):
+            admission.observe(
+                f"other-{index}",
+                {"status": "failed", "exit_code": 1, "failure_kind": failure_kind},
+            )
+        admission.observe(
+            "transport",
+            {
+                "status": "failed",
+                "exit_code": 1,
+                "failure_kind": "crash",
+                "retry": {"decisions": [{"failure_class": "transient_transport"}]},
+            },
+        )
+        for index in range(40):
+            admission.observe(
+                f"clean-{index}",
+                {"status": "completed", "exit_code": 0, "process_succeeded": True},
+            )
+            admission.observe(
+                f"limit-{index}",
+                {"status": "failed", "exit_code": 1, "failure_kind": "limit_shaped"},
+            )
+
+        receipt = admission.receipt()
+
+        self.assertEqual(receipt["schema_version"], "fanout_admission/v1")
+        self.assertEqual(receipt["mode"], "adaptive")
+        self.assertTrue(receipt["requested"])
+        self.assertEqual(receipt["initial_window"], 2)
+        self.assertEqual(receipt["ceiling"], 4)
+        self.assertEqual(receipt["minimum_window"], 1)
+        self.assertEqual(receipt["observed_provider_pressure_count"], 41)
+        recovered = next(
+            row for row in receipt["adjustments"] if row["unit_id"] == "recovered-limit"
+        )
+        self.assertEqual(recovered["status_class"], "provider_limit_pressure")
+        self.assertEqual((recovered["window_before"], recovered["window_after"]), (3, 1))
+        self.assertLessEqual(len(receipt["adjustments"]), 32)
+        self.assertGreater(receipt["adjustments_omitted"], 0)
+        self.assertNotIn("raw_output", str(receipt))
+        self.assertIn("not provider quota truth", receipt["claim_boundary"])
+
+
 if __name__ == "__main__":
     unittest.main()
