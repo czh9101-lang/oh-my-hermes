@@ -372,6 +372,36 @@ Supply wire-id routes in `~/.omh/routing/model-providers.json`
 }
 ```
 
+### Token prices
+
+The cost figures OMH shows when a host records none are ballparks from a
+shipped table, and what you actually pay is not: a gateway applies its own
+markup, an enterprise contract is not the list price, a free tier bills
+nothing, and vendors reprice. Put your own rates in
+`~/.omh/routing/model-prices.json` (`model_price_overrides/v1`):
+
+```json
+{
+  "schema_version": "model_price_overrides/v1",
+  "models": {
+    "claude-fable-5-1": {"input_per_mtok": 8.0, "output_per_mtok": 40.0},
+    "grok-code-fast": {"input_per_mtok": 0.2, "output_per_mtok": 1.5},
+    "my-free-tier-model": {"input_per_mtok": 0, "output_per_mtok": 0}
+  }
+}
+```
+
+A model listed here uses your rate; a model not listed falls back to the
+shipped ballpark, and a model neither prices reports no cost at all rather
+than claiming it was free. `cache_read_ratio` is optional and defaults to the
+shipped ratio for that model. Zero is a real rate, not an absent one, so a
+free tier can say so. Validation is strict and atomic, like its siblings: an
+invalid document is ignored whole rather than half-applied.
+
+A recorded cost from the host is never replaced by any of this — overrides
+only reach the approximation that fires when nothing was recorded, and an
+approximated figure still renders with its `~` marker.
+
 An alias listed here dispatches as that provider's model; an alias not listed
 dispatches unchanged with no provider, which is what a direct-billing host
 wants — the file is optional and absent by default. A `provider` passed
