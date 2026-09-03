@@ -202,5 +202,148 @@ class AdaptiveAdmissionReceiptTests(unittest.TestCase):
         self.assertIn("not provider quota truth", receipt["claim_boundary"])
 
 
+class _RetryControlledRunner:
+    def __init__(self, pressure_unit: str) -> None:
+        self.pressure_unit = pressure_unit
+        self.attempts: dict[str, int] = {}
+        self.started: list[tuple[str, int]] = []
+        self._released: set[tuple[str, int]] = set()
+        self._release_future = False
+        self._condition = threading.Condition()
+
+    def __call__(self, argv, **kwargs):
+        if argv[0] == "git":
+            return subprocess.run(argv, **kwargs)
+        unit_id = Path(str(kwargs["cwd"])).name.rsplit("-fanout-", 1)[-1]
+        with self._condition:
+            attempt = self.attempts.get(unit_id, 0) + 1
+            self.attempts[unit_id] = attempt
+            key = (unit_id, attempt)
+            self.started.append(key)
+            self._condition.notify_all()
+            released = self._condition.wait_for(
+                lambda: self._release_future or key in self._released,
+                timeout=5,
+            )
+        if not released:
+            raise AssertionError(f"timed out waiting to release {key}")
+        if key == (self.pressure_unit, 1):
+            return _FakeLimitCompleted()
+        return _FakeCompleted()
+
+    def wait_for_distinct_units(self, count: int, timeout: float = 2.0) -> bool:
+        with self._condition:
+            return self._condition.wait_for(
+                lambda: len({unit_id for unit_id, _attempt in self.started}) >= count,
+                timeout=timeout,
+            )
+
+    def wait_for_attempt(self, unit_id: str, attempt: int, timeout: float = 2.0) -> bool:
+        with self._condition:
+            return self._condition.wait_for(
+                lambda: (unit_id, attempt) in self.started,
+                timeout=timeout,
+            )
+
+    def release(self, unit_id: str, attempt: int = 1) -> None:
+        with self._condition:
+            self._released.add((unit_id, attempt))
+            self._condition.notify_all()
+
+    def release_all(self) -> None:
+        with self._condition:
+            self._release_future = True
+            self._condition.notify_all()
+
+
+class _FakeLimitCompleted:
+    returncode = 1
+    stdout = "Error: You have hit your usage limit. Try again later."
+    stderr = ""
+
+
+class FanoutRecoveredPressureIntegrationTests(unittest.TestCase):
+    def test_recovered_limit_pressure_reduces_admission_before_the_next_queued_unit(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed.txt"], cwd=repo, check=True)
+            subprocess.run(
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"],
+                cwd=repo,
+                check=True,
+            )
+            base_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            unit_ids = ["a-clean", "b-pressure", "c-hold", "d-hold", "e-later", "f-later"]
+            units = [
+                {
+                    "unit_id": unit_id,
+                    "title": unit_id,
+                    "owner": "codex",
+                    "file_scope": [f"src/{unit_id}/"],
+                }
+                for unit_id in unit_ids
+            ]
+            contract = write_fanout_contract(
+                paths,
+                build_fanout_contract(
+                    _GOAL,
+                    units,
+                    spawn_plan={
+                        "why_parallel": "The six file scopes are independent.",
+                        "why_not_single_unit": "The admission boundary requires a queued frontier.",
+                        "independence": "No fixture unit depends on another.",
+                        "expected_evidence_shape": "One process result per unit plus one retry.",
+                    },
+                ),
+            )
+            runner = _RetryControlledRunner("b-pressure")
+
+            with ThreadPoolExecutor(max_workers=1) as caller:
+                future = caller.submit(
+                    dispatch_fanout,
+                    paths,
+                    contract,
+                    goal_text=_GOAL,
+                    repo_root=repo,
+                    base_sha=base_sha,
+                    concurrency=4,
+                    adaptive_concurrency=True,
+                    max_retries=1,
+                    rng=lambda: 0.0,
+                    sleep=lambda _seconds: None,
+                    runner=runner,
+                    readiness=_ready,
+                )
+                self.assertTrue(runner.wait_for_distinct_units(2))
+                runner.release("a-clean")
+                self.assertTrue(runner.wait_for_distinct_units(4))
+                runner.release("b-pressure")
+                self.assertTrue(runner.wait_for_attempt("b-pressure", 2))
+                runner.release("b-pressure", 2)
+                self.assertFalse(runner.wait_for_distinct_units(5, timeout=0.2))
+                runner.release_all()
+                summary = future.result(timeout=5)
+
+        pressure = next(
+            row
+            for row in summary["adaptive_admission"]["adjustments"]
+            if row["unit_id"] == "b-pressure"
+        )
+        self.assertEqual(pressure["status_class"], "provider_limit_pressure")
+        self.assertEqual((pressure["window_before"], pressure["window_after"]), (3, 1))
+        self.assertEqual(runner.attempts["b-pressure"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()
