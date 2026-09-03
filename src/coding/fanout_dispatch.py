@@ -1262,7 +1262,7 @@ def dispatch_fanout(
             "fanout_recursion_depth", posture=resolve_security_posture(guard_env)
         )
         if depth_decision.tier != TIER_AUTO_ALLOWED:
-            return _depth_refusal_summary(
+            summary = _depth_refusal_summary(
                 contract,
                 dry_run=dry_run,
                 base_sha=base_sha,
@@ -1270,6 +1270,12 @@ def dispatch_fanout(
                 max_depth=effective_max_depth,
                 lineage=str(guard_env.get(FANOUT_LINEAGE_ENV_VAR, "") or ""),
             )
+            if adaptive_concurrency:
+                summary["adaptive_admission"] = AdaptiveFanoutAdmission(
+                    ceiling=concurrency,
+                    dry_run=dry_run,
+                ).receipt()
+            return summary
     spawn_ledger = _SpawnLedger(
         FANOUT_RUN_SPAWN_CEILING_DEFAULT if spawn_ceiling is None else spawn_ceiling
     )
