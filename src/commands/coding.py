@@ -2065,6 +2065,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             repo_root=repo_root,
             base_sha="",
             concurrency=concurrency["applied"],
+            adaptive_concurrency=bool(args.adaptive_concurrency),
             per_owner_lanes=parallelism["per_owner"],
             concurrency_policy=concurrency,
             max_depth=parallelism["max_depth"],
@@ -2103,6 +2104,7 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             # this single resolve and the unit's own creation.
             source_ref=args.base_ref,
             concurrency=concurrency["applied"],
+            adaptive_concurrency=bool(args.adaptive_concurrency),
             per_owner_lanes=parallelism["per_owner"],
             concurrency_policy=concurrency,
             max_depth=parallelism["max_depth"],
@@ -2583,14 +2585,23 @@ def _add_coding_commands(sub) -> None:
     fanout_dispatch.add_argument("--base-ref", default="HEAD", help="Ref resolved once to a SHA all unit branches start from.")
     # Default None resolves through the setup profile's `parallelism` block
     # (default_concurrency 5, global_concurrency 8 unless edited); an
-    # explicit flag still wins, clamped to the global ceiling.
+    # explicit flag still wins, clamped to the global ceiling. Adaptive mode
+    # reads that same resolved width as its admission ceiling.
     fanout_dispatch.add_argument(
         "--concurrency",
         type=int,
         default=None,
         help=(
-            "Pool width override; defaults to the setup profile's "
-            "parallelism.default_concurrency and is clamped to global_concurrency."
+            "Pool width override; defaults to parallelism.default_concurrency, is clamped "
+            "to global_concurrency, and is the ceiling in adaptive mode."
+        ),
+    )
+    fanout_dispatch.add_argument(
+        "--adaptive-concurrency",
+        action="store_true",
+        help=(
+            "Use the --concurrency ceiling; start at 2 and grow after clean completions; "
+            "provider-limit pressure halves it, including recovered retries."
         ),
     )
     fanout_dispatch.add_argument("--timeout", type=int, default=1800, help="Per-unit subprocess timeout in seconds.")

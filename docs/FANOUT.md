@@ -135,13 +135,30 @@ Rules:
 
 ## Dispatch bridge semantics
 
-- **Concurrency is a profile tunable.** The dispatch pool width comes from
+- **Concurrency is fixed by default and adaptive only when requested.** The dispatch pool width comes from
   the setup profile's `parallelism` block — `default_concurrency` (5) sized
   against a `global_concurrency` ceiling (8), the same defaults OMO's task
   engine ships. A fresh `omh setup` writes the block into the profile so it
   is visible and editable; an explicit `--concurrency` flag still wins,
-  clamped to the ceiling, and the dispatch summary's `concurrency` block
-  records the requested and applied widths plus their source. `per_owner`
+  clamped to the ceiling. Without another flag, scheduling remains fixed-width.
+  `--adaptive-concurrency` makes that resolved concurrency the ceiling, starts
+  the admission window at 2 (capped by the ceiling), grows it by one after an
+  observed clean completion, and halves it with a floor of 1 after observed
+  provider-limit pressure. Pressure includes a final `limit_shaped` result or
+  a `transient_provider_limit` retry decision even when the retry recovered;
+  auth, timeout, missing-binary, crash, terminal test/code, and ordinary
+  transport failures do not reduce the window. Ready dependency-frontier units
+  are submitted only while they fit the current window; a reduction does not
+  cancel units already running.
+
+  The dispatch summary's `concurrency` block records the requested and applied
+  ceiling plus its source. Adaptive mode additionally emits a bounded,
+  metadata-only `adaptive_admission` (`fanout_admission/v1`) receipt with the
+  initial, ceiling, final, and minimum windows and unit-id/status-class
+  adjustments. It includes no raw output and is not provider quota,
+  verification, review, CI, or merge evidence. A dry run reports
+  `not_observed_dry_run`, zero observed completions and pressure, and no
+  adjustments; planned units are not successful execution. `per_owner`
   maps an executor owner (for example `codex: 2`) to its own lane width so
   one rate-limited provider is not hammered by the whole pool; owners not
   named there are governed by the global pool alone. A gated owner's units

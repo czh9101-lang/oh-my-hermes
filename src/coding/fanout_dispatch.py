@@ -72,6 +72,7 @@ from .executor_progress import (
     write_progress_binding,
 )
 from .executor_readiness import probe_executor_readiness
+from .fanout_admission import AdaptiveFanoutAdmission
 from .fanout_artifact_sharing import plan_and_link_shared_artifacts
 from .fanout_contracts import (
     FANOUT_CLAIM_BOUNDARY,
@@ -1210,6 +1211,7 @@ def dispatch_fanout(
     # Conservative library fallback only: the CLI resolves the pool width
     # from the setup profile's `parallelism` block (default 5, ceiling 8).
     concurrency: int = 2,
+    adaptive_concurrency: bool = False,
     timeout: int = 1800,
     only_units: Sequence[str] | None = None,
     dry_run: bool = False,
@@ -1260,7 +1262,7 @@ def dispatch_fanout(
             "fanout_recursion_depth", posture=resolve_security_posture(guard_env)
         )
         if depth_decision.tier != TIER_AUTO_ALLOWED:
-            return _depth_refusal_summary(
+            summary = _depth_refusal_summary(
                 contract,
                 dry_run=dry_run,
                 base_sha=base_sha,
@@ -1268,6 +1270,12 @@ def dispatch_fanout(
                 max_depth=effective_max_depth,
                 lineage=str(guard_env.get(FANOUT_LINEAGE_ENV_VAR, "") or ""),
             )
+            if adaptive_concurrency:
+                summary["adaptive_admission"] = AdaptiveFanoutAdmission(
+                    ceiling=concurrency,
+                    dry_run=dry_run,
+                ).receipt()
+            return summary
     spawn_ledger = _SpawnLedger(
         FANOUT_RUN_SPAWN_CEILING_DEFAULT if spawn_ceiling is None else spawn_ceiling
     )
@@ -1415,6 +1423,11 @@ def dispatch_fanout(
             results[unit_id] = _skipped(unit, "not_selected")
 
     pending = [unit_id for unit_id in order if unit_id not in results]
+    admission = (
+        AdaptiveFanoutAdmission(ceiling=concurrency, dry_run=dry_run)
+        if adaptive_concurrency
+        else None
+    )
     # Per-owner lanes (OMO's per-provider limiter, reduced to what this
     # blocking pool can honor): only owners the policy names get a lane
     # semaphore — the global pool alone governs everyone else. The gate
@@ -1523,11 +1536,22 @@ def dispatch_fanout(
                 if any(_dependency_failed(results.get(dep)) for dep in units[unit_id].get("depends_on", [])):
                     results[unit_id] = _blocked(units[unit_id], results)
                     pending.remove(unit_id)
+            available_slots = (
+                admission.available_slots(
+                    sum(1 for unit_id in pending if unit_id in futures)
+                )
+                if admission is not None
+                else None
+            )
             for unit_id in list(pending):
+                if available_slots is not None and available_slots <= 0:
+                    break
                 if unit_id in futures:
                     continue
                 if all(_dependency_satisfied(results.get(dep)) for dep in units[unit_id].get("depends_on", [])):
                     _submit(unit_id)
+                    if available_slots is not None:
+                        available_slots -= 1
 
         _admit_frontier()
         while pending:
@@ -1542,7 +1566,10 @@ def dispatch_fanout(
             done, _ = futures_wait(inflight.values(), return_when=FIRST_COMPLETED)
             for unit_id, future in inflight.items():
                 if future in done:
-                    results[unit_id] = future.result()
+                    result = future.result()
+                    results[unit_id] = result
+                    if admission is not None:
+                        admission.observe(unit_id, result)
                     pending.remove(unit_id)
             _admit_frontier()
         pool.shutdown(wait=True)
@@ -1561,7 +1588,10 @@ def dispatch_fanout(
             if unit_id in results:
                 continue
             try:
-                results[unit_id] = future.result(timeout=UNIT_TERMINATE_GRACE_SECONDS + 5)
+                result = future.result(timeout=UNIT_TERMINATE_GRACE_SECONDS + 5)
+                results[unit_id] = result
+                if admission is not None:
+                    admission.observe(unit_id, result)
             except (
                 FuturesCancelledError,
                 FuturesTimeoutError,
@@ -1656,6 +1686,8 @@ def dispatch_fanout(
         "state_path": str(review_budget.path),
         "claim_boundary": "Budget accounting is not review, verification, CI, or merge evidence.",
     }
+    if admission is not None:
+        summary["adaptive_admission"] = admission.receipt()
     if concurrency_policy:
         # How the pool width was chosen (policy default vs flag, any clamp)
         # so a dispatch record answers "why did only N run at once".
