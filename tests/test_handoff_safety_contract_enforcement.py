@@ -254,9 +254,9 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
     "src/maintenance/update_check_probe.py": (
         "transport owner for the opt-in `omh update-check` facade (mode defaults to off): bounded "
         "`curl` GETs of the public GitHub API for the watched branch head, repository metadata, "
-        "commit compare, and reachable tags. The scheduled probe is one curl subprocess carrying at "
+        "commit compare, reachable tags, and reachable releases. The scheduled probe is one curl subprocess carrying at "
         "most two URLs (branch head first, repository metadata second), `--max-time 1.5` per "
-        "transfer with a 2.0 s `subprocess.run` whole-process bound; compare and tags use the same "
+        "transfer with a 2.0 s `subprocess.run` whole-process bound; compare, tags, and releases use the same "
         "bound only on the rare moved-head/recovery path. Reached from the launch door or explicit "
         "install/update only after the user opts in. The external curl process makes the connection; "
         "the facade, state, and recovery modules have no subprocess capability."
