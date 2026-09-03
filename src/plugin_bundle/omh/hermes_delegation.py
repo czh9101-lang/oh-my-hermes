@@ -784,10 +784,115 @@ APPROX_CACHE_READ_RATIO: dict[str, float] = {
 _DEFAULT_CACHE_READ_RATIO = 0.1
 
 
+# Token prices differ per user and drift over time: a gateway applies its own
+# markup, an enterprise contract is not the list price, a free tier bills
+# nothing, and vendors reprice. The shipped table below is a ballpark, so the
+# rates a user actually pays belong in their own document rather than in our
+# source -- the same rule `model-chains.json` and `providers.json` already
+# follow ("Chain customization is a config edit, not a source edit").
+#
+#   {"schema_version": "model_price_overrides/v1",
+#    "models": {"claude-fable-5-1": {"input_per_mtok": 8.0,
+#                                    "output_per_mtok": 40.0,
+#                                    "cache_read_ratio": 0.025}}}
+#
+# `cache_read_ratio` is optional and defaults to the shipped ratio for that
+# model. A model the shipped table never priced can be priced here, which is
+# how a user reaches a model OMH ships no rate for at all.
+MODEL_PRICE_OVERRIDES_SCHEMA_VERSION = "model_price_overrides/v1"
+
+
+def model_price_overrides_path(omh_home: str | Path | None = None) -> Path:
+    root = Path(omh_home).expanduser() if omh_home else Path.home() / ".omh"
+    return root / "routing" / "model-prices.json"
+
+
+def load_model_price_overrides(
+    omh_home: str | Path | None = None,
+) -> tuple[dict[str, tuple[float, float, float | None]], str]:
+    """Read the user's price override document.
+
+    Returns ``(overrides, status)`` where status is ``absent``, ``applied``,
+    or ``invalid: <reason>``, matching `load_mixture_chain_overrides`. An
+    invalid document is ignored entirely rather than half-applied.
+    """
+    path = model_price_overrides_path(omh_home)
+    try:
+        raw = _strict_json_loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, "absent"
+    except (OSError, UnicodeDecodeError, ValueError):
+        return {}, "invalid: unreadable JSON"
+    return parse_model_price_overrides(raw)
+
+
+def parse_model_price_overrides(
+    raw: object,
+) -> tuple[dict[str, tuple[float, float, float | None]], str]:
+    """Validate one already-parsed price document (strict, atomic)."""
+    if not isinstance(raw, dict):
+        return {}, "invalid: document must be a JSON object"
+    if raw.get("schema_version") != MODEL_PRICE_OVERRIDES_SCHEMA_VERSION:
+        return {}, f"invalid: schema_version must be {MODEL_PRICE_OVERRIDES_SCHEMA_VERSION}"
+    unknown = sorted(set(raw) - {"schema_version", "models"})
+    if unknown:
+        return {}, f"invalid: unsupported fields {unknown}"
+    models = raw.get("models")
+    if not isinstance(models, dict):
+        return {}, "invalid: models must be an object"
+    overrides: dict[str, tuple[float, float, float | None]] = {}
+    for name, entry in models.items():
+        if not isinstance(name, str) or not _CHAIN_TOKEN_RE.fullmatch(name):
+            return {}, f"invalid: model {name!r} is not a plain model token"
+        if not isinstance(entry, dict):
+            return {}, f"invalid: model {name!r} must be an object"
+        entry_unknown = sorted(set(entry) - {"input_per_mtok", "output_per_mtok", "cache_read_ratio"})
+        if entry_unknown:
+            return {}, f"invalid: model {name!r} fields {entry_unknown}"
+        rates: list[float] = []
+        for field in ("input_per_mtok", "output_per_mtok"):
+            value = entry.get(field)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return {}, f"invalid: model {name!r} {field} must be a number"
+            if value != value or value < 0 or value == float("inf"):
+                return {}, f"invalid: model {name!r} {field} must be zero or more"
+            rates.append(float(value))
+        ratio = entry.get("cache_read_ratio")
+        if ratio is None:
+            cache_ratio: float | None = None
+        elif isinstance(ratio, bool) or not isinstance(ratio, (int, float)):
+            return {}, f"invalid: model {name!r} cache_read_ratio must be a number"
+        elif ratio != ratio or ratio < 0 or ratio > 1:
+            return {}, f"invalid: model {name!r} cache_read_ratio must be between 0 and 1"
+        else:
+            cache_ratio = float(ratio)
+        overrides[name.casefold()] = (rates[0], rates[1], cache_ratio)
+    return overrides, "applied"
+
+
 def _approximate_cost_usd(
-    model: str, input_tokens: float, output_tokens: float, cache_read_tokens: float
+    model: str,
+    input_tokens: float,
+    output_tokens: float,
+    cache_read_tokens: float,
+    overrides: Mapping[str, tuple[float, float, float | None]] | None = None,
 ) -> float | None:
     key = _text(model).casefold()
+    override = (overrides or {}).get(key)
+    if override is not None:
+        input_price, output_price, override_ratio = override
+        if (input_tokens + output_tokens) <= 0:
+            return None
+        cache_ratio = (
+            override_ratio
+            if override_ratio is not None
+            else APPROX_CACHE_READ_RATIO.get(key, _DEFAULT_CACHE_READ_RATIO)
+        )
+        return (
+            input_tokens * input_price
+            + cache_read_tokens * input_price * cache_ratio
+            + output_tokens * output_price
+        ) / 1_000_000
     prices = APPROX_PRICE_PER_MTOK.get(key)
     if not prices or (input_tokens + output_tokens) <= 0:
         return None
@@ -1075,6 +1180,7 @@ def read_hermes_native_subagents(
     # overrides so a customized chain labels its children like a shipped one.
     active_chains = effective_mixture_category_chains(omh_home)
     provider_routes, _ = load_model_provider_routes(omh_home)
+    price_overrides, _price_status = load_model_price_overrides(omh_home)
     route_provenance = load_delegation_route_provenance(omh_home)
     payload: dict[str, Any] = {
         "status": "idle",
@@ -1195,7 +1301,9 @@ def read_hermes_native_subagents(
         # nothing rather than state a zero it cannot support.
         cost_approximate = False
         if not cost:
-            approx = _approximate_cost_usd(child["model"], input_tokens, output_tokens, cache_read)
+            approx = _approximate_cost_usd(
+                child["model"], input_tokens, output_tokens, cache_read, price_overrides
+            )
             if approx is not None:
                 cost = approx
                 cost_approximate = True
