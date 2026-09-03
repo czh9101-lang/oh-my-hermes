@@ -1182,12 +1182,25 @@ def read_hermes_native_subagents(
         # Subscription-billed hosts record no per-call cost; the owner asked
         # for an approximation there rather than a blank. Token-derived, and
         # flagged approximate so the widget can render it as `~$…`.
+        #
+        # `session_model_usage` declares both cost columns NOT NULL DEFAULT 0,
+        # so a host that billed zero and a host that recorded nothing reach
+        # this line as the same 0.0 -- the distinction is destroyed before OMH
+        # can read it, which is why the approximation fires on a falsy cost at
+        # all. What must NOT happen is the third case: no recorded cost AND no
+        # price for the model (`_approximate_cost_usd` returns None for an
+        # unpriced model, and for a run with no tokens). That left `cost` at
+        # 0.0 with no approximate flag, so the row claimed the run was free.
+        # An unknown cost is unknown: send None and let the surface say
+        # nothing rather than state a zero it cannot support.
         cost_approximate = False
         if not cost:
             approx = _approximate_cost_usd(child["model"], input_tokens, output_tokens, cache_read)
             if approx is not None:
                 cost = approx
                 cost_approximate = True
+            else:
+                cost = None
 
         parent_model = state.get("parent_models", {}).get(child["parent_id"], "")
         route_alias, route_provider = configured_route_for_wire(
