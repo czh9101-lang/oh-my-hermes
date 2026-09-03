@@ -18,6 +18,7 @@ from .executor_capability_snapshots import (
 EXECUTOR_CAPABILITY_SCHEMA_VERSION: Final = "executor_capability/v1"
 CAPABILITY_STATES: Final = ("supported", "unsupported", "unknown")
 EDIT_FORMAT_KEYS: Final = ("hashline", "str_replace", "patch")
+INPUT_MODALITY_KEYS: Final = ("text", "image", "audio", "video", "document")
 KNOWN_CAPABILITY_PROFILES: Final = ("codex", "claude-code", "omo-runtime")
 CAPABILITY_HOST_VARIANT_KEYS: Final = ("pi", "senpi", "opencode")
 EXECUTOR_CAPABILITY_CLAIM_BOUNDARY: Final = (
@@ -40,6 +41,7 @@ def legacy_executor_capability_projection(snapshot: Mapping[str, Any]) -> dict[s
         "persistent_eval": _legacy_state(rows.get("persistent_eval")),
         "tool_reentry": _legacy_state(rows.get("tool_reentry")),
         "code_mode_batching": _legacy_state(rows.get("code_mode_batching")),
+        "input_modality_support": {name: "unknown" for name in INPUT_MODALITY_KEYS},
         "host_variants": {},
         "provenance": {
             "source": "",

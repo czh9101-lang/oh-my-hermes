@@ -126,7 +126,8 @@ python3 -m omh.cli harness validate
 python3 -m omh.cli release checklist --json
 python3 -m omh.cli release skill-content-smoke --json
 python3 -m omh.cli release product-readiness --version 1.0.6 --json
-python3 -m omh.cli release evidence-bundle --version 1.0.6 --write --json
+python3 -m omh.cli release evidence-bundle --version 1.0.6 --write --repo-root "$PWD" --json
+python3 -m omh.cli release evidence-bundle --version 1.0.6 --verify --repo-root "$PWD" --json
 python3 -m omh.cli cases demo --all --json
 python3 -m omh.cli cases artifact --all --json
 python3 -m omh.cli cases replay --json
@@ -362,19 +363,54 @@ local deterministic evidence only: it does not run the checklist, mutate Hermes,
 dispatch executors, review code, pass CI, merge, deliver messages, or spend
 provider budget.
 
-When the local release story is ready, write an attachable evidence bundle:
+When the local release story is ready, write an attachable evidence bundle
+from the exact checkout the release will be cut from. Omitting `--repo-root`
+binds the current working directory, so the literal maintainer command is:
 
 ```sh
 omh release evidence-bundle --version 1.0.5 --write --json
 ```
 
-The bundle writes `omh_release_evidence_bundle/v1` under
-`.omh/runtime/release-evidence/` with the checklist, product readiness,
+Pass `--repo-root "$PWD"` when the checkout must be explicit. The bundle writes `omh_release_evidence_bundle/v2` to
+`.omh/runtime/release-evidence/<version>.json` with the checklist, product readiness,
 skill-content smoke, use-case readiness, grounded score, chat-card coverage,
 route-hint alignment, context-brief coverage, routing precision, native
-competition, Hermes UX quality, and parity snapshots. It is useful for release PRs and notes, but it is
+competition, Hermes UX quality, and parity snapshots, plus a
+`omh_release_source_identity/v1` block that binds the bundle to the full
+commit and tree hashes of `--repo-root`, its dirty state, and a deterministic
+input manifest (repo-relative POSIX paths and `sha256:` digests only). A
+bundle whose source identity is unavailable — no git checkout and no explicit
+`--archive-digest` or `--artifact-digest` — is still written for local use but
+reports `publication_ready: false` and exits non-zero under `--write`.
+
+A recorded bundle is re-checked, never regenerated, with either the canonical
+version path or one exact explicit path. Under the normal default `~/.omh`
+home, a missing relative `.omh/...` explicit path is interpreted below that
+configured home, so the literal command below works from a checkout. An
+existing literal path always wins; other missing relative paths remain missing:
+
+```sh
+omh release evidence-bundle --verify --repo-root "$PWD" --json
+omh release evidence-bundle --verify .omh/runtime/release-evidence/1.0.5.json --repo-root "$PWD" --json
+```
+
+The verifier is pure: it never writes. Its verdict vocabulary is `matching`,
+`dirty` (uncommitted changes in the worktree), `mismatched_revision` (the
+recorded commit differs from HEAD), `stale` (same revision, but the tree, a
+declared input digest, or the artifact digest changed), `unverifiable`
+(identity unavailable on either side), `legacy_schema` (a pre-v2 bundle, which
+can never verify as `matching`), and `missing` (no bundle recorded for the
+version). Exit code is 0 only for `matching`. Passing `--artifact <wheel>`
+also binds or checks the built artifact's digest.
+
+The bundle is useful for release PRs and notes, but it is
 still local deterministic evidence only; live Hermes smoke, CI, review, merge,
-delivery, and GitHub release publication must be observed separately.
+delivery, and GitHub release publication must be observed separately. It
+proves evidence provenance for the recorded revision, not deployment,
+adoption, or runtime behavior outside the executed gates. The distribution
+workflow regenerates this bundle from the exact tagged checkout and refuses
+publication when the binding does not hold; see
+[Distribution](DISTRIBUTION.md).
 
 ## Hermes CLI Install Smoke
 
@@ -420,7 +456,8 @@ command -v omh
 omh --help
 omh release skill-content-smoke --json
 omh release product-readiness --version 1.0.5 --json
-omh release evidence-bundle --version 1.0.5 --write --json
+omh release evidence-bundle --version 1.0.5 --write --repo-root "$PWD" --json
+omh release evidence-bundle --version 1.0.5 --verify --repo-root "$PWD" --json
 omh --omh-home /tmp/omh-smoke --hermes-home /tmp/hermes-smoke release hermes-smoke --install-path setup --omh-command omh --include-command-smoke
 ```
 

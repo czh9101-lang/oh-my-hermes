@@ -10,8 +10,11 @@ from ..local_store import atomic_write_text, read_json_object_result
 from ..manifest import local_modifications, new_manifest, read_manifest, skill_records, write_manifest
 from ..paths import (
     OmhPaths,
-    command_entry_belongs_to_venv,
+    command_entry_belongs_to_managed_install,
     managed_command_bin_dir,
+    managed_command_current_dir,
+    managed_command_generations_dir,
+    managed_command_self_update_state_path,
     managed_command_filenames,
     managed_command_venv_dir,
 )
@@ -909,6 +912,14 @@ def _collect_command_package_removal(
 
     for link in _managed_command_links(venv_dir):
         _collect_removal(link, removed=removed, would_remove=would_remove, kept=kept, dry_run=dry_run, force=True)
+    # Generation metadata is installer-owned only after attribution above has
+    # proved this command is ours; `_collect_removal` unlinks pointer links.
+    for path in (managed_command_current_dir(), managed_command_generations_dir(), managed_command_self_update_state_path()):
+        if path is not None:
+            _collect_removal(path, removed=removed, would_remove=would_remove, kept=kept, dry_run=dry_run, force=True)
+    state_path = managed_command_self_update_state_path()
+    if state_path is not None:
+        _collect_removal(state_path.with_name(f".{state_path.name}.lock"), removed=removed, would_remove=would_remove, kept=kept, dry_run=dry_run, force=True)
     _collect_removal(venv_dir, removed=removed, would_remove=would_remove, kept=kept, dry_run=dry_run, force=True)
 
 
@@ -927,7 +938,7 @@ def _managed_command_links(venv_dir: Path) -> list[Path]:
     seen: set[Path] = set()
     for candidate in candidates:
         path = candidate.expanduser()
-        if path in seen or not command_entry_belongs_to_venv(path, venv_dir):
+        if path in seen or not command_entry_belongs_to_managed_install(path):
             continue
         seen.add(path)
         links.append(path)

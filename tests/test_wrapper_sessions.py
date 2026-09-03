@@ -504,7 +504,7 @@ class WrapperSessionTests(unittest.TestCase):
             self.assertEqual(capability_report["profile"], "codex")
             self.assertIn("local_capabilities_used", capability_report["required_fields"])
             snapshot = prepared["handoff"]["coding_delegation"]["executor_handoff"]["executor_capability_snapshot"]
-            self.assertEqual(snapshot["schema_version"], "executor_capability_snapshot/v1")
+            self.assertEqual(snapshot["schema_version"], "executor_capability_snapshot/v2")
             self.assertEqual(snapshot["executor"], "codex")
             self.assertEqual(snapshot["capabilities"]["worktree_isolation"]["status"], "prepared")
             self.assertFalse(any(capability["status"] == "host_observed" for capability in snapshot["capabilities"].values()))

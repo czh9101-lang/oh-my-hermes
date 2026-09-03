@@ -220,7 +220,11 @@ def _capability_observation(session_status: dict[str, object]) -> dict[str, obje
         status = "unavailable"
     else:
         status = "unknown"
-    return {"status": status, "snapshot": snapshot}
+    return {
+        "status": status,
+        "snapshot": snapshot,
+        "modality_decision": _mapping(executor_status.get("executor_modality_decision")),
+    }
 
 
 def _dangling_run_projection(

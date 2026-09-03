@@ -48,6 +48,7 @@ from .executor_capability_snapshots import (
 )
 from .executor_local_workflow import build_executor_local_workflow
 from .executor_local_workflow_selection import is_workflow
+from .media_handoff_capabilities import build_executor_modality_decision, normalize_input_representation
 from .owner_fit import (
     accepted_plan_from_delegation,
     build_owner_fit_report,
@@ -366,10 +367,12 @@ def build_coding_delegation_payload(
     model_chains: Mapping[str, Sequence[tuple[str, str]]] | None = None,
     requested_model: str = "",
     requested_effort: str = "",
+    input_representation: object = "text_only",
+    transformation: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Prepare coding work through Maestro for external owners and natively for Hermes."""
 
-    if executor_target in {
+    if input_representation == "text_only" and executor_target in {
         "codex",
         "claude-code",
         "omx-runtime",
@@ -454,6 +457,8 @@ def build_coding_delegation_payload(
         model_chains=model_chains,
         requested_model=requested_model,
         requested_effort=requested_effort,
+        input_representation=input_representation,
+        transformation=transformation,
     )
 
 
@@ -488,6 +493,8 @@ def _build_coding_delegation_payload_native(
     model_chains: Mapping[str, Sequence[tuple[str, str]]] | None = None,
     requested_model: str = "",
     requested_effort: str = "",
+    input_representation: object = "text_only",
+    transformation: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     message = message.strip()
     if not message:
@@ -594,6 +601,11 @@ def _build_coding_delegation_payload_native(
         "executor_identity_rule": EXECUTOR_IDENTITY_RULE,
         "model_naming_rule": MODEL_NAMING_RULE,
         "readiness_evidence_rule": READINESS_EVIDENCE_RULE,
+        **(
+            {"input_representation": list(normalize_input_representation(input_representation))}
+            if input_representation != "text_only"
+            else {}
+        ),
     }
     proposed_selection = executor_selection_for_target(executor_target, action=delegation.action)
     selection = proposed_selection
@@ -819,6 +831,25 @@ def _build_coding_delegation_payload_native(
         category=model_route_category,
         recommendation=model_recommendation,
     )
+    modality_route = _primary_modality_route(
+        selected_executor=selection.selected_executor_profile,
+        recommendation=model_recommendation,
+    )
+    for handoff_key in ("executor_handoff", "prompt_handoff", "runtime_handoff"):
+        handoff = payload.get(handoff_key)
+        if isinstance(handoff, dict):
+            handoff["input_representation"] = list(payload.get("input_representation", []))
+            decision = build_executor_modality_decision(
+                input_representation=payload.get("input_representation", "text_only"),
+                snapshot=handoff.get("executor_capability_snapshot") if isinstance(handoff.get("executor_capability_snapshot"), Mapping) else None,
+                route=modality_route,
+                transformation=transformation,
+            )
+            if modality_route is not None:
+                decision_route = decision.get("route")
+                if isinstance(decision_route, dict):
+                    decision_route["endpoint_mode"] = modality_route["endpoint_mode"]
+            handoff["executor_modality_decision"] = decision
     _attach_request_complexity(
         payload,
         message,
@@ -887,6 +918,28 @@ def _attach_request_complexity(
         requested_model=requested_model,
         requested_effort=requested_effort,
     )
+
+
+def _primary_modality_route(
+    *,
+    selected_executor: str | None,
+    recommendation: Mapping[str, object] | None,
+) -> dict[str, str] | None:
+    """Return only an already-resolved exact route for a primary handoff."""
+    selected = recommendation.get("selected") if isinstance(recommendation, Mapping) else None
+    if not selected_executor or not isinstance(selected, Mapping):
+        return None
+    provider = str(selected.get("provider", "") or "").strip()
+    wire_model = str(selected.get("model_id", "") or "").strip()
+    endpoint_mode = str(selected.get("endpoint_mode", "") or "").strip()
+    if not provider or not wire_model or not endpoint_mode:
+        return None
+    return {
+        "executor": selected_executor,
+        "provider": provider,
+        "wire_model": wire_model,
+        "endpoint_mode": endpoint_mode,
+    }
 
 
 def _attach_model_routing_metadata(

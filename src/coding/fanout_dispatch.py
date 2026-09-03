@@ -63,6 +63,7 @@ from .executor_capability_snapshots import (
     validate_executor_capability_snapshot,
 )
 from .executor_capabilities import legacy_executor_capability_projection
+from .media_handoff_capabilities import build_executor_modality_decision
 from .executor_progress import (
     ExecutorProgressError,
     build_progress_binding,
@@ -940,7 +941,20 @@ def _unit_capability_precheck(
                 "executor_capability_snapshot is required by this contract"
             ]
     snapshot, errors = _dispatch_capability_snapshot(paths, handoff, declared_owner)
-    return declared_owner, snapshot, errors
+    if errors or snapshot is None:
+        return declared_owner, snapshot, errors
+    decision = build_executor_modality_decision(
+        input_representation=handoff.get("input_representation", "text_only"),
+        snapshot=snapshot,
+        route=handoff.get("model_route") if isinstance(handoff.get("model_route"), Mapping) else None,
+        transformation=handoff.get("executor_modality_decision", {}).get("transformation")
+        if isinstance(handoff.get("executor_modality_decision"), Mapping)
+        else None,
+    )
+    verdict = str(decision["verdict"])
+    if verdict != "dispatch":
+        return declared_owner, snapshot, [f"{verdict}: {decision['fallback_reason'] or decision['remaining_user_action']}"]
+    return declared_owner, snapshot, []
 
 
 def fanout_dispatch_preflight(
@@ -1379,7 +1393,7 @@ def dispatch_fanout(
                     "unit_id": unit_id,
                     "run_ref": str(unit.get("run_ref", unit_id)),
                     "owner": owner,
-                    "status": "capability_snapshot_invalid",
+                    "status": _capability_refusal_status(errors),
                     **_dispatch_status_ladder(),
                     "reason": "; ".join(errors),
                 }
@@ -1930,6 +1944,13 @@ def _report_recovery_options(
         emit(f"  [{option.get('key')}] {option.get('title')}{suffix}")
 
 
+def _capability_refusal_status(errors: Sequence[str]) -> str:
+    for status in ("modality_unknown", "modality_unsupported", "modality_transformation_unobserved"):
+        if any(str(error).startswith(f"{status}:") for error in errors):
+            return status
+    return "capability_snapshot_invalid"
+
+
 def _retarget_dispatch(
     paths: OmhPaths,
     *,
@@ -1975,6 +1996,22 @@ def _retarget_dispatch(
     handoff["executor_capability_snapshot"] = snapshot
     handoff["executor_capability_snapshot_policy"] = "frozen_required"
     handoff.pop("model_route", None)
+    decision = build_executor_modality_decision(
+        input_representation=handoff.get("input_representation", "text_only"),
+        snapshot=snapshot,
+        transformation=handoff.get("executor_modality_decision", {}).get("transformation")
+        if isinstance(handoff.get("executor_modality_decision"), Mapping)
+        else None,
+    )
+    handoff["executor_modality_decision"] = decision
+    if decision["verdict"] != "dispatch":
+        return {
+            "unit_id": retarget_id,
+            "owner": new_owner,
+            "status": str(decision["verdict"]),
+            "reason": str(decision["fallback_reason"] or decision["remaining_user_action"]),
+            "retargeted_from": {"unit_id": unit_id, "owner": failed_owner},
+        }
     retargeted = {
         **dict(unit),
         "unit_id": retarget_id,
@@ -2570,7 +2607,7 @@ def _dispatch_unit(
             "unit_id": unit_id,
             "run_ref": run_ref,
             "owner": owner,
-            "status": "capability_snapshot_invalid",
+            "status": _capability_refusal_status(capability_errors),
             **_dispatch_status_ladder(),
             "reason": "; ".join(capability_errors),
         }

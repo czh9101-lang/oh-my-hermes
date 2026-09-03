@@ -17,9 +17,12 @@ class OmhPaths:
     # Whether the caller named `omh_home` rather than accepting the default.
     # True by default: constructing OmhPaths directly always names one.
     omh_home_named: bool = True
+    managed_skills_dir: Path | None = None
 
     @property
     def skills_dir(self) -> Path:
+        if self.managed_skills_dir is not None:
+            return self.managed_skills_dir
         return self.omh_home / "skills"
 
     @property
@@ -491,6 +494,52 @@ def managed_command_venv_dir() -> Path | None:
     return None
 
 
+def managed_command_root() -> Path | None:
+    """Root containing the legacy venv and atomic self-update generations."""
+    venv_dir = managed_command_venv_dir()
+    return venv_dir.parent if venv_dir is not None else None
+
+
+def managed_command_generations_dir() -> Path | None:
+    root = managed_command_root()
+    return root / "generations" if root is not None else None
+
+
+def managed_command_current_dir() -> Path | None:
+    root = managed_command_root()
+    return root / "current" if root is not None else None
+
+
+def managed_command_self_update_state_path() -> Path | None:
+    root = managed_command_root()
+    return root / "self-update.json" if root is not None else None
+
+
+def managed_generation_for_executable(executable: Path | None = None) -> Path | None:
+    """Return the generation hosting an interpreter, or the staging override."""
+    explicit = os.environ.get("OMH_SELF_UPDATE_GENERATION")
+    if explicit:
+        return Path(explicit).expanduser()
+    generations = managed_command_generations_dir()
+    candidate = (executable or Path(os.sys.executable)).expanduser()
+    if generations is None or not generations.exists():
+        return None
+    for generation in generations.iterdir():
+        if _is_relative_to_without_resolving_final_symlink(candidate, generation / "venv"):
+            return generation
+    return None
+
+
+def managed_workflow_pack_dir(generation: Path | None = None) -> Path | None:
+    generation = generation or managed_generation_for_executable()
+    return generation / "skills" if generation is not None else None
+
+
+def managed_current_workflow_pack_dir() -> Path | None:
+    current = managed_command_current_dir()
+    return current / "skills" if current is not None else None
+
+
 def managed_command_bin_dir() -> Path | None:
     """Where the installers expose the `omh` command, or None if unlocatable."""
     explicit = os.environ.get("OMH_BIN_DIR")
@@ -584,6 +633,50 @@ def command_entry_belongs_to_venv(path: Path, venv_dir: Path) -> bool:
         if target is not None and _is_relative_to(target, venv_dir):
             return True
     return False
+
+
+def command_entry_belongs_to_managed_install(path: Path) -> bool:
+    """Strictly attribute legacy and pointer-spelled installer entries."""
+    venv_dir = managed_command_venv_dir()
+    root = managed_command_root()
+    if venv_dir is None or root is None:
+        return False
+    if command_entry_belongs_to_venv(path, venv_dir):
+        return True
+    try:
+        if path.is_symlink():
+            target = path.resolve()
+        elif _is_windows() and path.suffix.lower() == ".cmd" and path.is_file():
+            target = None
+            raw = path.read_bytes()
+            for encoding in _shim_decodings():
+                try:
+                    target = _shim_target(raw.decode(encoding))
+                except (UnicodeDecodeError, LookupError):
+                    continue
+                if target is not None:
+                    break
+            if target is None:
+                return False
+        else:
+            return False
+        return _is_relative_to(target, root / "current") or _is_relative_to(target, root / "generations")
+    except OSError:
+        return False
+
+
+def _is_relative_to_without_resolving_final_symlink(path: Path, parent: Path) -> bool:
+    """Test containment after resolving parent aliases, not a venv interpreter."""
+    try:
+        _resolve_parent_components(path).relative_to(parent.expanduser().resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _resolve_parent_components(path: Path) -> Path:
+    expanded = path.expanduser()
+    return expanded.parent.resolve() / expanded.name
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:
@@ -685,4 +778,5 @@ def resolve_paths(
         # resolved home against the default later cannot tell a named home from
         # an unnamed one that happens to match it.
         omh_home_named=omh_home is not None,
+        managed_skills_dir=managed_workflow_pack_dir() if normalized_scope == "user" else None,
     )

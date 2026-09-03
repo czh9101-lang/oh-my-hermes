@@ -71,6 +71,7 @@ from .executor_capability_snapshots import (
     read_matching_executor_capability_snapshot,
 )
 from .executors import executor_label
+from .media_handoff_capabilities import modality_requirements
 from .pre_handoff_readiness import (
     CAPABILITY_EVIDENCE_STALE_AFTER_SECONDS,
     capability_evidence_is_fresh,
@@ -88,7 +89,7 @@ OWNER_FIT_STATUS: Final = "prepared_not_observed"
 # are deliberately NOT read --- none of them names a capability from the
 # snapshot vocabulary, and mapping prose onto a capability is exactly the
 # heuristic this module exists to avoid.
-ACCEPTED_PLAN_FIELDS: Final = ("workflow", "work_owner_mode", "isolation_strategy")
+ACCEPTED_PLAN_FIELDS: Final = ("workflow", "work_owner_mode", "isolation_strategy", "input_representation", "input_route")
 
 _WORKTREE_REQUIRED_STRATEGY: Final = "worktree_required"
 _RUNTIME_HANDOFF_MODE: Final = "runtime_handoff"
@@ -237,6 +238,8 @@ def derive_plan_capability_requirements(plan: Mapping[str, Any]) -> tuple[dict[s
     workflow = str(plan.get("workflow", "") or "").strip()
     work_owner_mode = str(plan.get("work_owner_mode", "") or "").strip()
     isolation_strategy = str(plan.get("isolation_strategy", "") or "").strip()
+    input_representation = plan.get("input_representation", "")
+    input_route = plan.get("input_route")
 
     requirements: list[dict[str, Any]] = []
     claimed: set[str] = set()
@@ -281,6 +284,22 @@ def derive_plan_capability_requirements(plan: Mapping[str, Any]) -> tuple[dict[s
             f"The accepted plan hands the `{workflow}` workflow to the owner's own runtime, so the owner "
             "has to carry that workflow locally.",
         )
+    try:
+        media_requirements = (
+            modality_requirements(input_representation, input_route if isinstance(input_route, Mapping) else None)
+            if input_representation
+            else ()
+        )
+    except ValueError as exc:
+        raise OwnerFitError(str(exc)) from exc
+    for media in media_requirements:
+        _add(
+            media["capability"],
+            "input_representation",
+            f"{media['representation']}:{media['modality']}",
+            {key: media[key] for key in ("provider", "wire_model", "endpoint_mode") if media[key]},
+            "The accepted plan declares this input representation, which needs fresh route-scoped modality evidence.",
+        )
     return tuple(requirements)
 
 
@@ -295,10 +314,16 @@ def accepted_plan_from_delegation(payload: Mapping[str, Any]) -> dict[str, Any]:
     delegation = delegation if isinstance(delegation, Mapping) else {}
     isolation = payload.get("isolation_plan")
     isolation = isolation if isinstance(isolation, Mapping) else {}
+    handoff = next(
+        (candidate for candidate in (payload.get("executor_handoff"), payload.get("prompt_handoff"), payload.get("runtime_handoff")) if isinstance(candidate, Mapping)),
+        {},
+    )
     return {
         "workflow": str(delegation.get("recommended_workflow", "") or ""),
         "work_owner_mode": str(payload.get("work_owner_mode", "") or ""),
         "isolation_strategy": str(isolation.get("strategy", "") or ""),
+        "input_representation": payload.get("input_representation", handoff.get("input_representation", "")),
+        "input_route": handoff.get("model_route", {}),
     }
 
 

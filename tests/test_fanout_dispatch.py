@@ -56,7 +56,7 @@ from omh.coding.parallelism_policy import (  # noqa: E402
 )
 from omh.coding.executor_progress import read_progress_binding  # noqa: E402
 from omh.runtime.artifacts import append_journal_observation, create_run, show_run  # noqa: E402
-from omh.system.local_store import atomic_write_json  # noqa: E402
+from omh.system.local_store import atomic_write_json, utc_now  # noqa: E402
 from omh.system.output_truncation import resolve_spill_reference  # noqa: E402
 from omh.system.paths import OmhPaths  # noqa: E402
 
@@ -2679,6 +2679,201 @@ def _progress_events(paths: OmhPaths, run_ref: str) -> list[dict[str, object]]:
     if not events_path.is_file():
         return []
     return [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+class FanoutMediaCapabilityDispatchTests(unittest.TestCase):
+    _ROUTE = {"provider": "openai", "wire_model": "gpt-5", "endpoint_mode": "default"}
+    _UNIT = {
+        "unit_id": "media",
+        "title": "Media handoff",
+        "owner": "codex",
+        "file_scope": ["src/media/"],
+    }
+
+    def _snapshot(
+        self,
+        executor: str,
+        capabilities: tuple[str, ...],
+        *,
+        scope: dict[str, str] | None = None,
+        observed_at: str | None = None,
+    ) -> dict[str, object]:
+        recorded_at = observed_at or utc_now()
+        return build_executor_capability_snapshot(
+            executor=executor,
+            capabilities={
+                capability: {
+                    "status": "host_observed",
+                    "scope": scope or self._ROUTE,
+                    "evidence_ref": f"operator:{executor}-{capability}",
+                    "observed_at": recorded_at,
+                }
+                for capability in capabilities
+            },
+            recorded_at=recorded_at,
+        )
+
+    def _contract(
+        self,
+        temporary: str,
+        *,
+        capabilities: tuple[str, ...] = ("input_modality_image",),
+        input_representation: object = "raw_media:image",
+        transformation: dict[str, str] | None = None,
+        scope: dict[str, str] | None = None,
+        observed_at: str | None = None,
+    ) -> tuple[OmhPaths, Path, str, dict[str, object]]:
+        root = Path(temporary)
+        paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+        repo, sha = _make_repo(root)
+        unit = {
+            **self._UNIT,
+            "input_representation": input_representation,
+            "transformation": transformation or {},
+        }
+        snapshot = self._snapshot(
+            "codex",
+            capabilities,
+            scope=scope,
+            observed_at=observed_at,
+        )
+        contract = write_fanout_contract(
+            paths,
+            build_fanout_contract(_GOAL, [unit], capability_snapshots={"codex": snapshot}),
+        )
+        handoff = contract["units"][0]["handoff"]
+        handoff["model_route"] = dict(self._ROUTE)
+        return paths, repo, sha, contract
+
+    def _dispatch(self, paths, repo, sha, contract, *, runner, readiness=_ready, **kwargs):
+        return dispatch_fanout(
+            paths,
+            contract,
+            goal_text=_GOAL,
+            repo_root=repo,
+            base_sha=sha,
+            runner=runner,
+            readiness=readiness,
+            **kwargs,
+        )
+
+    def test_dispatch_rechecks_expired_and_switched_media_routes_before_spawn(self) -> None:
+        cases = (
+            ("stale", self._ROUTE, "2000-01-01T00:00:00Z"),
+            ("provider_switch", {**self._ROUTE, "provider": "anthropic"}, None),
+            ("model_switch", {**self._ROUTE, "wire_model": "gpt-5-mini"}, None),
+        )
+        for label, route, observed_at in cases:
+            with self.subTest(label=label), TemporaryDirectory() as temporary:
+                paths, repo, sha, contract = self._contract(temporary, observed_at=observed_at)
+                contract["units"][0]["handoff"]["model_route"] = route
+                spawned: list[object] = []
+
+                def runner(*args, **kwargs):
+                    spawned.append((args, kwargs))
+                    self.fail("invalid media capability evidence must refuse before spawn")
+
+                def readiness(*args, **kwargs):
+                    self.fail("invalid media capability evidence must refuse before readiness")
+
+                summary = self._dispatch(paths, repo, sha, contract, runner=runner, readiness=readiness)
+
+                self.assertEqual(summary["units"][0]["status"], "modality_unknown")
+                self.assertEqual(spawned, [])
+
+    def test_dispatch_requires_every_media_requirement_and_preserves_transformation_controls(self) -> None:
+        representations = ["raw_media:image", "raw_media:audio"]
+        with TemporaryDirectory() as temporary:
+            paths, repo, sha, incomplete = self._contract(
+                temporary,
+                capabilities=("input_modality_image",),
+                input_representation=representations,
+            )
+            summary = self._dispatch(
+                paths,
+                repo,
+                sha,
+                incomplete,
+                runner=lambda *args, **kwargs: self.fail("missing audio evidence must refuse before spawn"),
+                readiness=lambda *args, **kwargs: self.fail("missing audio evidence must refuse before readiness"),
+            )
+            self.assertEqual(summary["units"][0]["status"], "modality_unknown")
+
+        with TemporaryDirectory() as temporary:
+            paths, repo, sha, complete = self._contract(
+                temporary,
+                capabilities=("input_modality_image", "input_modality_audio"),
+                input_representation=representations,
+            )
+            runner = _agent_runner()
+            summary = self._dispatch(paths, repo, sha, complete, runner=runner)
+            self.assertTrue(summary["units"][0]["process_succeeded"])
+            self.assertEqual(len(runner.spawned), 1)
+
+        with TemporaryDirectory() as temporary:
+            transformation = {"kind": "ocr", "status": "observed", "evidence_ref": "operator:ocr"}
+            paths, repo, sha, transformed = self._contract(
+                temporary,
+                capabilities=("input_modality_text",),
+                input_representation="ocr_output",
+                transformation=transformation,
+            )
+            runner = _agent_runner()
+            summary = self._dispatch(paths, repo, sha, transformed, runner=runner)
+            self.assertTrue(summary["units"][0]["process_succeeded"])
+            self.assertEqual(
+                transformed["units"][0]["handoff"]["executor_modality_decision"]["transformation"],
+                transformation,
+            )
+
+        with TemporaryDirectory() as temporary:
+            paths, repo, sha, rerouted = self._contract(
+                temporary,
+                capabilities=("input_modality_text",),
+                input_representation="ocr_output",
+                transformation=transformation,
+            )
+            rerouted["units"][0]["handoff"]["model_route"] = {**self._ROUTE, "provider": "anthropic"}
+            summary = self._dispatch(
+                paths,
+                repo,
+                sha,
+                rerouted,
+                runner=lambda *args, **kwargs: self.fail("provider-switched transformed media must not spawn"),
+                readiness=lambda *args, **kwargs: self.fail("provider-switched transformed media must not probe readiness"),
+            )
+            self.assertEqual(summary["units"][0]["status"], "modality_unknown")
+
+    def test_retargeted_fanout_rechecks_media_capabilities_before_a_second_spawn(self) -> None:
+        with TemporaryDirectory() as temporary:
+            paths, repo, sha, contract = self._contract(temporary)
+            write_executor_capability_snapshot(
+                executor_capability_snapshot_path(paths.executor_capability_snapshots_dir, "claude-code"),
+                self._snapshot("claude-code", ("input_modality_image",)),
+            )
+            failing_runner = _writing_runner(fail_units={"media"}, write_units={"media"})
+
+            def runner(argv, **kwargs):
+                completed = failing_runner(argv, **kwargs)
+                if argv[0] != "git" and completed.returncode:
+                    return _FakeCompleted(completed.returncode, "authentication failed")
+                return completed
+
+            runner.spawned = failing_runner.spawned
+            summary = self._dispatch(
+                paths,
+                repo,
+                sha,
+                contract,
+                runner=runner,
+                on_failure="retarget",
+                retarget_owner="claude-code",
+            )
+
+            recovery = summary["failure_recovery"]["decisions"]
+            self.assertEqual(recovery[0]["choice"], "retarget")
+            self.assertEqual(recovery[0]["attempt"]["status"], "modality_unknown")
+            self.assertEqual(len(runner.spawned), 1)
 
 
 class FanoutDispatchMaestroProgressRowTests(unittest.TestCase):

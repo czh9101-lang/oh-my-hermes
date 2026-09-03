@@ -82,7 +82,7 @@ class DynamicWorkflowTests(unittest.TestCase):
 
         for stage in workflow["stages"]:
             snapshot = stage["executor_capability_snapshot"]
-            self.assertEqual(snapshot["schema_version"], "executor_capability_snapshot/v1")
+            self.assertEqual(snapshot["schema_version"], "executor_capability_snapshot/v2")
             self.assertEqual(snapshot["executor"], stage["target"])
             self.assertEqual(
                 set(snapshot["capabilities"]),

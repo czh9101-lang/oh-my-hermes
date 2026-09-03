@@ -111,6 +111,9 @@ _DEPENDENCY_SATISFYING_STATUSES: Final[tuple[str, ...]] = ("already_completed", 
 # failures and get their own lanes below.
 _BLOCKING_UNIT_STATUSES: Final[tuple[str, ...]] = (
     "capability_snapshot_invalid",
+    "modality_unknown",
+    "modality_unsupported",
+    "modality_transformation_unobserved",
     "executor_not_ready",
     "failed",
     "unsupported_for_local_dispatch",

@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 from ..version import __version__
 from ..capabilities.playbooks import playbook_capabilities
@@ -21,6 +21,11 @@ from ..command_path import (
     path_check_kind,
 )
 from ..local_store import atomic_write_json, read_json_object_result, utc_now
+from .release_identity import (
+    RELEASE_EVIDENCE_BUNDLE_SCHEMA_V2,
+    build_input_manifest,
+    probe_source_identity,
+)
 from ..plugin_bundle.omh.awareness import (
     awareness_primer_context,
     awareness_primer_markdown,
@@ -80,7 +85,7 @@ INSTALLED_COMMAND_SMOKE_SCHEMA = "installed_omh_command_smoke/v1"
 FIRST_USE_STATUS_SMOKE_SCHEMA = "first_use_status_smoke/v1"
 SKILL_CONTENT_SMOKE_SCHEMA = "skill_content_smoke/v1"
 PRODUCT_READINESS_SCHEMA = "omh_product_readiness/v1"
-RELEASE_EVIDENCE_BUNDLE_SCHEMA = "omh_release_evidence_bundle/v1"
+RELEASE_EVIDENCE_BUNDLE_SCHEMA = RELEASE_EVIDENCE_BUNDLE_SCHEMA_V2
 RELEASE_VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)*(?:[-_+.]?[A-Za-z0-9][A-Za-z0-9._+-]*)?$")
 DEFAULT_HERMES_TAP = "rlaope/oh-my-hermes"
 DEFAULT_HERMES_SKILL = "oh-my-hermes"
@@ -977,7 +982,7 @@ def release_readiness_checklist(
             "evidence-packaging",
             True,
             False,
-            "A local `omh_release_evidence_bundle/v1` artifact is written with checklist, product readiness, skill content, use-case readiness, grounded score, chat card coverage, route hint alignment, context brief coverage, routing precision, native-skill competition, localized chat copy, router fast-path quality, common request coverage, Hermes UX quality, and parity snapshots.",
+            "A local `omh_release_evidence_bundle/v2` artifact is written with checklist, product readiness, skill content, use-case readiness, grounded score, chat card coverage, route hint alignment, context brief coverage, routing precision, native-skill competition, localized chat copy, router fast-path quality, common request coverage, Hermes UX quality, and parity snapshots.",
             "The evidence bundle packages local deterministic evidence only; it is not live Hermes runtime use, connector execution, executor dispatch, review, CI, merge, delivery, or release publication evidence.",
         ),
         ReleaseChecklistItem(
@@ -2392,9 +2397,28 @@ def release_evidence_bundle(
     omh_command: str = "omh",
     paths: OmhPaths | None = None,
     write: bool = False,
+    repo_root: str | Path | None = None,
+    artifact: str | Path | None = None,
+    archive_digest: str = "",
+    artifact_digest: str = "",
+    runner: Callable[..., object] | None = None,
 ) -> dict[str, object]:
     release_version = _normalize_release_version(version)
     resolved_paths = paths or OmhPaths(omh_home=Path("~/.omh").expanduser(), hermes_home=Path("~/.hermes").expanduser())
+    probe_kwargs: dict[str, object] = {}
+    if runner is not None:
+        probe_kwargs["runner"] = runner
+    source_identity = probe_source_identity(
+        repo_root,
+        archive_digest=archive_digest,
+        artifact_digest=artifact_digest,
+        **probe_kwargs,
+    )
+    source_identity["input_manifest"] = build_input_manifest(
+        source_identity=source_identity,
+        paths=resolved_paths,
+        artifact=artifact,
+    )
     quality_evidence = _build_release_quality_evidence(release_version=release_version, omh_command=omh_command)
     checklist = quality_evidence.checklist
     product = _product_readiness_report_from_evidence(
@@ -2442,6 +2466,13 @@ def release_evidence_bundle(
     warnings = []
     if local_store_status != "passed":
         warnings.append(f"local_artifact_store: {local_store_status}")
+    identity_available = source_identity.get("identity_status") == "available"
+    if not identity_available:
+        warnings.append(
+            "source_identity: unavailable; pass --repo-root, --archive-digest, or --artifact-digest "
+            "so the bundle is bound to an immutable source revision"
+        )
+    publication_ready = not blocking_failures and identity_available
     grounded_score_summary = grounded_score.get("summary", {}) if isinstance(grounded_score.get("summary"), Mapping) else {}
     chat_card_summary = chat_cards.get("summary", {}) if isinstance(chat_cards.get("summary"), Mapping) else {}
     route_hint_summary = route_hints.get("summary", {}) if isinstance(route_hints.get("summary"), Mapping) else {}
@@ -2471,9 +2502,11 @@ def release_evidence_bundle(
         "version": release_version,
         "tag": f"v{release_version}",
         "created_at": utc_now(),
-        "status": "ready" if not blocking_failures else "needs_attention",
+        "status": "ready" if not blocking_failures and (identity_available or not write) else "needs_attention",
+        "publication_ready": publication_ready,
         "blocking_failures": blocking_failures,
         "warnings": warnings,
+        "source_identity": source_identity,
         "summary": {
             "release_checklist_required_items": checklist.get("required_item_count"),
             "product_readiness_status": product.get("status"),
@@ -2570,6 +2603,8 @@ def release_evidence_bundle(
             "common_request_coverage_ready",
             "hermes_ux_quality_ready",
             "parity_contract_matrix_ready",
+            "source_revision_bound",
+            "input_manifest_digest_recorded",
         ],
         "not_evidence_for": [
             "live_hermes_chat_selection",
@@ -2585,19 +2620,27 @@ def release_evidence_bundle(
         ],
         "next_actions": _release_evidence_next_actions(blocking_failures, local_store_status),
         "boundary": (
-            "A release evidence bundle packages deterministic local OMH evidence and optional local artifact-store state. "
-            "It does not mutate Hermes, run live profile smoke, call connectors, dispatch executors, review code, pass CI, "
-            "merge, deliver messages, publish GitHub releases, or prove provider billing/quota truth."
+            "A release evidence bundle packages deterministic local OMH evidence and optional local artifact-store state, "
+            "bound to the recorded source revision and declared input digests. It proves evidence provenance for the "
+            "recorded revision; it does not prove deployment, adoption, or runtime behavior outside the executed gates, "
+            "and it does not mutate Hermes, run live profile smoke, call connectors, dispatch executors, review code, "
+            "pass CI, merge, deliver messages, publish GitHub releases, or prove provider billing/quota truth."
         ),
     }
     if write:
-        artifact_path = resolved_paths.release_evidence_dir / f"omh-release-evidence-{release_version}.json"
+        artifact_path = resolved_paths.release_evidence_dir / f"{release_version}.json"
         payload["written"] = True
         payload["artifact_path"] = str(artifact_path)
-        atomic_write_json(artifact_path, payload, private=True)
-        _write_release_evidence_index(resolved_paths, payload)
+        # The persisted bundle names its artifact by basename only: the file is
+        # meant to be attached to release PRs and published as a release asset,
+        # so the maintainer's absolute home path must not leak into it. The
+        # absolute path stays in the returned (stdout) payload only.
+        persisted = dict(payload)
+        persisted["artifact_path"] = artifact_path.name
+        atomic_write_json(artifact_path, persisted, private=True)
+        _write_release_evidence_index(resolved_paths, persisted)
     else:
-        payload["artifact_path"] = str(resolved_paths.release_evidence_dir / f"omh-release-evidence-{release_version}.json")
+        payload["artifact_path"] = str(resolved_paths.release_evidence_dir / f"{release_version}.json")
     return payload
 
 
@@ -2643,6 +2686,9 @@ def _write_release_evidence_index(paths: OmhPaths, payload: Mapping[str, object]
     entries = []
     if existing and isinstance(existing.get("entries"), list):
         entries = [entry for entry in existing["entries"] if isinstance(entry, dict) and entry.get("version") != version]
+    source_identity = payload.get("source_identity")
+    if not isinstance(source_identity, Mapping):
+        source_identity = {}
     entries.append(
         {
             "version": version,
@@ -2651,6 +2697,8 @@ def _write_release_evidence_index(paths: OmhPaths, payload: Mapping[str, object]
             "created_at": payload.get("created_at"),
             "artifact_path": artifact_path,
             "schema_version": payload.get("schema_version"),
+            "commit_sha": source_identity.get("commit_sha"),
+            "tree_sha": source_identity.get("tree_sha"),
         }
     )
     entries.sort(key=lambda entry: str(entry.get("created_at") or ""))

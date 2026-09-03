@@ -41,6 +41,7 @@ from omh.maintenance.update_check import (
     update_check_cache_path,
     write_update_check_policy,
 )
+from omh.maintenance.update_check_state import write_update_check_cache
 from omh.paths import OmhPaths
 
 
@@ -58,9 +59,19 @@ def _http_stdout(status: int, *, etag: str = "", sha: str | None = None) -> str:
 
 
 def _ok_runner(sha: str, *, etag: str = '"abc"', calls: list[object] | None = None):
+    """Fake curl: a readable head, and a verified fast-forward compare.
+
+    Since the issue #1282 contract, `behind` is emitted only for a verified
+    `fast_forward`, so the compare read answers `status: ahead`; every other
+    URL (the head/metadata probe) answers with the head payload.
+    """
+
     def runner(argv, timeout=None):
         if calls is not None:
             calls.append(argv)
+        if any("/compare/" in str(arg) for arg in argv):
+            stdout = "HTTP/2 200\n\n" + json.dumps({"status": "ahead", "ahead_by": 1, "behind_by": 0})
+            return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout=_http_stdout(200, etag=etag, sha=sha), stderr="")
 
     return runner
@@ -181,6 +192,14 @@ class FetchRemoteMainIdentityTests(unittest.TestCase):
         result = fetch_remote_main_identity(runner=runner)
         self.assertFalse(result.ok)
 
+    def test_non_full_sha_is_a_clean_failure(self) -> None:
+        for sha in ("deadbeef", "g" * 40, "\x1b]8;;file:///Users/alice/.ssh/id_rsa\x07"):
+            with self.subTest(sha=sha):
+                result = fetch_remote_main_identity(runner=_ok_runner(sha))
+                self.assertFalse(result.ok)
+                self.assertIsNone(result.sha)
+                self.assertIn("invalid sha", result.error or "")
+
     def test_the_argv_invokes_curl_with_the_commits_endpoint(self) -> None:
         calls: list[object] = []
         fetch_remote_main_identity(runner=_ok_runner("a" * 40, calls=calls))
@@ -191,6 +210,25 @@ class FetchRemoteMainIdentityTests(unittest.TestCase):
 
 
 class EvaluateUpdateCheckTests(unittest.TestCase):
+    def test_cache_redacts_and_refuses_malformed_remote_commit(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(Path(tmp))
+            path = update_check_cache_path(paths)
+            path.parent.mkdir(parents=True)
+            unsafe = "\x1b]8;;file:///Users/alice/.ssh/id_rsa\x07"
+            atomic_write_json(
+                path,
+                {
+                    "schema_version": "omh_update_check_cache/v2",
+                    "remote_commit": unsafe,
+                    "outcome": "behind",
+                },
+            )
+
+            self.assertEqual(read_update_check_cache(paths)["remote_commit"], "")
+            with self.assertRaisesRegex(ValueError, "40-character hexadecimal"):
+                write_update_check_cache(paths, {"remote_commit": unsafe})
+
     def test_off_mode_makes_zero_network_attempts(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = _paths(Path(tmp))

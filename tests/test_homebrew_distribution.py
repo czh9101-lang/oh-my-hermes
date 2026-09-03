@@ -228,7 +228,9 @@ class DistributionReleaseContractTests(unittest.TestCase):
         ).read_text()
         steps = (
             "Validate tag and distribution contracts",
+            "Generate revision-bound release evidence",
             "Build one immutable wheel and npm tarball",
+            "Bind and retain evidence with release outputs",
             "Preflight npm and Homebrew destinations",
             "Create or verify immutable GitHub release asset",
             "Verify immutable release wheel",
@@ -249,6 +251,76 @@ class DistributionReleaseContractTests(unittest.TestCase):
         self.assertLess(
             workflow.index('echo "SOURCE_DATE_EPOCH='),
             workflow.index("- name: Build one immutable wheel and npm tarball"),
+        )
+
+    def test_release_evidence_gate_blocks_publication_and_is_retained(
+        self,
+    ) -> None:
+        workflow = (
+            PROJECT_ROOT / ".github" / "workflows" / "release.yml"
+        ).read_text()
+        generate = workflow.index(
+            "- name: Generate revision-bound release evidence"
+        )
+        bind = workflow.index(
+            "- name: Bind and retain evidence with release outputs"
+        )
+        build = workflow.index(
+            "- name: Build one immutable wheel and npm tarball"
+        )
+        first_write = workflow.index(
+            "- name: Create or verify immutable GitHub release asset"
+        )
+        verify = workflow.index("- name: Verify immutable release wheel")
+        # The evidence gate runs before anything is built or published, and
+        # the artifact binding lands after the wheel exists but before the
+        # first publish step.
+        self.assertLess(generate, build)
+        self.assertLess(build, bind)
+        self.assertLess(bind, first_write)
+        self.assertLess(first_write, verify)
+        # Generation is bound to the exact tagged checkout and fails closed.
+        self.assertIn(
+            'release evidence-bundle --version "$version" --write \\',
+            workflow,
+        )
+        self.assertIn('--repo-root "$GITHUB_WORKSPACE"', workflow)
+        self.assertIn('assert payload["status"] == "ready"', workflow)
+        self.assertIn('assert payload["publication_ready"] is True', workflow)
+        self.assertIn(
+            'assert payload["schema_version"] == "omh_release_evidence_bundle/v2"',
+            workflow,
+        )
+        self.assertIn('assert identity["dirty"] is False', workflow)
+        self.assertIn('assert identity["commit_sha"] == sys.argv[2]', workflow)
+        # The retained bundle names the artifact it covers by digest.
+        self.assertIn('--artifact "$OMH_WHEEL"', workflow)
+        self.assertIn(
+            'assert artifact["sha256"] == "sha256:" + sys.argv[2]',
+            workflow,
+        )
+        self.assertIn(
+            'bundle="$OMH_EVIDENCE_HOME/runtime/release-evidence/$OMH_VERSION.json"',
+            workflow,
+        )
+        self.assertIn(
+            "omh-release-evidence-$OMH_VERSION.json",
+            workflow,
+        )
+        # The bundle is uploaded beside the wheel and re-verified on resume.
+        self.assertIn(
+            '"$OMH_EVIDENCE_ASSET#Release evidence bundle"',
+            workflow,
+        )
+        self.assertIn('evidence_asset="$(basename "$OMH_EVIDENCE_ASSET")"', workflow)
+        self.assertIn('test "$evidence_count" = 1', workflow)
+        self.assertIn(
+            'release_bundle="$verified/$(basename "$OMH_EVIDENCE_ASSET")"',
+            workflow,
+        )
+        self.assertIn(
+            "release evidence bundle asset differs from the locally bound bundle",
+            workflow,
         )
 
     def test_ci_lints_distribution_tools(self) -> None:

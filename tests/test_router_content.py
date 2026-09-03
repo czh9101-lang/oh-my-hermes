@@ -38,6 +38,7 @@ from omh.playbooks import inspect_playbook, list_playbooks
 from omh.plugin_bundle.omh.awareness import ROUTER_KEYWORD_SKILLS, _ROUTE_HINT_RULES, router_keyword_summary
 from omh.quality.grounded_score import GROUNDED_SCENARIOS
 from omh.runtime.records import validate_harness_quality
+from omh.coding.executor_capability_snapshots import EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION
 from omh.skills.catalog import (
     OMH_SKILL_DISPLAY_NAME_OVERRIDES,
     OMH_SKILL_NAME_PREFIX,
@@ -1297,6 +1298,7 @@ class RouterContentTests(unittest.TestCase):
         # The harness contract and the rendered rules stay one maintained copy.
         contract = harness_quality_contract("coding-handling")
         quality_bar = tuple(contract["quality_bar"])
+        self.assertIn(EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION, " ".join(quality_bar))
         self.assertIn(DELEGATE_PROMPT_DISPLAY_RULE, quality_bar)
         self.assertIn(DELEGATE_MODEL_LABEL_RULE, quality_bar)
         # An unexposed reasoning effort renders as `(model)` alone; the old rule's
