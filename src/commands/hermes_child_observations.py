@@ -43,7 +43,17 @@ def result_payload(
     session.update(
         {
             key: usage[key]
-            for key in ("provider", "model", "total_tokens", "estimated_cost_usd")
+            # `cost_status`/`cost_source` travel with the cost they explain:
+            # without them a zero cannot be told apart from a provider that
+            # reported nothing, and the surface printed a confident $0.00.
+            for key in (
+                "provider",
+                "model",
+                "total_tokens",
+                "estimated_cost_usd",
+                "cost_status",
+                "cost_source",
+            )
             if key in usage
         }
     )
