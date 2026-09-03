@@ -18,14 +18,14 @@ try:
     from ..system.paths import managed_command_venv_dir, resolve_paths
     from .self_update_platform import SelfUpdatePlatform
     from .self_update_state import collect_garbage, commit_activation, generation_entry, interrupted_activation, load_state, mark_activation, mark_switched, migrate_legacy, pointer_target, record_pointer, recovery_target, restore_known_good, save_state, state_path, switch_current
-    from .self_update_state_validation import require_generation_path
+    from .self_update_state_validation import require_generation_path, same_existing_path
 except ImportError:  # pragma: no cover - direct-source installer smoke.
     from core.errors import OmhError
     from system.local_store import FileLockTimeout, file_lock
     from system.paths import managed_command_venv_dir, resolve_paths
     from install.self_update_platform import SelfUpdatePlatform
     from install.self_update_state import collect_garbage, commit_activation, generation_entry, interrupted_activation, load_state, mark_activation, mark_switched, migrate_legacy, pointer_target, record_pointer, recovery_target, restore_known_good, save_state, state_path, switch_current
-    from install.self_update_state_validation import require_generation_path
+    from install.self_update_state_validation import require_generation_path, same_existing_path
 
 RESULT_SCHEMA_VERSION = "command_package_self_update/v1"
 REENTRY_TIMEOUT_SECONDS = 600.0
@@ -95,7 +95,10 @@ def _reentry_argv() -> list[str]:
 def _reenter(root: Path, generation: Path, args: Any, runner: Runner, platform: SelfUpdatePlatform) -> tuple[bool, str]:
     trusted = require_generation_path(root, generation, None, "re-entry generation")
     pointed = pointer_target(root, platform=platform)
-    if pointed is None or require_generation_path(root, pointed, None, "current pointer target") != trusted:
+    if pointed is None:
+        raise OmhError("cannot re-enter an untrusted self-update generation")
+    pointed = require_generation_path(root, pointed, None, "current pointer target")
+    if not same_existing_path(pointed, trusted):
         raise OmhError("cannot re-enter an untrusted self-update generation")
     env = dict(os.environ, OMH_UPDATE_COMMAND_PACKAGE_REENTERED="1", OMH_SELF_UPDATE_GENERATION=str(trusted))
     try:

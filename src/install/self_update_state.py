@@ -14,14 +14,14 @@ try:
     from ..system.local_store import atomic_write_json, read_json_object_result
     from ..system.paths import managed_command_bin_dir
     from .self_update_platform import SelfUpdatePlatform
-    from .self_update_state_validation import parse_gc_entries, parse_generation_entry, parse_marker, parse_state, require_generation_path
+    from .self_update_state_validation import parse_gc_entries, parse_generation_entry, parse_marker, parse_state, require_generation_path, same_existing_path
 except ImportError:  # pragma: no cover - direct-source installer smoke.
     from core.errors import OmhError
     from install.config_adapter import ensure_external_dir, read_config, remove_external_dir, write_config
     from system.local_store import atomic_write_json, read_json_object_result
     from system.paths import managed_command_bin_dir
     from install.self_update_platform import SelfUpdatePlatform
-    from install.self_update_state_validation import parse_gc_entries, parse_generation_entry, parse_marker, parse_state, require_generation_path
+    from install.self_update_state_validation import parse_gc_entries, parse_generation_entry, parse_marker, parse_state, require_generation_path, same_existing_path
 
 STATE_SCHEMA_VERSION = "self_update_state/v1"
 
@@ -112,7 +112,7 @@ def interrupted_activation(
         return None
     candidate, previous = parsed
     pointed = pointer_target(root, platform=platform)
-    if pointed is not None and pointed.resolve() == candidate.resolve():
+    if pointed is not None and same_existing_path(pointed, candidate):
         return candidate, previous
     shutil.rmtree(candidate, ignore_errors=True)
     state["activation_in_progress"] = None

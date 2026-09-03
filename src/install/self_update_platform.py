@@ -51,7 +51,7 @@ class SelfUpdatePlatform:
             raw = os.readlink(link)
         except OSError:
             return None
-        target = Path(raw)
+        target = Path(_without_windows_namespace(raw) if self.is_windows else raw)
         return target if target.is_absolute() else root / target
 
     def create_directory_link(self, root: Path, link: Path, target: Path) -> None:
@@ -148,3 +148,11 @@ def _replace_windows_pointer(temporary: Path, current: Path, backup: Path) -> No
 
 def _windows_spelling(path: Path) -> str:
     return str(path).replace("/", "\\")
+
+
+def _without_windows_namespace(value: str) -> str:
+    if value.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + value[8:]
+    if value.startswith("\\\\?\\"):
+        return value[4:]
+    return value

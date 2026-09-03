@@ -483,8 +483,9 @@ def _sync_hermes_profiles(args: argparse.Namespace) -> list[dict[str, object]]:
         clone = argparse.Namespace(**vars(args))
         clone.hermes_home = str(profile_dir)
         profile_paths = _paths(clone)
-        registered = str(_registered_workflow_dir(profile_paths)) in external_dirs(
-            read_config(profile_paths.hermes_config_path)
+        registered = _external_dir_registered(
+            read_config(profile_paths.hermes_config_path),
+            _registered_workflow_dir(profile_paths),
         )
         if profile_paths.hermes_plugin_dir.is_dir() and not registered:
             results.append({"profile": name, "status": "unregistered_kept"})
@@ -583,6 +584,15 @@ def _registered_workflow_dir(paths: OmhPaths) -> Path:
     return paths.skills_dir
 
 
+def _external_dir_registered(config: str, path: Path) -> bool:
+    wanted = _external_dir_key(path)
+    return any(_external_dir_key(entry) == wanted for entry in external_dirs(config))
+
+
+def _external_dir_key(path: str | Path) -> str:
+    return os.path.normcase(os.path.normpath(str(path))).replace("\\", "/")
+
+
 def _refresh_hermes_registration(args: argparse.Namespace) -> dict[str, object] | None:
     """Carry a registered install forward to what the running version needs.
 
@@ -598,7 +608,7 @@ def _refresh_hermes_registration(args: argparse.Namespace) -> dict[str, object] 
     put it back.
     """
     paths = _paths(args)
-    if str(_registered_workflow_dir(paths)) not in external_dirs(read_config(paths.hermes_config_path)):
+    if not _external_dir_registered(read_config(paths.hermes_config_path), _registered_workflow_dir(paths)):
         return None
     try:
         return _apply_result(args)
@@ -1582,7 +1592,10 @@ def _apply_result(args: argparse.Namespace) -> dict[str, object]:
             {
                 "hermes_config_path": str(paths.hermes_config_path),
                 "last_applied_skills_dir": str(_registered_workflow_dir(paths)),
-                "external_dir_registered": str(_registered_workflow_dir(paths)) in read_config(paths.hermes_config_path),
+                "external_dir_registered": _external_dir_registered(
+                    read_config(paths.hermes_config_path),
+                    _registered_workflow_dir(paths),
+                ),
             },
         )
     return {

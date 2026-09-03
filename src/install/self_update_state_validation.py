@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +123,13 @@ def _is_name(value: str) -> bool:
 def _is_link(path: Path) -> bool:
     junction = getattr(path, "is_junction", None)
     return path.is_symlink() or bool(junction and junction())
+
+
+def same_existing_path(left: Path, right: Path) -> bool:
+    try:
+        return os.path.samefile(left, right)
+    except OSError:
+        return left.resolve() == right.resolve()
 
 
 def _invalid(label: str) -> None:

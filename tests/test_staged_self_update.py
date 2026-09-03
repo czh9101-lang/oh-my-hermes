@@ -130,7 +130,12 @@ class StagedSelfUpdateTests(unittest.TestCase):
         if launcher.exists() or launcher.is_symlink():
             self.assertIn(str(root / "current"), os.readlink(launcher))
         if expected is not None:
-            self.assertEqual(current, expected)
+            self._assert_same_path(current, expected)
+
+    def _assert_same_path(self, actual: Path | None, expected: Path) -> None:
+        self.assertIsNotNone(actual)
+        assert actual is not None
+        self.assertTrue(os.path.samefile(actual, expected), f"{actual!s} does not identify {expected!s}")
 
     def test_venv_and_pip_failures_delete_candidates_without_moving_the_pair(self):
         for failure in ("venv", "pip"):
@@ -178,10 +183,10 @@ class StagedSelfUpdateTests(unittest.TestCase):
             previous = (root / "current").resolve()
             original = self_update.switch_current
 
-            def reject_candidate(transaction_root, target):
+            def reject_candidate(transaction_root, target, **kwargs):
                 if target.name != "bootstrap-legacy":
                     raise OmhError("replace failed")
-                original(transaction_root, target)
+                original(transaction_root, target, **kwargs)
 
             with patch.object(self_update, "switch_current", side_effect=reject_candidate):
                 result = self._run(root, args, plan, self._runner())
@@ -450,7 +455,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
 
             platform = SelfUpdatePlatform.windows(junction_runner)
             switch_current(root, previous, platform=platform)
-            self.assertEqual(pointer_target(root, platform=platform), previous)
+            self._assert_same_path(pointer_target(root, platform=platform), previous)
             bootstrap = root / "generations" / "bootstrap-legacy"
             bootstrap.mkdir()
             platform.create_directory_link(root, bootstrap / "venv", previous)
@@ -467,7 +472,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
             self.assertIn(expected, shim.read_text())
             switch_current(root, candidate, platform=platform)
             switch_current(root, previous, platform=platform)
-            self.assertEqual(pointer_target(root, platform=platform), previous)
+            self._assert_same_path(pointer_target(root, platform=platform), previous)
             self.assertTrue(all(call[0][:5] == ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"] for call in calls))
             self.assertTrue(all(call[1]["shell"] is False for call in calls))
             self.assertTrue(all(call[1]["timeout"] > 0 for call in calls))
@@ -515,7 +520,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 platform.replace_current(root, previous)
                 platform.replace_current(root, candidate)
 
-            self.assertEqual(pointer_target(root, platform=platform).resolve(), candidate.resolve())
+            self._assert_same_path(pointer_target(root, platform=platform), candidate)
             self.assertFalse(any(root.glob(".current.*")))
 
     def test_windows_pointer_swap_restores_previous_after_second_rename_failure(self):
@@ -552,7 +557,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 platform.replace_current(root, candidate)
 
             self.assertTrue(any(destination.suffix == ".previous" for _source, destination in moves))
-            self.assertEqual(pointer_target(root, platform=platform).resolve(), previous.resolve())
+            self._assert_same_path(pointer_target(root, platform=platform), previous)
             self.assertFalse(any(root.glob(".current.*")))
 
     def test_windows_junction_creation_failure_keeps_the_previous_pointer(self):
@@ -574,7 +579,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
             switch_current(root, previous, platform=platform)
             with self.assertRaisesRegex(OmhError, "directory junction"):
                 switch_current(root, candidate, platform=platform)
-            self.assertEqual(pointer_target(root, platform=platform), previous)
+            self._assert_same_path(pointer_target(root, platform=platform), previous)
             self.assertFalse(any(root.glob(".current.*.tmp")))
 
     def test_windows_junction_command_keeps_path_bytes_out_of_program_text(self):
@@ -654,7 +659,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 result = run_installer_self_update(args, plan, runner=self._runner(failure="post"), platform=platform)
             self.assertEqual(result["activation"]["status"], "ok")
             self.assertTrue(result["rollback"]["performed"])
-            self.assertEqual(pointer_target(root, platform=platform), previous)
+            self._assert_same_path(pointer_target(root, platform=platform), previous)
             self.assertIn("\\current\\venv\\Scripts\\omh.exe", shim.read_text())
             self.assertIn(
                 (root / "current" / "skills").as_posix(),
@@ -721,7 +726,7 @@ class ManagedWorkflowRegistrationTests(unittest.TestCase):
             profile = root / "hermes" / "profiles" / "bot"
             (profile / "plugins" / "omh").mkdir(parents=True)
             (profile / "config.yaml").write_text(
-                f"skills:\n  external_dirs:\n  - {current_skills}\n"
+                f"skills:\n  external_dirs:\n  - {current_skills.as_posix()}\n"
             )
             args = self._args(root)
 
