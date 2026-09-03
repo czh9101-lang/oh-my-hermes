@@ -35,6 +35,7 @@ class AtomicInstallerUpdateContractTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "venv").mkdir()
+            (root / "omh" / "skills").mkdir(parents=True)
             with (
                 patch(f"{_run_command_package_self_update.__module__}.subprocess.run", side_effect=fake_run),
                 patch(f"{_run_command_package_self_update.__module__}.sys.argv", ["omh", "update", "--json"]),

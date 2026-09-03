@@ -458,7 +458,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
             target.mkdir(parents=True)
             with patch.object(self_update.os, "symlink", side_effect=OSError("no junction")):
                 with self.assertRaisesRegex(OmhError, "cannot atomically"):
-                    switch_current(root, target)
+                    switch_current(root, target, platform=SelfUpdatePlatform.host(is_windows=False))
             self.assertFalse((root / "current").exists())
 
     def test_windows_contract_activates_a_pointer_and_rewrites_the_shim(self):
