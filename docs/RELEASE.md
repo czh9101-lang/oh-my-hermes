@@ -384,7 +384,10 @@ bundle whose source identity is unavailable — no git checkout and no explicit
 reports `publication_ready: false` and exits non-zero under `--write`.
 
 A recorded bundle is re-checked, never regenerated, with either the canonical
-version path or one exact explicit path:
+version path or one exact explicit path. Under the normal default `~/.omh`
+home, a missing relative `.omh/...` explicit path is interpreted below that
+configured home, so the literal command below works from a checkout. An
+existing literal path always wins; other missing relative paths remain missing:
 
 ```sh
 omh release evidence-bundle --verify --repo-root "$PWD" --json

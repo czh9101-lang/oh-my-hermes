@@ -176,7 +176,7 @@ def _cmd_release_evidence_bundle_verify(args: argparse.Namespace) -> int:
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
     paths = _paths(args)
-    bundle_path = Path(args.verify) if args.verify else paths.release_evidence_dir / f"{release_version}.json"
+    bundle_path = _release_evidence_verify_path(args.verify, paths, release_version)
     bundle: object = None
     if bundle_path.exists():
         bundle, error = read_json_object_result(bundle_path)
@@ -196,6 +196,23 @@ def _cmd_release_evidence_bundle_verify(args: argparse.Namespace) -> int:
     else:
         _print_release_evidence_verification_summary(payload)
     return 0 if payload["verification"] == "matching" else 1
+
+
+def _release_evidence_verify_path(explicit_path: str | None, paths: object, release_version: str) -> Path:
+    if not explicit_path:
+        return paths.release_evidence_dir / f"{release_version}.json"
+    literal_path = Path(explicit_path)
+    if literal_path.is_absolute() or literal_path.exists():
+        return literal_path
+    suffix = literal_path.parts[1:]
+    if (
+        paths.omh_home.name == ".omh"
+        and literal_path.parts[:1] == (".omh",)
+        and suffix
+        and ".." not in suffix
+    ):
+        return paths.omh_home.joinpath(*suffix)
+    return literal_path
 
 
 def cmd_release_drift(args: argparse.Namespace) -> int:

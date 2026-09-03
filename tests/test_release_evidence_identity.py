@@ -38,11 +38,11 @@ def fake_git_runner(*, commit: str = COMMIT, tree: str = TREE, porcelain: str = 
         if fail:
             raise OSError("git is not available")
         args = list(command)
-        if args[:2] == ["git", "rev-parse"] and len(args) == 3 and args[2] == "HEAD":
+        if args[-2:] == ["rev-parse", "HEAD"]:
             return SimpleNamespace(returncode=0, stdout=commit + "\n", stderr="")
-        if args[:2] == ["git", "rev-parse"] and len(args) == 3:
+        if args[-2:] == ["rev-parse", "HEAD^{tree}"]:
             return SimpleNamespace(returncode=0, stdout=tree + "\n", stderr="")
-        if args[:2] == ["git", "status"]:
+        if "status" in args:
             return SimpleNamespace(returncode=0, stdout=porcelain, stderr="")
         return SimpleNamespace(returncode=1, stdout="", stderr="unexpected command")
 
@@ -77,6 +77,28 @@ def make_paths(tmp: str) -> OmhPaths:
 
 
 class ReleaseEvidenceIdentityTests(unittest.TestCase):
+    def test_verification_source_binding_mirrors_every_verdict(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = make_paths(str(Path(tmp) / "matching"))
+            bundle = git_bundle(paths)
+            stale_paths = make_paths(str(Path(tmp) / "stale"))
+            stale_bundle = git_bundle(stale_paths)
+            stale_paths.use_case_artifacts_dir.mkdir(parents=True)
+            (stale_paths.use_case_artifacts_dir / "changed.json").write_text("{}\n", encoding="utf-8")
+            cases = (
+                ("matching", verify_release_evidence_bundle(bundle, repo_root="/repo", paths=paths, runner=fake_git_runner())),
+                ("dirty", verify_release_evidence_bundle(bundle, repo_root="/repo", paths=paths, runner=fake_git_runner(porcelain=" M README.md\n"))),
+                ("mismatched_revision", verify_release_evidence_bundle(bundle, repo_root="/repo", paths=paths, runner=fake_git_runner(commit=OTHER_COMMIT, tree=OTHER_TREE))),
+                ("stale", verify_release_evidence_bundle(stale_bundle, repo_root="/repo", paths=stale_paths, runner=fake_git_runner())),
+                ("unverifiable", verify_release_evidence_bundle(bundle, repo_root="/repo", paths=paths, runner=fake_git_runner(fail=True))),
+                ("legacy_schema", verify_release_evidence_bundle({"schema_version": "omh_release_evidence_bundle/v1"}, repo_root="/repo", paths=paths, runner=fake_git_runner())),
+                ("missing", verify_release_evidence_bundle(None, version="1.0.1", repo_root="/repo", paths=paths, runner=fake_git_runner())),
+            )
+
+        for expected, payload in cases:
+            self.assertEqual(payload["verification"], expected)
+            self.assertEqual(payload["source_binding"]["verification_status"], expected)
+
     def test_clean_checkout_bundle_records_v2_identity(self) -> None:
         with TemporaryDirectory() as tmp:
             payload = release_evidence_bundle(

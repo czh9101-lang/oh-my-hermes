@@ -15,6 +15,7 @@ from .release_source_identity import (
 )
 
 RELEASE_EVIDENCE_VERIFICATION_SCHEMA = "omh_release_evidence_verification/v1"
+RELEASE_EVIDENCE_SOURCE_BINDING_SCHEMA = "omh_release_evidence_verification_source_binding/v1"
 
 VERIFY_MATCHING = "matching"
 VERIFY_DIRTY = "dirty"
@@ -239,6 +240,10 @@ def _verification_payload(
     return {
         "schema_version": RELEASE_EVIDENCE_VERIFICATION_SCHEMA,
         "verification": verdict,
+        "source_binding": {
+            "schema_version": RELEASE_EVIDENCE_SOURCE_BINDING_SCHEMA,
+            "verification_status": verdict,
+        },
         "version": version,
         "checked_at": checked_at,
         "reasons": reasons,

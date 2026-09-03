@@ -14,18 +14,18 @@ from typing import Any, Callable
 
 try:
     from ..core.errors import OmhError
-    from ..install.config_adapter import ensure_external_dir, read_config, remove_external_dir, write_config
     from ..system.local_store import FileLockTimeout, file_lock
-    from ..system.paths import managed_command_bin_dir, managed_command_venv_dir, resolve_paths
+    from ..system.paths import managed_command_venv_dir, resolve_paths
     from .self_update_platform import SelfUpdatePlatform
-    from .self_update_state import collect_garbage, commit_activation, generation_entry, interrupted_activation, load_state, mark_activation, mark_switched, migration_needed, now, pointer_target, record_pointer, recovery_target, restore_known_good, save_state, state_path, switch_current
+    from .self_update_state import collect_garbage, commit_activation, generation_entry, interrupted_activation, load_state, mark_activation, mark_switched, migrate_legacy, pointer_target, record_pointer, recovery_target, restore_known_good, save_state, state_path, switch_current
+    from .self_update_state_validation import require_generation_path
 except ImportError:  # pragma: no cover - direct-source installer smoke.
     from core.errors import OmhError
-    from install.config_adapter import ensure_external_dir, read_config, remove_external_dir, write_config
     from system.local_store import FileLockTimeout, file_lock
-    from system.paths import managed_command_bin_dir, managed_command_venv_dir, resolve_paths
+    from system.paths import managed_command_venv_dir, resolve_paths
     from install.self_update_platform import SelfUpdatePlatform
-    from install.self_update_state import collect_garbage, commit_activation, generation_entry, interrupted_activation, load_state, mark_activation, mark_switched, migration_needed, now, pointer_target, record_pointer, recovery_target, restore_known_good, save_state, state_path, switch_current
+    from install.self_update_state import collect_garbage, commit_activation, generation_entry, interrupted_activation, load_state, mark_activation, mark_switched, migrate_legacy, pointer_target, record_pointer, recovery_target, restore_known_good, save_state, state_path, switch_current
+    from install.self_update_state_validation import require_generation_path
 
 RESULT_SCHEMA_VERSION = "command_package_self_update/v1"
 REENTRY_TIMEOUT_SECONDS = 600.0
@@ -86,51 +86,6 @@ def _smoke(candidate: Path, expected_version: str, *, runner: Runner, platform: 
     return True, ""
 
 
-def _retarget_launcher(root: Path, platform: SelfUpdatePlatform | None = None) -> bool:
-    selected = platform or SelfUpdatePlatform.host()
-    directory = managed_command_bin_dir()
-    if directory is None:
-        return False
-    if selected.is_windows:
-        launcher = directory / "omh.cmd"
-        if not launcher.exists() and not launcher.is_symlink():
-            return False
-        selected.rewrite_command_shim(launcher, root)
-        return True
-    launcher = directory / "omh"
-    if not launcher.exists() and not launcher.is_symlink():
-        return False
-    target = selected.scripts_dir(root / "current" / "venv") / "omh"
-    temporary = launcher.with_name(f".{launcher.name}.{os.getpid()}.tmp")
-    temporary.unlink(missing_ok=True)
-    os.symlink(str(target), temporary)
-    os.replace(temporary, launcher)
-    return True
-
-
-def _migrate(root: Path, state: dict[str, Any], paths: Any, platform: SelfUpdatePlatform) -> None:
-    if not migration_needed(state):
-        return
-    legacy = Path(str(state["active"]["path"]))
-    bootstrap = root / "generations" / "bootstrap-legacy"
-    bootstrap.mkdir(parents=True, exist_ok=True)
-    for name, target in (("venv", legacy), ("skills", paths.omh_home / "skills")):
-        link = bootstrap / name
-        if not link.exists() and not link.is_symlink():
-            platform.create_directory_link(root, link, target)
-    if pointer_target(root, platform=platform) is None:
-        switch_current(root, bootstrap, platform=platform)
-    launcher = _retarget_launcher(root, platform)
-    old = paths.omh_home / "skills"
-    current_pack = root / "current" / "skills"
-    changed = ensure_external_dir(remove_external_dir(read_config(paths.hermes_config_path), old).text, current_pack)
-    if changed.changed:
-        write_config(paths.hermes_config_path, changed.text)
-    state["active"] = generation_entry(bootstrap, "bootstrap")
-    state["migration"] = {"status": "completed", "launcher_on_pointer": launcher, "registration_on_pointer": True, "completed_at": now()}
-    record_pointer(state, root, bootstrap)
-    save_state(root, state)
-
 
 def _reentry_argv() -> list[str]:
     argv = [item for item in sys.argv[1:] if item != "--recover-known-good"]
@@ -138,7 +93,11 @@ def _reentry_argv() -> list[str]:
 
 
 def _reenter(root: Path, generation: Path, args: Any, runner: Runner, platform: SelfUpdatePlatform) -> tuple[bool, str]:
-    env = dict(os.environ, OMH_UPDATE_COMMAND_PACKAGE_REENTERED="1", OMH_SELF_UPDATE_GENERATION=str(generation))
+    trusted = require_generation_path(root, generation, None, "re-entry generation")
+    pointed = pointer_target(root, platform=platform)
+    if pointed is None or require_generation_path(root, pointed, None, "current pointer target") != trusted:
+        raise OmhError("cannot re-enter an untrusted self-update generation")
+    env = dict(os.environ, OMH_UPDATE_COMMAND_PACKAGE_REENTERED="1", OMH_SELF_UPDATE_GENERATION=str(trusted))
     try:
         checked = _run(runner, [_python(root / "current", platform), "-m", "omh.cli", *_reentry_argv()], env=env, timeout=REENTRY_TIMEOUT_SECONDS, capture=False)
     except (OSError, subprocess.TimeoutExpired):
@@ -158,8 +117,9 @@ def _running_generation(root: Path) -> Path | None:
     return None
 
 
-def _cleanup_candidate(candidate: Path) -> None:
-    shutil.rmtree(candidate, ignore_errors=True)
+def _cleanup_candidate(root: Path, candidate: Path) -> None:
+    trusted = require_generation_path(root, candidate, None, "candidate cleanup target")
+    shutil.rmtree(trusted, ignore_errors=True)
 
 
 def _switch(root: Path, target: Path, platform: SelfUpdatePlatform) -> None:
@@ -199,17 +159,17 @@ def run_installer_self_update(args: Any, plan: dict[str, object], *, runner: Run
             staged, reason = _stage(candidate, package_url, str(plan.get("python") or sys.executable), runner=runner, json_mode=bool(getattr(args, "json", False)), platform=selected)
             result.update(phase="staging", staging={"status": "ok" if staged else "failed", "reason": reason})
             if not staged:
-                _cleanup_candidate(candidate)
+                _cleanup_candidate(root, candidate)
                 return result
             verified, reason = _smoke(candidate, expected_version, runner=runner, platform=selected)
             result.update(phase="verification", verification={"status": "ok" if verified else "failed", "reason": reason})
             if not verified:
-                _cleanup_candidate(candidate)
+                _cleanup_candidate(root, candidate)
                 return result
             try:
-                _migrate(root, state, paths, selected)
+                migrate_legacy(root, state, paths, selected)
             except (OSError, ValueError, OmhError) as exc:
-                _cleanup_candidate(candidate)
+                _cleanup_candidate(root, candidate)
                 result.update(phase="migration", migration={"status": "failed", "reason": str(exc)})
                 return result
             return _activate(root, state, candidate, args, runner, selected, result)
@@ -232,7 +192,7 @@ def _activate(root: Path, state: dict[str, Any], candidate: Path, args: Any, run
     launcher = "present" if state["migration"].get("launcher_on_pointer") else "absent_manual_instruction"
     result["activation"] = {"status": "ok", "pointer": str(root / "current"), "launcher": launcher}
     passed, reason = _reenter(root, candidate, args, runner, platform)
-    result["post_activation"] = {"status": "ok" if passed else "failed", "reason": reason}
+    result.update(phase="post_activation", post_activation={"status": "ok" if passed else "failed", "reason": reason})
     if not passed:
         _switch(root, previous, platform)
         _reenter(root, previous, args, runner, platform)
@@ -266,7 +226,7 @@ def _recover_interrupted(root: Path, state: dict[str, Any], interrupted: tuple[P
 
 
 def _recover_known_good(root: Path, state: dict[str, Any], args: Any, runner: Runner, platform: SelfUpdatePlatform, result: dict[str, Any]) -> dict[str, Any]:
-    target = recovery_target(state)
+    target = recovery_target(root, state)
     previous = Path(str(state["active"]["path"]))
     mark_activation(state, target, previous)
     save_state(root, state)

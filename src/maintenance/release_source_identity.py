@@ -32,8 +32,9 @@ def probe_source_identity(
 ) -> dict[str, object]:
     """Probe the immutable identity of the source under `repo_root`.
 
-    Read-only local git plumbing (``rev-parse`` and ``status --porcelain``):
-    no network call, nothing written, no ref moved. Full hashes are recorded
+    Read-only local git plumbing (``rev-parse`` and ``status --porcelain``)
+    runs with repository-config isolation: no network call, nothing written,
+    no ref moved. Full hashes are recorded
     because a binding contract cannot use truncated ones. Any probe failure --
     no git binary, no repository, a timeout, a malformed hash -- fails soft
     to ``identity_status: unavailable``; it never raises and never passes
@@ -47,9 +48,23 @@ def probe_source_identity(
     dirty: bool | None = None
     dirty_file_count = 0
     if root is not None:
-        commit_raw = _git_output(runner, root, ["git", "rev-parse", "HEAD"])
-        tree_raw = _git_output(runner, root, ["git", "rev-parse", "HEAD^{tree}"])
-        status_raw = _git_output(runner, root, ["git", "status", "--porcelain"])
+        commit_raw = _git_output(runner, root, ["git", "-c", "core.fsmonitor=false", "rev-parse", "HEAD"])
+        tree_raw = _git_output(
+            runner, root, ["git", "-c", "core.fsmonitor=false", "rev-parse", "HEAD^{tree}"]
+        )
+        status_raw = _git_output(
+            runner,
+            root,
+            [
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ],
+        )
         if commit_raw is not None and _FULL_SHA_RE.match(commit_raw.strip()):
             commit_sha = commit_raw.strip()
         if tree_raw is not None and _FULL_SHA_RE.match(tree_raw.strip()):

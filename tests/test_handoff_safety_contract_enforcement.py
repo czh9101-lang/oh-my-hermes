@@ -239,9 +239,15 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
         "`probe_source_identity`, reached from explicit `omh release evidence-bundle "
         "--write/--verify` (commands/release.py) and the release evidence builder "
         "(maintenance/release.py) through the `release_identity.py` facade; runs only the local, "
-        "read-only git identity reads enumerated in GIT_ARGV_ALLOWLIST below (`rev-parse HEAD`, "
-        "`rev-parse HEAD^{tree}`, `status --porcelain`), each bounded by a 15-second timeout, to "
-        "identify a source-checkout install. The facade and `release_evidence_verification.py` "
+        "read-only git identity reads enumerated in GIT_ARGV_ALLOWLIST below (`git -c "
+        "core.fsmonitor=false rev-parse HEAD`, `git -c core.fsmonitor=false rev-parse "
+        "HEAD^{tree}`, and `git -c core.fsmonitor=false --no-optional-locks status "
+        "--porcelain=v1 --untracked-files=all`), every argv explicitly overriding repository-"
+        "configured `core.fsmonitor` so an identity-only probe cannot execute repo-configured "
+        "hook-shaped config, the status probe additionally refusing the optional index lock "
+        "and pinning its own porcelain format and untracked-file visibility so repository config "
+        "cannot change what it reports, each bounded by a 15-second timeout, to identify a "
+        "source-checkout install. The facade and `release_evidence_verification.py` "
         "import no subprocess; this module spawns no agent, names no remote, and fails soft when "
         "git or a repository is absent."
     ),
@@ -586,19 +592,28 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
         "standing in the unit's own worktree and not in whatever repository encloses it; read-only, "
         "and the reason the `add` entry's containment claim is checked rather than asserted"
     ),
-    ("src/maintenance/release_source_identity.py", ("rev-parse", "HEAD")): (
-        "reads the current commit sha to identify a source-checkout install for release-evidence "
-        "identity; read-only local object lookup, names no remote, fails soft when git or a "
-        "repository is absent"
+    ("src/maintenance/release_source_identity.py", ("core.fsmonitor=false", "rev-parse", "HEAD")): (
+        "`git -c core.fsmonitor=false rev-parse HEAD` reads the current commit sha to identify a "
+        "source-checkout install for release-evidence identity; the `-c` override is the whole "
+        "isolation story of this call -- it disables repository-configured `core.fsmonitor` so an "
+        "identity-only read cannot execute repo-configured hook-shaped config -- and it is the "
+        "only config the probe overrides. Read-only local object lookup, names no remote, fails "
+        "soft when git or a repository is absent"
     ),
-    ("src/maintenance/release_source_identity.py", ("rev-parse", "HEAD^{tree}")): (
-        "reads the tree hash the release-evidence identity is recorded against, so a later "
-        "verification can tell the same tracked content apart from rewritten content; read-only "
-        "local object lookup, names no remote"
+    ("src/maintenance/release_source_identity.py", ("core.fsmonitor=false", "rev-parse", "HEAD^{tree}")): (
+        "`git -c core.fsmonitor=false rev-parse HEAD^{tree}` reads the tree hash the release-evidence "
+        "identity is recorded against, so a later verification can tell the same tracked content apart "
+        "from rewritten content; same single-purpose fsmonitor isolation as the HEAD call above; "
+        "read-only local object lookup, names no remote"
     ),
-    ("src/maintenance/release_source_identity.py", ("status",)): (
-        "`git status --porcelain` reads whether the checkout is dirty so the recorded identity can "
-        "say so; read-only, names no remote, writes nothing"
+    ("src/maintenance/release_source_identity.py", ("core.fsmonitor=false", "status")): (
+        "`git -c core.fsmonitor=false --no-optional-locks status --porcelain=v1 "
+        "--untracked-files=all` reads whether the checkout is dirty so the recorded identity can say "
+        "so; beyond the fsmonitor override shared with the two rev-parse calls, `--no-optional-locks` "
+        "keeps a read-only probe from touching the index lock, and `--porcelain=v1` plus "
+        "`--untracked-files=all` fix the output format and the untracked-file visibility so repository "
+        "config (status.showUntrackedFiles, status.porcelainFormat) cannot change what the probe "
+        "reports. Read-only, names no remote, writes nothing"
     ),
     ("src/quality/evidence_records.py", ("rev-parse", "HEAD^{tree}")): (
         "`rev-parse --short HEAD^{tree}` reads the tree hash a quality-evidence observation is "
@@ -1120,6 +1135,205 @@ class WindowsJunctionCommandBoundary(unittest.TestCase):
                 f"Windows host; the only admitted argv is the fixed junction command in "
                 f"{WINDOWS_JUNCTION_PLATFORM}. Remove the call, or widen the safety policy in "
                 f"{THIS_TEST} explicitly and with a reason.",
+            )
+
+
+# --------------------------------------------------------------------------
+# INVARIANT 1 corollary -- the isolated release-identity git argv
+# --------------------------------------------------------------------------
+
+# The release source-identity probe. The security review task st_01a06650
+# found that `git status --porcelain` runs repository-configured
+# `core.fsmonitor` -- hook-shaped config a repository can point at any
+# executable -- which turned an identity-only release probe into an execution
+# boundary. The fix isolated every probe argv with `-c core.fsmonitor=false`;
+# the status probe additionally refuses the optional index lock and pins its
+# own porcelain format and untracked-file visibility, so the dirtiness it
+# reports is deterministic rather than repository-configured. The producer
+# suite (tests/test_release_revision_binding.py) proves that behavior end to
+# end against a real repository with a sentinel fsmonitor and a
+# `status.showUntrackedFiles=no` config; these gates pin the structure, so the
+# argv cannot drift back toward the unsafe shape without this policy file
+# changing in the same commit.
+RELEASE_IDENTITY_SOURCE = "src/maintenance/release_source_identity.py"
+
+# The exact live argv of the three probe calls, read from the tree rather
+# than copied from issue text.
+RELEASE_IDENTITY_GIT_ARGV: tuple[tuple[str, ...], ...] = (
+    ("git", "-c", "core.fsmonitor=false", "rev-parse", "HEAD"),
+    ("git", "-c", "core.fsmonitor=false", "rev-parse", "HEAD^{tree}"),
+    (
+        "git",
+        "-c",
+        "core.fsmonitor=false",
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+    ),
+)
+
+# The command vocabulary the written safety policy must keep naming: the
+# fsmonitor override, the non-locking flag, and the deterministic
+# porcelain/untracked flags. Machine-consumed command tokens, not prose
+# wording -- the same standard the junction rationale gate applies.
+RELEASE_IDENTITY_ISOLATION_TOKENS = (
+    "core.fsmonitor=false",
+    "--no-optional-locks",
+    "--porcelain=v1",
+    "--untracked-files=all",
+)
+
+
+class ReleaseSourceIdentityGitBoundary(unittest.TestCase):
+    """The st_01a06650 finding cannot regress silently: the argv is pinned.
+
+    The behavioral proof lives in the release suite: a sentinel fsmonitor and a
+    `status.showUntrackedFiles=no` config are both overridden and the probe
+    still reports the untracked file as dirty. Behavior is proven once, per
+    run, against a real repository; structure is what decides whether the
+    NEXT change can quietly drop the isolation. Every gate here reads
+    `src/` as an abstract syntax tree, so a comment claiming the flags are
+    there cannot satisfy them and removing the flags cannot pass them.
+    """
+
+    def _git_argv(self) -> list[tuple[str | None, ...]]:
+        """Every constant-headed `git` argv literal in the identity module."""
+        return [
+            tuple(elements)
+            for relative_path, _lineno, elements in _argv_literals()
+            if relative_path == RELEASE_IDENTITY_SOURCE and elements[0] == "git"
+        ]
+
+    def test_the_probe_runs_exactly_the_three_isolated_git_argv(self) -> None:
+        argv = self._git_argv()
+        self.assertNotIn(
+            None,
+            [element for line in argv for element in line],
+            f"INVARIANT 1 (no hidden process spawn): {RELEASE_IDENTITY_SOURCE} builds a `git` "
+            f"argv with a non-literal element, so this gate cannot prove which flags run. "
+            f"Spell every probe element as a literal.",
+        )
+        self.assertEqual(
+            argv,
+            [tuple(expected) for expected in RELEASE_IDENTITY_GIT_ARGV],
+            f"INVARIANT 1 (no hidden process spawn): {RELEASE_IDENTITY_SOURCE} no longer runs "
+            f"exactly the three isolated git argv recorded in RELEASE_IDENTITY_GIT_ARGV in "
+            f"{THIS_TEST}. The probe's whole safety story is that argv shape: fsmonitor disabled "
+            f"on every call, no optional index lock, deterministic porcelain and untracked "
+            f"visibility on the status call. Changing it is a safety-policy change -- update "
+            f"RELEASE_IDENTITY_GIT_ARGV, GIT_ARGV_ALLOWLIST, and the PROCESS_SPAWN_ALLOWLIST "
+            f"rationale together, deliberately, with a security reason.",
+        )
+
+    def test_every_probe_argv_disables_fsmonitor_and_overrides_no_other_config(self) -> None:
+        """`-c core.fsmonitor=false` on every call, and nothing else via `-c`.
+
+        The fsmonitor override must ride every probe argv -- the rev-parse
+        calls read objects only, but git still consults repo config on the way
+        in, and the review found the status call executing repo-configured
+        code. And the override must stay the ONLY config the probe sets: a
+        second `-c` key would be a broader config channel than the finding
+        justified. Checked repo-wide, not just in this module, so a git argv
+        anywhere in `src/` cannot grow a config override this gate never
+        blessed.
+        """
+        for relative_path, lineno, elements in _argv_literals():
+            if elements[0] != "git":
+                continue
+            overrides = [
+                elements[index + 1]
+                for index in range(len(elements) - 1)
+                if elements[index] == "-c"
+            ]
+            offending = sorted(set(overrides) - {"core.fsmonitor=false"})
+            self.assertEqual(
+                offending,
+                [],
+                f"INVARIANT 1 (no hidden process spawn): {relative_path} line {lineno} builds a "
+                f"`git` argv whose `-c` config overrides include {offending}. The only sanctioned git "
+                f"config override in `src/` is `core.fsmonitor=false` on the release-identity "
+                f"probe (st_01a06650): one flag, one purpose, disabling repo-configured "
+                f"hook-shaped config on an identity-only read. A broader override needs a new "
+                f"security reason and a wider gate in {THIS_TEST}.",
+            )
+        for argv in self._git_argv():
+            overrides = [
+                argv[index + 1]
+                for index in range(len(argv) - 1)
+                if argv[index] == "-c"
+            ]
+            self.assertEqual(
+                overrides,
+                ["core.fsmonitor=false"],
+                f"INVARIANT 1 (no hidden process spawn): a release-identity probe argv in "
+                f"{RELEASE_IDENTITY_SOURCE} carries `-c` config overrides {overrides}. Every "
+                f"probe argv must carry exactly one -- `core.fsmonitor=false`, nothing else.",
+            )
+
+    def test_the_status_probe_is_non_locking_and_reports_deterministic_untracked_state(
+        self,
+    ) -> None:
+        status_argv = [argv for argv in self._git_argv() if "status" in argv]
+        self.assertEqual(
+            len(status_argv),
+            1,
+            f"INVARIANT 1 (no hidden process spawn): {RELEASE_IDENTITY_SOURCE} builds "
+            f"{len(status_argv)} `git status` argv. Exactly one status probe is admitted; "
+            f"a second one needs its own safety rationale.",
+        )
+        argv = status_argv[0]
+        for flag in ("--no-optional-locks", "--porcelain=v1", "--untracked-files=all"):
+            self.assertIn(
+                flag,
+                argv,
+                f"INVARIANT 1 (no hidden process spawn): the release-identity status probe no "
+                f"longer carries {flag!r}. That flag is part of the st_01a06650 boundary: "
+                f"`--no-optional-locks` keeps a read-only probe from touching the index lock, and "
+                f"`--porcelain=v1` / `--untracked-files=all` make the reported dirtiness "
+                f"deterministic against repository config like status.showUntrackedFiles. If the "
+                f"locking mechanism legitimately moves (flag to environment or back), update "
+                f"RELEASE_IDENTITY_GIT_ARGV and these gates together, deliberately.",
+            )
+
+    def test_the_probe_names_no_remote_or_mutating_verb(self) -> None:
+        for argv in self._git_argv():
+            offending = sorted(set(argv) & FORBIDDEN_GIT_VERBS)
+            self.assertEqual(
+                offending,
+                [],
+                f"INVARIANT 3 (no remote mutation): the release-identity probe in "
+                f"{RELEASE_IDENTITY_SOURCE} runs `git {' '.join(str(element) for element in argv)}`"
+                f", which carries the forbidden verb(s) {offending}. An identity probe reads; it "
+                f"never publishes to or moves a remote.",
+            )
+
+    def test_the_allowlist_rationale_names_the_live_isolated_argv(self) -> None:
+        """The written safety policy must describe the argv the code runs.
+
+        The PROCESS_SPAWN_ALLOWLIST entry is the safety policy for this spawn;
+        if it stops naming the isolation vocabulary, policy and spawn surface
+        have drifted apart. The asserted strings are the command tokens -- the
+        fsmonitor override, the non-locking flag, the porcelain format, and
+        the untracked-files policy -- not prose wording.
+        """
+        self.assertIn(
+            RELEASE_IDENTITY_SOURCE,
+            PROCESS_SPAWN_ALLOWLIST,
+            f"INVARIANT 1 (no hidden process spawn): {RELEASE_IDENTITY_SOURCE} lost its "
+            f"PROCESS_SPAWN_ALLOWLIST entry in {THIS_TEST} but still spawns the release-identity "
+            f"git probe. Restore the entry with the isolated-argv rationale.",
+        )
+        rationale = PROCESS_SPAWN_ALLOWLIST[RELEASE_IDENTITY_SOURCE]
+        for token in RELEASE_IDENTITY_ISOLATION_TOKENS:
+            self.assertIn(
+                token,
+                rationale,
+                f"INVARIANT 1 (no hidden process spawn): the PROCESS_SPAWN_ALLOWLIST entry for "
+                f"{RELEASE_IDENTITY_SOURCE} does not name {token!r}, but the module runs it on "
+                f"every probe (or, for the status-only flags, on the status probe). The allowlist "
+                f"rationale is the written safety policy for this spawn; update it to describe "
+                f"the live isolated argv instead of a retired bare one.",
             )
 
 

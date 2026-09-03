@@ -2295,11 +2295,12 @@ read as watching the branch it already watched, so upgrading never invents a
 network calls.
 
 One boundary, stated plainly: what the watch delivers is the classification, the
-notice, and the recorded gap. The gate that decides whether a later `omh update`
-may re-anchor its recorded position lives in the engine as a tested policy and is
-not yet wired into the update command's own state write. What you can rely on
-today is that `auto` acts on nothing but a verified fast-forward, and that a
-rewrite is always reported instead of being absorbed.
+notice, and the recorded gap. Before a later `omh update` records a new release
+source commit, the update command enforces the engine's cursor-advance policy:
+an open or unknown gap keeps the existing cursor pinned, while a verified
+fast-forward or an explicitly accepted gap re-arms the write. `auto` acts on
+nothing but a verified fast-forward, and a rewrite is always reported instead
+of being absorbed.
 
 ## Reapply
 

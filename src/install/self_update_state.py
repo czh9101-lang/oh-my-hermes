@@ -10,12 +10,18 @@ from typing import Any, Callable
 
 try:
     from ..core.errors import OmhError
+    from ..install.config_adapter import ensure_external_dir, read_config, remove_external_dir, write_config
     from ..system.local_store import atomic_write_json, read_json_object_result
+    from ..system.paths import managed_command_bin_dir
     from .self_update_platform import SelfUpdatePlatform
+    from .self_update_state_validation import parse_gc_entries, parse_generation_entry, parse_marker, parse_state, require_generation_path
 except ImportError:  # pragma: no cover - direct-source installer smoke.
     from core.errors import OmhError
+    from install.config_adapter import ensure_external_dir, read_config, remove_external_dir, write_config
     from system.local_store import atomic_write_json, read_json_object_result
+    from system.paths import managed_command_bin_dir
     from install.self_update_platform import SelfUpdatePlatform
+    from install.self_update_state_validation import parse_gc_entries, parse_generation_entry, parse_marker, parse_state, require_generation_path
 
 STATE_SCHEMA_VERSION = "self_update_state/v1"
 
@@ -51,7 +57,7 @@ def load_state(root: Path, legacy: Path) -> dict[str, Any]:
     if schema != STATE_SCHEMA_VERSION:
         reason = "newer" if isinstance(schema, str) and schema > STATE_SCHEMA_VERSION else "unsupported"
         raise OmhError(f"cannot use {path}: {reason} self-update state schema {schema!r}")
-    return state
+    return parse_state(root, state, legacy)
 
 
 def save_state(root: Path, state: dict[str, Any]) -> None:
@@ -73,7 +79,7 @@ def switch_current(
 ) -> None:
     """Atomically replace the one consumer pointer with a link or junction."""
     selected = platform or SelfUpdatePlatform.host(is_windows=is_windows)
-    selected.replace_current(root, target)
+    selected.replace_current(root, require_generation_path(root, target, None, "switch target"))
 
 
 def migration_needed(state: dict[str, Any]) -> bool:
@@ -101,14 +107,10 @@ def interrupted_activation(
     *,
     platform: SelfUpdatePlatform | None = None,
 ) -> tuple[Path, Path] | None:
-    marker = state.get("activation_in_progress")
-    if not isinstance(marker, dict):
+    parsed = parse_marker(root, state.get("activation_in_progress"))
+    if parsed is None:
         return None
-    try:
-        candidate = Path(str(marker["candidate"]))
-        previous = Path(str(marker["previous"]))
-    except KeyError as exc:
-        raise OmhError("cannot recover malformed activation marker") from exc
+    candidate, previous = parsed
     pointed = pointer_target(root, platform=platform)
     if pointed is not None and pointed.resolve() == candidate.resolve():
         return candidate, previous
@@ -137,16 +139,16 @@ def restore_known_good(root: Path, state: dict[str, Any], target: Path) -> None:
     record_pointer(state, root, target)
 
 
-def recovery_target(state: dict[str, Any]) -> Path:
-    selected = str(state.get("recovery_selected", ""))
+def recovery_target(root: Path, state: dict[str, Any]) -> Path:
+    selected = state.get("recovery_selected")
     active = state.get("active")
-    if selected and isinstance(active, dict) and active.get("id") == selected:
-        target = Path(str(active.get("path", "")))
+    if isinstance(selected, str) and isinstance(active, dict) and active.get("id") == selected:
+        target = parse_generation_entry(root, active, "active generation")
     else:
         previous = state.get("previous_known_good")
-        if not isinstance(previous, dict):
+        if previous is None:
             raise OmhError("no retained previous known-good generation is available")
-        target = Path(str(previous.get("path", "")))
+        target = parse_generation_entry(root, previous, "previous known-good generation")
     if not target.is_dir():
         raise OmhError("no retained previous known-good generation is available")
     return target
@@ -159,17 +161,60 @@ def collect_garbage(
     *,
     running_generation: Path | None,
 ) -> None:
-    active = str(state.get("active", {}).get("id", ""))
-    previous = str((state.get("previous_known_good") or {}).get("id", ""))
-    keep = {item for item in (active, previous, "bootstrap-legacy") if item}
+    keep = parse_gc_entries(root, state)
     if running_generation is not None:
         keep.add(running_generation.name)
     generations = root / "generations"
     for item in generations.iterdir() if generations.exists() else ():
-        if item.name not in keep:
+        junction = getattr(item, "is_junction", None)
+        if item.name not in keep and not item.is_symlink() and not (junction and junction()):
             shutil.rmtree(item, ignore_errors=True)
             result["cleanup"]["collected"].append(str(item))
     state["retained_generations"] = sorted(keep & {item.name for item in generations.iterdir()}) if generations.exists() else []
+
+
+def _retarget_launcher(root: Path, platform: SelfUpdatePlatform) -> bool:
+    directory = managed_command_bin_dir()
+    if directory is None:
+        return False
+    if platform.is_windows:
+        launcher = directory / "omh.cmd"
+        if not launcher.exists() and not launcher.is_symlink():
+            return False
+        platform.rewrite_command_shim(launcher, root)
+        return True
+    launcher = directory / "omh"
+    if not launcher.exists() and not launcher.is_symlink():
+        return False
+    target = platform.scripts_dir(root / "current" / "venv") / "omh"
+    temporary = launcher.with_name(f".{launcher.name}.{os.getpid()}.tmp")
+    temporary.unlink(missing_ok=True)
+    os.symlink(str(target), temporary)
+    os.replace(temporary, launcher)
+    return True
+
+
+def migrate_legacy(root: Path, state: dict[str, Any], paths: Any, platform: SelfUpdatePlatform) -> None:
+    if not migration_needed(state):
+        return
+    legacy = Path(str(state["active"]["path"]))
+    bootstrap = root / "generations" / "bootstrap-legacy"
+    bootstrap.mkdir(parents=True, exist_ok=True)
+    for name, target in (("venv", legacy), ("skills", paths.omh_home / "skills")):
+        link = bootstrap / name
+        if not link.exists() and not link.is_symlink():
+            platform.create_directory_link(root, link, target)
+    if pointer_target(root, platform=platform) is None:
+        switch_current(root, bootstrap, platform=platform)
+    launcher = _retarget_launcher(root, platform)
+    old = paths.omh_home / "skills"
+    changed = ensure_external_dir(remove_external_dir(read_config(paths.hermes_config_path), old).text, root / "current" / "skills")
+    if changed.changed:
+        write_config(paths.hermes_config_path, changed.text)
+    state["active"] = generation_entry(bootstrap, "bootstrap")
+    state["migration"] = {"status": "completed", "launcher_on_pointer": launcher, "registration_on_pointer": True, "completed_at": now()}
+    record_pointer(state, root, bootstrap)
+    save_state(root, state)
 
 
 def reconcile_interruption(

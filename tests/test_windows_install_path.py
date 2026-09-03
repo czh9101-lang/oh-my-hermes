@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -336,6 +337,50 @@ class ManagedCommandResolutionTests(unittest.TestCase):
             shim = self._shim(root, scripts / "omh.exe")
 
             self.assertFalse(command_entry_belongs_to_venv(shim, venv_dir))
+
+    @unittest.skipIf(os.name == "nt", "POSIX venv interpreters are symlinks")
+    def test_pointer_spelled_posix_generation_python_remains_installer_managed(self) -> None:
+        from omh.commands import setup as setup_commands
+        from omh.paths import managed_generation_for_executable, managed_workflow_pack_dir
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generation = root / "generations" / "20260903-live"
+            interpreter = generation / "venv" / "bin" / "python"
+            interpreter.parent.mkdir(parents=True)
+            try:
+                interpreter.symlink_to(Path(sys.executable).resolve())
+                current = root / "current"
+                current.symlink_to(generation, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("this host does not permit symlink creation")
+
+            pointer_interpreter = current / "venv" / "bin" / "python"
+            expected_generation = generation.resolve()
+            environment = {
+                "OMH_VENV_DIR": str(root / "venv"),
+                "OMH_SELF_UPDATE_GENERATION": "",
+            }
+            with (
+                patch.dict(os.environ, environment, clear=False),
+                patch.object(setup_commands.sys, "executable", str(pointer_interpreter)),
+            ):
+                self.assertEqual(managed_generation_for_executable(pointer_interpreter), expected_generation)
+                self.assertEqual(managed_workflow_pack_dir(), expected_generation / "skills")
+                self.assertTrue(setup_commands._managed_command_runtime()["managed"])
+
+            for unrelated in (
+                root / "generations-backup" / generation.name / "venv" / "bin" / "python",
+                root / "external" / "venv" / "bin" / "python",
+            ):
+                unrelated.parent.mkdir(parents=True)
+                unrelated.symlink_to(Path(sys.executable).resolve())
+                with (
+                    patch.dict(os.environ, environment, clear=False),
+                    patch.object(setup_commands.sys, "executable", str(unrelated)),
+                ):
+                    self.assertIsNone(managed_generation_for_executable(unrelated), unrelated)
+                    self.assertFalse(setup_commands._managed_command_runtime()["managed"])
 
 
 class ManagedCommandLocationTests(unittest.TestCase):

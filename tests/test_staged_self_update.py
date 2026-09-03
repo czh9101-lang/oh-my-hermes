@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from omh.commands.setup import _run_command_package_self_update
 from omh.core.errors import OmhError
-from omh.install import self_update
+from omh.install import self_update, self_update_state
 from omh.install.self_update import run_installer_self_update, switch_current
 from omh.install.self_update_platform import SelfUpdatePlatform, _remove_directory_link
 from omh.install.self_update_state import STATE_SCHEMA_VERSION, collect_garbage, pointer_target
@@ -161,7 +161,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             legacy, args, plan = self._fixture(root)
-            with patch.object(self_update, "_retarget_launcher", side_effect=OSError("locked")):
+            with patch.object(self_update_state, "_retarget_launcher", side_effect=OSError("locked")):
                 result = self._run(root, args, plan, self._runner())
             self.assertEqual(result["phase"], "migration")
             self.assertFalse(Path(result["candidate"]["path"]).exists())
@@ -201,6 +201,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
 
                 result = self._run(root, args, plan, recording_runner)
                 self.assertFalse(result["ok"])
+                self.assertEqual(result["phase"], "post_activation")
                 self.assertTrue(result["rollback"]["performed"])
                 self.assertEqual(sum("--command-package-updated" in call and "update" not in call for call in calls), 2)
                 self._assert_pair(root, previous)
@@ -232,9 +233,33 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 atomic_write_json(root / "self-update.json", state, private=True)
                 result = self._run(root, args, plan, self._runner(failure="pip"))
                 expected = "completed_interrupted_activation" if at_candidate else "discarded_unswitched_candidate"
+                expected_phase = "recovery" if at_candidate else "staging"
+                self.assertEqual(result["phase"], expected_phase)
                 self.assertEqual(result["recovery"]["action"], expected)
                 self.assertEqual((root / "current").resolve(), (candidate if at_candidate else previous).resolve())
                 self._assert_pair(root)
+
+    def test_interrupted_rollback_reports_the_recovery_phase(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy, args, plan = self._fixture(root, pointer=True)
+            previous = root / "generations" / "bootstrap-legacy"
+            candidate = root / "generations" / "interrupted"
+            (candidate / "venv" / "bin").mkdir(parents=True)
+            (candidate / "skills").mkdir()
+            switch_current(root, candidate)
+            state = json.loads((root / "self-update.json").read_text())
+            state["activation_in_progress"] = {
+                "candidate": str(candidate),
+                "previous": str(previous),
+                "phase": "post_switch",
+            }
+            atomic_write_json(root / "self-update.json", state, private=True)
+            result = self._run(root, args, plan, self._runner(failure="post"))
+            self.assertEqual(result["phase"], "recovery")
+            self.assertEqual(result["recovery"]["action"], "rolled_back_interrupted_activation")
+            self.assertTrue(result["rollback"]["performed"])
+            self.assertEqual((root / "current").resolve(), previous.resolve())
 
     def test_corrupt_and_newer_state_refuse_without_overwriting(self):
         for contents in ("not json", json.dumps({"schema_version": "self_update_state/v99"})):
@@ -247,6 +272,104 @@ class StagedSelfUpdateTests(unittest.TestCase):
                     self._run(root, args, plan, self._runner())
                 self.assertEqual(state_path.read_text(), contents)
                 self._assert_pair(root)
+
+    def test_invalid_marker_candidates_never_delete_or_reconcile_outside_generations(self):
+        for name, candidate in (
+            ("traversal", "{root}/generations/../outside"),
+            ("absolute", "{outside}"),
+            ("symlink", "{link}"),
+        ):
+            with self.subTest(name), TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                legacy, args, plan = self._fixture(root, pointer=True)
+                previous = (root / "current").resolve()
+                outside = root / "outside"
+                outside.mkdir()
+                sentinel = outside / "sentinel"
+                sentinel.write_text("do not delete")
+                link = root / "generations" / "escaped"
+                link.symlink_to(outside, target_is_directory=True)
+                raw_candidate = candidate.format(root=root, outside=outside, link=link)
+                state = json.loads((root / "self-update.json").read_text())
+                state["activation_in_progress"] = {
+                    "candidate": raw_candidate,
+                    "previous": str(previous),
+                    "phase": "pre_switch",
+                }
+                atomic_write_json(root / "self-update.json", state, private=True)
+                error = None
+                try:
+                    self._run(root, args, plan, self._runner(failure="pip"))
+                except OmhError as exc:
+                    error = exc
+                self.assertTrue(sentinel.exists(), "invalid marker candidate deleted an external sentinel")
+                self.assertIsInstance(error, OmhError, "invalid marker candidate was reconciled instead of refused")
+
+    def test_invalid_persisted_generation_entries_never_switch_or_reenter(self):
+        for name, mutate in (
+            ("mismatched-id-path", lambda state, outside, link: state["active"].update(id="wrong-id")),
+            ("mismatched-path", lambda state, outside, link: state["active"].update(path=str(outside.parent / "generations" / "other"))),
+            ("external-active", lambda state, outside, link: state.update(active=self._entry(outside))),
+            ("external-previous", lambda state, outside, link: state.update(previous_known_good=self._entry(outside))),
+            ("symlink-active", lambda state, outside, link: state.update(active=self._entry(link))),
+            ("external-pointer", lambda state, outside, link: state["pointer"].update(target="../../outside")),
+        ):
+            with self.subTest(name), TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                legacy, args, plan = self._fixture(root, pointer=True)
+                outside = root / "outside"
+                (outside / "venv" / "bin").mkdir(parents=True)
+                sentinel = outside / "venv" / "bin" / "sentinel"
+                sentinel.write_text("do not execute")
+                link = root / "generations" / "escaped-active"
+                link.symlink_to(outside, target_is_directory=True)
+                state_path = root / "self-update.json"
+                state = json.loads(state_path.read_text())
+                state["previous_known_good"] = self._entry((root / "current").resolve())
+                mutate(state, outside, link)
+                atomic_write_json(state_path, state, private=True)
+                args.recover_known_good = True
+                calls = []
+                runner = self._runner()
+
+                def recording_runner(command, **kwargs):
+                    calls.append(command)
+                    return runner(command, **kwargs)
+
+                error = None
+                try:
+                    self._run(root, args, plan, recording_runner)
+                except OmhError as exc:
+                    error = exc
+                self.assertTrue(sentinel.exists(), "invalid persisted entry reached an external generation")
+                self.assertEqual(calls, [], "invalid persisted generation entry was re-entered")
+                self.assertIsInstance(error, OmhError, "invalid persisted generation entry was switched or re-entered")
+
+    def test_malformed_marker_refuses_without_overwriting_state(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy, args, plan = self._fixture(root, pointer=True)
+            state_path = root / "self-update.json"
+            state = json.loads(state_path.read_text())
+            state["activation_in_progress"] = {"candidate": str(root / "outside")}
+            atomic_write_json(state_path, state, private=True)
+            before = state_path.read_bytes()
+            with self.assertRaises(OmhError):
+                self._run(root, args, plan, self._runner())
+            self.assertEqual(state_path.read_bytes(), before)
+
+    def test_gc_refuses_invalid_state_without_deleting_generation_entries(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            outside = root / "outside"
+            outside.mkdir()
+            stale = root / "generations" / "stale"
+            stale.mkdir(parents=True)
+            state = {"active": self._entry(outside), "previous_known_good": None}
+            result = {"cleanup": {"collected": []}}
+            with self.assertRaises(OmhError):
+                collect_garbage(root, state, result, running_generation=None)
+            self.assertTrue(stale.exists(), "GC deleted an in-root generation from invalid state")
 
     def test_known_good_recovery_is_reentered_idempotent_and_refuses_missing_target(self):
         with TemporaryDirectory() as temporary:
@@ -332,7 +455,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
             shim = directory / "omh.cmd"
             shim.write_text("old", newline="")
             with patch.dict(os.environ, {"OMH_BIN_DIR": str(directory)}, clear=False):
-                self.assertTrue(self_update._retarget_launcher(root, platform))
+                self.assertTrue(self_update_state._retarget_launcher(root, platform))
             expected = str(root).replace("/", "\\") + "\\current\\venv\\Scripts\\omh.exe"
             self.assertIn(expected, shim.read_text())
             switch_current(root, candidate, platform=platform)
@@ -437,7 +560,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
 
             platform = SelfUpdatePlatform.windows(junction_runner)
             with patch.dict(os.environ, {"OMH_VENV_DIR": str(legacy), "OMH_BIN_DIR": str(directory)}, clear=False):
-                self.assertTrue(self_update._retarget_launcher(root, platform))
+                self.assertTrue(self_update_state._retarget_launcher(root, platform))
                 result = run_installer_self_update(args, plan, runner=self._runner(failure="post"), platform=platform)
             self.assertEqual(result["activation"]["status"], "ok")
             self.assertTrue(result["rollback"]["performed"])

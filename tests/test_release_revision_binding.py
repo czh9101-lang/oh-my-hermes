@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from _cli_harness import run_cli
 
@@ -38,11 +39,11 @@ def fake_git_runner(*, commit: str = COMMIT, tree: str = TREE, porcelain: str = 
         if fail:
             raise OSError("git is not available")
         args = list(command)
-        if args[:2] == ["git", "rev-parse"] and len(args) == 3 and args[2] == "HEAD":
+        if args[-2:] == ["rev-parse", "HEAD"]:
             return SimpleNamespace(returncode=0, stdout=commit + "\n", stderr="")
-        if args[:2] == ["git", "rev-parse"] and len(args) == 3:
+        if args[-2:] == ["rev-parse", "HEAD^{tree}"]:
             return SimpleNamespace(returncode=0, stdout=tree + "\n", stderr="")
-        if args[:2] == ["git", "status"]:
+        if "status" in args:
             return SimpleNamespace(returncode=0, stdout=porcelain, stderr="")
         return SimpleNamespace(returncode=1, stdout="", stderr="unexpected command")
 
@@ -178,6 +179,56 @@ class ReleaseRevisionBindingContractTests(unittest.TestCase):
             self.assertEqual(verdict["verification"], "matching")
             self.assertEqual(snapshot_tree(Path(tmp)), before)
 
+    def test_probe_uses_isolated_git_argv(self) -> None:
+        calls: list[list[str]] = []
+        delegate = fake_git_runner()
+
+        def runner(command, **kwargs):
+            calls.append(list(command))
+            return delegate(command, **kwargs)
+
+        identity = probe_source_identity("/repo", runner=runner)
+
+        self.assertEqual(identity["identity_status"], "available")
+        self.assertEqual(
+            calls,
+            [
+                ["git", "-c", "core.fsmonitor=false", "rev-parse", "HEAD"],
+                ["git", "-c", "core.fsmonitor=false", "rev-parse", "HEAD^{tree}"],
+                [
+                    "git",
+                    "-c",
+                    "core.fsmonitor=false",
+                    "--no-optional-locks",
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                ],
+            ],
+        )
+
+    def test_probe_ignores_configured_fsmonitor_and_untracked_visibility(self) -> None:
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            init_git_repo(repo)
+            sentinel = repo / ".fsmonitor-ran"
+            fsmonitor = repo / "fsmonitor-sentinel"
+            fsmonitor.write_text("#!/bin/sh\n: > .fsmonitor-ran\n", encoding="utf-8")
+            fsmonitor.chmod(0o700)
+            subprocess.run(["git", "add", fsmonitor.name], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "add fsmonitor fixture"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "core.fsmonitor", str(fsmonitor)], cwd=repo, check=True)
+            subprocess.run(["git", "config", "status.showUntrackedFiles", "no"], cwd=repo, check=True)
+            (repo / "untracked.txt").write_text("must be detected\n", encoding="utf-8")
+
+            identity = probe_source_identity(repo)
+
+            self.assertEqual(identity["identity_status"], "available")
+            self.assertFalse(sentinel.exists())
+            self.assertIs(identity["dirty"], True)
+            self.assertEqual(identity["dirty_file_count"], 1)
+
     def test_manifest_is_deterministic_and_carries_relative_paths_only(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = OmhPaths(omh_home=Path(tmp) / ".omh", hermes_home=Path(tmp) / ".hermes")
@@ -222,6 +273,102 @@ class ReleaseRevisionBindingContractTests(unittest.TestCase):
 
 
 class ReleaseRevisionBindingCliContractTests(unittest.TestCase):
+    def test_cli_default_home_resolves_missing_relative_omh_verify_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            repo = root / "repo"
+            repo.mkdir()
+            init_git_repo(repo)
+            previous_cwd = Path.cwd()
+            try:
+                environment = dict(os.environ)
+                environment.pop("OMH_HOME", None)
+                environment.pop("HERMES_HOME", None)
+                environment["HOME"] = str(home)
+                with patch.dict(os.environ, environment, clear=True):
+                    os.chdir(repo)
+                    status, _, stderr = run_cli(
+                        ["release", "evidence-bundle", "--version", "0.0.0", "--write", "--json"],
+                        output_json=False,
+                    )
+                    configured = home / ".omh" / "runtime" / "release-evidence" / "0.0.0.json"
+                    self.assertEqual(status, 0, stderr)
+                    self.assertTrue(configured.is_file())
+                    self.assertFalse((repo / ".omh").exists())
+
+                    status, stdout, stderr = run_cli(
+                        [
+                            "release",
+                            "evidence-bundle",
+                            "--version",
+                            "0.0.0",
+                            "--verify",
+                            ".omh/runtime/release-evidence/0.0.0.json",
+                            "--json",
+                        ],
+                        output_json=False,
+                    )
+                    self.assertEqual(status, 0, stderr)
+                    self.assertEqual(json.loads(stdout)["verification"], "matching")
+
+                    literal = repo / ".omh" / "runtime" / "release-evidence" / "0.0.0.json"
+                    literal.parent.mkdir(parents=True)
+                    literal.write_text(
+                        json.dumps({"schema_version": "omh_release_evidence_bundle/v1", "version": "0.0.0"}),
+                        encoding="utf-8",
+                    )
+                    status, stdout, _ = run_cli(
+                        [
+                            "release",
+                            "evidence-bundle",
+                            "--version",
+                            "0.0.0",
+                            "--verify",
+                            ".omh/runtime/release-evidence/0.0.0.json",
+                            "--json",
+                        ],
+                        output_json=False,
+                    )
+                    self.assertEqual(status, 1)
+                    self.assertEqual(json.loads(stdout)["verification"], "legacy_schema")
+
+                    status, stdout, _ = run_cli(
+                        ["release", "evidence-bundle", "--version", "0.0.0", "--verify", "runtime/release-evidence/0.0.0.json", "--json"],
+                        output_json=False,
+                    )
+                    self.assertEqual(status, 1)
+                    self.assertEqual(json.loads(stdout)["verification"], "missing")
+            finally:
+                os.chdir(previous_cwd)
+
+    def test_cli_missing_relative_omh_path_does_not_fall_back_to_an_arbitrarily_named_home(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            init_git_repo(repo)
+            base = ["--omh-home", str(root / "configured-omh-home"), "--hermes-home", str(root / ".hermes")]
+
+            status, _, stderr = run_cli(
+                base + ["release", "evidence-bundle", "--version", "0.0.0", "--write", "--repo-root", str(repo), "--json"],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(repo)
+                status, stdout, _ = run_cli(
+                    base + ["release", "evidence-bundle", "--version", "0.0.0", "--verify", ".omh/runtime/release-evidence/0.0.0.json", "--json"],
+                    output_json=False,
+                )
+            finally:
+                os.chdir(previous_cwd)
+
+            self.assertEqual(status, 1)
+            self.assertEqual(json.loads(stdout)["verification"], "missing")
+
     def test_cli_uses_version_filename_and_accepts_an_explicit_verify_path(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

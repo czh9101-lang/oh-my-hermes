@@ -525,7 +525,7 @@ def managed_generation_for_executable(executable: Path | None = None) -> Path | 
     if generations is None or not generations.exists():
         return None
     for generation in generations.iterdir():
-        if _is_relative_to(candidate, generation / "venv"):
+        if _is_relative_to_without_resolving_final_symlink(candidate, generation / "venv"):
             return generation
     return None
 
@@ -663,6 +663,20 @@ def command_entry_belongs_to_managed_install(path: Path) -> bool:
         return _is_relative_to(target, root / "current") or _is_relative_to(target, root / "generations")
     except OSError:
         return False
+
+
+def _is_relative_to_without_resolving_final_symlink(path: Path, parent: Path) -> bool:
+    """Test containment after resolving parent aliases, not a venv interpreter."""
+    try:
+        _resolve_parent_components(path).relative_to(parent.expanduser().resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _resolve_parent_components(path: Path) -> Path:
+    expanded = path.expanduser()
+    return expanded.parent.resolve() / expanded.name
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:
