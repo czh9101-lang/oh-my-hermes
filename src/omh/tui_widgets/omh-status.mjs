@@ -204,7 +204,14 @@ export default function register(sdk) {
     return `${Math.floor(seconds / 3600)}h ${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}m`
   }
 
-  const metricSegment = (kind, text) => ({ kind, text })
+  // `drop` is shed priority, not screen position. The metadata now reads in
+  // the order the figures explain each other -- rate beside the token count
+  // it is derived from, then cache, then turn -- while a narrowing terminal
+  // still sheds the least valuable figure first (rate, then cost, then
+  // turn), exactly as it did when position and priority were the same list.
+  // Two orders, because the figure that reads first is not the figure that
+  // should go first.
+  const metricSegment = (kind, text, drop = 0) => ({ drop, kind, text })
   // Only observed values render. The old permanent not-collected labels on
   // cache/ctx were honest but unresolvable for Hermes-native children — the
   // host never records a child's context percentage — and read as a fixable
@@ -260,10 +267,15 @@ export default function register(sdk) {
     // from row to row.
     const routeSegment = dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route)
     const optional = [
-      metricSegment('fallback', Number.isFinite(row.fallback_count) && row.fallback_count > 0 ? `fallback:${row.fallback_count}` : ''),
-      metricSegment('cache', observedPercent('cache', row.cache_hit_percentage)),
-      metricSegment('context', observedPercent('ctx', row.context_percentage)),
-      metricSegment('turn', turnTools),
+      metricSegment('fallback', Number.isFinite(row.fallback_count) && row.fallback_count > 0 ? `fallback:${row.fallback_count}` : '', 1),
+      // Rate reads immediately after the tail's token count ('tokens, tok/s,
+      // cache, turns 순으로'): one number is the other's derivative, so the
+      // pair belongs together on the line. Its drop rank keeps it the first
+      // figure a narrow terminal sheds all the same.
+      metricSegment('rate', Number.isFinite(row.tokens_per_second) ? `${Math.round(row.tokens_per_second)} tok/s` : '', 6),
+      metricSegment('cache', observedPercent('cache', row.cache_hit_percentage), 2),
+      metricSegment('context', observedPercent('ctx', row.context_percentage), 3),
+      metricSegment('turn', turnTools, 4),
       // A subscription-billed host records no per-call cost, so the reader
       // supplies a token-derived approximation flagged cost_approximate —
       // rendered with a `~` so it never reads as billing truth. A true zero
@@ -274,8 +286,8 @@ export default function register(sdk) {
         Number.isFinite(row.cost_usd) && row.cost_usd > 0
           ? `${row.cost_approximate ? '~' : ''}$${row.cost_usd.toFixed(4)}`
           : '',
+        5,
       ),
-      metricSegment('rate', Number.isFinite(row.tokens_per_second) ? `${Math.round(row.tokens_per_second)} tok/s` : ''),
     ].filter(segment => segment.text)
     const running = !row.state || row.state === 'running'
     // A running row's elapsed ticks in real time: the snapshot's value plus
@@ -303,7 +315,10 @@ export default function register(sdk) {
       ? ` · ${tokenText.padStart(6)} tokens`
       : ' '.repeat(tokensWidth)
     const tailState = padCells(stateText, stateWidth)
-    const tailRest = ` · ${padCells(elapsedText(elapsed) || '0s', 7)}${tokensColumn ? tokensPiece : ''}`
+    // Elapsed and the token count are one fixed-width tail but two colours,
+    // so they render as two pieces: same cells as before, split at the dot.
+    const tailRest = ` · ${padCells(elapsedText(elapsed) || '0s', 7)}`
+    const tailTokens = tokensColumn ? tokensPiece : ''
     const prefix = `${taskId} `
     const separator = '  ·  '
     const budget = Math.max(24, columns - 4)
@@ -323,7 +338,11 @@ export default function register(sdk) {
     while (segments.length) {
       const metadata = segments.map(item => item.text).join(separator)
       if (fixedWidth + cellWidth(separator) + cellWidth(metadata) + 2 <= budget) break
-      segments.pop()
+      let shed = 0
+      for (let index = 1; index < segments.length; index += 1) {
+        if (segments[index].drop > segments[shed].drop) shed = index
+      }
+      segments.splice(shed, 1)
     }
     const metadata = segments.map(segment => segment.text).join(separator)
     return {
@@ -334,6 +353,7 @@ export default function register(sdk) {
       segments,
       tailRest,
       tailState,
+      tailTokens,
       taskId: main ? 'MAIN'.padEnd(8) : taskId,
     }
   }
@@ -368,6 +388,14 @@ export default function register(sdk) {
       h(Text, {}, '  '),
       h(Text, { color: statusColor }, layout.tailState),
       h(Text, { color: t.color.muted }, layout.tailRest),
+      // The token count is the one figure on the row that is a plain
+      // quantity, so it reads in `statusFg` -- the tone the host's own status
+      // line spends on its token gauge -- instead of the muted tint every
+      // other metric shares ('tokens는 약간 회색'). The palette derives that
+      // tone as a literal grey (grayOf) and a skin may retune it to its own
+      // status-bar text, so it stays neutral against the muted run either
+      // way. Still a theme token, never a literal.
+      h(Text, { color: t.color.statusFg }, layout.tailTokens),
       ...layout.segments.map((segment, index) =>
         h(
           Text,
@@ -382,6 +410,13 @@ export default function register(sdk) {
                 // something other than the plain Hermes-native default,
                 // here the Maestro lane's own spawned CLI.
                 || segment.kind === 'maestro'
+                // Cache hit rate is the figure the owner reads first on a
+                // long run, and asked for in yellow. `warn` is the palette's
+                // only amber, so the cache figure shares a colour with the
+                // route warnings above -- it is told apart by its `cache`
+                // label and by sitting in the metric run, not the route
+                // column. No literal enters this file for it.
+                || segment.kind === 'cache'
                 ? t.color.warn
                 : t.color.muted,
             key: `${segment.kind}-${index}`,
