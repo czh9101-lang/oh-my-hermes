@@ -541,8 +541,8 @@ class TuiWidgetPackTests(unittest.TestCase):
         # 그뒤에 캐시히트나 턴'), so the order is title, route/category, then
         # `state · elapsed · N tokens` -- each piece padded to a constant cell
         # width so the token figures still line up vertically down the list --
-        # and only then cache, turn, cost, and rate, which the drop loop still
-        # sheds from the right without ever touching the tail.
+        # and only then rate, cache, turn and cost, which the drop loop still
+        # sheds by rank without ever touching the tail.
         self.assertIn("` · ${tokenText.padStart(6)} tokens`", widget)
         self.assertIn("const routeCap = Math.max(10, Math.min(30, Math.floor(columns * 0.24)))", widget)
         # The route column reserves its width per LIST, exactly like tokens:
@@ -553,7 +553,34 @@ class TuiWidgetPackTests(unittest.TestCase):
             widget,
         )
         self.assertIn("h(Text, { color: statusColor }, layout.tailState)", widget)
+        # The tail is one fixed-width block but two colours: elapsed keeps the
+        # muted tint every metric shares, and the token count -- the row's one
+        # plain quantity -- reads in `statusFg`, the tone the host status line
+        # spends on its own token gauge ('tokens는 약간 회색'). A theme token
+        # either way; no literal colour enters this widget.
         self.assertIn("h(Text, { color: t.color.muted }, layout.tailRest)", widget)
+        self.assertIn("h(Text, { color: t.color.statusFg }, layout.tailTokens)", widget)
+        self.assertIn("const tailTokens = tokensColumn ? tokensPiece : ''", widget)
+        # Rate reads beside the token count it is derived from ('tokens,
+        # tok/s, cache, turns 순으로'), so the metric run is ordered rate,
+        # cache, ctx, turn, cost on screen.
+        self.assertLess(widget.index("metricSegment('rate'"), widget.index("metricSegment('cache'"))
+        self.assertLess(widget.index("metricSegment('cache'"), widget.index("metricSegment('turn'"))
+        self.assertLess(widget.index("metricSegment('turn'"), widget.index("        'cost',"))
+        # Screen position stopped being shed priority when rate moved left, so
+        # each segment carries a `drop` rank and the loop sheds the highest --
+        # rate first, then cost, then turn -- exactly the order the tail's
+        # comment has always promised. Popping the last segment would now shed
+        # cost before rate and drop the cheapest figure last.
+        self.assertIn("const metricSegment = (kind, text, drop = 0) => ({ drop, kind, text })", widget)
+        self.assertIn("if (segments[index].drop > segments[shed].drop) shed = index", widget)
+        self.assertIn("segments.splice(shed, 1)", widget)
+        self.assertNotIn("segments.pop()", widget)
+        # Cache hit rate renders in the palette's amber ('cache는 노란색'),
+        # which it shares with the route/dispatch warnings; turn and rate stay
+        # muted, so the run reads grey count, muted rate, amber cache, muted
+        # turn.
+        self.assertIn("|| segment.kind === 'cache'\n                ? t.color.warn", widget)
         # The tokens column exists per LIST: a row with no observed count
         # holds the grid with blank cells, and a wave with no counts at all
         # drops the column instead of wasting the width.
