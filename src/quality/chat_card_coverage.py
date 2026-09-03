@@ -346,6 +346,14 @@ CHAT_CARD_COVERAGE_CASES: tuple[ChatCardCoverageCase, ...] = (
         "prepare_tech_debt_audit",
     ),
     ChatCardCoverageCase(
+        "award-bar-score",
+        "Award Bar Score",
+        "score our landing page against the css design awards bar",
+        "award-bar-score",
+        "award_bar_score",
+        "prepare_award_bar_score",
+    ),
+    ChatCardCoverageCase(
         "codegraph-refresh",
         "Codegraph Refresh",
         "codegraph-refresh",

@@ -141,6 +141,7 @@
    "content-operator",
    "media-input-operator",
    "design-orchestration",
+   "award-bar-score",
    "localization-review"
   ],
   "route_summary": "Prepare the copy, prompt, package, or QA contract before claiming generated output.",

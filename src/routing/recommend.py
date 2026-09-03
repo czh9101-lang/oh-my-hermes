@@ -949,6 +949,18 @@ _SKILL_POLICIES = {
             "RESOLVED/NEW/CARRIED against the previous ledger on rerun."
         ),
     ),
+    "award-bar-score": RecommendationPolicy(
+        next_action="prepare_award_bar_score",
+        evidence_boundary=(
+            "An award-bar score is a self-assessment against a published rubric; it is not a jury score, a "
+            "placement, an award, rendered visual evidence, accessibility conformance, or a measured performance run."
+        ),
+        wrapper_guidance=(
+            "Score UI, UX, and innovation separately with the rendered evidence each score was read from, compute "
+            "the weighted total against the published threshold, name the binding constraint, and record any "
+            "innovation move that costs an accessibility or performance budget as a tradeoff the user chooses."
+        ),
+    ),
     "model-optimization": RecommendationPolicy(
         next_action="run_hermes_research",
         evidence_boundary=(
@@ -1869,6 +1881,35 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     # unambiguous alone.
     "tech-debt-audit": frozenset(
         {"audit", "code", "debt", "is", "ledger", "our", "report", "tech", "technical", "where"}
+    ),
+    # `award-bar-score` names its work with words every other lane owns --
+    # "design" is the whole materials lane, "review" is code-review, "site",
+    # "website" and "page" are frontend, and "award", "score" and "day" are
+    # ordinary business vocabulary. Credited as bare tokens they claimed sales
+    # awards, performance reviews, and every site request. Complete phrases
+    # ("award winning website", "design award", ...) carry the intent; the only
+    # unambiguous bare tokens are the award bodies' own names, kept in the route
+    # hint's `tokens` tuple.
+    "award-bar-score": frozenset(
+        {
+            "award",
+            "awards",
+            "bar",
+            "css",
+            "day",
+            "design",
+            "it",
+            "make",
+            "my",
+            "of",
+            "ready",
+            "review",
+            "score",
+            "site",
+            "the",
+            "website",
+            "winning",
+        }
     ),
     # `refactor-plan` names its work with the two most ordinary words in the
     # catalog -- "refactor" and "plan" -- plus "phases", "restructure", and

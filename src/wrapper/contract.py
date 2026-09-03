@@ -363,6 +363,8 @@ VISIBLE_ACTIONS = (
     "show_codegraph_refresh",
     "prepare_inference_serving",
     "show_inference_serving",
+    "prepare_award_bar_score",
+    "show_award_bar_score",
     "prepare_tech_debt_audit",
     "show_tech_debt_audit",
     "prepare_refactor_plan",
@@ -791,6 +793,13 @@ _HUMAN_ACK_BODY_BY_SKILL = {
         "RESOLVED/NEW/CARRIED reconciliation against the previous ledger. Detection commands stay prepared until "
         "their results are observed."
     ),
+    "award-bar-score": (
+        "I will prepare the award-bar score: a score for each of UI, UX, and innovation with the rendered "
+        "evidence it was read from, the weighted total against the published threshold, and the binding "
+        "constraint - the one axis whose gain moves the total most. Any innovation move that costs an "
+        "accessibility or performance budget is recorded as a tradeoff for you to choose. No jury outcome "
+        "is claimed, and axes stay not_observed until the page is rendered."
+    ),
     "codegraph-refresh": (
         "I will prepare a codegraph refresh: repo root, build/summary/handoff command choices, staleness scope, "
         "file-write policy, and observed-only codegraph summary or handoff evidence. Command execution and "
@@ -967,6 +976,7 @@ _ACK_PRIMARY_ACTIONS_BY_NEXT_ACTION = {
     "prepare_codebase_onboarding": ("prepare_codebase_onboarding", "Prepare onboarding"),
     "prepare_codegraph_refresh": ("prepare_codegraph_refresh", "Refresh codegraph"),
     "prepare_inference_serving": ("prepare_inference_serving", "Prepare serving"),
+    "prepare_award_bar_score": ("prepare_award_bar_score", "Score award bar"),
     "prepare_tech_debt_audit": ("prepare_tech_debt_audit", "Audit tech debt"),
     "prepare_refactor_plan": ("prepare_refactor_plan", "Plan refactor"),
     "prepare_codebase_uml": ("prepare_codebase_uml", "Draw codebase"),
@@ -2531,6 +2541,38 @@ _WORKFLOW_OPERATIONS_CHAT_CARDS: dict[str, dict[str, object]] = {
             "quality improvement",
             "review",
             "CI",
+        ],
+    },
+    "award-bar-score": {
+        "kind": "award_bar_score",
+        "headline": "I can score this surface against the published award bar.",
+        "body": (
+            "I will score UI, UX, and innovation separately from rendered evidence, compute the weighted total "
+            "against the published threshold, and name the binding constraint - the axis holding the total down. "
+            "Innovation moves that cost an accessibility or performance budget are recorded as tradeoffs you "
+            "choose, because those budgets outrank the score."
+        ),
+        "phase": "award_bar_score_prepared",
+        "next_action": "prepare_award_bar_score",
+        "artifact_schema": "award_bar_score/v1",
+        "claim_boundary_suffix": "It is a self-assessment against a published rubric, not a jury score, a placement, or an award.",
+        "actions": [
+            {"id": "prepare_award_bar_score", "label": "Score award bar", "style": "primary"},
+            {"id": "prepare_visual_qa", "label": "Capture the page", "style": "secondary"},
+            {"id": "show_status", "label": "Show status", "style": "secondary"},
+        ],
+        "recommended_flow": [
+            "confirm_rendered_evidence",
+            "score_each_axis_with_evidence",
+            "compute_weighted_total_against_threshold",
+            "name_binding_constraint_and_tradeoffs",
+        ],
+        "evidence_not_observed": [
+            "rendered captures",
+            "jury or award outcome",
+            "accessibility conformance",
+            "performance budget runs",
+            "implementation",
         ],
     },
     "codegraph-refresh": {

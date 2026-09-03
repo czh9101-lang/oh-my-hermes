@@ -134,9 +134,9 @@ NON_SKILL_BACKTICKS = frozenset(
 # `ralplan` for a contested direction), and `ralplan` hands back a decided
 # refactor that only needs its execution shape. One new case (ralplan's new
 # statement), three new pairs; the two rewritten statements already counted.
-EXPECTED_DEFERENCE_CASES = 184
-EXPECTED_DEFERENCE_PAIRS = 197
-EXPECTED_DEFERRING_OWNERS = 59
+EXPECTED_DEFERENCE_CASES = 188
+EXPECTED_DEFERENCE_PAIRS = 201
+EXPECTED_DEFERRING_OWNERS = 60
 
 # The ratchet. Recording a new inversion must be a visible edit to this number,
 # not one more dict line with a plausible sentence attached.

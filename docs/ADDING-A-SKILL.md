@@ -65,6 +65,18 @@ Adding a routing/intervention case moves exact-count assertions in
 `tests/test_hermes_ux_quality.py`, and `tests/test_release_smoke.py`. Grep
 those four for the old count.
 
+Two more sites are not in `omh release drift`'s report, so a green drift run
+does not clear them:
+
+- `tests/test_catalog_deference_policy.py` — every `do_not_use_when` line that
+  backticks a sibling skill adds a deference case, so a skill deferring to four
+  siblings moves `EXPECTED_DEFERENCE_CASES`, `EXPECTED_DEFERENCE_PAIRS`, and
+  `EXPECTED_DEFERRING_OWNERS` together.
+- `tests/test_router_content.py` — asserts the `docs/README.md` skill count
+  string, and `tests/test_routing_precision.py` additionally asserts
+  `total_case_count` and `total_passing_count`, which are the negative and
+  intervention corpora summed rather than either count alone.
+
 ## 4. Regenerate every generated artifact family
 
 ```sh
