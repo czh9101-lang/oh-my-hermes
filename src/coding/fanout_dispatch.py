@@ -1563,7 +1563,7 @@ def dispatch_fanout(
                     result = future.result()
                     results[unit_id] = result
                     if admission is not None:
-                        admission.observe(result)
+                        admission.observe(unit_id, result)
                     pending.remove(unit_id)
             _admit_frontier()
         pool.shutdown(wait=True)
@@ -1677,6 +1677,8 @@ def dispatch_fanout(
         "state_path": str(review_budget.path),
         "claim_boundary": "Budget accounting is not review, verification, CI, or merge evidence.",
     }
+    if admission is not None:
+        summary["adaptive_admission"] = admission.receipt()
     if concurrency_policy:
         # How the pool width was chosen (policy default vs flag, any clamp)
         # so a dispatch record answers "why did only N run at once".
