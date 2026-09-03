@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from ..system.metadata_safety import redact_metadata_text
+
 FANOUT_ADMISSION_SCHEMA_VERSION = "fanout_admission/v1"
 FANOUT_ADMISSION_ADJUSTMENT_LIMIT = 32
 FANOUT_ADMISSION_CLAIM_BOUNDARY = (
@@ -58,7 +60,7 @@ class AdaptiveFanoutAdmission:
         if len(self._adjustments) < FANOUT_ADMISSION_ADJUSTMENT_LIMIT:
             self._adjustments.append(
                 {
-                    "unit_id": str(unit_id),
+                    "unit_id": redact_metadata_text(str(unit_id), limit=64),
                     "status_class": status_class,
                     "action": action,
                     "window_before": before,
