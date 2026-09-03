@@ -317,7 +317,7 @@ def cmd_loop_queue_recover_dispatch(args: argparse.Namespace) -> int:
             _paths(args),
             args.loop_id,
             args.queue_id,
-            prior_attempt_id=args.prior_attempt_id,
+            prior_attempt_id=args.prior_attempt_id or "",
             prior_outcome=args.prior_outcome,
             outcome_evidence_refs=args.outcome_evidence_ref or [],
             outcome_summary=args.outcome_summary or "",
@@ -536,7 +536,7 @@ def _add_loop_commands(sub) -> None:
     queue_recover_dispatch = queue_sub.add_parser("recover-dispatch")
     queue_recover_dispatch.add_argument("--loop", dest="loop_id", required=True)
     queue_recover_dispatch.add_argument("--queue", dest="queue_id", required=True)
-    queue_recover_dispatch.add_argument("--prior-attempt-id", required=True)
+    queue_recover_dispatch.add_argument("--prior-attempt-id", default="")
     queue_recover_dispatch.add_argument(
         "--prior-outcome",
         choices=LOOP_DISPATCH_RECOVERY_OUTCOMES,

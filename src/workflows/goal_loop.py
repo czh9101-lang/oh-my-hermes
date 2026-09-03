@@ -1527,6 +1527,14 @@ def build_loop_queue_handoff(paths: OmhPaths, loop_id: str, queue_id: str) -> di
     if item.get("status") != "prepared_not_observed":
         raise ValueError("only prepared_not_observed loop queue items can render a handoff")
     text = _queue_handoff_text(cycle, item)
+    executor_session = _dict_value(item, "executor_session")
+    active_attempt_id = str(executor_session.get("active_attempt_id", ""))
+    dispatch_attempts = [entry for entry in executor_session.get("dispatch_attempts", []) if isinstance(entry, dict)]
+    actions = ["observe_loop_queue", "block_loop_queue", "show_loop_status"]
+    if dispatch_attempts:
+        # observe_loop_queue needs the attempt id once recovery has made the
+        # history ambiguous, so the surface that names the action carries it.
+        actions.insert(1, "recover_loop_queue_dispatch")
     return {
         "schema_version": LOOP_QUEUE_HANDOFF_SCHEMA,
         "loop_id": cycle["loop_id"],
@@ -1538,8 +1546,10 @@ def build_loop_queue_handoff(paths: OmhPaths, loop_id: str, queue_id: str) -> di
         "worktree_plan": item.get("worktree_plan", _empty_worktree_plan()),
         "subagent_plan": item.get("subagent_plan", _empty_subagent_plan()),
         "connector_plan": item.get("connector_plan", _connector_plan("", "", str(item.get("planned_action", "")))),
+        "active_dispatch_attempt_id": active_attempt_id,
+        "dispatch_attempt_count": len(dispatch_attempts),
         "next_action": "observe_or_block_loop_queue",
-        "actions": ["observe_loop_queue", "block_loop_queue", "show_loop_status"],
+        "actions": actions,
         "claim_boundary": _runtime_claim_boundary(),
     }
 
@@ -1927,9 +1937,12 @@ def dispatch_loop_queue_item(
                 raise ValueError(
                     "loop queue item already has a different executor dispatch; use explicit recovery"
                 )
-        attempts = [entry for entry in existing.get("dispatch_attempts", []) if isinstance(entry, dict)]
+        # Nothing to carry forward: an attempt is only ever appended once the
+        # status is dispatched, an equal dispatch returned above, a divergent one
+        # raised, and progress_observed implies an observed item the precondition
+        # already rejected. So this is always the first attempt.
         attempt = (
-            _new_dispatch_attempt(queue_id, len(attempts) + 1, dispatch)
+            _new_dispatch_attempt(queue_id, 1, dispatch)
             if dispatch["dispatch_status"] == "dispatched"
             else None
         )
@@ -1937,7 +1950,7 @@ def dispatch_loop_queue_item(
             **_empty_executor_session(str(capability["executor"])),
             **dispatch,
             "active_attempt_id": str(attempt["attempt_id"]) if attempt else "",
-            "dispatch_attempts": [*attempts, *([attempt] if attempt else [])],
+            "dispatch_attempts": [attempt] if attempt else [],
             "capability": capability,
         }
         runtime["last_queue_id"] = str(item["queue_id"])
@@ -1965,10 +1978,10 @@ def recover_loop_queue_item_dispatch(
     loop_id: str,
     queue_id: str,
     *,
-    prior_attempt_id: str,
     prior_outcome: str,
     outcome_evidence_refs: Iterable[str],
     executor: str,
+    prior_attempt_id: str = "",
     session_ref: str = "",
     thread_ref: str = "",
     evidence_refs: Iterable[str] | None = None,
@@ -1977,9 +1990,7 @@ def recover_loop_queue_item_dispatch(
     expected_revision: int | None = None,
     mutation_id: str | None = None,
 ) -> dict[str, Any]:
-    attempt_id = _safe_summary(prior_attempt_id, limit=120)
-    if not attempt_id:
-        raise ValueError("prior dispatch attempt id is required")
+    attempt_id = _safe_summary(prior_attempt_id, limit=120) if prior_attempt_id.strip() else ""
     if prior_outcome not in LOOP_DISPATCH_RECOVERY_OUTCOMES:
         raise ValueError(
             f"prior dispatch outcome must be one of: {', '.join(LOOP_DISPATCH_RECOVERY_OUTCOMES)}"
@@ -1999,10 +2010,15 @@ def recover_loop_queue_item_dispatch(
             raise ValueError("only prepared_not_observed loop queue items can recover executor dispatch")
         existing = _dict_value(item, "executor_session")
         attempts = [dict(entry) for entry in existing.get("dispatch_attempts", []) if isinstance(entry, dict)]
-        if not attempts:
-            raise ValueError("legacy executor dispatch has no attempt identity; record its outcome before recovery")
-        if existing.get("active_attempt_id") != attempt_id or attempts[-1].get("attempt_id") != attempt_id:
-            raise ValueError("prior dispatch attempt must be the active attempt")
+        if attempts:
+            if not attempt_id:
+                raise ValueError("prior dispatch attempt id is required")
+            if existing.get("active_attempt_id") != attempt_id or attempts[-1].get("attempt_id") != attempt_id:
+                raise ValueError("prior dispatch attempt must be the active attempt")
+        else:
+            attempts = [_adopted_legacy_dispatch_attempt(queue_id, existing)]
+            if attempt_id and attempts[-1]["attempt_id"] != attempt_id:
+                raise ValueError("prior dispatch attempt must be the active attempt")
         attempts[-1] = {
             **attempts[-1],
             "delivery_outcome": prior_outcome,
@@ -2014,6 +2030,9 @@ def recover_loop_queue_item_dispatch(
             ),
         }
         next_attempt = _new_dispatch_attempt(queue_id, len(attempts) + 1, dispatch)
+        # Unlike the first dispatch, recovery spreads **existing: the item keeps
+        # whatever progress the earlier attempt already recorded, and only the
+        # dispatch identity is replaced.
         item["executor_session"] = {
             **existing,
             **dispatch,
@@ -3378,6 +3397,26 @@ def _new_dispatch_attempt(
     }
 
 
+def _adopted_legacy_dispatch_attempt(
+    queue_id: str,
+    executor_session: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Attempt 1 for a record written before dispatch attempt history existed.
+
+    Refusing recovery on such a record leaves it with no way forward at all -
+    dispatch already refuses a divergent retry - so the legacy executor_session
+    is adopted as the attempt it always was. recorded_at is empty because the
+    legacy shape never stored a dispatch timestamp, and inventing one here
+    would be a claim the record cannot support.
+    """
+    if str(executor_session.get("dispatch_status", "")) != "dispatched":
+        raise ValueError("loop queue item has no recorded executor dispatch to recover")
+    return {
+        **_new_dispatch_attempt(queue_id, 1, _executor_session_dispatch(executor_session)),
+        "recorded_at": "",
+    }
+
+
 def _resolve_observed_dispatch_attempt(
     executor_session: Mapping[str, Any],
     requested_attempt_id: str,
@@ -3399,6 +3438,10 @@ def _resolve_observed_dispatch_attempt(
         raise ValueError("dispatch attempt id does not exist on this loop queue item")
     if expected_executor and attempt.get("executor") != expected_executor:
         raise ValueError(f"dispatch attempt is not owned by {expected_executor}")
+    if attempt.get("delivery_outcome") == "delivery_failed":
+        raise ValueError(
+            "dispatch attempt was recorded as delivery_failed; a later observation cannot confirm it"
+        )
     return requested
 
 
@@ -3417,14 +3460,36 @@ def _confirm_dispatch_attempt(
         attempts[index] = {
             **attempt,
             "delivery_outcome": "delivery_confirmed",
-            "outcome_evidence_refs": _safe_list(
-                [*_string_list(attempt.get("outcome_evidence_refs", [])), *refs],
-                limit=320,
-            ),
+            "outcome_evidence_refs": refs,
             "outcome_summary": "Executor progress or result was observed for this dispatch attempt.",
+            "outcome_history": _superseded_outcomes(attempt),
         }
         break
     return attempts
+
+
+def _superseded_outcomes(attempt: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Prior delivery claims, kept as their own entries rather than merged.
+
+    An attempt recorded as delivery_unknown carries the evidence for that
+    uncertainty - an acknowledgement timeout, say. Concatenating those refs
+    onto the confirmation would make the timeout read as evidence that the
+    dispatch arrived, so the superseded claim keeps its own outcome, refs and
+    summary here and outcome_evidence_refs holds only the current outcome.
+    """
+    history = [dict(entry) for entry in attempt.get("outcome_history", []) if isinstance(entry, dict)]
+    prior_refs = _safe_list(_string_list(attempt.get("outcome_evidence_refs", [])), limit=320)
+    if not prior_refs:
+        return history
+    return [
+        *history,
+        {
+            "delivery_outcome": str(attempt.get("delivery_outcome", "")),
+            "outcome_evidence_refs": prior_refs,
+            "outcome_summary": str(attempt.get("outcome_summary", "")),
+            "superseded_at": utc_now(),
+        },
+    ]
 
 
 def _narration_next_message(status: str, executor_session: dict[str, Any]) -> str:
@@ -4132,6 +4197,10 @@ def _queue_item_summary(item: dict[str, Any]) -> dict[str, Any]:
         "reason": str(item.get("reason", "")),
         "observed": bool(item.get("observed", False)),
         "observed_evidence_refs": _string_list(item.get("observed_evidence_refs", [])),
+        "active_dispatch_attempt_id": str(_dict_value(item, "executor_session").get("active_attempt_id", "")),
+        "dispatch_attempt_count": len(
+            [entry for entry in _dict_value(item, "executor_session").get("dispatch_attempts", []) if isinstance(entry, dict)]
+        ),
         "blocker_reason": str(item.get("blocker_reason", "")),
         "worktree_strategy": str(_dict_value(item, "worktree_plan").get("strategy", "")),
         "subagent_strategy": str(_dict_value(item, "subagent_plan").get("strategy", "")),
@@ -4457,6 +4526,17 @@ def _validate_executor_dispatch_session(
             errors.append(f"{attempt_prefix}.outcome_evidence_refs must be a string list")
         elif outcome in {"delivery_confirmed", "delivery_failed"} and not outcome_refs:
             errors.append(f"{attempt_prefix}.outcome_evidence_refs are required for a conclusive outcome")
+        if "outcome_history" in attempt:
+            history = attempt.get("outcome_history")
+            if not isinstance(history, list) or not all(isinstance(entry, dict) for entry in history):
+                errors.append(f"{attempt_prefix}.outcome_history must be a list of superseded outcomes")
+            elif any(
+                entry.get("delivery_outcome") not in {"delivery_unknown", "delivery_confirmed", "delivery_failed"}
+                for entry in history
+            ):
+                errors.append(f"{attempt_prefix}.outcome_history records an unsupported delivery outcome")
+            elif any(entry.get("delivery_outcome") == "delivery_failed" for entry in history):
+                errors.append(f"{attempt_prefix}.outcome_history cannot supersede a recorded delivery failure")
 
     active_attempt = attempts_by_id.get(active_attempt_id)
     if active_attempt is None:

@@ -2059,9 +2059,21 @@ Replaying the exact metadata is a no-op, divergent metadata is refused, and
 attempt. Recovery records the prior attempt as `delivery_failed` or
 `delivery_unknown` with evidence before appending; an observation names the
 attempt it confirms, and must do so explicitly once recovery has made the
-history ambiguous. The legacy single `executor_session` fields remain a mirror
-of the active attempt, and records written before attempt history remain
-readable. Other queue mutators retain status preconditions — `observe` requires
+history ambiguous. Outcomes only ever tighten: an observation that confirms an
+attempt moves the superseded claim, with its own evidence and summary, into
+that attempt's `outcome_history` rather than merging the two ref lists — an
+acknowledgement timeout must not end up cited as evidence that the dispatch
+arrived — and `delivery_failed` is final, so a later observation is refused
+instead of reversing it. The legacy single `executor_session` fields remain a
+mirror of the active attempt. Records written before attempt history stay
+readable, and recovery adopts such a session as attempt 1 rather than refusing
+it, because dispatch already refuses their divergent retry and refusing here
+too would leave an in-flight legacy item with no way forward; the adopted
+attempt carries an empty `recorded_at`, since the legacy shape never stored a
+dispatch timestamp. `build_loop_queue_handoff` carries
+`active_dispatch_attempt_id` and `dispatch_attempt_count`, so the surface that
+names `observe_loop_queue` also hands over the id that action now requires.
+Other queue mutators retain status preconditions — `observe` requires
 `prepared_not_observed`, and `block` refuses an already-observed item. Wrapper
 sessions (`src/wrapper/sessions.py`) mutate in place — status transitions and a
 single `current_run_id` — instead of appending id-bearing items, so a repeat
