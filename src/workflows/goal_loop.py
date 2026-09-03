@@ -1506,6 +1506,12 @@ def list_loop_queue(paths: OmhPaths, loop_id: str, *, include_observed: bool = F
         "pending_queue_count": sum(1 for item in queue if item.get("status") == "prepared_not_observed"),
         "blocked_queue_count": sum(1 for item in queue if item.get("status") in {"blocked", "blocked_by_permission", "blocked_by_wait"}),
         "observed_queue_count": sum(1 for item in queue if item.get("status") == "observed" and item.get("observed") is True),
+        "unaccounted_dispatch_queue_count": sum(
+            1
+            for item in queue
+            if item.get("status") == "observed"
+            and _unresolved_dispatch_attempt_ids(_dict_value(item, "executor_session"))
+        ),
         "claim_boundary": _runtime_claim_boundary(),
     }
 
@@ -1548,6 +1554,7 @@ def build_loop_queue_handoff(paths: OmhPaths, loop_id: str, queue_id: str) -> di
         "connector_plan": item.get("connector_plan", _connector_plan("", "", str(item.get("planned_action", "")))),
         "active_dispatch_attempt_id": active_attempt_id,
         "dispatch_attempt_count": len(dispatch_attempts),
+        "unresolved_dispatch_attempt_ids": _unresolved_dispatch_attempt_ids(executor_session),
         "next_action": "observe_or_block_loop_queue",
         "actions": actions,
         "claim_boundary": _runtime_claim_boundary(),
@@ -2203,6 +2210,7 @@ def build_loop_cycle_narration(paths: OmhPaths, loop_id: str, queue_id: str = ""
         "executor_status": f"{executor_label} 상태: {executor_session.get('dispatch_status', 'not_dispatched')}",
         "progress_summary": progress_text,
         "verification_status": str(_dict_value(item, "verification_plan").get("expected_signal", "verification not planned yet")),
+        "unresolved_dispatch_attempts": _unresolved_dispatch_attempt_ids(executor_session),
         "next_message": _narration_next_message(status, executor_session),
         "not_evidence_yet": ["implementation", "review", "ci", "merge", "goal_completion"],
         "claim_boundary": _runtime_claim_boundary(),
@@ -2240,15 +2248,23 @@ def observe_loop_queue_item(
             executor_session,
             dispatch_attempt_id,
         )
+        updated_session = dict(executor_session)
         if observed_attempt_id:
-            item["executor_session"] = {
-                **executor_session,
-                "dispatch_attempts": _confirm_dispatch_attempt(
-                    executor_session,
-                    observed_attempt_id,
-                    aggregate_refs,
-                ),
-            }
+            updated_session["dispatch_attempts"] = _confirm_dispatch_attempt(
+                executor_session,
+                observed_attempt_id,
+                aggregate_refs,
+            )
+        if updated_session.get("dispatch_status") == "dispatched":
+            # observe_codex_loop_queue_item already does this. Leaving it at
+            # "dispatched" made the narration tell an operator to go observe
+            # progress for an item that had just been observed, because
+            # _narration_next_message reads dispatch_status before status.
+            # A prepared or never-requested session is untouched: no dispatch
+            # happened, so there is no executor progress to claim.
+            updated_session["dispatch_status"] = "progress_observed"
+        if updated_session != executor_session:
+            item["executor_session"] = updated_session
         item["status"] = "observed"
         item["observed"] = True
         item["observed_dispatch_attempt_id"] = observed_attempt_id
@@ -3417,6 +3433,21 @@ def _adopted_legacy_dispatch_attempt(
     }
 
 
+def _unresolved_dispatch_attempt_ids(executor_session: Mapping[str, Any]) -> list[str]:
+    """Attempts that were dispatched and never accounted for.
+
+    Recovery appends an attempt without retracting the one before it, so an
+    item can close with a dispatch nobody ever resolved -- the executor may
+    have run it twice. The record was already honest about that; nothing read
+    it back. These ids are what a reader needs to say so.
+    """
+    return [
+        str(entry.get("attempt_id", ""))
+        for entry in executor_session.get("dispatch_attempts", [])
+        if isinstance(entry, dict) and entry.get("delivery_outcome") == "delivery_unknown"
+    ]
+
+
 def _resolve_observed_dispatch_attempt(
     executor_session: Mapping[str, Any],
     requested_attempt_id: str,
@@ -3494,6 +3525,12 @@ def _superseded_outcomes(attempt: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def _narration_next_message(status: str, executor_session: dict[str, Any]) -> str:
     dispatch_status = str(executor_session.get("dispatch_status", ""))
+    unresolved = _unresolved_dispatch_attempt_ids(executor_session)
+    if status == "observed" and unresolved:
+        return (
+            f"이 항목은 관측됐지만 결과가 확인되지 않은 디스패치가 {len(unresolved)}건 남아 있어. "
+            "에이전트가 같은 작업을 두 번 실행했을 수 있으니, 다음 단계는 남은 시도의 전달 결과를 확인하는 거야."
+        )
     if status == "prepared_not_observed" and dispatch_status in {"", "not_requested", "prepared"}:
         return "아직 실행 증거는 없고, 다음 단계는 선택한 코딩 에이전트에 이 큐 항목을 넘기는 거야."
     if dispatch_status == "dispatched":
@@ -4201,6 +4238,7 @@ def _queue_item_summary(item: dict[str, Any]) -> dict[str, Any]:
         "dispatch_attempt_count": len(
             [entry for entry in _dict_value(item, "executor_session").get("dispatch_attempts", []) if isinstance(entry, dict)]
         ),
+        "unresolved_dispatch_attempt_ids": _unresolved_dispatch_attempt_ids(_dict_value(item, "executor_session")),
         "blocker_reason": str(item.get("blocker_reason", "")),
         "worktree_strategy": str(_dict_value(item, "worktree_plan").get("strategy", "")),
         "subagent_strategy": str(_dict_value(item, "subagent_plan").get("strategy", "")),
