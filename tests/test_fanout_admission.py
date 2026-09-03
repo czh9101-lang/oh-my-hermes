@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import threading
 import unittest
@@ -404,6 +405,49 @@ class AdaptiveAdmissionDryRunTests(unittest.TestCase):
         self.assertEqual(receipt["final_window"], receipt["initial_window"])
         self.assertEqual(runner.started, [])
         self.assertIn("Dry-run plans are not observed execution", receipt["claim_boundary"])
+
+
+class AdaptiveAdmissionCliTests(unittest.TestCase):
+    def test_dispatch_help_and_parser_expose_the_opt_in_ceiling_semantics(self) -> None:
+        from omh.commands.main import build_parser
+
+        help_result = subprocess.run(
+            [sys.executable, "-m", "omh.cli", "coding", "fanout", "dispatch", "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("--adaptive-concurrency", help_result.stdout)
+        self.assertIn("--concurrency ceiling", help_result.stdout)
+        self.assertIn("provider-limit pressure", help_result.stdout)
+        self.assertIn("recovered retries", help_result.stdout)
+        args = build_parser().parse_args(
+            [
+                "coding",
+                "fanout",
+                "dispatch",
+                "fanout-0123456789ab",
+                "--goal-file",
+                "goal.txt",
+                "--concurrency",
+                "6",
+                "--adaptive-concurrency",
+            ]
+        )
+        default_args = build_parser().parse_args(
+            [
+                "coding",
+                "fanout",
+                "dispatch",
+                "fanout-0123456789ab",
+                "--goal-file",
+                "goal.txt",
+            ]
+        )
+        self.assertTrue(args.adaptive_concurrency)
+        self.assertFalse(default_args.adaptive_concurrency)
 
 
 if __name__ == "__main__":
