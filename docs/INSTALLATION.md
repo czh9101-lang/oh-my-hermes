@@ -106,6 +106,22 @@ operation, and `--dry-run` never changes the command package. A source checkout
 or other unmanaged Python environment is not rewritten implicitly; the result
 reports the supported installer command instead.
 
+On installer-managed installs (the curl and PowerShell paths), the update is
+staged rather than applied in place. OMH builds the new command environment and
+its workflow pack off to the side, smoke-tests them, and only then swaps them in
+with a single pointer move. You either keep the version you had or get the new
+one; there is no half-updated state in between, even if the machine loses power
+mid-update. If the new version fails its post-activation check, OMH puts the
+previous one back automatically and says so. To go back deliberately after a bad
+update, run:
+
+```sh
+omh update --recover-known-good
+```
+
+See [Staged installer updates and recovery](#staged-installer-updates-and-recovery)
+for what is on disk and what the JSON payload reports.
+
 ### Verify or troubleshoot the installation
 
 Run doctor separately after setup:
@@ -1220,7 +1236,8 @@ command -v omh
 omh --help
 omh release skill-content-smoke --json
 omh release product-readiness --version 1.0.5 --json
-omh release evidence-bundle --version 1.0.5 --write --json
+omh release evidence-bundle --version 1.0.5 --write --repo-root "$PWD" --json
+omh release evidence-bundle --version 1.0.5 --verify --repo-root "$PWD" --json
 omh --omh-home /tmp/omh-smoke --hermes-home /tmp/hermes-smoke release hermes-smoke --install-path setup --omh-command omh --include-command-smoke
 ```
 
@@ -1240,10 +1257,69 @@ single release-candidate card that combines skill content, G1-G10 use-case
 readiness, parity contracts, and release checklist shape. It is still local
 contract evidence, not live Hermes chat or executor evidence.
 
-Use `omh release evidence-bundle --version 1.0.5 --write --json` when you want
-that local release-candidate evidence written under
-`.omh/runtime/release-evidence/` for a release PR or release note. The bundle is
-not CI, live Hermes smoke, executor, delivery, merge, or GitHub release evidence.
+Use the evidence bundle when you want that local release-candidate evidence
+written under `.omh/runtime/release-evidence/` for a release PR or release note:
+
+```sh
+omh release evidence-bundle --version 1.0.5 --write --repo-root "$PWD" --json
+```
+
+The bundle is not CI, live Hermes smoke, executor, delivery, merge, or GitHub
+release evidence.
+
+#### Revision-bound evidence and `--verify`
+
+Maintainer and release-automation surface. Nobody installing or using OMH needs
+to run any of it.
+
+The bundle used to record what the gates said without recording which source
+they said it about. Attached to a release, that reads as provenance for whatever
+the reader assumes. It now binds to a revision, and the binding can be re-checked
+without regenerating anything.
+
+`--repo-root` names the checkout being described. OMH reads it only, never
+writes to it, and records the full commit hash, the full tree hash, whether the
+worktree was dirty, and a deterministic input manifest of repo-relative paths
+and `sha256:` digests. Absolute paths never land in the file, and the recorded
+artifact is stored by basename.
+
+Re-check a recorded bundle with:
+
+```sh
+omh release evidence-bundle --version 1.0.5 --verify --repo-root "$PWD" --json
+```
+
+Verification is pure. It never writes and never regenerates, so a run that
+disagrees with the bundle cannot silently repair it. The verdict is one of a
+closed set, and exit code 0 means `matching` and nothing else:
+
+| Verdict | Meaning |
+| --- | --- |
+| `matching` | Same commit, same tree, digests agree. The only exit-0 verdict |
+| `dirty` | The worktree has uncommitted changes, so no clean claim is possible. Checked first and it wins over `stale` |
+| `mismatched_revision` | The recorded commit is not the one you are on now |
+| `stale` | Same commit, but the tree, a declared input digest, or the artifact digest moved |
+| `unverifiable` | Identity is unavailable on one side, so the answer is unknown rather than assumed |
+| `legacy_schema` | A pre-v2 bundle. It can never read as `matching`, because it was never bound to a revision |
+| `missing` | No bundle is recorded for that version |
+
+`--write` is fail-closed the same way. Without a usable identity, meaning no git
+checkout and no explicit `--archive-digest` or `--artifact-digest`, the bundle is
+still written for local use but reports `status: needs_attention` and
+`publication_ready: false`, and the command exits non-zero. It never quietly
+passes.
+
+Compatibility: this is a deliberate hard bump to
+`omh_release_evidence_bundle/v2`. Bundles already on disk stay exactly as they
+are and verify as `legacy_schema`; that is the point, since a v1 file genuinely
+was not revision-bound. The evidence index stays at v1 and only gains
+`commit_sha` and `tree_sha` alongside what it already had. Release publication
+regenerates the bundle from the exact tagged checkout and refuses to publish
+when the binding does not hold; see [Release](RELEASE.md) and
+[Distribution](DISTRIBUTION.md) for the maintainer flow.
+
+What this proves is provenance for the recorded revision. It is still not CI,
+live Hermes smoke, executor, delivery, merge, or GitHub release evidence.
 
 ```sh
 omh release hermes-smoke --live --install-path tap --target-confirmed
@@ -2021,6 +2097,95 @@ under `~/.omh/runtime/state.json` as `last_setup`, `last_install`,
 count, source metadata, command-package status, and health summaries without
 storing raw chat prompts.
 
+### Staged installer updates and recovery
+
+Applies to installer-managed commands only: the curl installer, the PowerShell
+installer, and any install whose `omh` launcher lives under the managed root
+(`~/.local/share/omh` on POSIX, `%LOCALAPPDATA%\omh` on Windows). Homebrew, Bun,
+and npm installs keep delegating to their own package manager and are untouched
+by everything in this section, as are pip, pipx, distro, and source-checkout
+installs.
+
+An installer-managed `omh update` no longer upgrades the running environment in
+place. It runs as a transaction:
+
+1. Take an enforced lock. A second `omh update` on the same machine stops
+   immediately with `another omh update is already in progress; no changes were
+   made` rather than racing the first one.
+2. Reconcile anything a previous interrupted run left behind (see below).
+3. Stage the new release into a fresh generation directory, entirely separate
+   from the one you are running.
+4. Smoke-test the candidate: import the package, read its version, render its
+   workflow pack.
+5. Move the `current` pointer to the candidate. This is one atomic rename and it
+   is the only step that makes the new version visible.
+6. Re-enter through the pointer to confirm the activated version actually runs.
+7. On success, keep the previous generation as the known-good fallback and
+   collect the rest. On failure, move the pointer back.
+
+The pointer is what makes the swap all-or-nothing. Both things that consume the
+install are spelled beneath it and never in resolved form: the `omh` launcher
+resolves through `current/venv/bin/omh` (`current\Scripts\omh.exe` on Windows),
+and the workflow pack Hermes reads is registered in `skills.external_dirs` as
+`current/skills`. Because both names stay fixed, the command you run and the
+pack Hermes serves always come from the same generation. There is no observable
+moment, including a crash mid-update, where you get the new command with the old
+pack or the reverse.
+
+On disk, under the managed root:
+
+```text
+current -> generations/<id>     # the single activation pointer
+generations/<id>/venv           # that generation's command environment
+generations/<id>/skills         # that generation's workflow pack
+self-update.json                # private activation state (self_update_state/v1)
+venv/                           # the pre-generation environment, kept as fallback
+```
+
+What you see when something goes wrong:
+
+| Situation | What happens | What you get back |
+| --- | --- | --- |
+| Staging or download fails | Candidate deleted before anything is activated | The install you already had, untouched |
+| Candidate fails its smoke checks | Candidate deleted before activation | The install you already had, untouched |
+| Activated version fails the post-activation run | Pointer moved back automatically | The previous generation, active again |
+| Machine dies mid-activation | Next `omh update` reconciles the marker against the pointer, then rolls back or discards the candidate | A consistent pair either way |
+| Two updates at once | The second refuses to start | No partial work |
+| You want the previous version back | `omh update --recover-known-good` | The retained known-good generation, active again |
+
+`omh update --recover-known-good` refuses rather than guesses when no retained
+generation exists. If the activation state file is unreadable or carries a schema
+this version does not know, the update fails closed, names the file, and points
+at that same recovery flag instead of rewriting it.
+
+Installs made before this layout existed migrate lazily, and only once. On the
+first staged update, after the candidate has passed its smoke checks, OMH creates
+a bootstrap generation that links to the environment and pack you already have,
+points `current` at it, retargets the launcher, and rewrites the Hermes
+registration. Every step of that happens while both names still resolve to the
+old pair, so an interruption anywhere in the migration leaves you on the version
+you were already running. A candidate that fails staging or smoke never triggers
+any of it. The pre-generation environment and the pack at `~/.omh/skills` survive
+as fallback targets and are never collected while they are retained. You are not
+asked to rerun `omh setup`, and `omh uninstall` collects the pointer, the
+generations, and the state file through its normal dry-run and kept-file
+reporting.
+
+`omh update --json` reports the transaction as
+`command_package_self_update/v1`, with a `phase` naming how far it got
+(`staging`, `verification`, `migration`, `activation`, `post_activation`,
+`recovery`, `cleanup`) plus `rollback` and `cleanup` records. `ok` is true only
+after the post-activation run through the pointer succeeded, so a payload that
+stops at an earlier phase is a report of what did not happen, never a claim that
+the new version is live.
+
+Windows: `current` is a directory junction, so activation and bootstrap links
+do not require Developer Mode or an elevated shell. The `omh.cmd` shim is
+atomically rewritten to the literal `current\venv\Scripts\omh.exe` path; it does
+not name a resolved generation. Deterministic Windows seams cover activation,
+rollback, junction-creation failure cleanup, bootstrap links, and the shim.
+Live Windows behavior under real file locking remains **Not-tested**.
+
 ### Startup update check (opt-in)
 
 By default, `omh`/`hermes` never checks for updates on launch -- OMH's core
@@ -2049,17 +2214,92 @@ argv), and by design that means the launch waits for that subprocess -- a
 command-package refresh can take minutes on the preview channel, the same
 wait `omh update` always has. A non-blocking lock keeps two simultaneous
 launches from auto-updating at once, and a failed or already-applied attempt
-is never retried before the next interval. Either mode makes at most one
-short-timeout network request per `interval_hours` (a conditional GET against
-the GitHub commits API, ETag-cached in
-`~/.omh/runtime/update-check.json`); a network failure or timeout is a silent
-skip that never blocks or delays the launch. An install that predates a
-recorded comparable identity reports the check as inconclusive rather than
-guessing, and resolves the next time update-check records one. A `stable` or
+is never retried before the next interval. Either mode spends at most one curl
+subprocess per `interval_hours`, carrying two requests: the conditional,
+ETag-cached GET against the GitHub commits API that has always been there, and a
+repository-metadata read that names the current default branch. Each transfer is
+capped at 1.5 seconds inside a 2.0 second whole-process bound, so worst-case
+launch wall time is unchanged, and the cache still lives at
+`~/.omh/runtime/update-check.json`. A network failure or timeout is a silent
+skip that never blocks or delays the launch; a starved metadata read is recorded
+as a partial and retried next interval rather than being read as a branch
+change. An install that predates a recorded comparable identity reports the
+check as inconclusive rather than guessing, and resolves the next time
+update-check records one. A `stable` or
 `local` channel install reports inconclusive too, but permanently -- only the
 `preview` channel's `main` source ref ever records a comparable identity, so
 the notice for that case says the comparison does not apply to that channel
 instead of suggesting an `omh update` that cannot resolve it.
+
+#### When upstream history is rewritten
+
+Comparing two commit hashes only tells you they differ. It does not tell you
+whether the branch moved forward, got rolled back, was force-pushed over, or
+stopped existing under that name. The check used to treat every difference as
+"you are behind"; after a rewrite that produced a confident, wrong answer, and a
+recorded position that quietly pointed at a commit nobody could reach any more.
+
+The watch now classifies the relationship before it claims anything. When the
+recorded commit and the branch head differ, one bounded compare read decides
+which of these it is:
+
+| Ancestry | What it means | What you see |
+| --- | --- | --- |
+| `fast_forward` | The branch moved forward over your recorded commit | The normal `OMH update available: <old> -> <new>` notice; the only class `auto` acts on |
+| `rewound` | The branch head is behind your recorded commit | Inconclusive, plus a recorded coverage gap |
+| `rewritten` | The two histories diverged, so a force-push replaced commits | Inconclusive, plus a gap: `origin/main history rewritten (ancestry: rewritten)` |
+| `cursor_unreachable` | The recorded commit is no longer reachable at all | Inconclusive, plus a gap |
+| `branch_recreated` | Unreachable commit and a head that went backwards in time. Labeled a heuristic, because one read cannot prove recreation | Inconclusive, plus a gap |
+| `default_branch_changed` | The repository's default branch is no longer the one being watched | The recorded position stays pinned; the notice names the old and new branch and points at `omh update-check status` |
+| `unknown` | The probe failed, or the remote answered without enough to decide (shallow or delayed visibility) | `origin/main ancestry could not be verified`, plus an open gap. Never `up_to_date` |
+
+Only a verified `fast_forward` may report `behind` or trigger `auto`. Everything
+else is reported as inconclusive with a **coverage gap**: a record of the
+interval the check can no longer speak for, naming the old and new refs and when
+the uncertainty started. Silence never means complete coverage. An open gap is
+printed ahead of the outcome, so it shows up even on a launch that would
+otherwise have said nothing.
+
+Gaps close on their own only when the recorded position converges again *and*
+every declared recovery source answered definitively for that window. A readable
+new head across a rewrite is not enough. When the head is readable but coverage
+is incomplete, the gap stays open on purpose.
+
+The extra reads stay rare and stay bounded. A compare fires only when the head
+has actually moved away from the recorded commit, the tag read only inside an
+open recovery window, and each one gets the same 1.5 second transfer inside its
+own 2.0 second process bound as the launch probe. In `off` mode none of it runs.
+The cache also keeps a ledger of recovery attempts, capped at 20 entries and
+deduplicated by event, so re-probing the same rewritten head updates the existing
+entry instead of appending a new one forever.
+
+Inspecting and accepting a gap is a maintainer surface, not something a normal
+user has to learn:
+
+```sh
+omh update-check status          # adds Ancestry: and Coverage gap: lines
+omh update-check status --json   # the full v2 cache under last_check
+omh update-check accept-gap      # after reviewing the rewritten history
+```
+
+`accept-gap` records that a human looked at the rewrite and the uncertain
+interval and is willing to move on. It never claims the unreachable commits were
+recovered, and it is idempotent: with no open gap it prints `No open coverage gap
+to accept.` and changes nothing.
+
+Compatibility: the cache grows to `omh_update_check_cache/v2` additively. An
+older v1 cache reads as unknown ancestry with no gap, and the first v2 write
+preserves every key it already had. A cache with no recorded default branch is
+read as watching the branch it already watched, so upgrading never invents a
+`default_branch_changed`. `off` remains the shipped default and still makes zero
+network calls.
+
+One boundary, stated plainly: what the watch delivers is the classification, the
+notice, and the recorded gap. The gate that decides whether a later `omh update`
+may re-anchor its recorded position lives in the engine as a tested policy and is
+not yet wired into the update command's own state write. What you can rely on
+today is that `auto` acts on nothing but a verified fast-forward, and that a
+rewrite is always reported instead of being absorbed.
 
 ## Reapply
 

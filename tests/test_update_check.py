@@ -58,9 +58,19 @@ def _http_stdout(status: int, *, etag: str = "", sha: str | None = None) -> str:
 
 
 def _ok_runner(sha: str, *, etag: str = '"abc"', calls: list[object] | None = None):
+    """Fake curl: a readable head, and a verified fast-forward compare.
+
+    Since the issue #1282 contract, `behind` is emitted only for a verified
+    `fast_forward`, so the compare read answers `status: ahead`; every other
+    URL (the head/metadata probe) answers with the head payload.
+    """
+
     def runner(argv, timeout=None):
         if calls is not None:
             calls.append(argv)
+        if any("/compare/" in str(arg) for arg in argv):
+            stdout = "HTTP/2 200\n\n" + json.dumps({"status": "ahead", "ahead_by": 1, "behind_by": 0})
+            return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout=_http_stdout(200, etag=etag, sha=sha), stderr="")
 
     return runner

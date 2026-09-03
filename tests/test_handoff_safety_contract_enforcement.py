@@ -49,9 +49,13 @@ import ast
 import hashlib
 import itertools
 import json
+import os
+import re
+import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from _cli_harness import run_cli
 from _local_package import load_local_package
@@ -67,6 +71,13 @@ from omh.coding.action_gate import (  # noqa: E402
 )
 from omh.coding.coding_delegation import DELEGATION_ACTIONS  # noqa: E402
 from omh.coding.executors import WORK_OWNER_MODES  # noqa: E402
+from omh.install.self_update_platform import (  # noqa: E402
+    JUNCTION_LINK_ENV,
+    JUNCTION_TARGET_ENV,
+    JUNCTION_TIMEOUT_SECONDS,
+    SelfUpdatePlatform,
+    WINDOWS_JUNCTION_COMMAND,
+)
 from omh.plugin_bundle.omh.tools.evidence_tool import _DEFAULT_ALLOWLIST  # noqa: E402
 from omh.skills.catalog_types import CODING_INTENTS  # noqa: E402
 from omh.workflows.goal_loop import build_authority_envelope  # noqa: E402
@@ -182,17 +193,73 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
     "src/install/release_smoke_core.py": (
         "release smoke runner; executes the smoke commands an operator asked for."
     ),
+    "src/install/self_update.py": (
+        "the installer branch of an explicit `omh update` (reached only from "
+        "`commands/setup.py:_run_command_package_self_update` when the operator runs it, never a "
+        "hidden or default execution): runs local, staged commands only -- `python -m venv` to "
+        "build the candidate generation's venv, that candidate's `python -m pip install "
+        "--disable-pip-version-check --no-cache-dir --upgrade <package_url>` into it, the "
+        "candidate smokes (`python -c 'import omh.cli'`, `python -m omh.cli --version`, and the "
+        "workflow-pack smoke), and the bounded post-activation re-entry `python -m omh.cli ... "
+        "--command-package-updated` through the generation pointer. Every command runs the staged "
+        "candidate interpreter locally; rollback, never the operator's environment, absorbs any "
+        "failure."
+    ),
+    "src/install/self_update_platform.py": (
+        "the Windows platform seam of the staged `omh update` transaction above: it creates the "
+        "bootstrap and `current` generation links as local directory junctions through one fixed "
+        "argv, `powershell.exe -NoLogo -NoProfile -NonInteractive -Command "
+        "WINDOWS_JUNCTION_COMMAND`, whose program text is a module-level constant running "
+        "`New-Item -ItemType Junction ... | Out-Null`. The command's only data inputs are the "
+        "two named environment keys `OMH_JUNCTION_LINK` and `OMH_JUNCTION_TARGET`, added to a "
+        "copy of the parent environment: no path, user, or target bytes are ever embedded in the "
+        "program text, so a valid Windows install path containing `&`, `|`, `^`, `<`, `>`, or "
+        "`%...%` cannot be re-parsed or expanded by the child -- the data transport is the "
+        "environment variables, not `shell=False`. The child runs with `shell=False`, the link's "
+        "parent as `cwd` so the target stays relative and relocatable, and a 15-second bound; a "
+        "failed junction is removed and the old pointer is left untouched. The command holds no "
+        "other PowerShell authority -- no script file, no expression evaluation, no network or "
+        "process cmdlet. On POSIX the same operation is `os.symlink` and spawns nothing, and the "
+        "Windows launcher retarget is an `atomic_write_text` shim rewrite that spawns no process. "
+        "Reached only from `install.self_update` inside an explicit `omh update`; no network, no "
+        "remote."
+    ),
+    "src/maintenance/installer_update.py": (
+        "deterministic `demo_atomic_update()` facade for the installer transaction above; imports "
+        "`subprocess` only to build `CompletedProcess` stand-ins for the fake runner it injects "
+        "into `install.self_update` -- it spawns no process of its own, makes no network call, "
+        "and runs entirely inside a TemporaryDirectory."
+    ),
     "src/install/plugin_loader_observation.py": (
         "`omh doctor` isolated real-Hermes registration probe; reads registered tool/hook names, "
         "dispatches no agent work, and writes only inside a temporary HERMES_HOME."
     ),
-    "src/maintenance/update_check.py": (
-        "opt-in `omh update-check` probe (mode defaults to off): a single bounded `curl` GET of the "
-        "public GitHub commits API for `main`, reached only from the already-allowlisted `omh` "
-        "launch door (commands/main.py) or an explicit `omh install`/`omh update` "
-        "(commands/setup.py) when update-check is not off. The external `curl` process makes the "
-        "connection, never this module -- the same shape as the pip/npm/brew self-update already "
-        "allowlisted for commands/setup.py above."
+    "src/maintenance/release_source_identity.py": (
+        "the single subprocess owner of the release-identity lane after the #1280 split: "
+        "`probe_source_identity`, reached from explicit `omh release evidence-bundle "
+        "--write/--verify` (commands/release.py) and the release evidence builder "
+        "(maintenance/release.py) through the `release_identity.py` facade; runs only the local, "
+        "read-only git identity reads enumerated in GIT_ARGV_ALLOWLIST below (`rev-parse HEAD`, "
+        "`rev-parse HEAD^{tree}`, `status --porcelain`), each bounded by a 15-second timeout, to "
+        "identify a source-checkout install. The facade and `release_evidence_verification.py` "
+        "import no subprocess; this module spawns no agent, names no remote, and fails soft when "
+        "git or a repository is absent."
+    ),
+    "src/maintenance/update_check_probe.py": (
+        "transport owner for the opt-in `omh update-check` facade (mode defaults to off): bounded "
+        "`curl` GETs of the public GitHub API for the watched branch head, repository metadata, "
+        "commit compare, and reachable tags. The scheduled probe is one curl subprocess carrying at "
+        "most two URLs (branch head first, repository metadata second), `--max-time 1.5` per "
+        "transfer with a 2.0 s `subprocess.run` whole-process bound; compare and tags use the same "
+        "bound only on the rare moved-head/recovery path. Reached from the launch door or explicit "
+        "install/update only after the user opts in. The external curl process makes the connection; "
+        "the facade, state, and recovery modules have no subprocess capability."
+    ),
+    "src/runtime/update_watch_recovery.py": (
+        "deterministic `demo_rewrite_recovery()` facade for the issue #1282 update-watch recovery; "
+        "imports `subprocess` only to build `CompletedProcess` stand-ins for the fake curl runner "
+        "it injects into `maintenance.update_check` -- it spawns no process of its own, makes no "
+        "network call, and runs entirely inside a TemporaryDirectory."
     ),
     "src/plugin_bundle/omh/tools/evidence_tool.py": (
         "allowlisted local verification-command runner; its allowlist is itself gated below."
@@ -519,6 +586,20 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
         "standing in the unit's own worktree and not in whatever repository encloses it; read-only, "
         "and the reason the `add` entry's containment claim is checked rather than asserted"
     ),
+    ("src/maintenance/release_source_identity.py", ("rev-parse", "HEAD")): (
+        "reads the current commit sha to identify a source-checkout install for release-evidence "
+        "identity; read-only local object lookup, names no remote, fails soft when git or a "
+        "repository is absent"
+    ),
+    ("src/maintenance/release_source_identity.py", ("rev-parse", "HEAD^{tree}")): (
+        "reads the tree hash the release-evidence identity is recorded against, so a later "
+        "verification can tell the same tracked content apart from rewritten content; read-only "
+        "local object lookup, names no remote"
+    ),
+    ("src/maintenance/release_source_identity.py", ("status",)): (
+        "`git status --porcelain` reads whether the checkout is dirty so the recorded identity can "
+        "say so; read-only, names no remote, writes nothing"
+    ),
     ("src/quality/evidence_records.py", ("rev-parse", "HEAD^{tree}")): (
         "`rev-parse --short HEAD^{tree}` reads the tree hash a quality-evidence observation is "
         "recorded against, so assessment can later tell evidence about the current tracked content "
@@ -715,6 +796,330 @@ class NoRemoteMutation(unittest.TestCase):
                 f"would let a verification request run the mutating git verb(s) {offending}. Evidence "
                 f"gathering is read-only. Remove the entry from `_DEFAULT_ALLOWLIST` in "
                 f"src/plugin_bundle/omh/tools/evidence_tool.py.",
+            )
+
+
+# --------------------------------------------------------------------------
+# INVARIANT 1 corollary -- the fixed Windows junction command boundary
+# --------------------------------------------------------------------------
+
+# The staged-update junction seam. `create_directory_link` used to pass the
+# link and target bytes as cmd.exe program text after `/c`, where `&`, `|`,
+# `^`, `<`, `>`, and `%...%` are operators and percent expansion happens even
+# inside quotes -- `shell=False` protected nothing because cmd.exe IS the
+# shell (correction-verification.md section 17.1, BLOCKER-S1). The correction
+# moved every path byte out of the program text and into two named environment
+# variables behind one fixed powershell.exe command. These gates hold that
+# boundary in place: the command stays a constant, the path bytes stay out of
+# the argv, and the written allowlist rationale stays describing the command
+# the code actually runs, so neither can drift alone.
+WINDOWS_JUNCTION_PLATFORM = "src/install/self_update_platform.py"
+WINDOWS_JUNCTION_ARGV_HEAD = (
+    "powershell.exe",
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+)
+
+# `powershell -Command` is arbitrary-code authority on a Windows host; these
+# are the tokens that would widen the junction command from "create one
+# directory junction" into network or process authority.
+POWERSHELL_PROGRAMS = frozenset({"powershell", "powershell.exe", "pwsh", "pwsh.exe"})
+POWERSHELL_AUTHORITY_TOKENS = (
+    "Invoke-",
+    "Start-Process",
+    "Net.WebClient",
+    "DownloadFile",
+    "DownloadString",
+    "http",
+)
+
+
+class WindowsJunctionCommandBoundary(unittest.TestCase):
+    """BLOCKER-S1 cannot regress silently: the junction argv is pinned.
+
+    The producer suite (`tests/test_staged_self_update.py`) proves the seam
+    works; these gates prove the safety contract holds. They are behavioural
+    where behaviour decides (the spawn itself, observed through a captured
+    runner) and structural where structure decides (the argv and command
+    constant read as an AST, so a comment cannot satisfy them and an
+    f-string cannot sneak past them).
+    """
+
+    def _platform_tree(self) -> ast.Module:
+        for relative_path, tree in _source_modules():
+            if relative_path == WINDOWS_JUNCTION_PLATFORM:
+                return tree
+        self.fail(
+            f"{WINDOWS_JUNCTION_PLATFORM} is not in the src/ sweep, so the junction command "
+            f"boundary cannot be checked. This gate only runs against the live tree."
+        )
+
+    def test_the_allowlist_rationale_names_the_live_command(self) -> None:
+        """The written safety policy must describe the command the code runs.
+
+        The entry below is the safety policy for this spawn; if it names a
+        command the module no longer runs (or stops naming the one it does),
+        the policy and the spawn surface have drifted apart. The asserted
+        strings are the command vocabulary -- program, flags, cmdlet, and the
+        two environment keys -- not prose wording.
+        """
+        self.assertIn(
+            WINDOWS_JUNCTION_PLATFORM,
+            PROCESS_SPAWN_ALLOWLIST,
+            f"INVARIANT 1 (no hidden process spawn): {WINDOWS_JUNCTION_PLATFORM} lost its "
+            f"PROCESS_SPAWN_ALLOWLIST entry in {THIS_TEST} but still runs the Windows junction "
+            f"command. Restore the entry with the fixed-command rationale.",
+        )
+        rationale = PROCESS_SPAWN_ALLOWLIST[WINDOWS_JUNCTION_PLATFORM]
+        for token in (
+            *WINDOWS_JUNCTION_ARGV_HEAD,
+            "New-Item",
+            JUNCTION_LINK_ENV,
+            JUNCTION_TARGET_ENV,
+        ):
+            self.assertIn(
+                token,
+                rationale,
+                f"INVARIANT 1 (no hidden process spawn): the PROCESS_SPAWN_ALLOWLIST entry for "
+                f"{WINDOWS_JUNCTION_PLATFORM} does not name {token!r}, but the module runs "
+                f"{' '.join(WINDOWS_JUNCTION_ARGV_HEAD)} <constant>. The allowlist rationale is "
+                f"the written safety policy for this spawn; update it to describe the live "
+                f"command instead of a retired one.",
+            )
+        for retired in ("cmd.exe", "mklink"):
+            self.assertNotIn(
+                retired,
+                rationale,
+                f"INVARIANT 1 (no hidden process spawn): the PROCESS_SPAWN_ALLOWLIST entry for "
+                f"{WINDOWS_JUNCTION_PLATFORM} still describes the retired `{retired}` argv. "
+                f"That argv passed untrusted path bytes as cmd.exe program text (BLOCKER-S1, "
+                f"correction-verification.md section 17.1); the rationale must describe the "
+                f"fixed powershell.exe command with environment-variable data transport.",
+            )
+
+    def test_the_junction_command_references_only_the_two_named_environment_keys(self) -> None:
+        """The command's only data inputs are the two named environment keys."""
+        referenced = re.findall(r"\$env:([A-Za-z0-9_]+)", WINDOWS_JUNCTION_COMMAND)
+        self.assertEqual(
+            referenced,
+            [JUNCTION_LINK_ENV, JUNCTION_TARGET_ENV],
+            f"INVARIANT 1 (no hidden process spawn): the Windows junction command reads "
+            f"{referenced} from the environment, but only {JUNCTION_LINK_ENV} and "
+            f"{JUNCTION_TARGET_ENV} are the sanctioned data transport. Any other reference "
+            f"puts unsanitised parent-environment bytes into the program text. Read only the "
+            f"two named keys in src/install/self_update_platform.py.",
+        )
+        self.assertNotIn(
+            "%",
+            WINDOWS_JUNCTION_COMMAND,
+            "INVARIANT 1 (no hidden process spawn): cmd.exe-style percent sequences have no "
+            "place in the fixed junction command; they expand before the command runs.",
+        )
+        for token in ("New-Item", "-ItemType Junction", "Out-Null"):
+            self.assertIn(
+                token,
+                WINDOWS_JUNCTION_COMMAND,
+                f"INVARIANT 1 (no hidden process spawn): the junction command no longer creates "
+                f"the junction with {token!r}. It must stay the one fixed `New-Item -ItemType "
+                f"Junction ... | Out-Null` command -- widening it needs a new safety rationale.",
+            )
+        for token in POWERSHELL_AUTHORITY_TOKENS:
+            self.assertNotIn(
+                token,
+                WINDOWS_JUNCTION_COMMAND,
+                f"INVARIANT 1 (no hidden process spawn): the junction command contains {token!r}, "
+                f"which is network or process authority, not junction creation. The staged-update "
+                f"seam is admitted for one fixed local command and nothing broader.",
+            )
+
+    def test_the_junction_argv_is_built_only_from_constants(self) -> None:
+        """The argv is five literals plus one module constant -- nothing dynamic.
+
+        Decided by AST: if any element becomes an f-string, a concatenation,
+        or a computed value, the path bytes are back in the program text and
+        BLOCKER-S1 has regressed, whatever the captured-runner tests say.
+        """
+        tree = self._platform_tree()
+        commands = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.List)
+            and node.elts
+            and isinstance(node.elts[0], ast.Constant)
+            and node.elts[0].value == "powershell.exe"
+        ]
+        self.assertEqual(
+            len(commands),
+            1,
+            f"INVARIANT 1 (no hidden process spawn): {WINDOWS_JUNCTION_PLATFORM} now builds "
+            f"{len(commands)} powershell.exe argv literals. Exactly one fixed command is "
+            f"admitted; a second one needs its own safety rationale.",
+        )
+        elements = commands[0].elts
+        self.assertEqual(
+            len(elements),
+            len(WINDOWS_JUNCTION_ARGV_HEAD) + 1,
+            f"INVARIANT 1 (no hidden process spawn): the junction argv changed shape from the "
+            f"fixed {list(WINDOWS_JUNCTION_ARGV_HEAD)} head plus one command constant. Update "
+            f"the allowlist rationale and these gates together, deliberately.",
+        )
+        for element in elements[: len(WINDOWS_JUNCTION_ARGV_HEAD)]:
+            self.assertIsInstance(
+                element,
+                ast.Constant,
+                "INVARIANT 1 (no hidden process spawn): a junction argv head element is now a "
+                "computed value. The head must stay literal so the gate can prove which program "
+                "and flags run.",
+            )
+        self.assertEqual(
+            [element.value for element in elements[: len(WINDOWS_JUNCTION_ARGV_HEAD)]],
+            list(WINDOWS_JUNCTION_ARGV_HEAD),
+            "INVARIANT 1 (no hidden process spawn): the junction argv head is no longer the "
+            "fixed powershell.exe -NoLogo -NoProfile -NonInteractive -Command spelling. The "
+            "flags bound the child (no profile, no interactivity); widening them needs a new "
+            "safety rationale.",
+        )
+        command_element = elements[len(WINDOWS_JUNCTION_ARGV_HEAD)]
+        self.assertIsInstance(command_element, ast.Name)
+        self.assertEqual(
+            command_element.id,  # type: ignore[attr-defined]
+            "WINDOWS_JUNCTION_COMMAND",
+            "INVARIANT 1 (no hidden process spawn): the junction program text is no longer the "
+            "WINDOWS_JUNCTION_COMMAND constant. An interpolated or built string would carry "
+            "path bytes into the program text -- BLOCKER-S1 exactly. Pass the fixed constant.",
+        )
+        constants = [
+            node.value.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "WINDOWS_JUNCTION_COMMAND"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Constant)
+        ]
+        self.assertEqual(
+            constants,
+            [WINDOWS_JUNCTION_COMMAND],
+            "INVARIANT 1 (no hidden process spawn): WINDOWS_JUNCTION_COMMAND must stay a single "
+            "module-level string constant. Building it from anything dynamic puts untrusted "
+            "bytes back into the child's program text.",
+        )
+
+    def test_the_spawn_carries_path_bytes_only_in_the_two_named_keys(self) -> None:
+        """BLOCKER-S1's case, driven through the real seam with a captured runner.
+
+        A link and target whose every byte is a shell metacharacter
+        (`A&B%TEMP%^!()`) must reach the child exactly twice -- as the values of
+        the two named environment keys -- and must appear in neither the argv
+        nor the `list2cmdline` program text the child parses. `shell=False`, a
+        bounded timeout, and the link's parent as `cwd` are asserted on the
+        same captured spawn, because they are part of the same boundary.
+        """
+        metacharacters = "A&B%TEMP%^!()"
+        calls = []
+
+        def runner(command, **kwargs):
+            calls.append((command, kwargs))
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary) / metacharacters
+            link = root / f".current.{metacharacters}.tmp"
+            target = root / "generations" / metacharacters
+            with patch.dict(os.environ, {"PRESERVED": "yes"}, clear=True):
+                SelfUpdatePlatform.windows(runner).create_directory_link(root, link, target)
+
+        self.assertEqual(
+            len(calls),
+            1,
+            "INVARIANT 1 (no hidden process spawn): the Windows junction creation spawned more "
+            "than one child. The seam is admitted for one command.",
+        )
+        command, kwargs = calls[0]
+        program_text = subprocess.list2cmdline(command)
+        self.assertNotIn(
+            metacharacters,
+            "\n".join(command),
+            "INVARIANT 1 (no hidden process spawn): the untrusted path bytes appear in the "
+            "junction argv itself. Path data must travel in the two named environment keys, "
+            "never in the program text (BLOCKER-S1).",
+        )
+        self.assertNotIn(
+            metacharacters,
+            program_text,
+            "INVARIANT 1 (no hidden process spawn): the untrusted path bytes survive into the "
+            "`list2cmdline` program text the child parses. They must travel in the two named "
+            "environment keys only (BLOCKER-S1).",
+        )
+        self.assertEqual(command[0], "powershell.exe")
+        self.assertEqual(command[1:5], ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
+        self.assertEqual(command[5], WINDOWS_JUNCTION_COMMAND)
+        self.assertIs(kwargs["shell"], False)
+        self.assertEqual(kwargs["timeout"], JUNCTION_TIMEOUT_SECONDS)
+        self.assertGreater(
+            JUNCTION_TIMEOUT_SECONDS,
+            0,
+            "INVARIANT 1 (no hidden process spawn): the junction child has no positive timeout "
+            "bound; an unbounded PowerShell child is not an admitted spawn shape.",
+        )
+        self.assertLessEqual(
+            JUNCTION_TIMEOUT_SECONDS,
+            15.0,
+            "INVARIANT 1 (no hidden process spawn): the junction timeout bound grew beyond the "
+            "15 seconds the allowlist rationale states. Widen the policy deliberately, not by "
+            "editing the constant.",
+        )
+        self.assertEqual(kwargs["cwd"], str(link.parent))
+        expected_environment = {
+            "PRESERVED": "yes",
+            JUNCTION_LINK_ENV: str(link),
+            JUNCTION_TARGET_ENV: os.path.relpath(target, link.parent),
+        }
+        self.assertEqual(
+            kwargs["env"],
+            expected_environment,
+            "INVARIANT 1 (no hidden process spawn): the junction child environment is not the "
+            "parent environment plus exactly the two named link/target keys. No third data "
+            "channel and no dropped parent variable is admitted.",
+        )
+        self.assertIn(metacharacters, kwargs["env"][JUNCTION_LINK_ENV])
+        self.assertIn(metacharacters, kwargs["env"][JUNCTION_TARGET_ENV])
+        carrying = sorted(
+            key for key, value in kwargs["env"].items() if metacharacters in value
+        )
+        self.assertEqual(
+            carrying,
+            sorted((JUNCTION_LINK_ENV, JUNCTION_TARGET_ENV)),
+            "INVARIANT 1 (no hidden process spawn): environment keys other than the two named "
+            "ones carry the untrusted path bytes. The transport must be exactly "
+            f"{JUNCTION_LINK_ENV} and {JUNCTION_TARGET_ENV}.",
+        )
+
+    def test_no_module_gains_broader_powershell_authority(self) -> None:
+        """PowerShell is admitted for one fixed junction command, nowhere else.
+
+        The whole `src/` tree is swept for constant-headed argv literals that
+        start a PowerShell program. Exactly one exists, in the staged-update
+        platform seam, with exactly the bounded flag head -- so neither a new
+        module nor a widened existing one gains a PowerShell door without this
+        gate and the allowlist both noticing.
+        """
+        for relative_path, lineno, elements in _argv_literals():
+            program = elements[0]
+            if program not in POWERSHELL_PROGRAMS:
+                continue
+            argv = tuple(element for element in elements if element is not None)
+            self.assertEqual(
+                (relative_path, argv),
+                (WINDOWS_JUNCTION_PLATFORM, WINDOWS_JUNCTION_ARGV_HEAD),
+                f"INVARIANT 1 (no hidden process spawn): {relative_path} line {lineno} runs a "
+                f"PowerShell argv {list(argv)}. PowerShell is arbitrary-code authority on a "
+                f"Windows host; the only admitted argv is the fixed junction command in "
+                f"{WINDOWS_JUNCTION_PLATFORM}. Remove the call, or widen the safety policy in "
+                f"{THIS_TEST} explicitly and with a reason.",
             )
 
 

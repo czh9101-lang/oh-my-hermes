@@ -40,7 +40,7 @@ class UnifiedExecutorCapabilityProjectionTests(unittest.TestCase):
     def test_prepared_snapshot_owns_the_complete_capability_vocabulary(self) -> None:
         snapshot = prepared_executor_capability_snapshot("codex")
 
-        self.assertEqual(snapshot["schema_version"], "executor_capability_snapshot/v1")
+        self.assertEqual(snapshot["schema_version"], "executor_capability_snapshot/v2")
         self.assertEqual(snapshot["executor"], "codex")
         self.assertEqual(snapshot["capabilities"]["worktree_isolation"]["status"], "prepared")
         for name in DESCRIPTIVE_CAPABILITY_NAMES:

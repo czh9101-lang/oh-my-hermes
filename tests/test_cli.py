@@ -46,6 +46,18 @@ _NO_EXTERNAL_CLI_DETECTED = {
 }
 
 
+def _init_git_repo(root: Path) -> None:
+    for command in (
+        ["git", "init"],
+        ["git", "config", "user.email", "omh-tests@example.test"],
+        ["git", "config", "user.name", "OMH Tests"],
+    ):
+        subprocess.run(command, cwd=root, check=True, capture_output=True)
+    (root / "README.md").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "fixture"], cwd=root, check=True, capture_output=True)
+
+
 class CliTests(unittest.TestCase):
     def test_ops_design_orchestration_is_pure_and_prepared(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -263,6 +275,11 @@ class CliTests(unittest.TestCase):
                             "observed_at": "2026-07-15T00:00:00Z",
                         },
                         "visual_qa": {"status": "unknown"},
+                        "input_modality_text": {"status": "unknown"},
+                        "input_modality_image": {"status": "unknown"},
+                        "input_modality_audio": {"status": "unknown"},
+                        "input_modality_video": {"status": "unknown"},
+                        "input_modality_document": {"status": "unknown"},
                     }
                 ),
                 encoding="utf-8",
@@ -284,9 +301,14 @@ class CliTests(unittest.TestCase):
             self.assertEqual(status, 0, stderr)
             self.assertEqual(stderr, "")
             prepared = json.loads(stdout)
-            self.assertEqual(prepared["schema_version"], "executor_capability_snapshot/v1")
+            self.assertEqual(prepared["schema_version"], "executor_capability_snapshot/v2")
             self.assertEqual(prepared["executor"], "codex")
             self.assertEqual(prepared["capabilities"]["parallel_agents"]["status"], "host_observed")
+            for modality in ("text", "image", "audio", "video", "document"):
+                self.assertEqual(
+                    prepared["capabilities"][f"input_modality_{modality}"],
+                    {"status": "unknown"},
+                )
             self.assertNotIn("execution", prepared)
             self.assertNotIn("verification", prepared)
 
@@ -297,7 +319,7 @@ class CliTests(unittest.TestCase):
             recorded = json.loads(stdout)
             snapshot_path = Path(recorded["snapshot_path"])
             self.assertTrue(snapshot_path.is_file())
-            self.assertEqual(recorded["snapshot"]["schema_version"], "executor_capability_snapshot/v1")
+            self.assertEqual(recorded["snapshot"]["schema_version"], "executor_capability_snapshot/v2")
             self.assertIn("not execution evidence", recorded["claim_boundary"])
 
             status, stdout, stderr = run_cli(
@@ -4014,76 +4036,22 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         )
         self.assertNotIn("cmd.exe", command)
 
-    def test_update_self_update_reenters_with_command_package_marker(self) -> None:
+    def test_update_self_update_stages_before_reentry(self) -> None:
         args = Namespace(json=True)
-        plan = {"release": Namespace(package_url="https://example.invalid/omh.zip"), "python": sys.executable}
-        first = subprocess.CompletedProcess(args=["pip"], returncode=0, stdout="", stderr="")
-        second = subprocess.CompletedProcess(args=["omh"], returncode=0, stdout="", stderr="")
-
-        with patch.object(setup_commands.subprocess, "run", side_effect=[first, second]) as run:
-            with patch.object(setup_commands.sys, "argv", ["omh", "update", "--json"]):
-                status = setup_commands._run_command_package_self_update(args, plan)
-
-        self.assertEqual(status, 0)
-        pip_args = run.call_args_list[0].args[0]
-        self.assertEqual(pip_args[:4], [sys.executable, "-m", "pip", "install"])
-        self.assertIn("--force-reinstall", pip_args)
-        # A branch archive keeps one URL while its contents change, so pip
-        # would reinstall a cached `main.zip` and report success on an older
-        # tree. `--force-reinstall` forces the reinstall, not the download.
-        self.assertIn("--no-cache-dir", pip_args)
-        self.assertIn("https://example.invalid/omh.zip", pip_args)
-        reentry_args = run.call_args_list[1].args[0]
-        self.assertEqual(reentry_args[:3], [sys.executable, "-m", "omh.cli"])
-        self.assertIn("update", reentry_args)
-        self.assertIn("--json", reentry_args)
-        self.assertIn("--command-package-updated", reentry_args)
-        self.assertEqual(run.call_args_list[1].kwargs["env"][setup_commands.SELF_UPDATE_REENTRY_ENV], "1")
+        plan = {"method": "installer", "release": Namespace(package_url="https://example.invalid/omh.zip"), "python": sys.executable}
+        with patch("omh.install.self_update.run_installer_self_update", return_value={"ok": True, "activation": {"status": "ok"}, "rollback": {"performed": False}}) as transaction:
+            self.assertEqual(setup_commands._run_command_package_self_update(args, plan), 0)
+        self.assertIs(transaction.call_args.kwargs["runner"], setup_commands.subprocess.run)
 
     def test_stable_self_update_downloads_the_release_wheel(self) -> None:
-        # The tag archive is ~44 MB of assets, tests, and site; the wheel is
-        # ~2.7 MB. This is the URL `omh update --channel stable` hands pip.
-        args = Namespace(json=True)
         release = setup_commands.package_url_for("stable", "1.0.6")
-        plan = {"release": release, "python": sys.executable}
-        first = subprocess.CompletedProcess(args=["pip"], returncode=0, stdout="", stderr="")
-        second = subprocess.CompletedProcess(args=["omh"], returncode=0, stdout="", stderr="")
+        self.assertEqual(release.package_url, "https://github.com/rlaope/oh-my-hermes/releases/download/v1.0.6/oh_my_hermes-1.0.6-py3-none-any.whl")
 
-        with patch.object(setup_commands.subprocess, "run", side_effect=[first, second]):
-            with patch.object(setup_commands.sys, "argv", ["omh", "update", "--json"]):
-                status = setup_commands._run_command_package_self_update(args, plan)
-
-        self.assertEqual(status, 0)
-        self.assertEqual(
-            release.package_url,
-            "https://github.com/rlaope/oh-my-hermes/releases/download/v1.0.6/"
-            "oh_my_hermes-1.0.6-py3-none-any.whl",
-        )
-
-    def test_a_failed_wheel_update_names_the_archive_fallback(self) -> None:
-        # v1.0.3 through v1.0.5 published no wheel asset, so pip answers with a
-        # bare 404 against a URL the user never typed. The failure has to name
-        # the archive that does exist for the same tag.
+    def test_a_failed_wheel_update_reports_staging_without_mutating_active_command(self) -> None:
         args = Namespace(json=True)
-        plan = {
-            "release": setup_commands.package_url_for("stable", "1.0.4"),
-            "python": sys.executable,
-        }
-        failed = subprocess.CompletedProcess(
-            args=["pip"], returncode=1, stdout="", stderr="ERROR: HTTP error 404"
-        )
-
-        with patch.object(setup_commands.subprocess, "run", side_effect=[failed]):
-            with self.assertRaises(OmhError) as raised:
-                setup_commands._run_command_package_self_update(args, plan)
-
-        message = str(raised.exception)
-        self.assertIn("404", message)
-        self.assertIn("--package-url", message)
-        self.assertIn(
-            "https://github.com/rlaope/oh-my-hermes/archive/refs/tags/v1.0.4.zip",
-            message,
-        )
+        plan = {"method": "installer", "release": setup_commands.package_url_for("stable", "1.0.4"), "python": sys.executable}
+        with patch("omh.install.self_update.run_installer_self_update", return_value={"ok": False, "phase": "staging", "activation": {"status": "skipped"}, "rollback": {"performed": False}}):
+            self.assertEqual(setup_commands._run_command_package_self_update(args, plan), 1)
 
     def test_update_self_update_skips_local_channel_without_package_source(self) -> None:
         args = Namespace(
@@ -4803,6 +4771,9 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         with TemporaryDirectory() as tmp:
             omh_home = Path(tmp) / ".omh"
             hermes_home = Path(tmp) / ".hermes"
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            _init_git_repo(repo)
             base = ["--omh-home", str(omh_home), "--hermes-home", str(hermes_home)]
 
             status, stdout, stderr = run_cli(
@@ -4834,16 +4805,30 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertFalse((omh_home / "runtime" / "release-evidence" / "index.json").exists())
 
             status, stdout, stderr = run_cli(
-                base + ["release", "evidence-bundle", "--version", "1.0.1", "--write", "--json"],
+                base + [
+                    "release",
+                    "evidence-bundle",
+                    "--version",
+                    "1.0.1",
+                    "--write",
+                    "--repo-root",
+                    str(repo),
+                    "--json",
+                ],
                 output_json=False,
             )
 
             self.assertEqual(status, 0, stderr)
             self.assertEqual(stderr, "")
             payload = json.loads(stdout)
-            self.assertEqual(payload["schema_version"], "omh_release_evidence_bundle/v1")
+            self.assertEqual(payload["schema_version"], "omh_release_evidence_bundle/v2")
             self.assertEqual(payload["status"], "ready")
             self.assertTrue(payload["written"])
+            self.assertTrue(payload["publication_ready"])
+            self.assertEqual(payload["source_identity"]["schema_version"], "omh_release_source_identity/v1")
+            self.assertEqual(payload["source_identity"]["origin"], "git_checkout")
+            self.assertEqual(payload["source_identity"]["identity_status"], "available")
+            self.assertIs(payload["source_identity"]["dirty"], False)
             self.assertEqual(payload["summary"]["product_readiness_status"], "ready")
             self.assertEqual(payload["summary"]["grounded_score_perfect"], 50)
             self.assertEqual(payload["summary"]["grounded_score_average"], 10.0)
@@ -4879,6 +4864,82 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertIn("local_artifact_store: not_written", payload["warnings"])
             self.assertTrue(Path(payload["artifact_path"]).exists())
             self.assertTrue((omh_home / "runtime" / "release-evidence" / "index.json").exists())
+
+    def test_release_evidence_bundle_verify_matching_exits_zero_in_json_and_human_output(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            _init_git_repo(repo)
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+
+            status, stdout, stderr = run_cli(
+                base + ["release", "evidence-bundle", "--write", "--repo-root", str(repo), "--json"],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(json.loads(stdout)["schema_version"], "omh_release_evidence_bundle/v2")
+
+            status, stdout, stderr = run_cli(
+                base + ["release", "evidence-bundle", "--verify", "--repo-root", str(repo), "--json"],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(stderr, "")
+            verdict = json.loads(stdout)
+            self.assertEqual(verdict["schema_version"], "omh_release_evidence_verification/v1")
+            self.assertEqual(verdict["verification"], "matching")
+            self.assertEqual(verdict["reasons"], [])
+
+            status, stdout, stderr = run_cli(
+                base + ["release", "evidence-bundle", "--verify", "--repo-root", str(repo)],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(stderr, "")
+            self.assertIn("OMH release evidence verification for", stdout)
+            self.assertIn("Verification: matching", stdout)
+            with self.assertRaises(json.JSONDecodeError):
+                json.loads(stdout)
+
+    def test_release_evidence_bundle_verify_nonmatching_exits_one_in_json_and_human_output(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            _init_git_repo(repo)
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+
+            status, _, stderr = run_cli(
+                base + ["release", "evidence-bundle", "--write", "--repo-root", str(repo), "--json"],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
+
+            (repo / "README.md").write_text("mutated\n", encoding="utf-8")
+
+            status, stdout, stderr = run_cli(
+                base + ["release", "evidence-bundle", "--verify", "--repo-root", str(repo), "--json"],
+                output_json=False,
+            )
+            self.assertEqual(status, 1)
+            self.assertEqual(stderr, "")
+            verdict = json.loads(stdout)
+            self.assertEqual(verdict["schema_version"], "omh_release_evidence_verification/v1")
+            self.assertEqual(verdict["verification"], "dirty")
+            self.assertTrue(verdict["reasons"])
+
+            status, stdout, stderr = run_cli(
+                base + ["release", "evidence-bundle", "--verify", "--repo-root", str(repo)],
+                output_json=False,
+            )
+            self.assertEqual(status, 1)
+            self.assertEqual(stderr, "")
+            self.assertIn("OMH release evidence verification for", stdout)
+            self.assertIn("Verification: dirty", stdout)
+            self.assertIn("Reasons", stdout)
+            with self.assertRaises(json.JSONDecodeError):
+                json.loads(stdout)
 
     def test_release_install_smoke_defaults_to_human_plan_with_json_escape_hatch(self) -> None:
         with TemporaryDirectory() as tmp:

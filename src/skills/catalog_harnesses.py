@@ -87,7 +87,7 @@ _HARNESSES = [
         quality_bar=(
             "Clarify scope before edits when target behavior, files, or verification are missing.",
             "Attach acceptance criteria, verification expectations, and review expectations to the prepared handoff.",
-            "Carry executor_capability_snapshot/v1 only as metadata-only context; host_observed requires bounded scope and evidence.",
+            "Carry executor_capability_snapshot/v2 only as metadata-only context (v1 records remain valid and project forward with every input-modality row unknown); host_observed requires bounded scope and evidence.",
             "When an explicit project root is supplied, attach only conflict-free project_governance_profile/v1 metadata; existing project rules override advisory defaults and a declined default stays non-blocking.",
             "Use product_family_template/v1 for prepared web, mobile, desktop, or API quality guidance without implying installed tools, execution, or observed QA.",
             "Report coding progress from lifecycle evidence, not from the existence of a prepared prompt.",

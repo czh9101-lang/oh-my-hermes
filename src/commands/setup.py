@@ -74,14 +74,12 @@ from ..manifest import read_manifest
 from ..menubar_app import is_managed_menubar_install, setup_menubar_app, uninstall_menubar_app
 from ..mcp.host_config import install_mcp_host_config
 from ..mcp_bridge import MCP_HOST_CONFIG_RECIPE_HOSTS
-from ..paths import OmhPaths, managed_command_venv_dir
+from ..paths import OmhPaths, managed_command_venv_dir, managed_current_workflow_pack_dir, managed_generation_for_executable
 from ..plugin_bundle.omh.metadata import MEMORY_PROVIDER_NAME
 from ..plugin_pack import PLUGIN_NAME, PluginPackError, install_plugin_bundle
 from ..probe import probe_capabilities
 from ..release import (
     RELEASE_CHANNELS,
-    ReleaseSelection,
-    missing_release_asset_hint,
     package_url_for,
     release_artifact_note,
 )
@@ -332,7 +330,10 @@ def _install_result(args: argparse.Namespace) -> dict[str, object]:
         }
         # Only overwrite a previously recorded identity with a freshly
         # confirmed one; never regress it to "" just because update-check
-        # was off (or the probe failed) on this particular run.
+        # was off (or the probe failed) on this particular run. The helper
+        # also enforces the issue #1282 replayable advance policy: an open,
+        # unaccepted coverage gap (or a non-fast-forward ancestry) pins the
+        # cursor by returning "".
         release_source_commit = _release_source_commit_for_state(paths, release)
         if release_source_commit:
             state_patch["release_source_commit"] = release_source_commit
@@ -574,6 +575,14 @@ def _print_hermes_profiles_line(results: list[dict[str, object]], *, language: s
     print(f"  {tr(language, 'hermes_profiles_synced', summary=summary)}")
 
 
+def _registered_workflow_dir(paths: OmhPaths) -> Path:
+    """Keep installer consumers under the non-resolved shared pointer."""
+    current = managed_current_workflow_pack_dir()
+    if current is not None and _managed_command_runtime().get("managed"):
+        return current
+    return paths.skills_dir
+
+
 def _refresh_hermes_registration(args: argparse.Namespace) -> dict[str, object] | None:
     """Carry a registered install forward to what the running version needs.
 
@@ -589,7 +598,7 @@ def _refresh_hermes_registration(args: argparse.Namespace) -> dict[str, object] 
     put it back.
     """
     paths = _paths(args)
-    if paths.skills_dir.as_posix() not in external_dirs(read_config(paths.hermes_config_path)):
+    if _registered_workflow_dir(paths).as_posix() not in external_dirs(read_config(paths.hermes_config_path)):
         return None
     try:
         return _apply_result(args)
@@ -821,79 +830,18 @@ def _command_package_self_update_plan(args: argparse.Namespace) -> dict[str, obj
 def _run_command_package_self_update(args: argparse.Namespace, plan: dict[str, object]) -> int:
     if plan.get("method") == "package_manager":
         return _run_package_manager_self_update(args, plan)
-    release = plan.get("release")
-    package_url = str(getattr(release, "package_url", "") or "")
-    if not package_url:
-        raise OmhError("cannot update command package because no package URL is available")
-    python = str(plan.get("python") or sys.executable)
-    wants_json = _wants_json(args)
-    progress = _HumanProgress(enabled=not wants_json, use_color=_use_color())
-    progress.header("OMH update", "Refresh the OMH command package and workflow pack.")
-    # The size goes on the line printed before pip starts, not after it
-    # finishes: a stable wheel is a second, and the repository archive is the
-    # multi-minute wait people were left staring at with no explanation.
-    note = release_artifact_note(release) if isinstance(release, ReleaseSelection) else ""
-    progress.step(
-        1,
-        2,
-        "Updating omh command package",
-        detail=f"{package_url} ({note})" if note else package_url,
-    )
-    pip_command = [
-        python,
-        "-m",
-        "pip",
-        "install",
-        "--disable-pip-version-check",
-        # A branch archive keeps one URL while its contents change, and pip
-        # caches by URL. Without this, `omh update` reinstalls whatever
-        # `main.zip` was downloaded last - it reports success, the version
-        # string does not move, and the user gets an older tree. Observed:
-        # a fresh venv still printed "Using cached main.zip" and installed
-        # a build from before the merge it was run to pick up.
-        # `--force-reinstall` does not help; it forces the reinstall, not
-        # the download.
-        "--no-cache-dir",
-        "--force-reinstall",
-        "--upgrade",
-        package_url,
-    ]
-    # Human mode hands pip the terminal so its own download and build lines
-    # appear as they happen. This step fetches an archive and builds an sdist,
-    # which takes minutes on the preview channel, and a terminal that prints
-    # nothing for that long is indistinguishable from a hang -- the reported
-    # symptom was `omh update` "stuck" on the URL line, from a run that was
-    # working the whole time. The wait is expected and the step line above
-    # already names its size; what was missing was any sign of progress.
-    # JSON mode keeps capturing, because stdout there has to stay parseable.
-    if wants_json:
-        pip_command.insert(pip_command.index("install") + 1, "-q")
-    capture = subprocess.PIPE if wants_json else None
-    completed = subprocess.run(
-        pip_command,
-        text=True,
-        stdout=capture,
-        stderr=capture,
-    )
-    if completed.returncode != 0:
-        detail = _bounded_command_error(
-            completed.stderr
-            or completed.stdout
-            # Human mode streamed pip straight to the terminal, so there is
-            # nothing captured to quote back -- the user already saw it.
-            or f"pip install failed with exit code {completed.returncode}"
-        )
-        hint = missing_release_asset_hint(release) if isinstance(release, ReleaseSelection) else ""
-        message = f"command package update failed: {detail}"
-        raise OmhError(f"{message}; {hint}" if hint else message)
-    progress.done("command package updated")
-    if not wants_json:
-        progress.step(2, 2, "Refreshing OMH workflows with the updated command")
-    argv = _reentry_argv_with_command_package_updated()
-    env = dict(os.environ)
-    env[SELF_UPDATE_REENTRY_ENV] = "1"
-    rerun = subprocess.run([python, "-m", "omh.cli", *argv], env=env)
-    return int(rerun.returncode)
+    # Installer-owned packages are never mutated in place.  The transaction
+    # stages command and workflow-pack bytes together, then flips one pointer.
+    from ..install.self_update import run_installer_self_update
+
+    result = run_installer_self_update(args, plan, runner=subprocess.run)
+    if _wants_json(args):
+        _print_json(result)
+    elif result.get("ok"):
+        print("OMH update complete: command and workflow pack activated together.")
+    else:
+        print(f"OMH update stopped during {result.get('phase')}; the known-good generation remains active.")
+    return 0 if result.get("ok") else 1
 
 
 def _run_package_manager_self_update(
@@ -1049,7 +997,7 @@ def _managed_command_runtime() -> dict[str, object]:
     if venv_dir is None:
         return {"managed": False, "reason": "no home directory or OMH_VENV_DIR is available"}
     executable = Path(sys.executable).expanduser()
-    if not _is_relative_to_without_resolving_symlinks(executable, venv_dir):
+    if not _is_relative_to_without_resolving_symlinks(executable, venv_dir) and managed_generation_for_executable(executable) is None:
         return {
             "managed": False,
             "reason": "current omh command is not running from the installer-managed OMH venv",
@@ -1155,12 +1103,27 @@ def _release_source_commit_for_state(paths, release) -> str:
     pinned stable tag or a local source is not meaningfully "behind main".
     Silent no-op (returns "") on any failure; this metadata must never fail
     the install/update command it rides along with.
+
+    Advance policy (issue #1282): the cursor advances only under a replayable
+    gap policy. `cursor_advance_allowed` reads the update-check cache (no
+    network) and refuses while a coverage gap is open and unaccepted or the
+    recorded ancestry is not a verified `fast_forward`, so `omh update` never
+    re-anchors `release_source_commit` across a failed required source read;
+    a completed recovery or an explicit `omh update-check accept-gap` re-arms
+    it. The gate is checked before the recording probe so a blocked advance
+    spends no network attempt.
     """
     if release.source_label != "main":
         return ""
-    from ..maintenance.update_check import read_update_check_policy, record_remote_commit_for_install
+    from ..maintenance.update_check import (
+        cursor_advance_allowed,
+        read_update_check_policy,
+        record_remote_commit_for_install,
+    )
 
     if read_update_check_policy(paths)["mode"] == "off":
+        return ""
+    if not cursor_advance_allowed(paths):
         return ""
     return record_remote_commit_for_install(paths)
 
@@ -1559,7 +1522,7 @@ def _apply_result(args: argparse.Namespace) -> dict[str, object]:
     memory_mode = str(getattr(args, "memory_mode", "") or "") or "review-first"
     current = read_config(paths.hermes_config_path)
     try:
-        change = ensure_external_dir(current, paths.skills_dir)
+        change = ensure_external_dir(current, _registered_workflow_dir(paths))
         compression = ensure_compression_defaults(change.text)
         # Installing the bridge and switching it on are separate steps in
         # Hermes. Doing only the first leaves an install that passes every
@@ -1618,8 +1581,8 @@ def _apply_result(args: argparse.Namespace) -> dict[str, object]:
             paths,
             {
                 "hermes_config_path": str(paths.hermes_config_path),
-                "last_applied_skills_dir": str(paths.skills_dir),
-                "external_dir_registered": str(paths.skills_dir) in read_config(paths.hermes_config_path),
+                "last_applied_skills_dir": str(_registered_workflow_dir(paths)),
+                "external_dir_registered": str(_registered_workflow_dir(paths)) in read_config(paths.hermes_config_path),
             },
         )
     return {
@@ -4519,6 +4482,7 @@ def _add_top_level_commands(sub) -> None:
     update.add_argument("--yes", action="store_true", help="Use the recommended branded TUI choice without prompting.")
     update.add_argument("--interactive", action="store_true", help="Force the interactive update prompt.")
     update.add_argument("--no-interactive", action="store_true", help="Disable the interactive update prompt.")
+    update.add_argument("--recover-known-good", action="store_true", help="Atomically restore the retained known-good installer generation.")
     update.add_argument(
         "--no-omh-tui",
         action="store_true",

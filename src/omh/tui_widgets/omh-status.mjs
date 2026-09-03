@@ -488,6 +488,9 @@ export default function register(sdk) {
     const successStates = new Set(['completed', 'already_completed', 'dry_run_planned'])
     const failedStates = new Set([
       'capability_snapshot_invalid',
+      'modality_unknown',
+      'modality_unsupported',
+      'modality_transformation_unobserved',
       'failed',
       'blocked',
       'blocked_by_dependency',

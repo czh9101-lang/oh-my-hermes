@@ -27,6 +27,9 @@ _SUCCESS_STATES: Final[frozenset[str]] = frozenset(
 _FAILED_STATES: Final[frozenset[str]] = frozenset(
     {
         "capability_snapshot_invalid",
+        "modality_unknown",
+        "modality_unsupported",
+        "modality_transformation_unobserved",
         "failed",
         "blocked_by_dependency",
         "executor_not_ready",

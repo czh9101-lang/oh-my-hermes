@@ -81,14 +81,29 @@ A `vX.Y.Z` tag runs the distribution workflow in this order:
    older tag only when every later `main` change is confined to the
    release-control allowlist.
 2. Run distribution contract tests.
-3. Build one wheel and stage the npm tarball from it.
-4. Create the GitHub release and upload the wheel.
-5. Download and byte-verify the immutable release asset.
-6. Publish the already-staged npm tarball with provenance.
-7. Render the Homebrew formula from the verified release URL and SHA-256.
-8. Update `rlaope/homebrew-tap/Formula/omh.rb` only when its existing version
-   is older; an equal version must already be byte-identical, and a newer
-   version blocks the run.
+3. Generate the revision-bound release evidence bundle
+   (`omh_release_evidence_bundle/v2`) from the exact tagged checkout and
+   assert it is `ready`, publication-ready, clean, and bound to the tag
+   commit. Any other state blocks the run before anything is built or
+   published.
+4. Build one wheel and stage the npm tarball from it.
+5. Rebind the canonical local evidence bundle
+   (`.omh/runtime/release-evidence/X.Y.Z.json`) to the built wheel so the
+   retained bundle records the artifact's SHA-256, and assert that digest equals
+   the build's recorded wheel digest.
+6. Create the GitHub release and upload the wheel plus the evidence bundle
+   (`omh-release-evidence-X.Y.Z.json`) as immutable assets.
+7. Download and byte-verify the immutable release assets. The evidence
+   bundle is compared with its `created_at` stamp excluded: regeneration at
+   the same tag legitimately re-stamps it, while every binding field
+   (schema, revision, tree, input digests, artifact digest, status) must be
+   identical, so a resumed run cannot accept a bundle bound to different
+   content behind a matching version/tag.
+8. Publish the already-staged npm tarball with provenance.
+9. Render the Homebrew formula from the verified release URL and SHA-256.
+10. Update `rlaope/homebrew-tap/Formula/omh.rb` only when its existing
+    version is older; an equal version must already be byte-identical, and a
+    newer version blocks the run.
 
 All distribution tags share one non-cancelling concurrency group. The tap
 update cannot run before npm publication succeeds, and an older run cannot
@@ -141,9 +156,14 @@ artifacts from the immutable tag. Any artifact-affecting change after the tag
 blocks recovery and requires a new patch release.
 
 A resumed run reuses a GitHub asset only when its bytes match the locally
-rebuilt wheel, accepts an existing npm version only when its integrity matches
-the staged tarball, and skips a tap commit when the formula is already
-identical.
+rebuilt wheel, accepts an existing evidence-bundle asset only when its
+binding fields match the locally regenerated bundle (compared with the
+`created_at` stamp excluded), accepts an existing npm version only when its
+integrity matches the staged tarball, and skips a tap commit when the
+formula is already identical. A legitimately regenerated bundle that differs
+from the published one — for example after a schema fix — is rejected the
+same way an artifact identity mismatch is: correct the source, bump the
+patch version, and cut a new tag instead of replacing the asset.
 
 Published npm versions and GitHub release assets are immutable. Do not replace
 them. If an identity mismatch occurs, stop the workflow and publish a new patch

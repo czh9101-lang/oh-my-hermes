@@ -89,6 +89,41 @@ jobs:
             tests.test_homebrew_distribution \
             tests.test_distribution_surfaces
 
+      - name: Generate revision-bound release evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Publication is gated on evidence generated from this exact tagged
+          # checkout: an uploaded bundle could describe any revision, which is
+          # the defect this step exists to close. A failing assertion here
+          # blocks the run before any artifact is built or published.
+          version="$(uv run tools/package_manager/metadata.py --version)"
+          test "v$version" = "$RELEASE_TAG"
+          evidence_home="$RUNNER_TEMP/omh-evidence-home"
+          uv run python -m omh.cli \
+            --omh-home "$evidence_home" \
+            --hermes-home "$RUNNER_TEMP/omh-evidence-hermes" \
+            release evidence-bundle --version "$version" --write \
+            --repo-root "$GITHUB_WORKSPACE" --json > "$RUNNER_TEMP/evidence.json"
+          tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
+          test "$tag_commit" = "$(git rev-parse HEAD)"
+          bundle="$evidence_home/runtime/release-evidence/$version.json"
+          uv run python - "$bundle" "$tag_commit" <<'PY'
+          import json
+          import sys
+
+          payload = json.load(open(sys.argv[1], encoding="utf-8"))
+          identity = payload["source_identity"]
+          assert payload["status"] == "ready", payload["blocking_failures"]
+          assert payload["publication_ready"] is True
+          assert payload["schema_version"] == "omh_release_evidence_bundle/v2"
+          assert identity["origin"] == "git_checkout"
+          assert identity["dirty"] is False
+          assert identity["identity_status"] == "available"
+          assert identity["commit_sha"] == sys.argv[2]
+          PY
+          echo "OMH_EVIDENCE_HOME=$evidence_home" >> "$GITHUB_ENV"
+
       - name: Resolve release channel
         shell: bash
         run: |
@@ -134,6 +169,37 @@ jobs:
             echo "OMH_TARBALL=$tarball"
           } >> "$GITHUB_ENV"
 
+      - name: Bind and retain evidence with release outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Rebind the same revision-bound evidence to the built wheel so the
+          # retained bundle names the exact artifact it covers.
+          test -n "${OMH_EVIDENCE_HOME:-}"
+          uv run python -m omh.cli \
+            --omh-home "$OMH_EVIDENCE_HOME" \
+            --hermes-home "$RUNNER_TEMP/omh-evidence-hermes" \
+            release evidence-bundle --version "$OMH_VERSION" --write \
+            --repo-root "$GITHUB_WORKSPACE" --artifact "$OMH_WHEEL" --json > "$RUNNER_TEMP/evidence-bound.json"
+          bundle="$OMH_EVIDENCE_HOME/runtime/release-evidence/$OMH_VERSION.json"
+          uv run python - "$bundle" "$OMH_WHEEL_SHA256" <<'PY'
+          import json
+          import sys
+
+          payload = json.load(open(sys.argv[1], encoding="utf-8"))
+          identity = payload["source_identity"]
+          assert payload["status"] == "ready", payload["blocking_failures"]
+          assert payload["publication_ready"] is True
+          assert identity["identity_status"] == "available"
+          assert identity["dirty"] is False
+          artifact = identity["input_manifest"]["artifact"]
+          assert artifact["binding"] == "recorded"
+          assert artifact["sha256"] == "sha256:" + sys.argv[2]
+          PY
+          evidence_asset="$RUNNER_TEMP/omh-release-evidence-$OMH_VERSION.json"
+          cp "$bundle" "$evidence_asset"
+          echo "OMH_EVIDENCE_ASSET=$evidence_asset" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: rlaope/homebrew-tap
@@ -167,6 +233,7 @@ jobs:
         run: |
           set -euo pipefail
           asset="$(basename "$OMH_WHEEL")"
+          evidence_asset="$(basename "$OMH_EVIDENCE_ASSET")"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             asset_count="$(
               gh release view "$RELEASE_TAG" \
@@ -179,6 +246,17 @@ jobs:
             else
               test "$asset_count" = 1
             fi
+            evidence_count="$(
+              gh release view "$RELEASE_TAG" \
+                --json assets \
+                --jq "[.assets[] | select(.name == \"$evidence_asset\")] | length"
+            )"
+            if [ "$evidence_count" = 0 ]; then
+              gh release upload "$RELEASE_TAG" \
+                "$OMH_EVIDENCE_ASSET#Release evidence bundle"
+            else
+              test "$evidence_count" = 1
+            fi
           else
             extra=()
             if [ "$RELEASE_CHANNEL" = "beta" ]; then
@@ -190,6 +268,7 @@ jobs:
             # the first stable cut -- failed before creating the release.
             gh release create "$RELEASE_TAG" \
               "$OMH_WHEEL#Python wheel" \
+              "$OMH_EVIDENCE_ASSET#Release evidence bundle" \
               --verify-tag \
               --generate-notes \
               --title "$RELEASE_TAG" \
@@ -212,6 +291,28 @@ jobs:
           release_sha256="$(shasum -a 256 "$release_wheel" | cut -d ' ' -f 1)"
           test "$release_sha256" = "$OMH_WHEEL_SHA256"
           echo "OMH_RELEASE_SHA256=$release_sha256" >> "$GITHUB_ENV"
+          gh release download "$RELEASE_TAG" \
+            --pattern "$(basename "$OMH_EVIDENCE_ASSET")" \
+            --dir "$verified"
+          release_bundle="$verified/$(basename "$OMH_EVIDENCE_ASSET")"
+          # The bundle re-stamps created_at on every regeneration at the same
+          # tag; every binding field (schema, revision, tree, input digests,
+          # artifact digest, status) must be identical once that stamp is
+          # excluded, so a resumed run cannot accept a bundle bound to
+          # different content behind a matching version/tag.
+          uv run python - "$OMH_EVIDENCE_ASSET" "$release_bundle" <<'PY'
+          import json
+          import sys
+
+          def normalized(path):
+              payload = json.load(open(path, encoding="utf-8"))
+              payload.pop("created_at", None)
+              return payload
+
+          assert normalized(sys.argv[1]) == normalized(sys.argv[2]), (
+              "release evidence bundle asset differs from the locally bound bundle"
+          )
+          PY
 
       - name: Publish or verify npm package
         shell: bash

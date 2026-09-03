@@ -15,11 +15,12 @@ from .executor_local_workflow_selection import (
 )
 
 
-EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: Final = "executor_capability_snapshot/v1"
+EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: Final = "executor_capability_snapshot/v2"
+LEGACY_EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: Final = "executor_capability_snapshot/v1"
 PREPARED_CAPABILITY_SNAPSHOT_RECORDED_AT: Final = "1970-01-01T00:00:00Z"
 CAPABILITY_STATUSES: Final = frozenset({"prepared", "host_observed", "unavailable", "unknown"})
 LOCAL_WORKFLOW_CAPABILITY_NAME: Final = "local_workflow"
-KNOWN_CAPABILITY_NAMES: Final = frozenset(
+_OPERATIONAL_CAPABILITY_NAMES: Final = frozenset(
     {
         "parallel_agents",
         "background_work",
@@ -36,6 +37,16 @@ KNOWN_CAPABILITY_NAMES: Final = frozenset(
         "code_mode_batching",
     }
 )
+INPUT_MODALITY_CAPABILITY_NAMES: Final = frozenset(
+    {
+        "input_modality_text",
+        "input_modality_image",
+        "input_modality_audio",
+        "input_modality_video",
+        "input_modality_document",
+    }
+)
+KNOWN_CAPABILITY_NAMES: Final = _OPERATIONAL_CAPABILITY_NAMES | INPUT_MODALITY_CAPABILITY_NAMES
 DESCRIPTIVE_CAPABILITY_NAMES: Final = frozenset(
     {
         "edit_format_hashline",
@@ -77,6 +88,7 @@ _MAX_EVIDENCE_REF_LENGTH: Final = 240
 _MAX_SCOPE_ITEMS: Final = 12
 _MAX_SCOPE_TEXT_LENGTH: Final = 160
 _LOCAL_WORKFLOW_SCOPE_KEYS: Final = frozenset({"profile", "skill_id", "environment"})
+_MODALITY_SCOPE_KEYS: Final = frozenset({"provider", "wire_model", "endpoint_mode"})
 _FORBIDDEN_SCOPE_KEY_TERMS: Final = ("raw", "prompt", "log", "transcript", "reasoning")
 _SENSITIVE_METADATA_PATTERNS: Final = ("api_key", "apikey", "authorization:", "bearer ", "ghp_", "github_pat_", "password", "private-token", "secret", "token", "xoxb-", "xoxp-")
 _SENSITIVE_METADATA_TOKEN_RE: Final = re.compile(r"(?:^|[\s=:,])(sk-|gh[opsu]_)", re.IGNORECASE)
@@ -147,20 +159,33 @@ def recorded_executor_capability_snapshot(
 def complete_executor_capability_snapshot(
     snapshot: Mapping[str, JsonValue],
 ) -> SnapshotRecord:
-    """Project a valid sparse snapshot onto the complete known vocabulary."""
+    """Project a valid sparse snapshot onto the v2 vocabulary.
+
+    v1 records remain valid input, but cannot establish route-bound media
+    support; every added modality row is therefore explicitly unknown.
+    """
     errors = validate_executor_capability_snapshot(snapshot)
     if errors:
         raise ExecutorCapabilitySnapshotError("; ".join(errors))
     raw_capabilities = snapshot["capabilities"]
     assert isinstance(raw_capabilities, Mapping)
     capabilities = {name: {"status": "unknown"} for name in sorted(KNOWN_CAPABILITY_NAMES)}
-    capabilities.update(
-        {
-            str(name): _copy_snapshot(capability)
-            for name, capability in raw_capabilities.items()
-        }
-    )
-    return {**_copy_snapshot(snapshot), "capabilities": capabilities}
+    capabilities.update({str(name): _copy_snapshot(capability) for name, capability in raw_capabilities.items()})
+    projected = _copy_snapshot(snapshot)
+    projected["schema_version"] = EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION
+    projected["capabilities"] = capabilities
+    return projected
+
+
+def executor_capability_snapshot_compatibility(snapshot: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    """State whether a snapshot is readable and whether it required v1 projection."""
+    errors = validate_executor_capability_snapshot(snapshot)
+    if errors:
+        return {"compatible": False, "reason": "; ".join(errors)}
+    version = snapshot.get("schema_version")
+    if version == LEGACY_EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION:
+        return {"compatible": True, "projected_from": "v1", "modality_rows": "unknown"}
+    return {"compatible": True, "projected_from": "", "modality_rows": "recorded"}
 
 
 def validate_executor_capability_snapshot(snapshot: Mapping[str, JsonValue]) -> list[str]:
@@ -234,8 +259,15 @@ def _root_errors(snapshot: Mapping[str, JsonValue]) -> list[str]:
         if len(names) > 3:
             rendered += f", ... ({len(names) - 3} more)"
         errors.append(f"snapshot contains unsupported fields: {rendered}")
-    if snapshot.get("schema_version") != EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION:
-        errors.append(f"schema_version must be {EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION}")
+    if snapshot.get("schema_version") not in {
+        EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
+        LEGACY_EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
+    }:
+        errors.append(
+            "schema_version must be "
+            f"{EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION} or "
+            f"{LEGACY_EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION}"
+        )
     executor = snapshot.get("executor")
     if not isinstance(executor, str) or not executor.strip() or len(executor.strip()) > _MAX_EXECUTOR_LENGTH:
         errors.append("executor must be a nonempty bounded string")
@@ -261,6 +293,9 @@ def _capability_errors(
         if name not in KNOWN_CAPABILITY_NAMES:
             errors.append(f"unsupported capability name: {str(name)[:80]}")
             continue
+        if name in INPUT_MODALITY_CAPABILITY_NAMES:
+            errors.extend(_modality_errors(name, value, recorded_at=recorded_at))
+            continue
         if not isinstance(value, Mapping):
             errors.append(f"{name} capability must be a mapping")
             continue
@@ -273,6 +308,25 @@ def _capability_errors(
             case _:
                 errors.append(f"{name} capability status must be one of {', '.join(sorted(CAPABILITY_STATUSES))}")
     return errors
+
+
+def _modality_errors(name: str, capability: JsonValue, *, recorded_at: JsonValue | None) -> list[str]:
+    if not isinstance(capability, Mapping):
+        return [f"{name} capability must be a mapping"]
+    status = capability.get("status")
+    if status in {"host_observed", "unavailable"}:
+        errors = _observed_capability_errors(name, capability, status=str(status))
+        scope = capability.get("scope")
+        if isinstance(scope, Mapping) and set(scope) != _MODALITY_SCOPE_KEYS:
+            errors.append(f"{name} scope must contain exactly provider, wire_model, and endpoint_mode")
+        if not evidence_reference(capability.get("evidence_ref")):
+            errors.append(f"{name} evidence_ref must be a safe opaque reference")
+        if not observation_time_relation(recorded_at, capability.get("observed_at")):
+            errors.append(f"{name} observed_at must be timezone-aware and within 24 hours before recorded_at")
+        return errors
+    if status == "unknown":
+        return _unexpected_capability_field_errors(name, capability, _STATUS_ONLY_CAPABILITY_FIELDS)
+    return [f"{name} capability status must be one of host_observed, unavailable, unknown"]
 
 
 def _local_workflow_errors(capability: JsonValue, *, recorded_at: JsonValue | None) -> list[str]:

@@ -143,7 +143,7 @@ class ReleaseSmokeTests(unittest.TestCase):
         self.assertIn("wrapper chat card coverage", items["product_readiness"]["evidence_required"])
         self.assertIn("product contracts", items["product_readiness"]["proof_boundary"])
         self.assertEqual(items["release_evidence_bundle"]["command"], "/tmp/omh release evidence-bundle --version 1.0.0 --write --json")
-        self.assertIn("omh_release_evidence_bundle/v1", items["release_evidence_bundle"]["evidence_required"])
+        self.assertIn("omh_release_evidence_bundle/v2", items["release_evidence_bundle"]["evidence_required"])
         self.assertIn("local deterministic evidence", items["release_evidence_bundle"]["proof_boundary"])
         self.assertTrue(items["live_tap_smoke"]["mutates_profile"])
         self.assertTrue(items["live_tap_smoke"]["requires_release_authority"])
@@ -415,8 +415,12 @@ class ReleaseSmokeTests(unittest.TestCase):
 
             payload = release_evidence_bundle(version="v1.0.1", omh_command="/tmp/omh command", paths=paths)
 
-            self.assertEqual(payload["schema_version"], "omh_release_evidence_bundle/v1")
+            self.assertEqual(payload["schema_version"], "omh_release_evidence_bundle/v2")
             self.assertEqual(payload["status"], "ready")
+            self.assertFalse(payload["publication_ready"])
+            self.assertEqual(payload["source_identity"]["schema_version"], "omh_release_source_identity/v1")
+            self.assertEqual(payload["source_identity"]["origin"], "unknown")
+            self.assertEqual(payload["source_identity"]["identity_status"], "unavailable")
             self.assertFalse(payload["written"])
             self.assertFalse(paths.release_evidence_index_path.exists())
             self.assertIn("local_artifact_store: not_written", payload["warnings"])
@@ -493,14 +497,17 @@ class ReleaseSmokeTests(unittest.TestCase):
 
             self.assertTrue(written["written"])
             artifact_path = Path(str(written["artifact_path"]))
+            self.assertEqual(artifact_path, paths.release_evidence_dir / "1.0.1.json")
             self.assertTrue(artifact_path.exists())
             self.assertTrue(paths.release_evidence_index_path.exists())
             stored = json.loads(artifact_path.read_text(encoding="utf-8"))
             index = json.loads(paths.release_evidence_index_path.read_text(encoding="utf-8"))
-            self.assertEqual(stored["schema_version"], "omh_release_evidence_bundle/v1")
+            self.assertEqual(stored["schema_version"], "omh_release_evidence_bundle/v2")
+            self.assertEqual(stored["artifact_path"], artifact_path.name)
+            self.assertIn("source_identity", stored)
             self.assertEqual(index["schema_version"], "omh_release_evidence_index/v1")
             self.assertEqual(index["latest_version"], "1.0.1")
-            self.assertEqual(index["latest_artifact_path"], str(artifact_path))
+            self.assertEqual(index["latest_artifact_path"], artifact_path.name)
 
     def test_release_evidence_bundle_reuses_product_readiness_quality_evidence(self) -> None:
         counted_names = (

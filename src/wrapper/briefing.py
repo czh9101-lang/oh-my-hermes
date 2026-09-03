@@ -277,6 +277,9 @@ def _executor_capability_block(
     snapshot = deepcopy(capability)
     return {
         "executor_capability_snapshot": snapshot,
+        "executor_modality_decision": deepcopy(handoff.get("executor_modality_decision"))
+        if isinstance(handoff.get("executor_modality_decision"), dict)
+        else {},
         "executor_capability": legacy_executor_capability_projection(snapshot),
     }
 

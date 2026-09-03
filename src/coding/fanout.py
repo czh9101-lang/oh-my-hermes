@@ -29,6 +29,7 @@ from .executor_capability_snapshots import (
 )
 from .fanout_review_budget import normalized_review_role
 from .model_routing import MODEL_CATEGORIES, canonical_model_category, model_route_for_unit
+from .media_handoff_capabilities import build_executor_modality_decision, normalize_input_representation
 
 _UNIT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _FROZEN_CAPABILITY_SNAPSHOT_POLICY = "frozen_required"
@@ -410,6 +411,8 @@ def _normalized_unit(unit: Mapping[str, object], index: int) -> dict[str, object
         "verification_commands": _normalized_verification_commands(
             unit.get("verification_commands"), index
         ),
+        "input_representation": list(normalize_input_representation(unit.get("input_representation", "text_only"))),
+        "transformation": dict(unit.get("transformation") or {}),
     }
 
 
@@ -521,6 +524,14 @@ def _contract_unit(
         handoff["executor_capability_snapshot_policy"] = _FROZEN_CAPABILITY_SNAPSHOT_POLICY
     if isinstance(capability_snapshot, Mapping):
         handoff["executor_capability_snapshot"] = deepcopy(dict(capability_snapshot))
+    representations = unit.get("input_representation", [])
+    handoff["input_representation"] = deepcopy(representations)
+    handoff["executor_modality_decision"] = build_executor_modality_decision(
+        input_representation=representations,
+        snapshot=capability_snapshot if isinstance(capability_snapshot, Mapping) else None,
+        route=model_route if isinstance(model_route, Mapping) else None,
+        transformation=unit.get("transformation") if isinstance(unit.get("transformation"), Mapping) else None,
+    )
     contract_unit: dict[str, object] = {
         "unit_id": unit_id,
         "title": str(unit.get("title") or unit_id),

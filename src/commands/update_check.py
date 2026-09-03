@@ -15,6 +15,7 @@ import sys
 
 from ..maintenance.update_check import (
     UPDATE_CHECK_MODES,
+    accept_update_check_gap,
     read_update_check_cache,
     read_update_check_policy,
     update_check_cache_path,
@@ -45,6 +46,15 @@ def _print_status(payload: dict[str, object]) -> None:
         remote = cache.get("remote_commit")
         if remote:
             print(f"Remote main: {remote}")
+        ancestry = cache.get("ancestry")
+        if ancestry:
+            print(f"Ancestry: {ancestry}")
+        gap = cache.get("gap")
+        if isinstance(gap, dict) and gap.get("status") in ("open", "accepted"):
+            since = gap.get("since") or "unknown"
+            print(f"Coverage gap: {gap.get('status')} since {since}")
+            if gap.get("status") == "open":
+                print("Review with `omh update-check status --json`; accept with `omh update-check accept-gap`.")
     else:
         print("Last checked: never")
     print("Change with `omh update-check set --mode off|notify|auto [--interval-hours N]`.")
@@ -84,6 +94,37 @@ def cmd_update_check_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_update_check_accept_gap(args: argparse.Namespace) -> int:
+    """Maintainer acceptance of an open coverage gap (issue #1282).
+
+    Acceptance is explicit: it records that a human reviewed the rewritten
+    history and the uncertain interval, and permits the next `omh update` to
+    re-anchor the cursor. It never claims the unreachable commits were
+    recovered.
+    """
+    paths = _paths(args)
+    before = read_update_check_cache(paths)
+    before_gap = before.get("gap") if isinstance(before, dict) else None
+    was_open = isinstance(before_gap, dict) and before_gap.get("status") == "open"
+    cache = accept_update_check_gap(paths)
+    gap = cache.get("gap") if isinstance(cache, dict) else None
+    if _wants_json(args):
+        _print_json(
+            {
+                "schema_version": "omh_update_check_status/v1",
+                "accepted": was_open,
+                "gap": gap if isinstance(gap, dict) else {},
+                "cache_path": str(update_check_cache_path(paths)),
+            }
+        )
+        return 0
+    if was_open:
+        print("Coverage gap accepted; the next `omh update` may re-anchor the recorded cursor.")
+    else:
+        print("No open coverage gap to accept.")
+    return 0
+
+
 def _add_update_check_commands(sub) -> None:
     group = sub.add_parser(
         "update-check",
@@ -105,3 +146,10 @@ def _add_update_check_commands(sub) -> None:
     )
     set_cmd.add_argument("--json", action="store_true", help="Print the machine-readable status payload.")
     set_cmd.set_defaults(func=cmd_update_check_set)
+
+    accept_gap = group_sub.add_parser(
+        "accept-gap",
+        help="Accept an open coverage gap after reviewing rewritten upstream history.",
+    )
+    accept_gap.add_argument("--json", action="store_true", help="Print the machine-readable status payload.")
+    accept_gap.set_defaults(func=cmd_update_check_accept_gap)

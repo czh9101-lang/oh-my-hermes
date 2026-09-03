@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from ..version import __version__
 from ..installer import OmhError
+from ..local_store import read_json_object_result
+from ..maintenance.release import _normalize_release_version
+from ..maintenance.release_identity import verify_release_evidence_bundle
 from ..release import (
     DEFAULT_HERMES_SKILL,
     DEFAULT_HERMES_TAP,
@@ -144,12 +148,18 @@ def cmd_release_product_readiness(args: argparse.Namespace) -> int:
 
 
 def cmd_release_evidence_bundle(args: argparse.Namespace) -> int:
+    if args.verify is not None:
+        return _cmd_release_evidence_bundle_verify(args)
     try:
         payload = release_evidence_bundle(
             version=args.version or __version__,
             omh_command=args.omh_command,
             paths=_paths(args),
             write=args.write,
+            repo_root=args.repo_root or Path.cwd(),
+            artifact=args.artifact,
+            archive_digest=args.archive_digest,
+            artifact_digest=args.artifact_digest,
         )
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
@@ -158,6 +168,34 @@ def cmd_release_evidence_bundle(args: argparse.Namespace) -> int:
     else:
         _print_release_evidence_bundle_summary(payload)
     return 0 if payload["status"] == "ready" else 1
+
+
+def _cmd_release_evidence_bundle_verify(args: argparse.Namespace) -> int:
+    try:
+        release_version = _normalize_release_version(args.version or __version__)
+    except ValueError as exc:
+        raise OmhError(str(exc)) from exc
+    paths = _paths(args)
+    bundle_path = Path(args.verify) if args.verify else paths.release_evidence_dir / f"{release_version}.json"
+    bundle: object = None
+    if bundle_path.exists():
+        bundle, error = read_json_object_result(bundle_path)
+        if error is not None:
+            bundle = {"schema_version": None, "version": release_version, "read_error": error}
+    payload = verify_release_evidence_bundle(
+        bundle if isinstance(bundle, dict) else None,
+        version=release_version,
+        repo_root=args.repo_root or Path.cwd(),
+        paths=paths,
+        artifact=args.artifact,
+        archive_digest=args.archive_digest,
+        artifact_digest=args.artifact_digest,
+    )
+    if _wants_json(args):
+        _print_json(payload)
+    else:
+        _print_release_evidence_verification_summary(payload)
+    return 0 if payload["verification"] == "matching" else 1
 
 
 def cmd_release_drift(args: argparse.Namespace) -> int:
@@ -272,7 +310,36 @@ def _add_release_commands(sub) -> None:
     )
     evidence_bundle.add_argument("--version", default="", help="Release version to bundle, such as 1.0.1 or v1.0.1.")
     evidence_bundle.add_argument("--omh-command", default="omh", help="Installed OMH executable name/path shown in release gate commands.")
-    evidence_bundle.add_argument("--write", action="store_true", help="Write the bundle under .omh/runtime/release-evidence/.")
+    bundle_mode = evidence_bundle.add_mutually_exclusive_group()
+    bundle_mode.add_argument("--write", action="store_true", help="Write the bundle under .omh/runtime/release-evidence/.")
+    bundle_mode.add_argument(
+        "--verify",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help="Re-compute the recorded revision binding from PATH, or the canonical version bundle when PATH is omitted; never writes or regenerates. Exit 0 iff matching.",
+    )
+    evidence_bundle.add_argument(
+        "--repo-root",
+        default=None,
+        help="Source checkout the bundle is bound to; probed read-only for commit, tree, and dirty state.",
+    )
+    evidence_bundle.add_argument(
+        "--artifact",
+        default=None,
+        help="Built release artifact (wheel) whose sha256 is recorded in or checked against the bundle.",
+    )
+    evidence_bundle.add_argument(
+        "--archive-digest",
+        default="",
+        help="sha256:<hex> digest binding a source archive when no git checkout is available.",
+    )
+    evidence_bundle.add_argument(
+        "--artifact-digest",
+        default="",
+        help="sha256:<hex> digest binding an installed package when no git checkout is available.",
+    )
     evidence_bundle.add_argument("--json", action="store_true", help="Print the machine-readable release evidence bundle payload.")
     evidence_bundle.set_defaults(func=cmd_release_evidence_bundle)
 
@@ -575,6 +642,19 @@ def _print_release_evidence_bundle_summary(payload: dict[str, object]) -> None:
         print(f"  - {action}")
     print("")
     print(f"Boundary: {payload.get('boundary')}")
+    print("For machine-readable output, rerun with `--json`.")
+
+
+def _print_release_evidence_verification_summary(payload: dict[str, object]) -> None:
+    print(f"OMH release evidence verification for {payload.get('version')}")
+    print(f"Verification: {payload.get('verification')}")
+    reasons = payload.get("reasons", [])
+    if isinstance(reasons, list) and reasons:
+        print("Reasons")
+        for reason in reasons:
+            print(f"  - {reason}")
+    print("")
+    print(f"Boundary: {payload.get('claim_boundary')}")
     print("For machine-readable output, rerun with `--json`.")
 
 

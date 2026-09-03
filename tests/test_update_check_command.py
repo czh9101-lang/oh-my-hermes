@@ -8,8 +8,8 @@
 
 The probe spawns `curl` as a subprocess (never a Python-level network client
 -- see `tests/test_handoff_safety_contract_enforcement.py` INVARIANT 2), so
-every test here patches `omh.maintenance.update_check._run_curl` -- the one
-name `fetch_remote_main_identity` resolves when no `runner` is passed
+every test here patches `omh.maintenance.update_check_probe._run_curl` --
+the transport seam the probe functions resolve when no `runner` is passed
 explicitly -- rather than the global `subprocess.run`, so a legitimate
 subprocess call elsewhere in `omh update` (e.g. command-package self-update)
 is never accidentally intercepted. None of these tests may spawn a real
@@ -50,7 +50,7 @@ from omh.maintenance.update_check import (
 )
 from omh.paths import OmhPaths
 
-_RUN_CURL_TARGET = "omh.maintenance.update_check._run_curl"
+_RUN_CURL_TARGET = "omh.maintenance.update_check_probe._run_curl"
 
 
 def _base(root: Path) -> list[str]:
@@ -67,7 +67,29 @@ def _http_stdout(sha: str) -> str:
 
 
 def _fake_curl(sha: str):
+    """Fake curl: a readable head, and a verified fast-forward compare.
+
+    Since the issue #1282 contract, `behind` is emitted only for a verified
+    `fast_forward`, so the compare read answers `status: ahead`.
+    """
+
     def runner(argv, timeout=None):
+        if any("/compare/" in str(arg) for arg in argv):
+            stdout = 'HTTP/2 200\n\n' + json.dumps({"status": "ahead", "ahead_by": 1, "behind_by": 0})
+            return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+        return subprocess.CompletedProcess(argv, 0, stdout=_http_stdout(sha), stderr="")
+
+    return runner
+
+
+def _fake_curl_rewritten(sha: str, *, compare_status: int = 404):
+    """Fake curl for rewritten history: head readable, cursor unreachable."""
+
+    def runner(argv, timeout=None):
+        if any("/compare/" in str(arg) for arg in argv):
+            return subprocess.CompletedProcess(argv, 0, stdout=f"HTTP/2 {compare_status}\n\n", stderr="")
+        if any("/tags" in str(arg) for arg in argv):
+            return subprocess.CompletedProcess(argv, 0, stdout='HTTP/2 200\n\n[{"name": "v0.1.0"}]', stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout=_http_stdout(sha), stderr="")
 
     return runner
@@ -338,11 +360,115 @@ class StartupCheckLaunchIntegrationTests(unittest.TestCase):
             state = read_json_object(paths.runtime_state_path) or {}
             self.assertNotIn("last_update", state)
 
+    def test_notify_prints_the_rewrite_line_even_when_no_update_qualifies(self) -> None:
+        # Issue #1282: an unreachable cursor must surface the classification
+        # and the open gap -- silence never means complete coverage.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _paths(root)
+            write_update_check_policy(paths, mode="notify")
+            paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(paths.runtime_state_path, {"release_source_commit": "a" * 40})
+            args = self._args(root)
+            buffer = io.StringIO()
+            with patch(_RUN_CURL_TARGET, _fake_curl_rewritten("b" * 40)), contextlib.redirect_stdout(buffer):
+                main_module._run_startup_update_check(args)
+            output = buffer.getvalue()
+            self.assertIn("history rewritten", output)
+            self.assertIn("cursor_unreachable", output)
+            self.assertIn("coverage gap", output)
+            self.assertNotIn("OMH update available", output)
+
+    def test_auto_mode_never_auto_updates_across_unverified_ancestry(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _paths(root)
+            write_update_check_policy(paths, mode="auto")
+            paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(paths.runtime_state_path, {"release_source_commit": "a" * 40})
+            args = self._args(root)
+            buffer = io.StringIO()
+            with (
+                patch(_RUN_CURL_TARGET, _fake_curl_rewritten("b" * 40)),
+                patch.object(main_module.subprocess, "run") as run,
+                contextlib.redirect_stdout(buffer),
+            ):
+                main_module._run_startup_update_check(args)
+            run.assert_not_called()
+            state = read_json_object(paths.runtime_state_path) or {}
+            self.assertNotIn("last_update", state)
+            self.assertEqual(state.get("release_source_commit"), "a" * 40)
+
     def test_cache_path_matches_the_documented_runtime_location(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = _paths(root)
             self.assertEqual(update_check_cache_path(paths), paths.omh_home / "runtime" / "update-check.json")
+
+
+class WatchRecoveryCliTests(unittest.TestCase):
+    """CLI surface for the issue #1282 rewritten-history recovery contract."""
+
+    def _prime_open_gap(self, root: Path) -> None:
+        paths = _paths(root)
+        write_update_check_policy(paths, mode="notify")
+        paths.runtime_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(paths.runtime_state_path, {"release_source_commit": "a" * 40})
+        args = argparse.Namespace(omh_home=str(root / ".omh"), hermes_home=str(root / ".hermes"), scope=None)
+        with patch(_RUN_CURL_TARGET, _fake_curl_rewritten("b" * 40)), contextlib.redirect_stdout(io.StringIO()):
+            main_module._run_startup_update_check(args)
+
+    def test_status_json_exposes_ancestry_generation_and_gap(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._prime_open_gap(root)
+            status, stdout, stderr = run_cli(_base(root) + ["update-check", "status", "--json"])
+            self.assertEqual((status, stderr), (0, ""))
+            payload = json.loads(stdout)
+            self.assertEqual(payload["schema_version"], "omh_update_check_status/v1")
+            last_check = payload["last_check"]
+            self.assertEqual(last_check["schema_version"], "omh_update_check_cache/v2")
+            self.assertEqual(last_check["ancestry"], "cursor_unreachable")
+            self.assertEqual(last_check["watched_branch"], "main")
+            self.assertEqual(last_check["branch_generation"], 0)
+            self.assertEqual(last_check["gap"]["status"], "open")
+            self.assertTrue(last_check["gap"]["since"])
+            self.assertTrue(last_check["recovery_attempts"])
+
+    def test_status_human_output_names_the_open_gap(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._prime_open_gap(root)
+            status, stdout, stderr = run_cli(_base(root) + ["update-check", "status"], output_json=False)
+            self.assertEqual((status, stderr), (0, ""))
+            self.assertIn("Ancestry: cursor_unreachable", stdout)
+            self.assertIn("Coverage gap: open", stdout)
+            self.assertIn("accept-gap", stdout)
+
+    def test_accept_gap_marks_policy_acceptance(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._prime_open_gap(root)
+            status, stdout, stderr = run_cli(_base(root) + ["update-check", "accept-gap"], output_json=False)
+            self.assertEqual((status, stderr), (0, ""))
+            self.assertIn("Coverage gap accepted", stdout)
+            cache = read_update_check_cache(_paths(root))
+            self.assertEqual(cache["gap"]["status"], "accepted")
+            # Acceptance is recorded and idempotent.
+            status, stdout, _ = run_cli(_base(root) + ["update-check", "accept-gap"], output_json=False)
+            self.assertEqual(status, 0)
+            self.assertIn("No open coverage gap", stdout)
+
+    def test_accept_gap_json_reports_the_gap(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._prime_open_gap(root)
+            status, stdout, stderr = run_cli(_base(root) + ["update-check", "accept-gap", "--json"])
+            self.assertEqual((status, stderr), (0, ""))
+            payload = json.loads(stdout)
+            self.assertEqual(payload["schema_version"], "omh_update_check_status/v1")
+            self.assertTrue(payload["accepted"])
+            self.assertEqual(payload["gap"]["status"], "accepted")
 
 
 if __name__ == "__main__":

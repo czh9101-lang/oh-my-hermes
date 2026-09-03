@@ -62,7 +62,7 @@ class ExecutorCapabilitySnapshotTests(unittest.TestCase):
             recorded_at="2026-07-15T00:00:01Z",
         )
 
-        self.assertEqual(snapshot["schema_version"], "executor_capability_snapshot/v1")
+        self.assertEqual(snapshot["schema_version"], "executor_capability_snapshot/v2")
         self.assertEqual(snapshot["executor"], "codex")
         self.assertEqual(snapshot["capabilities"]["parallel_agents"]["status"], "host_observed")
         self.assertEqual(validate_executor_capability_snapshot(snapshot), [])
