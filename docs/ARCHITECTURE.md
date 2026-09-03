@@ -2073,7 +2073,16 @@ attempt carries an empty `recorded_at`, since the legacy shape never stored a
 dispatch timestamp. `build_loop_queue_handoff` carries
 `active_dispatch_attempt_id` and `dispatch_attempt_count`, so the surface that
 names `observe_loop_queue` also hands over the id that action now requires.
-Other queue mutators retain status preconditions — `observe` requires
+Because recovery appends without retracting, an item can close with an attempt
+still `delivery_unknown` — a dispatch the executor may have run and nobody
+resolved — so the handoff, `omh loop queue list` and the cycle narration each
+report the open attempt ids, and the narration says plainly that the work may
+have run twice. Both observation paths move `dispatch_status` to
+`progress_observed`; leaving the generic one at `dispatched` made
+`_narration_next_message`, which reads `dispatch_status` before `status`, ask
+an operator to observe an item that had just been observed. A session that was
+never dispatched keeps its status, because no executor progress happened to
+claim. Other queue mutators retain status preconditions — `observe` requires
 `prepared_not_observed`, and `block` refuses an already-observed item. Wrapper
 sessions (`src/wrapper/sessions.py`) mutate in place — status transitions and a
 single `current_run_id` — instead of appending id-bearing items, so a repeat

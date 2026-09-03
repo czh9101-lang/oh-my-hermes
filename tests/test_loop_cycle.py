@@ -1298,6 +1298,121 @@ class GoalLoopTests(unittest.TestCase):
         )
         self.assertEqual(validate_loop_cycle(observed), {"ok": True, "errors": []})
 
+    def test_loop_queue_observation_moves_dispatch_status_like_the_codex_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            cycle = create_loop_cycle(
+                paths,
+                goal_summary="Tell the operator what is actually next",
+                goal_reframe="A generic observation moves the executor session forward too.",
+                success_criteria=["The narration does not ask for an observation already made"],
+                permission_profile="execute_with_gates",
+                allowed_executors=["codex"],
+            )
+            ticked = tick_loop_runtime(paths, cycle["loop_id"])
+            queue_id = ticked["runtime"]["queue"][0]["queue_id"]
+            dispatch_loop_queue_item(
+                paths,
+                cycle["loop_id"],
+                queue_id,
+                executor="codex",
+                session_ref="codex-session-1",
+                evidence_refs=["wrapper:dispatch:1"],
+            )
+            observed = observe_loop_queue_item(
+                paths,
+                cycle["loop_id"],
+                queue_id,
+                evidence_refs=["wrapper:observed:1"],
+                summary="Wrapper observed the executor result.",
+            )
+            narration = build_loop_cycle_narration(paths, cycle["loop_id"], queue_id)
+
+        item = observed["runtime"]["queue"][0]
+        self.assertEqual(item["status"], "observed")
+        self.assertEqual(item["executor_session"]["dispatch_status"], "progress_observed")
+        self.assertIn("progress_observed", narration["executor_status"])
+        self.assertIn("검증", narration["next_message"])
+        self.assertEqual(validate_loop_cycle(observed), {"ok": True, "errors": []})
+
+    def test_loop_queue_observation_leaves_an_undispatched_session_alone(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            cycle = create_loop_cycle(
+                paths,
+                goal_summary="Never claim executor progress that did not happen",
+                goal_reframe="An item observed without a dispatch has no executor progress.",
+                success_criteria=["An undispatched session keeps its dispatch status"],
+                permission_profile="execute_with_gates",
+                allowed_executors=["codex"],
+            )
+            ticked = tick_loop_runtime(paths, cycle["loop_id"])
+            queue_id = ticked["runtime"]["queue"][0]["queue_id"]
+            observed = observe_loop_queue_item(
+                paths,
+                cycle["loop_id"],
+                queue_id,
+                evidence_refs=["wrapper:observed:1"],
+                summary="Operator observed the queue item without dispatching it.",
+            )
+
+        session = observed["runtime"]["queue"][0]["executor_session"]
+        self.assertEqual(session["dispatch_status"], "not_requested")
+        self.assertEqual(session["dispatch_attempts"], [])
+        self.assertEqual(validate_loop_cycle(observed), {"ok": True, "errors": []})
+
+    def test_loop_queue_surfaces_report_an_unaccounted_dispatch_attempt(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
+            cycle = create_loop_cycle(
+                paths,
+                goal_summary="Make a possible double execution readable",
+                goal_reframe="An item can close with a dispatch nobody resolved.",
+                success_criteria=["An unaccounted dispatch attempt is reported, not merely recorded"],
+                permission_profile="execute_with_gates",
+                allowed_executors=["codex"],
+            )
+            ticked = tick_loop_runtime(paths, cycle["loop_id"])
+            queue_id = ticked["runtime"]["queue"][0]["queue_id"]
+            first = dispatch_loop_queue_item(
+                paths,
+                cycle["loop_id"],
+                queue_id,
+                executor="codex",
+                session_ref="codex-session-1",
+                evidence_refs=["wrapper:dispatch:1"],
+            )
+            first_attempt_id = first["runtime"]["queue"][0]["executor_session"]["active_attempt_id"]
+            recover_loop_queue_item_dispatch(
+                paths,
+                cycle["loop_id"],
+                queue_id,
+                prior_attempt_id=first_attempt_id,
+                prior_outcome="delivery_unknown",
+                outcome_evidence_refs=["wrapper:ack-timeout:1"],
+                executor="codex",
+                session_ref="codex-session-2",
+                evidence_refs=["wrapper:dispatch:2"],
+            )
+            handoff = build_loop_queue_handoff(paths, cycle["loop_id"], queue_id)
+            observe_loop_queue_item(
+                paths,
+                cycle["loop_id"],
+                queue_id,
+                evidence_refs=["wrapper:observed:1"],
+                dispatch_attempt_id=first_attempt_id,
+            )
+            narration = build_loop_cycle_narration(paths, cycle["loop_id"], queue_id)
+            listed = list_loop_queue(paths, cycle["loop_id"], include_observed=True)
+
+        # Before the item is observed, both attempts are still open.
+        self.assertEqual(len(handoff["unresolved_dispatch_attempt_ids"]), 2)
+        # Observing attempt 1 resolves it and leaves the recovered attempt open.
+        self.assertEqual(len(narration["unresolved_dispatch_attempts"]), 1)
+        self.assertIn("두 번 실행", narration["next_message"])
+        self.assertEqual(listed["unaccounted_dispatch_queue_count"], 1)
+        self.assertEqual(len(listed["queue"][0]["unresolved_dispatch_attempt_ids"]), 1)
+
     def test_loop_queue_lifecycle_lists_handoffs_observes_and_blocks_items(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")
