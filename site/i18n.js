@@ -237,10 +237,10 @@ window.OMH_I18N = {
     "fam.kicker": { en: "Capability families", ko: "역량 패밀리", ja: "ファミリー", zh: "能力家族" },
     "fam.title": { en: "Start with the job.", ko: "할 일에서 시작합니다.", ja: "仕事から始める。", zh: "从要办的事开始。" },
     "fam.lead": {
-      en: "103 skills behind seven human-readable families. The family is the front door.",
-      ko: "사람이 읽는 7개 패밀리 뒤의 103개 스킬. 패밀리가 정문입니다.",
-      ja: "人が読める 7 ファミリーの背後に 103 スキル。ファミリーが正面玄関。",
-      zh: "七个人类可读的家族背后是 103 个技能。家族就是正门。"
+      en: "116 skills behind seven human-readable families. The family is the front door.",
+      ko: "사람이 읽는 7개 패밀리 뒤의 116개 스킬. 패밀리가 정문입니다.",
+      ja: "人が読める 7 ファミリーの背後に 116 スキル。ファミリーが正面玄関。",
+      zh: "七个人类可读的家族背后是 116 个技能。家族就是正门。"
     },
     "fam.head.cap": { en: "Capability", ko: "역량", ja: "ケイパビリティ", zh: "能力" },
     "fam.head.try": { en: "Try it with", ko: "이렇게 써보세요", ja: "使うスキル", zh: "试用技能" },

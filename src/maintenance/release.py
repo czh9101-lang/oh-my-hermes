@@ -170,7 +170,13 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # (three-condition trigger, docs/adr/ convention pointer, never-edit-accepted
 # lifecycle rule); instruction lines on one existing skill, not padding;
 # warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 379904
+# 379904 -> 383766: `award-bar-score` is a new installable skill (scoring a
+# web surface against published award axes); one new capability section for
+# one new workflow, not per-section padding; warranted growth.
+# 383766 -> 384097: the axis-spread and reduced-motion quality-bar lines
+# were corrected against measured entry data; bounds and a counter-claim
+# replacing a wrong rule, not padding; warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 384097
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -192,7 +198,9 @@ FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # `inference-serving` skill; warranted growth.
 # 107677 -> 108618: one standalone capability row for the new
 # `tech-debt-audit` skill; warranted growth.
-STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 108618
+# 108618 -> 109590: one standalone capability row for the new
+# `award-bar-score` skill; warranted growth.
+STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 109590
 STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ULW fold context ceiling (issue #954, PR D). The limit is the pre-D measured
 # value of the full profile's `skill_body` chars on `main` @ acb9a060, in the
@@ -602,7 +610,16 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # criteria-before-generation rules plus the judge-score safety line; four
 # instruction lines on one existing skill, with the shape table and judging
 # rules in a new on-demand reference outside this count; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 869354
+# 869354 -> 876865: `award-bar-score` is one new installable skill body
+# (per-axis scoring, the weighted total against the published threshold, the
+# binding-constraint call, and the accessibility/performance tradeoff
+# ledger), plus its lane name on the materials_and_visuals skills' Workflow
+# Lane lines; the judging model, weights, thresholds, and the worked
+# arithmetic live in one on-demand reference outside this count; warranted
+# growth.
+# 876865 -> 877208: same measured correction reaching the always-loaded
+# body; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 877208
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
