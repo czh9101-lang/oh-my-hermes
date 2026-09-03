@@ -810,6 +810,11 @@ def _strict_json_loads(text: str) -> object:
 # and rendered with a `~`. Cache reads are charged at a tenth of input unless
 # APPROX_CACHE_READ_RATIO names the model.
 APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
+    # Every rate below carries the vendor page it came from and the month it
+    # was read. A number without that is unauditable -- a reader cannot tell
+    # a current price from one that drifted, which is how the Claude rows
+    # went stale before anyone noticed.
+    # OpenAI list prices (openai.com/api/pricing, 2026-08):
     "gpt-5.6-sol": (1.25, 10.0),
     "gpt-5.6-terra": (1.25, 10.0),
     "gpt-5.6-luna": (0.25, 2.0),
@@ -822,21 +827,32 @@ APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-mythos-5-1": (10.0, 50.0),
     "claude-sonnet-5": (2.0, 10.0),
     "claude-haiku-4-5": (1.0, 5.0),
+    # Moonshot AI list price (platform.moonshot.cn pricing, 2026-08):
     "kimi-k3": (0.6, 2.5),
+    # Zhipu AI list price (docs.z.ai pricing, 2026-08):
     "glm-5.2": (0.6, 2.2),
     # Z.ai list price for the 5.3 generation (docs.z.ai pricing, 2026-08).
     # 5.3 always reasons and bills the reasoning inside output tokens, so the
     # output side dominates real spend; still an approximation, not billing.
     "glm-5.3": (1.4, 4.4),
     "glm-5.3-flash": (0.15, 0.5),
+    # DeepSeek list price (api-docs.deepseek.com pricing, 2026-08):
     "deepseek-v3.2": (0.28, 0.42),
+    # Zhipu AI speed-tier ballpark (docs.z.ai pricing, 2026-08):
     "glm-5.2-ultrafast": (0.3, 1.2),
     # Speed-tier ballpark mirrors the glm pattern (roughly half the base
     # model's list price); editable approximation, not billing evidence.
     "kimi-k3-ultrafast": (0.3, 1.25),
+    # Google AI Studio list price (ai.google.dev/pricing, 2026-08):
     "gemini-3.1-pro": (1.25, 10.0),
+    # Alibaba Cloud Model Studio list price (alibabacloud.com pricing, 2026-08):
     "qwen3-coder": (0.4, 1.6),
+    # Upstage list price (upstage.ai pricing, 2026-08):
     "solar-pro2": (0.15, 0.60),
+    # xAI list price (docs.x.ai pricing, 2026-08). The catalog shipped
+    # this model with a provider family and no rate, so every run on it
+    # reported no cost at all.
+    "grok-code-fast": (0.2, 1.5),
 }
 
 
@@ -1368,6 +1384,11 @@ def read_hermes_native_subagents(
         # An unknown cost is unknown: send None and let the surface say
         # nothing rather than state a zero it cannot support.
         cost_approximate = False
+        # A figure derived from the operator's own rate and one derived from
+        # our shipped ballpark are both approximations, but they are not
+        # equally arguable: only the first is a number the operator chose.
+        # The row says which, so a surface can tell them apart.
+        cost_override = _text(child["model"]).casefold() in price_overrides
         if not cost:
             approx = _approximate_cost_usd(
                 child["model"], input_tokens, output_tokens, cache_read, price_overrides
@@ -1451,6 +1472,8 @@ def read_hermes_native_subagents(
             row["cost_usd"] = cost
             if cost_approximate:
                 row["cost_approximate"] = True
+                if cost_override:
+                    row["cost_override"] = True
         if tokens_per_second is not None:
             row["tokens_per_second"] = tokens_per_second
         if cache_hit is not None:

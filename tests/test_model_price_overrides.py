@@ -118,11 +118,17 @@ class PricingTests(unittest.TestCase):
         self.assertAlmostEqual(overridden, 1.0)
 
     def test_a_model_the_shipped_table_never_priced_can_be_priced(self) -> None:
-        # The only route to a cost for a model OMH ships no rate for.
-        self.assertIsNone(_approximate_cost_usd("grok-code-fast", 1_000_000, 0, 0))
+        # The only route to a cost for a model OMH ships no rate for -- a
+        # local model, a gateway id, a generation onboarded before its rate
+        # was published.
+        self.assertIsNone(_approximate_cost_usd("some-unlisted-model", 1_000_000, 0, 0))
         self.assertAlmostEqual(
             _approximate_cost_usd(
-                "grok-code-fast", 1_000_000, 1_000_000, 0, {"grok-code-fast": (0.2, 1.5, None)}
+                "some-unlisted-model",
+                1_000_000,
+                1_000_000,
+                0,
+                {"some-unlisted-model": (0.2, 1.5, None)},
             ),
             1.7,
         )
@@ -138,6 +144,26 @@ class PricingTests(unittest.TestCase):
             "claude-fable-5-1", 1_000, 0, 1_000_000, {"claude-fable-5-1": (10.0, 50.0, None)}
         )
         self.assertAlmostEqual(priced, (1_000 * 10.0 + 1_000_000 * 10.0 * 0.025) / 1_000_000)
+
+    def test_every_shipped_rate_carries_its_source(self) -> None:
+        # A rate without a vendor page and a month is unauditable: a reader
+        # cannot tell a current price from one that drifted, which is how the
+        # Claude rows went stale before anyone noticed. Each rate must have a
+        # citation comment somewhere in the block above it.
+        import inspect
+
+        from omh.plugin_bundle.omh import hermes_delegation
+
+        source = inspect.getsource(hermes_delegation)
+        block = source.split("APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {", 1)[1]
+        block = block.split("\n}", 1)[0]
+        cited = 0
+        for line in block.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                cited = 1 if "pricing" in stripped or "list price" in stripped else cited
+            elif stripped.startswith('"'):
+                self.assertTrue(cited, f"{stripped} has no price source above it")
 
     def test_a_zero_rate_is_a_real_price_not_an_absent_one(self) -> None:
         # A free tier bills nothing; the override must be able to say so.

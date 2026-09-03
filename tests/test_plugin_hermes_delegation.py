@@ -511,19 +511,21 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
         )
 
     def test_an_unpriceable_unrecorded_cost_is_unknown_rather_than_free(self):
-        # grok-code-fast ships in the catalog with a provider family but no
-        # price row, so nothing can derive a figure for it. The host recorded
-        # no cost either (the columns are NOT NULL DEFAULT 0, so "billed
-        # nothing" and "recorded nothing" arrive identically as 0.0). The row
-        # must then carry NO cost at all: a bare 0.0 with no approximate flag
-        # renders exactly like a genuinely free run, which is the claim OMH
-        # cannot support.
+        # Any model the shipped table does not price -- a local model, a
+        # gateway id, a generation onboarded before its rate was published --
+        # leaves nothing to derive a figure from. The host recorded no cost
+        # either (the columns are NOT NULL DEFAULT 0, so "billed nothing" and
+        # "recorded nothing" arrive identically as 0.0). The row must then
+        # carry NO cost at all: a bare 0.0 with no approximate flag renders
+        # exactly like a genuinely free run, which is the claim OMH cannot
+        # support. The rule is the point, not the example model -- when the
+        # table gains a rate for one, the next unpriced model inherits it.
         _build_state_db(
             self.home,
             [
                 {
-                    "id": "20260818_100200_grok001",
-                    "model": "grok-code-fast",
+                    "id": "20260818_100200_unpriced1",
+                    "model": "some-unlisted-model",
                     "effort": "medium",
                     "started_at": NOW - 300,
                     "usage": {
@@ -546,7 +548,7 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
         )
         payload = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home / ".omh")
         row = payload["rows"][0]
-        self.assertEqual(row["model"], "grok-code-fast")
+        self.assertEqual(row["model"], "some-unlisted-model")
         self.assertEqual(row["tokens"], 15_000)
         self.assertNotIn("cost_usd", row)
         self.assertNotIn("cost_approximate", row)

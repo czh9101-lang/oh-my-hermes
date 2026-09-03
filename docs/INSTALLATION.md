@@ -400,7 +400,12 @@ invalid document is ignored whole rather than half-applied.
 
 A recorded cost from the host is never replaced by any of this — overrides
 only reach the approximation that fires when nothing was recorded, and an
-approximated figure still renders with its `~` marker.
+approximated figure still renders with its `~` marker. A row whose figure
+came from your own rate is marked `cost_override` beside `cost_approximate`,
+so a number you chose can be told apart from our shipped ballpark.
+
+Every shipped rate carries the vendor page it was read from and the month, so
+a reader can tell a current price from one that drifted.
 
 A dispatch that inherits its provider is checked before the route is written:
 if the session's own provider cannot serve the model being pinned — the
