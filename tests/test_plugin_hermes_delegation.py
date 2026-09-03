@@ -510,6 +510,47 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
             (20_000 * 0.15 + 10_000 * 0.015 + 5_000 * 0.60) / 1_000_000,
         )
 
+    def test_an_unpriceable_unrecorded_cost_is_unknown_rather_than_free(self):
+        # grok-code-fast ships in the catalog with a provider family but no
+        # price row, so nothing can derive a figure for it. The host recorded
+        # no cost either (the columns are NOT NULL DEFAULT 0, so "billed
+        # nothing" and "recorded nothing" arrive identically as 0.0). The row
+        # must then carry NO cost at all: a bare 0.0 with no approximate flag
+        # renders exactly like a genuinely free run, which is the claim OMH
+        # cannot support.
+        _build_state_db(
+            self.home,
+            [
+                {
+                    "id": "20260818_100200_grok001",
+                    "model": "grok-code-fast",
+                    "effort": "medium",
+                    "started_at": NOW - 300,
+                    "usage": {
+                        "api_calls": 3,
+                        "input_tokens": 12_000,
+                        "output_tokens": 3_000,
+                        "cache_read_tokens": 0,
+                        "first_seen": NOW - 290,
+                        "last_seen": NOW - 10,
+                    },
+                }
+            ],
+        )
+        _write_manifest(
+            self.home,
+            "deleg_grok",
+            ["grok lane"],
+            started=NOW - 305,
+            log_mtime=NOW - 5,
+        )
+        payload = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home / ".omh")
+        row = payload["rows"][0]
+        self.assertEqual(row["model"], "grok-code-fast")
+        self.assertEqual(row["tokens"], 15_000)
+        self.assertNotIn("cost_usd", row)
+        self.assertNotIn("cost_approximate", row)
+
     def test_an_observed_host_cost_is_never_replaced_by_the_approximation(self):
         _build_state_db(
             self.home,
