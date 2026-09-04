@@ -17,9 +17,17 @@ from .fanout_contracts import (
     FANOUT_UNIT_OWNERS,
     FanoutContractError,
     MAX_SPAWN_PLAN_FIELD_CHARS,
+    MAX_UNIT_VERIFICATION_CHECK_ID_CHARS,
+    MAX_UNIT_VERIFICATION_CHECK_TIMEOUT,
     MAX_UNIT_VERIFICATION_COMMAND_CHARS,
     MAX_UNIT_VERIFICATION_COMMANDS,
     PREPARED_NOT_OBSERVED,
+    VERIFICATION_CHECK_ID_PATTERN,
+    VERIFICATION_CHECK_CLAIM_SCOPES,
+    VERIFICATION_CHECK_RESOURCE_CLASS_PATTERN,
+    is_verification_check_resource_class,
+    VERIFICATION_CHECK_SAFETIES,
+    VERIFICATION_CHECK_TIERS,
     verification_command_argv,
 )
 from .executor_capability_snapshots import (
@@ -32,6 +40,7 @@ from .model_routing import MODEL_CATEGORIES, canonical_model_category, model_rou
 from .media_handoff_capabilities import build_executor_modality_decision, normalize_input_representation
 
 _UNIT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+_VERIFICATION_CHECK_ID_RE = re.compile(VERIFICATION_CHECK_ID_PATTERN)
 _FROZEN_CAPABILITY_SNAPSHOT_POLICY = "frozen_required"
 
 
@@ -384,6 +393,15 @@ def _normalized_unit(unit: Mapping[str, object], index: int) -> dict[str, object
     owner = unit.get("owner")
     raw_role = str(unit.get("role", "") or "").strip()
     review_role = normalized_review_role(raw_role)
+    checks = _normalized_verification_checks(unit.get("verification_checks"), index)
+    commands = _normalized_verification_commands(unit.get("verification_commands"), index)
+    if checks is not None:
+        if commands:
+            raise FanoutContractError(
+                f"unit at index {index} declares both verification_commands and verification_checks; "
+                "declare verification_checks only — the command list is derived from it"
+            )
+        commands = [str(check["command"]) for check in checks]
     return {
         "unit_id": str(unit.get("unit_id", "")).strip(),
         "title": " ".join(str(unit.get("title", "")).split()),
@@ -408,9 +426,10 @@ def _normalized_unit(unit: Mapping[str, object], index: int) -> dict[str, object
         # Prose `integration_checks` say what "verified" means; these say how a
         # dispatcher could observe it. An empty answer is the default and means
         # the contract names no command anyone can run for this unit.
-        "verification_commands": _normalized_verification_commands(
-            unit.get("verification_commands"), index
-        ),
+        "verification_commands": commands,
+        # The structured sibling: per-check tier/safety/edges, or None when the
+        # unit declared none (the key is then omitted from the frozen unit).
+        "verification_checks": checks,
         "input_representation": list(normalize_input_representation(unit.get("input_representation", "text_only"))),
         "transformation": dict(unit.get("transformation") or {}),
     }
@@ -479,6 +498,139 @@ def _normalized_verification_commands(value: object, index: int) -> list[str]:
         verification_command_argv(command)
         commands.append(command)
     return commands
+
+
+def _normalized_verification_checks(value: object, index: int) -> list[dict[str, object]] | None:
+    """The additive per-check metadata sibling of `verification_commands`.
+
+    Absent (or declared empty) returns None so the contract stays
+    byte-identical to one frozen before the field existed. Each entry carries
+    its command plus the declared tier, safety, dependency edges, and timeout
+    with defaults made explicit, so the plan compiler downstream never has to
+    guess which fields the operator set.
+    """
+    if value is None or value == []:
+        return None
+    if not isinstance(value, (list, tuple)):
+        raise FanoutContractError(
+            f"unit at index {index} verification_checks must be a list of check objects"
+        )
+    if len(value) > MAX_UNIT_VERIFICATION_COMMANDS:
+        raise FanoutContractError(
+            f"unit at index {index} verification_checks must have at most "
+            f"{MAX_UNIT_VERIFICATION_COMMANDS} checks"
+        )
+    checks: list[dict[str, object]] = []
+    ids: list[str] = []
+    for entry in value:
+        if not isinstance(entry, Mapping):
+            raise FanoutContractError(
+                f"unit at index {index} verification_checks entries must be objects; got {entry!r}"
+            )
+        command = _normalized_verification_commands([entry.get("command")], index)[0]
+        declared_id = str(entry.get("id") or f"check-{len(checks)}").strip()
+        if (
+            not _VERIFICATION_CHECK_ID_RE.match(declared_id)
+            or len(declared_id) > MAX_UNIT_VERIFICATION_CHECK_ID_CHARS
+        ):
+            raise FanoutContractError(
+                f"unit at index {index} verification_checks ids must match "
+                f"{VERIFICATION_CHECK_ID_PATTERN} and be at most "
+                f"{MAX_UNIT_VERIFICATION_CHECK_ID_CHARS} chars; got {declared_id!r}"
+            )
+        if declared_id in ids:
+            raise FanoutContractError(
+                f"unit at index {index} verification_checks ids must be unique; got {declared_id!r} twice"
+            )
+        tier = entry.get("tier", "unit")
+        if tier not in VERIFICATION_CHECK_TIERS:
+            raise FanoutContractError(
+                f"unit at index {index} verification_checks tier must be one of "
+                f"{', '.join(VERIFICATION_CHECK_TIERS)}; got {tier!r}"
+            )
+        safety = entry.get("safety", "stateful")
+        if safety not in VERIFICATION_CHECK_SAFETIES:
+            raise FanoutContractError(
+                f"unit at index {index} verification_checks safety must be one of "
+                f"{', '.join(VERIFICATION_CHECK_SAFETIES)}; got {safety!r}"
+            )
+        resource_class = entry.get("resource_class", "local_cpu")
+        if not isinstance(resource_class, str) or not is_verification_check_resource_class(resource_class):
+            raise FanoutContractError(
+                f"unit at index {index} verification_checks resource_class must match "
+                f"{VERIFICATION_CHECK_RESOURCE_CLASS_PATTERN}; got {resource_class!r}"
+            )
+        claim_scope = entry.get(
+            "claim_scope", "integrated_verification" if tier == "integration" else "unit_verification"
+        )
+        if claim_scope not in VERIFICATION_CHECK_CLAIM_SCOPES:
+            raise FanoutContractError(
+                f"unit at index {index} verification_checks claim_scope must be one of "
+                f"{', '.join(VERIFICATION_CHECK_CLAIM_SCOPES)}; got {claim_scope!r}"
+            )
+        expected_scope = "integrated_verification" if tier == "integration" else "unit_verification"
+        if claim_scope != expected_scope:
+            raise FanoutContractError(
+                f"unit at index {index} verification_checks {tier} tier requires claim_scope "
+                f"{expected_scope!r}; got {claim_scope!r}"
+            )
+        raw_deps = entry.get("depends_on", [])
+        if not isinstance(raw_deps, (list, tuple)) or not all(isinstance(dep, str) for dep in raw_deps):
+            raise FanoutContractError(
+                f"unit at index {index} verification_checks depends_on must be a list of check ids"
+            )
+        timeout = entry.get("timeout", MAX_UNIT_VERIFICATION_CHECK_TIMEOUT)
+        if (
+            not isinstance(timeout, int)
+            or isinstance(timeout, bool)
+            or not 1 <= timeout <= MAX_UNIT_VERIFICATION_CHECK_TIMEOUT
+        ):
+            raise FanoutContractError(
+                f"unit at index {index} verification_checks timeout must be an integer between 1 and "
+                f"{MAX_UNIT_VERIFICATION_CHECK_TIMEOUT}; got {timeout!r}"
+            )
+        ids.append(declared_id)
+        checks.append(
+            {
+                "command": command,
+                "id": declared_id,
+                "tier": tier,
+                "safety": safety,
+                "resource_class": resource_class,
+                "claim_scope": claim_scope,
+                "depends_on": [str(dep).strip() for dep in raw_deps],
+                "timeout": timeout,
+            }
+        )
+    _require_acyclic_check_edges(checks, index)
+    return checks
+
+
+def _require_acyclic_check_edges(checks: list[dict[str, object]], index: int) -> None:
+    """Refuse unknown, self, or cyclic `depends_on` references at freeze time."""
+    ids = {str(check["id"]): check for check in checks}
+    for check in checks:
+        for dep in check["depends_on"]:
+            if dep not in ids:
+                raise FanoutContractError(
+                    f"unit at index {index} verification_checks depends_on references unknown check "
+                    f"{dep!r}"
+                )
+            if dep == check["id"]:
+                raise FanoutContractError(
+                    f"unit at index {index} verification_checks {dep!r} depends on itself"
+                )
+    remaining = {str(check["id"]): set(str(dep) for dep in check["depends_on"]) for check in checks}
+    while remaining:
+        ready = [check_id for check_id, deps in remaining.items() if not deps]
+        if not ready:
+            raise FanoutContractError(
+                f"unit at index {index} verification_checks depends_on forms a cycle"
+            )
+        for check_id in ready:
+            del remaining[check_id]
+        for deps in remaining.values():
+            deps.difference_update(ready)
 
 
 def _sibling_scopes(units: Sequence[Mapping[str, object]], unit_id: str) -> list[str]:
@@ -558,4 +710,7 @@ def _contract_unit(
     # key, so contracts frozen before this field stay byte-identical.
     if unit.get("verification_commands"):
         contract_unit["verification_commands"] = list(unit["verification_commands"])
+    # And its structured sibling rides only when declared, for the same reason.
+    if unit.get("verification_checks"):
+        contract_unit["verification_checks"] = [dict(check) for check in unit["verification_checks"]]
     return contract_unit

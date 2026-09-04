@@ -1692,5 +1692,133 @@ class FanoutVerificationCommandTests(unittest.TestCase):
         self.assertEqual(argv, ["python", "-c", "print(1)", "|", "tee", "log"])
 
 
+class FanoutVerificationChecksContractTests(unittest.TestCase):
+    """The additive `verification_checks` metadata beside `verification_commands`."""
+
+    def _with_checks(self, checks: object) -> list[dict[str, object]]:
+        units = [dict(unit) for unit in _UNITS]
+        units[0]["verification_checks"] = checks
+        return units
+
+    def test_absent_field_leaves_the_contract_byte_identical(self) -> None:
+        without = build_fanout_contract("split work", _UNITS)
+        declared_empty = build_fanout_contract("split work", self._with_checks([]))
+
+        self.assertEqual(without, declared_empty)
+        for unit in without["units"]:
+            self.assertNotIn("verification_checks", unit)
+
+    def test_declared_checks_are_normalized_and_derive_the_command_list(self) -> None:
+        contract = build_fanout_contract(
+            "split work",
+            self._with_checks(
+                [
+                    {"command": "python -m unittest", "id": "red", "safety": "read_only"},
+                    {"command": "python -m compileall src", "depends_on": ["red"], "tier": "integration"},
+                ]
+            ),
+        )
+        units = {unit["unit_id"]: unit for unit in contract["units"]}
+
+        # Old readers see the derived command list; new readers see the metadata.
+        self.assertEqual(
+            units["core"]["verification_commands"],
+            ["python -m unittest", "python -m compileall src"],
+        )
+        checks = units["core"]["verification_checks"]
+        self.assertEqual(checks[0]["id"], "red")
+        self.assertEqual(checks[0]["safety"], "read_only")
+        self.assertEqual(checks[0]["tier"], "unit")
+        self.assertEqual(checks[0]["resource_class"], "local_cpu")
+        self.assertEqual(checks[0]["claim_scope"], "unit_verification")
+        self.assertEqual(checks[0]["depends_on"], [])
+        self.assertEqual(checks[1]["id"], "check-1")
+        self.assertEqual(checks[1]["tier"], "integration")
+        self.assertEqual(checks[1]["resource_class"], "local_cpu")
+        self.assertEqual(checks[1]["claim_scope"], "integrated_verification")
+        self.assertEqual(checks[1]["safety"], "stateful")
+        self.assertEqual(checks[1]["depends_on"], ["red"])
+        self.assertGreater(checks[1]["timeout"], 0)
+        self.assertNotIn("verification_checks", units["tests"])
+
+    def test_declaring_both_fields_is_refused(self) -> None:
+        units = self._with_checks([{"command": "python -m unittest"}])
+        units[0]["verification_commands"] = ["python -m unittest"]
+        with self.assertRaises(FanoutContractError) as raised:
+            build_fanout_contract("split work", units)
+        self.assertIn("verification_checks", str(raised.exception))
+
+    def test_a_declared_resource_class_is_preserved_without_a_hardcoded_catalog(self) -> None:
+        # Given a stateful check that names its real shared resource
+        contract = build_fanout_contract(
+            "split work",
+            self._with_checks(
+                [{"command": "python -m unittest", "resource_class": "postgres-acceptance"}]
+            ),
+        )
+
+        # When frozen, Then the validated name is retained so independent
+        # stateful resources do not serialize behind an unrelated hardcode.
+        self.assertEqual(
+            contract["units"][0]["verification_checks"][0]["resource_class"],
+            "postgres-acceptance",
+        )
+
+    def test_bad_tier_or_safety_is_refused(self) -> None:
+        for bad in (
+            [{"command": "python -m unittest", "tier": "global"}],
+            [{"command": "python -m unittest", "safety": "sandboxed"}],
+            [{"command": "python -m unittest", "resource_class": "network/resource"}],
+            [{"command": "python -m unittest", "claim_scope": "integrated_verification"}],
+        ):
+            with self.subTest(checks=bad):
+                with self.assertRaises(FanoutContractError):
+                    build_fanout_contract("split work", self._with_checks(bad))
+
+    def test_unknown_self_or_cyclic_dependencies_are_refused(self) -> None:
+        for bad in (
+            [{"command": "python -m unittest", "depends_on": ["nope"]}],
+            [{"command": "python -m unittest", "id": "a", "depends_on": ["a"]}],
+            [
+                {"command": "python -m unittest", "id": "a", "depends_on": ["b"]},
+                {"command": "python -m compileall src", "id": "b", "depends_on": ["a"]},
+            ],
+            [
+                {"command": "python -m unittest", "id": "dup"},
+                {"command": "python -m compileall src", "id": "dup"},
+            ],
+        ):
+            with self.subTest(checks=bad):
+                with self.assertRaises(FanoutContractError):
+                    build_fanout_contract("split work", self._with_checks(bad))
+
+    def test_timeout_bounds_are_enforced(self) -> None:
+        for bad_timeout in (0, -1, 601, "60"):
+            with self.subTest(timeout=bad_timeout):
+                with self.assertRaises(FanoutContractError):
+                    build_fanout_contract(
+                        "split work",
+                        self._with_checks([{"command": "python -m unittest", "timeout": bad_timeout}]),
+                    )
+        contract = build_fanout_contract(
+            "split work",
+            self._with_checks([{"command": "python -m unittest", "timeout": 60}]),
+        )
+        units = {unit["unit_id"]: unit for unit in contract["units"]}
+        self.assertEqual(units["core"]["verification_checks"][0]["timeout"], 60)
+
+    def test_check_commands_follow_the_same_bounds_as_bare_commands(self) -> None:
+        for bad in (
+            [{"command": ""}],
+            [{"command": "python -c " + "a" * MAX_UNIT_VERIFICATION_COMMAND_CHARS}],
+            [{"command": "python -c 'unbalanced"}],
+            [{"command": f"python -c 'print({index})'"} for index in range(MAX_UNIT_VERIFICATION_COMMANDS + 1)],
+            ["python -m unittest"],
+        ):
+            with self.subTest(checks=bad):
+                with self.assertRaises(FanoutContractError):
+                    build_fanout_contract("split work", self._with_checks(bad))
+
+
 if __name__ == "__main__":
     unittest.main()

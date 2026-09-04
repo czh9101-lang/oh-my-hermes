@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import shlex
 import shutil
 import subprocess
 import sys
+import threading
 from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
@@ -39,6 +41,7 @@ from omh.coding.fanout_journal import (  # noqa: E402
 )
 from omh.coding.fanout_dispatch import (  # noqa: E402
     FANOUT_DEPTH_ENV_VAR,
+    _integrated_checkout_contains_producer_heads,
     FANOUT_LINEAGE_ENV_VAR,
     _MAX_RECOVERY_PATHS,
     _apply_integration_readiness,
@@ -50,6 +53,7 @@ from omh.coding.fanout_dispatch import (  # noqa: E402
     dispatch_model_preferences_path,
     verify_goal_matches_contract,
 )
+from omh.coding.verification_execution import VerificationExecutionGate  # noqa: E402
 from omh.coding.parallelism_policy import (  # noqa: E402
     FANOUT_MAX_DEPTH_DEFAULT,
     FANOUT_RUN_SPAWN_CEILING_DEFAULT,
@@ -3560,6 +3564,7 @@ _FLOODING_OUTPUT = "flood" * 900
 def _verification_runner(script: Path, sidecar: Path, payload: dict[str, object], *, mode: str = "valid"):
     """Agent spawns write a sidecar; verification commands really run."""
     verified: list[list[str]] = []
+    verification_envs: list[dict[str, str]] = []
 
     def runner(argv, **kwargs):
         if argv[0] == "git":
@@ -3573,6 +3578,7 @@ def _verification_runner(script: Path, sidecar: Path, payload: dict[str, object]
                 timeout=kwargs.get("timeout"),
             )
         verified.append(list(argv))
+        verification_envs.append(dict(kwargs.get("env") or {}))
         return subprocess.run(
             argv,
             cwd=kwargs.get("cwd"),
@@ -3583,6 +3589,7 @@ def _verification_runner(script: Path, sidecar: Path, payload: dict[str, object]
         )
 
     runner.verified = verified
+    runner.verification_envs = verification_envs
     return runner
 
 
@@ -3809,6 +3816,542 @@ class FanoutDispatchVerificationTests(unittest.TestCase):
             self.assertEqual(runner.verified, [])
 
 
+class FanoutDispatchPlannedVerificationTests(unittest.TestCase):
+    """Contracts carrying `verification_checks` metadata run through the
+    revision-bound plan engine; metadata-free contracts keep the legacy loop."""
+
+    def _setup(self, tmp: str, checks: list[dict[str, object]], *, mode: str = "valid"):
+        root = Path(tmp)
+        paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+        repo, sha = _make_repo(root)
+        units = [dict(unit) for unit in _UNITS]
+        units[0]["verification_checks"] = checks
+        contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
+        sidecar = unit_result_path(paths, contract["fanout_id"], "core")
+        runner = _verification_runner(
+            _stub_executor_script(root),
+            sidecar,
+            _unit_result_payload(contract, sha),
+            mode=mode,
+        )
+        return paths, repo, sha, contract, runner
+
+    def _dispatch(self, paths, repo, sha, contract, runner, **kwargs):
+        summary = dispatch_fanout(
+            paths,
+            contract,
+            goal_text=_GOAL,
+            repo_root=repo,
+            base_sha=sha,
+            only_units=["core"],
+            runner=runner,
+            readiness=_ready,
+            **kwargs,
+        )
+        return {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+
+    def test_planned_read_only_checks_pass_and_flip_the_ladder(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, runner = self._setup(
+                tmp,
+                [
+                    {"command": _PASSING_COMMAND, "id": "unit-tests", "safety": "read_only"},
+                    {"command": _ENV_COMMAND, "id": "env-gate", "safety": "read_only"},
+                ],
+            )
+
+            core = self._dispatch(
+                paths,
+                repo,
+                sha,
+                contract,
+                runner,
+                run_verification=True,
+                env={"PATH": os.environ["PATH"], "API_TOKEN": "ambient-secret"},
+            )
+
+            self.assertEqual(core["verification_status"], "passed")
+            self.assertEqual(core["verification_plan_schema"], "verification_plan/v1")
+            self.assertEqual(len(core["verification_checks"]), 2)
+            for row in core["verification_checks"]:
+                self.assertEqual(row["status"], "passed")
+                self.assertEqual(row["tier"], "unit")
+                self.assertTrue(row["check_id"])
+                self.assertNotIn("reused", row)
+            self.assertTrue(core["verification_receipts"])
+            self.assertTrue(_unit_verification_is_observed(paths, core["run_ref"]))
+            self.assertTrue(core["integration_ready"])
+            self.assertEqual(len(runner.verified), 2)
+            self.assertTrue(runner.verification_envs)
+            self.assertTrue(all("API_TOKEN" not in env for env in runner.verification_envs))
+            self.assertTrue(all(env["OMH_FANOUT_DEPTH"] == "1" for env in runner.verification_envs))
+
+    def test_a_failed_red_check_blocks_its_green_dependent(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, runner = self._setup(
+                tmp,
+                [
+                    {"command": _FAILING_COMMAND, "id": "red", "safety": "read_only"},
+                    {"command": _PASSING_COMMAND, "id": "green", "depends_on": ["red"]},
+                ],
+            )
+
+            core = self._dispatch(paths, repo, sha, contract, runner, run_verification=True)
+
+            self.assertEqual(core["verification_status"], "failed")
+            self.assertEqual(
+                [row["status"] for row in core["verification_checks"]], ["failed", "skipped"]
+            )
+            # GREEN never started: exactly one process ran.
+            self.assertEqual(len(runner.verified), 1)
+            self.assertFalse(_unit_verification_is_observed(paths, core["run_ref"]))
+            self.assertFalse(core["integration_ready"])
+
+    def test_a_metadata_free_contract_keeps_the_legacy_serial_rows(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            units = [dict(unit) for unit in _UNITS]
+            units[0]["verification_commands"] = [_PASSING_COMMAND, _ENV_COMMAND]
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
+            sidecar = unit_result_path(paths, contract["fanout_id"], "core")
+            runner = _verification_runner(
+                _stub_executor_script(root), sidecar, _unit_result_payload(contract, sha)
+            )
+
+            core = self._dispatch(paths, repo, sha, contract, runner, run_verification=True)
+
+            self.assertEqual(core["verification_status"], "passed")
+            self.assertNotIn("verification_plan_schema", core)
+            for row in core["verification_checks"]:
+                self.assertNotIn("check_id", row)
+                self.assertNotIn("reused", row)
+            self.assertEqual(
+                [row["command"] for row in core["verification_checks"]],
+                [_PASSING_COMMAND, _ENV_COMMAND],
+            )
+            self.assertTrue(core["integration_ready"])
+
+    def _two_unit_setup(
+        self, tmp: str, checks: list[dict[str, object]], *, producer_head_outside_integrated: bool = False
+    ):
+        root = Path(tmp)
+        paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+        repo, sha = _make_repo(root)
+        producer_head_sha = sha
+        if producer_head_outside_integrated:
+            branch = subprocess.run(
+                ["git", "branch", "--show-current"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+            _git(repo, "checkout", "-qb", "producer")
+            (repo / "producer.txt").write_text("producer\n", encoding="utf-8")
+            _git(repo, "add", "producer.txt")
+            _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "producer")
+            producer_head_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+            _git(repo, "checkout", "-q", branch)
+        units = [dict(_UNITS[0]), dict(_UNITS[1])]
+        units[0]["verification_checks"] = checks
+        contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
+        script = _stub_executor_script(root)
+        sidecars = {
+            "codex": (
+                unit_result_path(paths, contract["fanout_id"], "core"),
+                _unit_result_payload(contract, sha, "core", head_sha=producer_head_sha),
+            ),
+            "claude": (
+                unit_result_path(paths, contract["fanout_id"], "docs"),
+                _unit_result_payload(contract, sha, "docs"),
+            ),
+        }
+        verified: list[list[str]] = []
+
+        def runner(argv, **kwargs):
+            if argv[0] == "git":
+                return subprocess.run(argv, **kwargs)
+            if argv[0] in sidecars:
+                sidecar, payload = sidecars[argv[0]]
+                return subprocess.run(
+                    [sys.executable, str(script), "valid", str(sidecar), json.dumps(payload)],
+                    cwd=kwargs.get("cwd"),
+                    text=True,
+                    capture_output=True,
+                    timeout=kwargs.get("timeout"),
+                )
+            verified.append(list(argv))
+            return subprocess.run(
+                argv,
+                cwd=kwargs.get("cwd"),
+                env=kwargs.get("env"),
+                text=True,
+                capture_output=True,
+                timeout=kwargs.get("timeout"),
+            )
+
+        runner.verified = verified
+        return paths, repo, sha, contract, runner
+
+    def test_an_integration_check_runs_after_the_producer_lanes_fan_in(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, runner = self._two_unit_setup(
+                tmp,
+                [
+                    {"command": _PASSING_COMMAND, "id": "unit-tests", "safety": "read_only"},
+                    {"command": _ENV_COMMAND, "id": "full-gate", "tier": "integration"},
+                ],
+            )
+
+            integrated_revision = subprocess.run(
+                ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                runner=runner,
+                readiness=_ready,
+                run_verification=True,
+                integrated_worktree=repo,
+                integrated_revision=integrated_revision,
+            )
+            entries = {entry["unit_id"]: entry for entry in summary["units"]}
+            core = entries["core"]
+
+            self.assertEqual(entries["docs"]["status"], "completed")
+            self.assertEqual(core["producer_head_sha"], sha)
+            self.assertEqual(core["verification_status"], "passed")
+            rows = core["verification_checks"]
+            self.assertEqual([row["tier"] for row in rows], ["unit", "integration"])
+            # The full gate is bound to the supplied integrated checkout, not
+            # a producer receipt: only the unit-tier command could run there.
+            self.assertNotIn("reused", rows[0])
+            self.assertNotIn("reused", rows[1])
+            # The unit-tier check ran once in its producer worktree; the full
+            # gate ran once after fan-in against the explicit integrated tree.
+            self.assertEqual(len(runner.verified), 2)
+            self.assertTrue(core["unit_verification_observed"])
+            self.assertTrue(core["integration_ready"])
+
+    def test_selected_lane_fan_in_runs_an_integrated_gate_without_unselected_units(self) -> None:
+        # Given a two-unit contract where only core is selected for this dispatch
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, runner = self._two_unit_setup(
+                tmp,
+                [
+                    {"command": _PASSING_COMMAND, "id": "unit-tests", "safety": "read_only"},
+                    {"command": _ENV_COMMAND, "id": "full-gate", "tier": "integration"},
+                ],
+            )
+            integrated_revision = subprocess.run(
+                ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+
+            # When the selected producer completes against the clean integrated checkout
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=runner,
+                readiness=_ready,
+                run_verification=True,
+                integrated_worktree=repo,
+                integrated_revision=integrated_revision,
+            )
+
+            # Then only core contributes producer evidence and its valid broad gate runs.
+            entries = {entry["unit_id"]: entry for entry in summary["units"]}
+            self.assertEqual(entries["docs"]["status"], "not_selected")
+            self.assertEqual(entries["core"]["verification_status"], "passed")
+            self.assertEqual([row["tier"] for row in entries["core"]["verification_checks"]], ["unit", "integration"])
+            self.assertEqual(len(runner.verified), 2)
+
+    def test_an_integration_gate_holds_when_the_supplied_tree_revision_is_stale(self) -> None:
+        # Given producer work and an explicitly supplied integrated checkout
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, runner = self._two_unit_setup(
+                tmp,
+                [
+                    {"command": _PASSING_COMMAND, "id": "unit-tests", "safety": "read_only"},
+                    {"command": _ENV_COMMAND, "id": "full-gate", "tier": "integration"},
+                ],
+            )
+
+            # When the caller's revision does not bind that checkout exactly
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                runner=runner,
+                readiness=_ready,
+                run_verification=True,
+                integrated_worktree=repo,
+                integrated_revision="stale-tree",
+            )
+
+            # Then no full gate process is spawned and integration remains HOLD.
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertEqual(core["verification_status"], "held")
+            self.assertFalse(core["unit_verification_observed"])
+            self.assertEqual(len(runner.verified), 1)
+
+    def test_a_forged_sidecar_head_cannot_substitute_for_the_observed_producer_head(self) -> None:
+        # Given a clean integrated checkout at base and a producer whose actual
+        # HEAD moved while its sidecar falsely reports the base revision
+        with TemporaryDirectory() as tmp:
+            repo, base_sha = _make_repo(Path(tmp))
+            branch = subprocess.run(
+                ["git", "branch", "--show-current"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+            _git(repo, "checkout", "-qb", "producer")
+            (repo / "producer.txt").write_text("producer\n", encoding="utf-8")
+            _git(repo, "add", "producer.txt")
+            _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "producer")
+            observed_head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+            _git(repo, "checkout", "-q", branch)
+            results = {
+                "core": {
+                    "unit_result": {"head_sha": base_sha},
+                    "producer_head_sha": observed_head,
+                }
+            }
+
+            # When fan-in checks ancestry, Then it uses the dispatcher's actual
+            # post-execution observation, not the executor-reported base SHA.
+            self.assertFalse(_integrated_checkout_contains_producer_heads(subprocess.run, repo, results))
+
+    def test_a_forged_base_sidecar_after_producer_head_moves_holds_the_integration_gate(self) -> None:
+        # Given an executor that commits after reporting the stale base SHA
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, original_runner = self._two_unit_setup(
+                tmp,
+                [
+                    {"command": _PASSING_COMMAND, "id": "unit-tests", "safety": "read_only"},
+                    {"command": _ENV_COMMAND, "id": "full-gate", "tier": "integration"},
+                ],
+            )
+            committed = threading.Event()
+
+            def runner(argv, **kwargs):
+                completed = original_runner(argv, **kwargs)
+                if argv[0] == "codex" and not committed.is_set():
+                    worktree = Path(kwargs["cwd"])
+                    (worktree / "moved-after-sidecar.txt").write_text("moved\n", encoding="utf-8")
+                    _git(worktree, "add", "moved-after-sidecar.txt")
+                    _git(worktree, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "moved")
+                    committed.set()
+                return completed
+
+            integrated_revision = subprocess.run(
+                ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+
+            # When dispatch observes the producer after process completion,
+            # Then stale sidecar identity invalidates producer evidence and no gate runs.
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=runner,
+                readiness=_ready,
+                run_verification=True,
+                integrated_worktree=repo,
+                integrated_revision=integrated_revision,
+            )
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertTrue(committed.is_set())
+            self.assertFalse(core["result_schema_valid"])
+            self.assertNotIn("verification_status", core)
+            self.assertEqual(original_runner.verified, [])
+
+    def test_a_dirty_producer_cannot_enter_integration_fan_in(self) -> None:
+        # Given an executor that leaves uncommitted content after a valid sidecar
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, original_runner = self._two_unit_setup(
+                tmp,
+                [
+                    {"command": _PASSING_COMMAND, "id": "unit-tests", "safety": "read_only"},
+                    {"command": _ENV_COMMAND, "id": "full-gate", "tier": "integration"},
+                ],
+            )
+            dirtied = threading.Event()
+
+            def runner(argv, **kwargs):
+                completed = original_runner(argv, **kwargs)
+                if argv[0] == "codex" and not dirtied.is_set():
+                    (Path(kwargs["cwd"]) / "dirty-after-sidecar.txt").write_text("dirty\n", encoding="utf-8")
+                    dirtied.set()
+                return completed
+
+            integrated_revision = subprocess.run(
+                ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=runner,
+                readiness=_ready,
+                run_verification=True,
+                integrated_worktree=repo,
+                integrated_revision=integrated_revision,
+            )
+
+            # Then canonical identity cannot be observed and integration remains HOLD.
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertTrue(dirtied.is_set())
+            self.assertFalse(core["result_schema_valid"])
+            self.assertNotIn("verification_status", core)
+            self.assertEqual(original_runner.verified, [])
+
+    def test_a_clean_integrated_checkout_missing_a_producer_commit_holds_without_a_full_gate(self) -> None:
+        # Given producer evidence that names a commit outside the clean base checkout
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, runner = self._two_unit_setup(
+                tmp,
+                [
+                    {"command": _PASSING_COMMAND, "id": "unit-tests", "safety": "read_only"},
+                    {"command": _ENV_COMMAND, "id": "full-gate", "tier": "integration"},
+                ],
+                producer_head_outside_integrated=True,
+            )
+            integrated_revision = subprocess.run(
+                ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+
+            # When the supplied clean checkout omits the observed producer commit
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                runner=runner,
+                readiness=_ready,
+                run_verification=True,
+                integrated_worktree=repo,
+                integrated_revision=integrated_revision,
+            )
+
+            # Then the mismatched sidecar fails producer identity before any
+            # producer or integration verification can be claimed.
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertNotIn("verification_status", core)
+            self.assertFalse(core["unit_verification_observed"])
+            self.assertEqual(len(runner.verified), 0)
+
+    def test_a_failing_integration_check_holds_the_unit_after_fan_in(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, runner = self._two_unit_setup(
+                tmp,
+                [
+                    {"command": _PASSING_COMMAND, "id": "unit-tests", "safety": "read_only"},
+                    {"command": _FAILING_COMMAND, "id": "full-gate", "tier": "integration"},
+                ],
+            )
+
+            integrated_revision = subprocess.run(
+                ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                runner=runner,
+                readiness=_ready,
+                run_verification=True,
+                integrated_worktree=repo,
+                integrated_revision=integrated_revision,
+            )
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+
+            self.assertEqual(core["verification_status"], "failed")
+            self.assertEqual(
+                [row["status"] for row in core["verification_checks"]], ["passed", "failed"]
+            )
+            self.assertFalse(core["unit_verification_observed"])
+            self.assertFalse(core["integration_ready"])
+
+    def test_dispatch_shuts_the_shared_execution_gate_after_recovery_raises(self) -> None:
+        # Given a dispatch-scoped verification gate and a recovery seam that fails
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, runner = self._setup(
+                tmp, [{"command": _PASSING_COMMAND, "id": "unit-tests", "safety": "read_only"}]
+            )
+            closed = threading.Event()
+
+            class TrackingGate(VerificationExecutionGate):
+                def shutdown(self) -> None:
+                    super().shutdown()
+                    closed.set()
+
+            # When post-pool recovery raises, Then the gate is still shut down.
+            with (
+                mock.patch("omh.coding.fanout_dispatch.VerificationExecutionGate", TrackingGate),
+                mock.patch(
+                    "omh.coding.fanout_dispatch._run_failure_recovery", side_effect=RuntimeError("recovery")
+                ),
+                self.assertRaisesRegex(RuntimeError, "recovery"),
+            ):
+                self._dispatch(paths, repo, sha, contract, runner, run_verification=True)
+            self.assertTrue(closed.is_set())
+
+    def test_the_aggregate_decision_matches_the_serial_path(self) -> None:
+        decisions: list[tuple[str, list[str], bool, bool]] = []
+        for tmp_index, use_metadata in enumerate((False, True)):
+            with TemporaryDirectory() as tmp:
+                if use_metadata:
+                    paths, repo, sha, contract, runner = self._setup(
+                        tmp,
+                        [
+                            {"command": _PASSING_COMMAND, "id": "a"},
+                            {"command": _FAILING_COMMAND, "id": "b"},
+                        ],
+                    )
+                else:
+                    root = Path(tmp)
+                    paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+                    repo, sha = _make_repo(root)
+                    units = [dict(unit) for unit in _UNITS]
+                    units[0]["verification_commands"] = [_PASSING_COMMAND, _FAILING_COMMAND]
+                    contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
+                    sidecar = unit_result_path(paths, contract["fanout_id"], "core")
+                    runner = _verification_runner(
+                        _stub_executor_script(root), sidecar, _unit_result_payload(contract, sha)
+                    )
+
+                core = self._dispatch(paths, repo, sha, contract, runner, run_verification=True)
+                decisions.append(
+                    (
+                        core["verification_status"],
+                        [row["status"] for row in core["verification_checks"]],
+                        core["unit_verification_observed"],
+                        core["integration_ready"],
+                    )
+                )
+
+        self.assertEqual(decisions[0], decisions[1])
+        self.assertEqual(decisions[0][0], "failed")
+
+
 class FanoutDispatchVerificationCliTests(unittest.TestCase):
     def _prepare(self, root: Path, base: list[str]) -> str:
         units_path = root / "units.json"
@@ -3859,6 +4402,52 @@ class FanoutDispatchVerificationCliTests(unittest.TestCase):
                 status, _stdout, stderr = run_cli(argv + ["--run-verification"])
             self.assertEqual(status, 0, stderr)
             self.assertTrue(captured["run_verification"])
+
+    def test_integration_target_requires_verification_and_a_complete_pair(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, _sha = _make_repo(root)
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+            fanout_id = self._prepare(root, base)
+            goal_path = root / "goal.txt"
+            goal_path.write_text(_GOAL, encoding="utf-8")
+            argv = base + [
+                "coding",
+                "fanout",
+                "dispatch",
+                fanout_id,
+                "--goal-file",
+                str(goal_path),
+                "--repo-root",
+                str(repo),
+                "--dry-run",
+            ]
+
+            for incomplete in (
+                ["--integration-worktree", str(repo)],
+                ["--integration-revision", "tree"],
+            ):
+                with self.subTest(incomplete=incomplete):
+                    status, _stdout, stderr = run_cli(argv + incomplete)
+                    self.assertNotEqual(status, 0)
+                    self.assertIn("must be supplied together", stderr)
+
+            with mock.patch(
+                "omh.coding.fanout_dispatch.dispatch_fanout",
+                return_value={"schema_version": "fanout_dispatch_summary/v1", "units": []},
+            ) as dispatch:
+                status, _stdout, stderr = run_cli(
+                    argv
+                    + [
+                        "--integration-worktree",
+                        str(repo),
+                        "--integration-revision",
+                        "tree",
+                    ]
+                )
+            self.assertNotEqual(status, 0)
+            self.assertIn("require --run-verification", stderr)
+            dispatch.assert_not_called()
 
 
 class SpawnStaggerTests(unittest.TestCase):

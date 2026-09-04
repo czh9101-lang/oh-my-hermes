@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import shlex
 import shutil
 import signal
@@ -105,6 +106,15 @@ from .fanout_retry import (
     evaluate_unit_retry,
 )
 from .unit_prompt_protocol import shared_unit_preamble_lines, unit_protocol_lines
+from .verification_execution import VerificationExecutionGate
+from .verification_integration import run_post_integration_verification
+from .verification_plan import (
+    VERIFICATION_PLAN_SCHEMA_VERSION,
+    compile_verification_plan,
+    verification_execution_environment,
+)
+from .verification_receipts import SingleFlight
+from .verification_runner import PlanRunContext, run_verification_plan
 from .fanout_unit_results import (
     FANOUT_UNIT_RESULT_CHECK_STATUSES,
     FANOUT_UNIT_RESULT_DECLINE_REASONS,
@@ -1066,12 +1076,46 @@ def declared_verification_commands(unit: Mapping[str, Any]) -> list[str]:
     return [str(entry).strip() for entry in declared if str(entry).strip()]
 
 
+# One process-wide single-flight registry for verification receipts: two
+# consumers resolving the same revision-bound key in this process share one
+# check process and one receipt.
+_VERIFICATION_SINGLE_FLIGHT = SingleFlight()
+
+
+def _verification_worktree_revision(runner: Callable[..., Any], worktree: Path) -> str | None:
+    """Return a reusable tree revision only when the worktree is clean.
+
+    `HEAD^{tree}` cannot describe tracked edits or untracked files. Reuse is
+    therefore disabled rather than guessed whenever git cannot prove the exact
+    worktree is clean.
+    """
+    status = _git_text(
+        runner, worktree, ["git", "status", "--porcelain=v1", "--untracked-files=all"]
+    )
+    if status is None or status.strip():
+        return None
+    revision = _git_text(runner, worktree, ["git", "rev-parse", "HEAD^{tree}"])
+    return revision.strip() if revision else None
+
+
+def _observed_clean_producer_head(runner: Callable[..., Any], worktree: Path) -> str | None:
+    """Return the canonical full producer commit only after proving its worktree clean."""
+    if _verification_worktree_revision(runner, worktree) is None:
+        return None
+    head_sha = _git_text(runner, worktree, ["git", "rev-parse", "HEAD"])
+    if head_sha is None:
+        return None
+    normalized = head_sha.strip()
+    return normalized if re.fullmatch(r"[0-9a-f]{40}", normalized) else None
+
+
 def _run_verification_command(
     command: str,
     worktree: Path,
     runner: Callable[..., Any],
     child_env: Mapping[str, str] | None = None,
     spill_dir: Path | None = None,
+    timeout: int | None = None,
 ) -> tuple[str, str, dict[str, Any] | None]:
     """Run one command in the unit worktree; return status, bounded tail, truncation record.
 
@@ -1084,7 +1128,11 @@ def _run_verification_command(
     fit, so a reader can tell "this is the whole failure output" from "the tail
     of a longer one". It is `None` for the paths that never ran a command and
     so have a constructed message rather than captured output.
+
+    `timeout` lets a planned check narrow the per-command ceiling; the module
+    ceiling remains the default and nothing here can widen it.
     """
+    effective_timeout = timeout if isinstance(timeout, int) and timeout > 0 else _VERIFICATION_COMMAND_TIMEOUT
     try:
         env_overrides, argv = verification_command_argv(command)
     except FanoutContractError as exc:
@@ -1099,7 +1147,7 @@ def _run_verification_command(
             env={**(os.environ if child_env is None else child_env), **env_overrides},
             text=True,
             capture_output=True,
-            timeout=_VERIFICATION_COMMAND_TIMEOUT,
+            timeout=effective_timeout,
         )
         exit_code = int(getattr(completed, "returncode", 1))
         combined = (
@@ -1108,7 +1156,7 @@ def _run_verification_command(
     except FileNotFoundError:
         return "failed", f"{argv[0]} not found on PATH", None
     except subprocess.TimeoutExpired:
-        return "failed", f"timed out after {_VERIFICATION_COMMAND_TIMEOUT}s", None
+        return "failed", f"timed out after {effective_timeout}s", None
     except (OSError, subprocess.SubprocessError, TypeError, ValueError) as exc:
         return "failed", f"could not run: {exc}", None
     if exit_code == 0:
@@ -1130,6 +1178,230 @@ def _run_verification_command(
     return "failed", f"{detail} {notice}" if notice else detail, bounded.record
 
 
+def _run_planned_verification(
+    paths: OmhPaths,
+    unit: Mapping[str, Any],
+    *,
+    fanout_id: str,
+    run_ref: str,
+    unit_id: str,
+    worktree: Path,
+    owner: str,
+    runner: Callable[..., Any],
+    child_env: Mapping[str, str] | None,
+    wave_width: int,
+    execution_gate: VerificationExecutionGate | None,
+    integration_ready: Callable[[], bool],
+    required_revision: str | None = None,
+    post_integration: bool = False,
+    producer_evidence: bool = False,
+) -> dict[str, Any]:
+    """Run a metadata-carrying unit's checks through the revision-bound plan engine.
+
+    Rows keep the exact dispatcher-observed shape the legacy loop writes (plus
+    additive `check_id`/`tier`/`reused` keys) and pass through the same
+    `validate_check_rows` gate. The `unit_verification_observed` journal event
+    is appended only when every check holds fresh or reused in-scope passing
+    evidence: a failed, blocked, or fan-in-deferred check appends nothing,
+    which is the HOLD semantics the aggregate has always had. Integration-tier
+    checks defer while `integration_ready` is closed; the post-pool fan-in
+    wave re-resolves the plan with the gate open and unit-tier receipts then
+    share the one process the worker already ran.
+    """
+    plan = compile_verification_plan(unit, fanout_id=fanout_id, unit_id=unit_id)
+    if plan is None:
+        return {}
+    revision = _verification_worktree_revision(runner, worktree)
+    if required_revision is not None and revision != required_revision:
+        revision = None
+    execution_environment = verification_execution_environment(
+        os.environ if child_env is None else child_env
+    )
+    context = PlanRunContext(
+        paths=paths,
+        worktree=worktree,
+        revision=revision,
+        max_workers=max(1, wave_width),
+        integration_ready=integration_ready,
+        single_flight=_VERIFICATION_SINGLE_FLIGHT,
+        execution_environment=execution_environment,
+        execution_gate=execution_gate,
+    )
+
+    def run_node(node: Any) -> tuple[str, str, dict[str, Any] | None]:
+        return _run_verification_command(
+            node.command,
+            worktree,
+            runner,
+            execution_environment,
+            spill_dir=paths.runtime_output_spills_dir,
+            timeout=node.timeout,
+        )
+
+    result = (
+        run_post_integration_verification(
+            context, plan, producer_evidence=producer_evidence, run_node=run_node
+        )
+        if post_integration
+        else run_verification_plan(context, plan, run_node=run_node)
+    )
+    rows: list[dict[str, object]] = []
+    for outcome in result.outcomes:
+        row: dict[str, object] = {
+            "command": outcome.node.command,
+            "status": outcome.status,
+            "evidence_ref": f"journal:{UNIT_VERIFICATION_OBSERVATION_SOURCE}:{run_ref}",
+            "reported_by": "dispatcher",
+            "observed_by": "dispatcher",
+            "observation_source": UNIT_VERIFICATION_OBSERVATION_SOURCE,
+            "check_id": outcome.node.check_id,
+            "tier": outcome.node.tier,
+        }
+        if outcome.reused and outcome.receipt_key:
+            row["reused"] = True
+            row["receipt_ref"] = f"verification_receipt:{outcome.receipt_key}"
+        if outcome.status == "skipped" and outcome.detail:
+            row["note"] = outcome.detail
+        rows.append(row)
+    validated_rows = validate_check_rows(rows)
+    if result.all_passed:
+        append_journal_observation(
+            paths,
+            {
+                "target_type": "run",
+                "target_id": run_ref,
+                "run_id": run_ref,
+                "event": "unit_verification_observed",
+                "status": "observed",
+                "summary": (
+                    f"dispatcher ran {len(validated_rows)} declared verification command(s) "
+                    f"for unit {unit_id}; all passed"
+                ),
+                "worker_ref": unit_id,
+                "worktree_ref": str(worktree),
+                "runtime_profile": owner,
+            },
+        )
+    verification: dict[str, Any] = {
+        "verification_status": (
+            "passed" if result.all_passed else ("held" if result.deferred and not result.failures else "failed")
+        ),
+        "verification_checks": validated_rows,
+        "verification_claim_boundary": UNIT_VERIFICATION_CLAIM_BOUNDARY,
+        "verification_plan_schema": VERIFICATION_PLAN_SCHEMA_VERSION,
+    }
+    receipt_keys = sorted(
+        {outcome.receipt_key for outcome in result.outcomes if outcome.receipt_key}
+    )
+    if receipt_keys:
+        verification["verification_receipts"] = receipt_keys
+    if result.failures:
+        verification["verification_failures"] = result.failures
+    if result.truncations:
+        verification["verification_output_truncation"] = result.truncations
+    if result.deferred and not result.failures:
+        verification["verification_integration_deferred"] = True
+    return verification
+
+
+def _producer_verification_is_sufficient(entry: Mapping[str, Any]) -> bool:
+    """Whether one producer's unit-tier verification passed or was absent."""
+    if not (entry.get("process_succeeded") and entry.get("result_schema_valid")):
+        return False
+    rows = entry.get("verification_checks")
+    if not isinstance(rows, list):
+        return True
+    unit_rows = [row for row in rows if isinstance(row, Mapping) and row.get("tier", "unit") == "unit"]
+    return all(row.get("status") == "passed" for row in unit_rows)
+
+
+def _integrated_checkout_contains_producer_heads(
+    runner: Callable[..., Any], integrated_worktree: Path, results: Mapping[str, dict[str, Any]]
+) -> bool:
+    """Prove the supplied checkout contains every dispatcher-observed producer commit."""
+    for entry in results.values():
+        head_sha = entry.get("producer_head_sha")
+        if not isinstance(head_sha, str) or re.fullmatch(r"[0-9a-f]{40}", head_sha) is None:
+            return False
+        if _git_text(
+            runner, integrated_worktree, ["git", "merge-base", "--is-ancestor", head_sha, "HEAD"]
+        ) is None:
+            return False
+    return True
+
+
+def _run_integration_verification_wave(
+    paths: OmhPaths,
+    *,
+    results: Mapping[str, dict[str, Any]],
+    units: Mapping[str, Mapping[str, Any]],
+    order: Sequence[str],
+    selected_unit_ids: set[str],
+    runner: Callable[..., Any],
+    wave_width: int,
+    fanout_id: str,
+    integrated_worktree: Path | None,
+    integrated_revision: str | None,
+    execution_gate: VerificationExecutionGate,
+) -> None:
+    """Run integration-tier checks once the producer lanes have fanned in.
+
+    Reached after the dispatch pool drained, so every selected unit is
+    terminal by construction — that fan-in is the gate the worker deferred
+    on. Only units whose unit-tier evidence all passed (`held`) re-resolve;
+    the engine then runs just their integration-tier checks while unit-tier
+    checks resolve as receipt reuses of the one process the worker ran. A
+    pass appends the same `unit_verification_observed` event the worker
+    withheld, and the ladder projection after this wave folds it in.
+    """
+    if integrated_worktree is None or not integrated_revision:
+        return
+    producer_results = {
+        unit_id: results[unit_id] for unit_id in selected_unit_ids if unit_id in results
+    }
+    producer_evidence = bool(producer_results) and all(
+        _producer_verification_is_sufficient(entry) for entry in producer_results.values()
+    )
+    producer_evidence = producer_evidence and _integrated_checkout_contains_producer_heads(
+        runner, integrated_worktree, producer_results
+    )
+    for unit_id in order:
+        if unit_id not in selected_unit_ids:
+            continue
+        entry = results.get(unit_id)
+        unit = units.get(unit_id)
+        if entry is None or unit is None or not entry.get("verification_integration_deferred"):
+            continue
+        rerun = _run_planned_verification(
+            paths,
+            unit,
+            fanout_id=fanout_id,
+            run_ref=str(entry["run_ref"]),
+            unit_id=unit_id,
+            worktree=integrated_worktree,
+            owner=str(entry.get("owner") or "choose"),
+            runner=runner,
+            child_env=None,
+            wave_width=wave_width,
+            execution_gate=execution_gate,
+            integration_ready=lambda: True,
+            required_revision=integrated_revision,
+            post_integration=True,
+            producer_evidence=producer_evidence,
+        )
+        if not rerun:
+            continue
+        integration_rows = rerun.pop("verification_checks", [])
+        unit_rows = [
+            row for row in entry.get("verification_checks", []) if row.get("tier") != "integration"
+        ]
+        entry["verification_checks"] = [*unit_rows, *integration_rows]
+        entry.pop("verification_integration_deferred", None)
+        entry.pop("verification_failures", None)
+        entry.update(rerun)
+        entry["unit_verification_observed"] = _unit_verification_is_observed(paths, str(entry["run_ref"]))
+
+
 def _run_unit_verification(
     paths: OmhPaths,
     unit: Mapping[str, Any],
@@ -1140,6 +1412,9 @@ def _run_unit_verification(
     owner: str,
     runner: Callable[..., Any],
     child_env: Mapping[str, str] | None = None,
+    fanout_id: str = "",
+    wave_width: int = 1,
+    execution_gate: VerificationExecutionGate | None = None,
 ) -> dict[str, Any]:
     """Run one unit's declared verification commands and record what was observed.
 
@@ -1149,21 +1424,48 @@ def _run_unit_verification(
     `unit_verification_observed` journal event, so the ladder flips from the
     same evidence an operator would otherwise record by hand. Any failure
     appends nothing, leaving the unit short of `integration_ready`.
+
+    A unit carrying `verification_checks` metadata runs through the
+    revision-bound plan engine instead of the serial loop below; a
+    metadata-free unit keeps the legacy loop byte-for-byte.
     """
     commands = declared_verification_commands(unit)
     if not commands:
         return {}
+    if unit.get("verification_checks"):
+        return _run_planned_verification(
+            paths,
+            unit,
+            fanout_id=fanout_id,
+            run_ref=run_ref,
+            unit_id=unit_id,
+            worktree=worktree,
+            owner=owner,
+            runner=runner,
+            child_env=child_env,
+            wave_width=wave_width,
+            execution_gate=execution_gate,
+            integration_ready=lambda: False,
+        )
     rows: list[dict[str, object]] = []
     failures: list[str] = []
     truncations: list[dict[str, Any]] = []
     for command in commands:
-        status, detail, truncation = _run_verification_command(
-            command,
-            worktree,
-            runner,
-            child_env,
-            spill_dir=paths.runtime_output_spills_dir,
+        def run_command(command: str = command) -> tuple[str, str, dict[str, Any] | None]:
+            return _run_verification_command(
+                command,
+                worktree,
+                runner,
+                child_env,
+                spill_dir=paths.runtime_output_spills_dir,
+            )
+
+        outcome = (
+            run_command()
+            if execution_gate is None
+            else execution_gate.submit_legacy(run_command).result()
         )
+        status, detail, truncation = outcome
         if truncation is not None:
             truncations.append(truncation)
         rows.append(
@@ -1230,6 +1532,8 @@ def dispatch_fanout(
     only_units: Sequence[str] | None = None,
     dry_run: bool = False,
     run_verification: bool = False,
+    integrated_worktree: Path | None = None,
+    integrated_revision: str | None = None,
     runner: Callable[..., Any] = signal_safe_unit_runner,
     readiness: Callable[..., dict[str, object]] = probe_executor_readiness,
     live_safety_profile_revision: str | None = None,
@@ -1460,6 +1764,9 @@ def dispatch_fanout(
     # only for runners carrying the real-runner `accepts_on_spawn` seam, so
     # injected test runners and dry runs never wait.
     spawn_stagger = _SpawnStagger(CACHE_WARM_SPAWN_STAGGER_SECONDS)
+    verification_execution_gate = (
+        VerificationExecutionGate(max(1, concurrency)) if run_verification and not dry_run else None
+    )
     # Every per-unit argument except the unit and its capability precheck.
     # Named once so the post-run recovery pass re-dispatches a retargeted unit
     # through exactly the arguments the pool used, rather than a second
@@ -1486,6 +1793,10 @@ def dispatch_fanout(
         "sleep": sleep,
         "ignore_limit_signal": ignore_limit_signal,
         "review_budget": review_budget,
+        # The check wave inside each unit rides the same policy-resolved width
+        # as the unit pool itself — never a new unbounded pool.
+        "verification_wave_width": max(1, concurrency),
+        "verification_execution_gate": verification_execution_gate,
     }
 
     def _dispatch_with_owner_gate(unit: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
@@ -1634,34 +1945,58 @@ def dispatch_fanout(
         # live agent groups — the same hazard the signal path closes.
         if sys.exc_info()[0] is not None and interrupted_by is None:
             terminate_live_unit_groups()
+            if verification_execution_gate is not None:
+                verification_execution_gate.shutdown()
         pool.shutdown(wait=False, cancel_futures=True)
         if installed_term:
             signal.signal(signal.SIGTERM, previous_term)
 
-    # Recovery runs on the collected results and before the summary is built, so
-    # a retarget attempt's own outcome and a `wait` mark are both in hand when
-    # the run journal is projected. An interrupted batch is skipped entirely:
-    # the operator already asked for it to stop.
-    failure_recovery = (
-        None
-        if (dry_run or interrupted_by is not None)
-        else _run_failure_recovery(
-            paths,
-            results=results,
-            order=order,
-            units=units,
-            repo_root=repo_root,
-            timeout=timeout,
-            mode=on_failure,
-            retarget_owner=retarget_owner,
-            interactive=interactive,
-            read_line=read_line,
-            write_line=write_line,
-            hermes_routing=hermes_routing,
-            hermes_child=hermes_child,
-            unit_dispatch_kwargs=unit_dispatch_kwargs,
+    try:
+        # Recovery runs on the collected results and before the summary is built, so
+        # a retarget attempt's own outcome and a `wait` mark are both in hand when
+        # the run journal is projected. An interrupted batch is skipped entirely:
+        # the operator already asked for it to stop.
+        failure_recovery = (
+            None
+            if (dry_run or interrupted_by is not None)
+            else _run_failure_recovery(
+                paths,
+                results=results,
+                order=order,
+                units=units,
+                repo_root=repo_root,
+                timeout=timeout,
+                mode=on_failure,
+                retarget_owner=retarget_owner,
+                interactive=interactive,
+                read_line=read_line,
+                write_line=write_line,
+                hermes_routing=hermes_routing,
+                hermes_child=hermes_child,
+                unit_dispatch_kwargs=unit_dispatch_kwargs,
+            )
         )
-    )
+        # The fan-in gate the unit workers deferred integration-tier checks on:
+        # the pool has drained, so every selected unit is terminal and those
+        # checks may run now — once per integrated revision, with unit-tier
+        # receipts sharing the process the worker already ran.
+        if run_verification and not dry_run and interrupted_by is None and verification_execution_gate is not None:
+            _run_integration_verification_wave(
+                paths,
+                results=results,
+                units=units,
+                order=order,
+                selected_unit_ids=selected,
+                runner=runner,
+                wave_width=max(1, concurrency),
+                fanout_id=fanout_id,
+                integrated_worktree=integrated_worktree,
+                integrated_revision=integrated_revision,
+                execution_gate=verification_execution_gate,
+            )
+    finally:
+        if verification_execution_gate is not None:
+            verification_execution_gate.shutdown()
     summary_units = [results[unit_id] for unit_id in order]
     for entry in summary_units:
         decision = resume_decisions.get(str(entry.get("unit_id", "")))
@@ -2595,6 +2930,8 @@ def _dispatch_unit(
     sleep: Callable[[float], None] = time.sleep,
     ignore_limit_signal: bool = False,
     review_budget: ReviewDispatchBudget,
+    verification_wave_width: int = 1,
+    verification_execution_gate: VerificationExecutionGate | None = None,
 ) -> dict[str, Any]:
     from .model_inventory import catalog_fingerprint_note
 
@@ -3168,6 +3505,7 @@ def _dispatch_unit(
     )
     unit_result = _intake_unit_result(
         paths,
+        runner=runner,
         sidecar_path=sidecar_path,
         run_ref=run_ref,
         unit_id=unit_id,
@@ -3192,6 +3530,9 @@ def _dispatch_unit(
             owner=owner,
             runner=runner,
             child_env=child_env,
+            fanout_id=fanout_id,
+            wave_width=verification_wave_width,
+            execution_gate=verification_execution_gate,
         )
     result = {
         "unit_id": unit_id,
@@ -3315,6 +3656,7 @@ _MAX_UNIT_RESULT_TEXT = 300
 def _intake_unit_result(
     paths: OmhPaths,
     *,
+    runner: Callable[..., Any],
     sidecar_path: Path | None,
     run_ref: str,
     unit_id: str,
@@ -3344,6 +3686,7 @@ def _intake_unit_result(
                 base_sha=base_sha,
                 worktree=worktree,
                 owner=owner,
+                runner=runner,
             )
             if fallback is not None:
                 return fallback
@@ -3370,6 +3713,11 @@ def _intake_unit_result(
             fanout_id=fanout_id,
             base_sha=base_sha,
         )
+        producer_head_sha = _observed_clean_producer_head(runner, worktree)
+        if producer_head_sha is None:
+            raise ValueError("dispatcher could not observe a clean committed producer HEAD")
+        if validated["head_sha"] != producer_head_sha:
+            raise ValueError("head_sha does not match dispatcher-observed producer HEAD")
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError) as exc:
         return _unit_result_failure(
             paths,
@@ -3401,6 +3749,7 @@ def _intake_unit_result(
         "unit_result_status": "unit_result_validated",
         "result_schema_valid": True,
         "unit_result_source": "sidecar",
+        "producer_head_sha": producer_head_sha,
         "unit_result": _bounded_unit_result(validated),
     }
 
@@ -3430,6 +3779,7 @@ def _stdout_fenced_json_blocks(stdout_text: str) -> list[str]:
 def _intake_stdout_unit_result(
     paths: OmhPaths,
     *,
+    runner: Callable[..., Any],
     stdout_text: str,
     run_ref: str,
     unit_id: str,
@@ -3458,6 +3808,11 @@ def _intake_stdout_unit_result(
             fanout_id=fanout_id,
             base_sha=base_sha,
         )
+        producer_head_sha = _observed_clean_producer_head(runner, worktree)
+        if producer_head_sha is None:
+            raise ValueError("dispatcher could not observe a clean committed producer HEAD")
+        if validated["head_sha"] != producer_head_sha:
+            raise ValueError("head_sha does not match dispatcher-observed producer HEAD")
     except (ValueError, TypeError) as exc:
         return _unit_result_failure(
             paths,
@@ -3491,6 +3846,7 @@ def _intake_stdout_unit_result(
         "unit_result_status": "unit_result_validated",
         "result_schema_valid": True,
         "unit_result_source": "stdout_fenced_block",
+        "producer_head_sha": producer_head_sha,
         "unit_result": _bounded_unit_result(validated),
     }
 

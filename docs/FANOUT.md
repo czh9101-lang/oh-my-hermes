@@ -334,6 +334,72 @@ Rules:
   `planned_verification_commands`. This runs inside the same sanctioned
   dispatch bridge as the unit spawns themselves: still operator-invoked, still
   local, still no merge and no network from omh.
+- **Verification plans, tiers, and receipts (opt-in).** Beside bare
+  `verification_commands`, a unit may declare `verification_checks` — the
+  additive, structured sibling (declare one or the other, never both; the
+  command list is then derived from the checks). Each check names its
+  `command` plus optional `id`, `tier` (`unit` default, or `integration`),
+  `safety` (`stateful` default, or `read_only`), `resource_class`
+  (a validated lowercase resource name such as `local_cpu`, `shared_repo`, or
+  `postgres-acceptance`; equal stateful names serialize),
+  `claim_scope` (closed and tier-bound: `unit_verification` or
+  `integrated_verification`), `depends_on` (sibling check ids; unknown, self,
+  or cyclic references are refused at freeze), and `timeout` (an integer that
+  may only narrow the 600s ceiling). Declared
+  checks compile to a `verification_plan/v1`: typed nodes with stable ids,
+  executor-neutral, identical in every lane. At dispatch, read-only
+  unit-tier checks run as a bounded parallel wave whose width is the same
+  policy-resolved concurrency the unit pool runs with — never a new
+  unbounded pool. One dispatch-scoped execution gate is shared by every unit
+  plan and the post-integration wave, so concurrent units cannot multiply that
+  width; `stateful` checks serialize on their resource class even across plans,
+  and a check starts only after every check it depends on has passed. A failed
+  check blocks its dependents (recorded `skipped`, never run) while unrelated
+  checks finish. Integration-tier checks hold until every selected and actually
+  produced lane has passed unit-tier verification (or intentionally declared
+  none) **and** the caller supplies one clean, exact integrated checkout with
+  `--integration-worktree <path> --integration-revision <HEAD^{tree}>`.
+  After each executor exits, dispatch itself proves the producer worktree is
+  clean, resolves canonical `git rev-parse HEAD`, and requires exact full-SHA
+  equality with the sidecar before recording producer evidence. It ancestry
+  checks that dispatcher-observed SHA against the integrated checkout; a
+  forged base sidecar, a dirty producer, or a clean base that omits a producer
+  commit stays HOLD. Unselected lanes never participate in partial-dispatch
+  fan-in. Fan-in alone never claims integration. The full gate then runs once
+  against that supplied tree, never a producer worktree. This is an explicit
+  two-stage flow: producer checks first in their own worktrees, then one broad
+  gate in the caller-supplied integrated checkout. Every executed check files an immutable
+  `verification_receipt/v1` under `~/.omh/coding/verification-receipts/`,
+  keyed by repository/worktree identity + exact revision (the worktree's
+  tree hash) + normalized argv + toolchain/config digest (executable bytes,
+  the exact structured-check execution environment, and relevant lock/config
+  files) + claim scope. Structured checks inherit only a closed non-secret
+  runtime/platform/temp/CI/fanout-lineage environment; any additional value
+  must be declared explicitly. A secret-shaped declared override
+  (`*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_KEY`, `*_PIN`, credential, or auth
+  name) still reaches that check but disables receipt reuse entirely: the
+  check runs fresh and files no receipt, so no persisted key supports offline
+  value guessing. Metadata-free legacy commands keep their historical full
+  environment. Non-secret environment values remain exact invalidators. Receipt filenames accept only
+  64 lowercase hexadecimal characters and every load, store, and lock proves
+  the non-symlink destination remains beneath the receipt directory. Dirty or
+  untracked worktrees produce no reusable revision evidence. Any key
+  component changing — a new revision, one argv token, an env override, a
+  lockfile, claim scope, tier, dependency edge, safety, resource class, or
+  timeout — is a different receipt, never a mutation:
+  cached evidence cannot cross revisions and cannot be silently upgraded to
+  a broader claim. Two consumers resolving the same key share one process
+  and one receipt; the second consumer's row carries `reused: true` and a
+  `verification_receipt:<key>` ref. Receipts retain metadata only (key,
+  check id, timestamps, duration, status, revision, dependency ids, claim
+  scope) — never command text, env values, or command output; failure detail
+  stays behind the bounded-tail-plus-spill path. A missing, stale, or
+  scope-insufficient receipt is treated as missing evidence: the aggregate
+  appends `unit_verification_observed` only when every check holds fresh or
+  reused in-scope passing evidence, exactly the HOLD semantics a failure has
+  always had. **Migration:** contracts without `verification_checks` are
+  untouched — they freeze byte-identically, run the legacy serial loop in
+  declared order, and produce the same rows and journal event as before.
 - **Dependency bar.** A satisfied dependency means only that the owner agent
   process exited 0. It is not verified, reviewed, or correct work. Failed
   units block their dependents, never their independents.

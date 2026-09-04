@@ -592,6 +592,31 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
         "standing in the unit's own worktree and not in whatever repository encloses it; read-only, "
         "and the reason the `add` entry's containment claim is checked rather than asserted"
     ),
+    ("src/coding/fanout_dispatch.py", ("status",)): (
+        "`git status --porcelain=v1 --untracked-files=all` rejects dirty or untracked unit and "
+        "integrated worktrees before verification receipts can be reused; read-only local metadata "
+        "inspection, names no remote, writes nothing, and fixes both output format and untracked visibility"
+    ),
+    ("src/coding/fanout_dispatch.py", ("rev-parse", "HEAD^{tree}")): (
+        "`rev-parse HEAD^{tree}` reads the tree hash of the unit worktree's HEAD, the revision "
+        "component of every verification receipt key the planned-verification engine resolves; "
+        "without it a receipt could be reused across a content change, so the read happens at plan "
+        "time inside the unit's own worktree. Read-only local object lookup, names no remote, "
+        "writes nothing, and resolves no caller-supplied ref"
+    ),
+    ("src/coding/fanout_dispatch.py", ("rev-parse", "HEAD")): (
+        "`rev-parse HEAD` reads the canonical full commit SHA from the clean producer worktree "
+        "after executor exit. The dispatcher compares it exactly to the sidecar report before "
+        "allowing integration fan-in, so executor text cannot substitute a stale base SHA. "
+        "Read-only local object lookup, names no remote, writes nothing, and resolves no "
+        "caller-supplied ref"
+    ),
+    ("src/coding/fanout_dispatch.py", ("merge-base",)): (
+        "`merge-base --is-ancestor <producer-head> HEAD` proves each sidecar-observed producer commit "
+        "is contained by the caller-supplied integrated checkout before a broad integration gate can "
+        "run. It is a read-only local ancestry query, names no remote, writes nothing, and refuses "
+        "rather than treating fan-in alone as integration evidence"
+    ),
     ("src/maintenance/release_source_identity.py", ("core.fsmonitor=false", "rev-parse", "HEAD")): (
         "`git -c core.fsmonitor=false rev-parse HEAD` reads the current commit sha to identify a "
         "source-checkout install for release-evidence identity; the `-c` override is the whole "

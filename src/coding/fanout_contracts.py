@@ -87,9 +87,30 @@ MAX_UNIT_VERIFICATION_COMMAND_CHARS = 240
 # back, and the docs describing both cannot drift apart.
 UNIT_VERIFICATION_OBSERVATION_SOURCE = "dispatch_verification"
 
+# Optional per-check metadata (`verification_checks`): the additive,
+# structured sibling of `verification_commands` that lets a unit declare
+# tiers, read/write safety, dependency edges, and a narrowed timeout per
+# check. Same closed-vocabulary rule as every other contract enum: anything
+# outside these tuples is a freeze-time refusal, never a silent default.
+VERIFICATION_CHECK_TIERS = ("unit", "integration")
+VERIFICATION_CHECK_SAFETIES = ("read_only", "stateful")
+VERIFICATION_CHECK_RESOURCE_CLASS_PATTERN = r"^[a-z0-9][a-z0-9_.-]{0,63}$"
+VERIFICATION_CHECK_CLAIM_SCOPES = ("unit_verification", "integrated_verification")
+# A check may only narrow the dispatcher's per-command ceiling, never widen
+# it: the ceiling exists so one hung command cannot hold a dispatch open.
+MAX_UNIT_VERIFICATION_CHECK_TIMEOUT = 600
+VERIFICATION_CHECK_ID_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
+MAX_UNIT_VERIFICATION_CHECK_ID_CHARS = 40
+
 # A leading `NAME=VALUE` token: the one shell idiom a verification command may
 # use, because the repo's own integration gate is spelled that way.
 _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_VERIFICATION_CHECK_RESOURCE_CLASS_RE = re.compile(VERIFICATION_CHECK_RESOURCE_CLASS_PATTERN)
+
+
+def is_verification_check_resource_class(value: str) -> bool:
+    """Whether one contract resource name is safe to use as a lock key."""
+    return _VERIFICATION_CHECK_RESOURCE_CLASS_RE.fullmatch(value) is not None
 
 
 class FanoutContractError(ValueError):
