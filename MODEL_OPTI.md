@@ -55,6 +55,7 @@ identical prompt. Nothing else about the pipeline changes per model.
 | `llama` | `llama-` | open-weights Llama ids, any serving host |
 | `codestral` | `codestral-` | Codestral coding ids |
 | `solar` | `solar-` | Upstage Solar Pro ids |
+| `minimax` | `minimax-` | `MiniMax-M3`, `MiniMax-M2.7` (recognized, uncalibrated — see the coverage matrix) |
 | `unknown` | anything else | emerging families before a prefix lands |
 
 The design-qualified aliases are concrete serving-catalog ids, not new model
@@ -720,6 +721,7 @@ gate requires a completed paired run on the intended execution surface.
 | `gpt-6-astra` (exact-model override) | yes → `gpt` | yes, both override tables, resolved before the family block | documented contract plus counters for the four official traits; paired measurement is the named follow-up |
 | `openai-gpt-`, `anthropic-claude-` (design-qualified aliases) | yes → `gpt` / `claude` | yes, through the design family | concrete models.dev/OpenCode serving ids carry these sub-prefixes; their catalog `base_model` fields establish the underlying design family |
 | other `openai-`, `anthropic-` vendor-qualified ids | recognized as model targets, family `unknown` | no → `generic` | vendor qualification alone does not establish a design; O-series, image, and emerging ids remain uncalibrated |
+| `minimax` | yes | no → `generic` | prefix landed in #1304 (`MiniMax-M3`, released 2026-05-31, and `MiniMax-M2.7`, 2026-03-18, per minimax.io release notes and the platform.minimax.io model list); the calibration pair waits on an observed failure mode or a provider-stated characteristic worth countering |
 | emerging families | no → `unknown` | no → `generic` | add a prefix and a calibration pair when one lands (the #1051/#1052 pattern) |
 
 Gaps close by evidence, not by copywriting: a new calibration entry needs an

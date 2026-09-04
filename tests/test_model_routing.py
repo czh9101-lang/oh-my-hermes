@@ -135,6 +135,19 @@ class FamilyPrefixParityTests(unittest.TestCase):
         self.assertEqual(model_family("solar-pro2"), "solar")
         self.assertEqual(model_family("upstage/solar-pro2"), "solar")
 
+    def test_minimax_family_is_recognized(self) -> None:
+        # MiniMax ids as the vendor serves them (MiniMax-M3, 2026-05-31;
+        # MiniMax-M2.7, 2026-03-18) and as gateways spell them.
+        self.assertEqual(model_family("MiniMax-M3"), "minimax")
+        self.assertEqual(model_family("MiniMax-M2.7"), "minimax")
+        self.assertEqual(model_family("minimax/minimax-m2.7"), "minimax")
+        self.assertEqual(model_family("MiniMaxAI/MiniMax-M2.7-highspeed"), "minimax")
+        # Negative controls: the bare vendor name and a near-miss prefix stay
+        # unknown, and a provider segment alone never classifies.
+        self.assertEqual(model_family("minimax"), "unknown")
+        self.assertEqual(model_family("minimaxi-m3"), "unknown")
+        self.assertEqual(model_family("minimax/abab6.5s-chat"), "unknown")
+
     def test_vendor_prefixed_model_ids_alias_to_design_families(self) -> None:
         self.assertEqual(model_family("digitalocean/openai-gpt-5.6-sol"), "gpt")
         self.assertEqual(model_family("digitalocean/anthropic-claude-opus-5"), "claude")
