@@ -310,6 +310,11 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertIn("const truncateTextCells =", widget)
         self.assertIn("const sanitizeText =", widget)
         self.assertIn("sanitizeText(value).slice(0, 4096)", widget)
+        # The route identity is shaped by parentheses -- `category:architect(
+        # anthropic/claude...)`, `(codex/maestro ...)`, `turn 3 (12 tools)` --
+        # so the allowlist keeps them; stripping them rendered the category
+        # and model as one run-on token (`architectanthropic/c...`).
+        self.assertIn("/[^\\p{L}\\p{N} .:/_·|+()\\[\\]!\\-]/gu", widget)
         self.assertNotIn("safeText(value, 4096)", widget)
         self.assertIn("'blocked_by_dependency'", widget)
         self.assertIn("'dry_run_planned'", widget)

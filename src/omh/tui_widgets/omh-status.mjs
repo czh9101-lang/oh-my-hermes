@@ -51,8 +51,12 @@ export default function register(sdk) {
     }
   }
 
+  // Parentheses are in the allowlist because the row identity is SHAPED by
+  // them: `category:architect(anthropic/claude...)`, `(codex/maestro ...)`,
+  // and `turn 3 (12 tools)` all lost their brackets here and rendered as
+  // one run-on token (`architectanthropic/c...`, the owner's report).
   const sanitizeText = value => String(value ?? '')
-    .replace(/[^\p{L}\p{N} .:/_·|+\[\]!\-]/gu, '')
+    .replace(/[^\p{L}\p{N} .:/_·|+()\[\]!\-]/gu, '')
   const safeText = value => sanitizeText(value).slice(0, 96)
 
   // Text, not chrome. The owner's direction after living with the bordered
