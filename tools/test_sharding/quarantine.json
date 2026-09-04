@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "match": "test_fanout_signal_safety",
+      "owner": "@rlaope",
+      "reason": "installs real process-wide signal handlers and kills process groups with SIGTERM-ignoring grandchildren; unsafe beside other tests under any in-process parallelism",
+      "added": "2026-09-04"
+    },
+    {
+      "match": "test_hermes_child_cli",
+      "owner": "@rlaope",
+      "reason": "mutates process-wide OMH_ISOLATED_HERMES_DEPTH and spawns fake hermes child processes",
+      "added": "2026-09-04"
+    },
+    {
+      "match": "test_hermes_child_dispatch",
+      "owner": "@rlaope",
+      "reason": "spawns fake hermes child processes with loopback readiness probes and SIGTERM-ignoring descendants",
+      "added": "2026-09-04"
+    },
+    {
+      "match": "test_cross_harness_adapter_security",
+      "owner": "@rlaope",
+      "reason": "binds unix-domain and loopback TCP sockets; port and path state must not be shared with parallel tests",
+      "added": "2026-09-04"
+    }
+  ]
+}

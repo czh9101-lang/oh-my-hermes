@@ -3889,7 +3889,25 @@ class RouterContentTests(unittest.TestCase):
         # The generated omh-docs addition raises the measured installable catalog to 117.
         self.assertIn("**117 installable skills**", docs_readme)
         self.assertIn("**Retain knowledge**", docs_readme)
-        self.assertIn("python -m unittest discover -s tests", ci)
+        # The unit suite runs through the deterministic sharding tools (issue
+        # #1294): plan once, run per shard plus the serial quarantine, then
+        # reconcile fail-closed. Pinning all three tool invocations keeps the
+        # trust surface -- CI proves every discovered test executes exactly
+        # once per platform/version -- while matching the sharded workflow;
+        # the monolithic discover command must not return as a silent
+        # replacement that bypasses exact-once accounting.
+        self.assertIn("python tools/test_sharding/plan.py --shards 2", ci)
+        self.assertIn("--durations timings-history/timings.json", ci)
+        self.assertIn("actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684", ci)
+        self.assertIn("actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809", ci)
+        self.assertIn("test-sharding-timings-${{ github.run_id }}", ci)
+        self.assertIn("python tools/test_sharding/run.py --plan shard-plan/plan.json", ci)
+        self.assertIn("--lane linux-${{ matrix.python-version }} --shard ${{ matrix.shard }}", ci)
+        self.assertIn("--lane windows-3.12 --shard ${{ matrix.shard }}", ci)
+        self.assertIn("--lane ${{ matrix.lane }} --quarantine", ci)
+        self.assertIn("python tools/test_sharding/aggregate.py --plan shard-plan/plan.json", ci)
+        self.assertIn("--lanes linux-3.11,linux-3.12,windows-3.12", ci)
+        self.assertNotIn("python -m unittest discover -s tests", ci)
         self.assertIn("python -m compileall src", ci)
         self.assertIn("docs workflows --check", ci)
         self.assertIn("Capability probe smoke", ci)

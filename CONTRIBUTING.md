@@ -117,3 +117,59 @@ Two things catch outside contributions most often:
 
 Labels are defined in [`.github/labels.yml`](.github/labels.yml) and applied by
 the maintainer. You do not need to label your own PR.
+
+## Test Sharding (CI)
+
+CI splits the unit-test suite into two deterministic shards per
+platform/version plus a serial quarantine, planned by
+`tools/test_sharding/plan.py` and reconciled fail-closed by
+`tools/test_sharding/aggregate.py`. This changes nothing for local
+development: the full-suite command above
+(`PYTHONPATH=src python -m unittest discover -s tests`) still runs
+everything and remains the documented path.
+
+To reproduce one CI shard locally:
+
+```sh
+python tools/test_sharding/plan.py --shards 2 \
+  --durations tools/test_sharding/timings.json \
+  --quarantine tools/test_sharding/quarantine.json --out /tmp/plan.json
+python tools/test_sharding/run.py --plan /tmp/plan.json --lane local --shard 0 --out /tmp/result.json
+python tools/test_sharding/run.py --plan /tmp/plan.json --lane local --quarantine --out /tmp/result-q.json
+```
+
+Rules that keep the plan green:
+
+- Every discovered test is assigned exactly once. Renaming or deleting a
+  test needs no shard bookkeeping; the plan is regenerated on every run.
+- Tests that mutate process-wide state (signal handlers, spawned child
+  processes, bound sockets, fixed ports) belong in
+  `tools/test_sharding/quarantine.json`, never in the parallel shards. Each
+  entry requires an `owner`, a `reason`, and an `added` date; an entry that
+  matches no discovered test fails the plan, so the quarantine cannot grow
+  silently or rot.
+- `tools/test_sharding/timings.json` is the committed duration-history
+  fallback used only to balance shards. It is performance data, never test
+  or merge evidence. Successful `main` runs automatically save bounded
+  immutable timing history; the next planner restores it over this fallback
+  without executing test code or writing repository state.
+
+### What gates a merge
+
+The `aggregate` job is the gate. It depends on `test`, `test-windows`, and
+`test-quarantine`, runs with `if: always()`, and fails unless every one of
+them succeeded, so a failed, cancelled, or skipped shard cannot produce a
+partial green. A green shard on its own proves only that slice ran; a green
+`aggregate` is what proves the whole suite ran and reconciled.
+
+This repository has no rulesets and no branch protection on `main` (verified
+read-only on 2026-09-04), so nothing is enforced at the platform level today.
+If protection is enabled later, require `aggregate` and nothing else: shard
+job names change with the shard count, and the aggregate is already red
+whenever any of them is.
+
+The >=25% slowest-job speedup from issue #1294 is a target, not a result. It
+is **NOT YET OBSERVED**, and the measurement procedure that would settle it,
+including the metric, the 10-run corpora, exclusions, and the retry and flaky
+comparison, lives in
+[CI Test Sharding Rollout](docs/CI-TEST-SHARDING.md).
