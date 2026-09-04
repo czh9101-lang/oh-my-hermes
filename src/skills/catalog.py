@@ -193,6 +193,14 @@ _SURFACE_EXPOSURES = (
         "Use as an installed Hermes workflow skill when users ask how to triage GitHub PR, issue, review, webhook, or CI events into label, review, or fix-handoff actions without claiming GitHub mutation.",
     ),
     SurfaceExposure(
+        "github-issue-intake",
+        "workflow_skill",
+        ("routable", "installable", "playbook", "harness", "workflow_reference", "capability"),
+        True,
+        "primary_workflow_skill",
+        "Use as an installed Hermes workflow skill when a public chat report should become a new GitHub issue through classification, a bounded interview, duplicate search, direction confirmation, and an authorized connector handoff without core OMH calling GitHub.",
+    ),
+    SurfaceExposure(
         "agent-board",
         "workflow_skill",
         ("routable", "installable", "playbook", "harness", "workflow_reference", "capability"),

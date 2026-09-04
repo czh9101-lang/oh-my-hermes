@@ -54,7 +54,7 @@ Hermes memory, skills, tools, gateway surfaces, and OMH's role, see the
 
 ## Six Capability Families
 
-The public front door groups **117 installable skills** by user intent. Exact
+The public front door groups **118 installable skills** by user intent. Exact
 skill names remain available for deterministic routing, wrapper rendering, and
 operator control.
 
@@ -88,6 +88,9 @@ Use [Capabilities](CAPABILITIES.md) for the manifest contract and
   user-declared editorial provider preferences, never probed integrations.
 - Wrapper sessions own chat continuity and plan decisions. Linked runtime runs
   own dispatch, execution, verification, review, CI, and merge evidence.
+- GitHub issue intake keeps raw content transient: only checked-in issue forms
+  can authorize a connector request, each dispatch consumes one stable
+  idempotency key, and connector read-back is the sole creation evidence.
 - Generated workflow docs come from `src/skills/catalog.py`; update the catalog
   before refreshing generated references.
 - Project memory under `.omh/memory/` is reviewed OMH-local context. Recall packs

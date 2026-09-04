@@ -910,6 +910,32 @@ observed-only.
 Claim boundary: A GitHub event card is not webhook receipt, GitHub mutation, code execution, review, CI, docs sync, or merge evidence.
 ```
 
+```text
+# github-issue-intake
+
+operator
+please file this as an issue: omh setup fails on Windows
+
+Hermes Agent  BOT
+[omh] github-issue-intake - I can prepare this GitHub issue without claiming anything was filed.
+
+I will prepare the intake card: classification, a bounded interview of at most
+three decision-changing questions, duplicate search status, a direction check
+with observed evidence versus inference, and the scoped issue package. Issue
+creation runs only after explicit confirmation through an authorized connector.
+A maintainer transition needs authenticated wrapper actor/evidence identity.
+Only the checked-in issue form can build a connector-authorizable request; an
+arbitrary title, body, or label set stays prepared-only. The idempotency-keyed
+request is complete only in the transient connector handoff, whose dispatch is
+consumed once; the external connector enforces the key and persisted state
+stores metadata, digests, and refs. Only bound read-back counts as observed
+evidence.
+
+[ Open intake card ] [ Show direction check ] [ Confirm issue creation ] disabled [ Show status ]
+
+Claim boundary: A prepared issue package is not issue creation, GitHub mutation, label application, coding, PR, merge, or deployment evidence.
+```
+
 What gets better for the team:
 
 - Research department, material packaging, and GitHub event requests no longer

@@ -4895,6 +4895,7 @@ _DEFINITIONS = [
             "Do not claim the image was rendered or attached without the observed render command result and file.",
             "Do not present the picture as complete architecture: the legend's folded units, pruned edges, and hidden symbols are part of the answer.",
             "Never send the diagram to a chat surface or repository the user did not name; the render is local and the attachment is the wrapper's observed action.",
+            "The render surface is the local Java CLI or `PLANTUML_JAR` invocation only; browser/TeaVM PlantUML render options are not part of this workflow.",
         ),
         quality_tier="codegraph-gated",
         quality_bar=(
@@ -7208,5 +7209,105 @@ _DEFINITIONS.append(
             "If self-host readiness is green but media fails, inspect MinIO and disk separately from relay readiness.",
         ),
         aliases=("omh-buzz",),
+    )
+)
+
+
+_DEFINITIONS.append(
+    SkillDefinition(
+        "github-issue-intake",
+        "GitHub issue intake workflow: turn a public chat report into a confirmed, verified issue package.",
+        (
+            "github-issue-intake",
+            "github issue intake",
+            "issue intake",
+            "file this as an issue",
+            "file a github issue",
+            "open a github issue",
+            "create a github issue",
+            "submit a github issue",
+            "report a bug as an issue",
+            "new github issue",
+        ),
+        "Use when a public chat report should become a new GitHub issue: classify it, ask at most three decision-changing questions, search duplicates, confirm the direction, and hand the scoped creation to an authorized connector.",
+        category="github-ops",
+        phase="issue-intake",
+        hermes_role="retained-operator",
+        delegation_boundary="retained-catalog-intent",
+        handoff_policy=(
+            "Keep intake, direction check, and confirmation in Hermes; hand the confirmed package to an authorized "
+            "Hermes-native/wrapper connector for the single scoped create_issue write, and hand implementation to a "
+            "coding workflow only after separate maintainer authorization."
+        ),
+        required_inputs=(
+            "public report or summary",
+            "source boundary",
+            "explicit target repository",
+            "desired outcome",
+            "scope boundary",
+            "missing evidence",
+        ),
+        expert_questions=(
+            ExpertQuestion(
+                "desired outcome",
+                "What is the smallest user-visible outcome this issue should ask for?",
+                "이 이슈가 요구해야 할 가장 작은 사용자 관점 결과는 무엇인가요?",
+            ),
+            ExpertQuestion(
+                "scope boundary",
+                "What is explicitly included in this issue, and what is explicitly out of scope?",
+                "이 이슈에 명시적으로 포함되는 범위와 명시적으로 제외되는 범위는 무엇인가요?",
+            ),
+            ExpertQuestion(
+                "missing evidence",
+                "Which reproduction steps, versions, or logs are still missing and would change the issue direction?",
+                "이슈 방향을 바꿀 수 있는 재현 단계, 버전, 로그 중 아직 없는 증거는 무엇인가요?",
+            ),
+        ),
+        expected_outputs=(
+            "github_issue_intake/v1",
+            "direction check",
+            "duplicate status",
+            "issue package or connector handoff",
+            "read-back verification or explicit blocker",
+        ),
+        artifact_expectations=("github_issue_intake/v1 metadata-only wrapper card when recorded",),
+        safety_rules=(
+            "Investigation is read-only: repository and documentation exploration plus GitHub duplicate search; never mutate code, settings, branches, commits, PRs, releases, or deployments.",
+            "No external mutation before the direction check and an explicit confirmation; a maintainer file-now requires authenticated-wrapper actor/evidence identity and never bypasses duplicate, template, security, or read-back gates.",
+            "Confirmation requires a complete direction check - type, user-visible problem, source summary, smallest desired outcome, included and excluded scope, observed evidence versus inference, and duplicate status - plus a completed duplicate search; any blocker (security redirect, missing evidence, connector unavailable, or credentials missing) stops confirmation and handoff and cannot be cleared by a later observed result.",
+            "A public reporter authorizes exactly one scoped create_issue against an explicit repository; code, configuration, branch, commit, PR, merge, deployment, and coding-executor mutations stay in their own maintainer-gated lanes.",
+            "Security vulnerability reports redirect to the private SECURITY.md reporting path instead of a public issue.",
+            "Core OMH never calls GitHub; only a checked-in issue-form builder can produce an authorized create_issue request. An authorized connector receives one stable idempotency-keyed request, must enforce that key externally, and returns observed result evidence bound to that request; dispatch consumes the core handoff, so dispatched or observed artifacts cannot hand off again.",
+            "A prepared issue package is not creation evidence; only connector read-back of repository, author, title, body, labels, and URL is observed evidence.",
+            "The target repository must be explicit or safely configured; never infer a cross-repository target from context.",
+            "github_issue_intake/v1 persists bounded metadata, digests, and refs only: no raw title, body, transcript, platform event, credential, prompt, private log, or private content; the complete request remains transient for the connector.",
+        ),
+        quality_tier="workflow-surface-gated",
+        quality_bar=(
+            "Classify the report from supplied or observed facts and separate observation from inference.",
+            "Ask at most three unresolved, decision-changing questions; stop with a specific missing-evidence request instead of filing a vague issue.",
+            "Present the direction check, require confirmation, and keep prepared packages distinct from observed creation.",
+        ),
+        why_this_exists=(
+            "`github-issue-intake` exists so a public support-chat report can become a verified GitHub issue through "
+            "one bounded, confirmation-gated lane instead of ad hoc chat narration or an unscoped bot write."
+        ),
+        do_not_use_when=(
+            "The report only wants classification or signal clustering; use feedback-triage instead.",
+            "The event concerns an already-existing issue, PR, review, or CI run; use github-event-ops instead.",
+            "The user wants implementation; coding stays a separate follow-up lane with its own maintainer authority.",
+            "The report describes a security vulnerability; redirect to the private SECURITY.md path.",
+        ),
+        good_example=SkillExample(
+            prompt="please file this as an issue: omh setup fails on Windows",
+            expected="Classify the report, run the bounded interview, search duplicates, present the direction check, and prepare github_issue_intake/v1 for confirmation-gated connector handoff.",
+            why="The request is an explicit pre-creation filing ask with a classifiable report and an explicit target.",
+        ),
+        bad_example=SkillExample(
+            prompt="github-issue-intake prove the issue was filed and labelled.",
+            expected="Report that creation, labeling, and any GitHub mutation stay unobserved until an authorized connector returns read-back evidence.",
+            why="A prepared package is not issue creation, label application, or any GitHub mutation evidence.",
+        ),
     )
 )

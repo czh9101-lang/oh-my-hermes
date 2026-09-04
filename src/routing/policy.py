@@ -2679,6 +2679,82 @@ _GITHUB_EVENT_OPS_TOKENS = _normalized_token_set(
         "열림",
     }
 )
+_GITHUB_ISSUE_INTAKE_PHRASES = (
+    "github issue intake",
+    "issue intake",
+    "file this as an issue",
+    "file this as a github issue",
+    "file an issue",
+    "file a github issue",
+    "file a new issue",
+    "file a bug report",
+    "open an issue",
+    "open a github issue",
+    "open a new issue",
+    "create an issue",
+    "create a github issue",
+    "create a new issue",
+    "submit an issue",
+    "submit a github issue",
+    "raise an issue",
+    "raise a github issue",
+    "register an issue",
+    "register a github issue",
+    "report this as an issue",
+    "report a bug as an issue",
+    "make a github issue",
+    "new github issue",
+    "이슈로 올려",
+    "깃허브 이슈로 올려",
+    "깃허브에 이슈",
+    "이슈 등록",
+    "이슈 생성",
+    "이슈 만들어",
+    "깃허브 이슈 만들",
+    "깃허브 이슈 생성",
+    "깃허브 이슈 등록",
+    "버그 리포트 올려",
+    "버그 리포트 등록",
+)
+# Only these forms establish a new GitHub issue without separately naming a
+# repository. Generic English "file/open an issue" is common non-GitHub
+# language (landlord, payroll, support tickets), so it needs GitHub/repo context.
+_GITHUB_ISSUE_INTAKE_EXPLICIT_PHRASES = (
+    "github issue intake",
+    "issue intake",
+    "file this as an issue",
+    "file this as a github issue",
+    "file a github issue",
+    "open a github issue",
+    "create a github issue",
+    "submit a github issue",
+    "report a bug as an issue",
+    "new github issue",
+    "이슈로 올려",
+    "깃허브 이슈로 올려",
+    "깃허브에 이슈",
+    "이슈 등록",
+    "이슈 생성",
+    "이슈 만들어",
+    "깃허브 이슈 만들",
+    "깃허브 이슈 생성",
+    "깃허브 이슈 등록",
+    "버그 리포트 올려",
+    "버그 리포트 등록",
+)
+_GITHUB_ISSUE_INTAKE_TOKENS = _normalized_token_set(
+    {
+        "file",
+        "open",
+        "create",
+        "submit",
+        "raise",
+        "register",
+        "올려",
+        "등록",
+        "생성",
+    }
+)
 _RELEASE_CLAIM_REVIEW_PHRASES = (
     "readme claim",
     "readme claims",
@@ -4915,6 +4991,15 @@ CODING_PROGRESS_STATUS_GUARD = RoutingGuardRule(
     why="Matched guard/trigger metadata; coding progress questions should render the selected handoff/session status without claiming missing evidence.",
     activation_status="active",
 )
+GITHUB_ISSUE_INTAKE_GUARD = RoutingGuardRule(
+    id="github_issue_intake_before_event_ops_or_feedback",
+    rule="Public-chat requests to file a brand-new GitHub issue should route to github-issue-intake before github-event-ops or feedback-triage.",
+    matched_label="guard:github_issue_intake",
+    preferred_skills=("github-issue-intake",),
+    score_boost=44,
+    why="Matched pre-creation issue filing language; prepare an intake card with a bounded interview, duplicate search, and direction confirmation before any GitHub mutation claim.",
+    activation_status="active",
+)
 GITHUB_EVENT_OPS_GUARD = RoutingGuardRule(
     id="github_event_ops_before_generic_planning",
     rule="GitHub PR, issue, CI, and issue-to-PR requests should route to github-event-ops before generic planning.",
@@ -5100,6 +5185,7 @@ ROUTING_GUARD_RULES = (
     WEB_RESEARCH_BEFORE_PROCESS_GUARD,
     MISSED_WORKFLOW_WEB_RESEARCH_GUARD,
     MISSED_WORKFLOW_OPERATING_RHYTHM_GUARD,
+    GITHUB_ISSUE_INTAKE_GUARD,
     GITHUB_EVENT_OPS_GUARD,
     MATERIALS_PACKAGE_GUARD,
     MEMORY_NEW_GUARD,
@@ -5516,6 +5602,8 @@ def _active_routing_guard_rules_cached(
         rules.append(WEB_RESEARCH_BEFORE_PROCESS_GUARD)
     if _missed_workflow_research_guard_applies(normalized_query, query_tokens):
         rules.append(MISSED_WORKFLOW_WEB_RESEARCH_GUARD)
+    if _github_issue_intake_guard_applies(normalized_query, query_tokens):
+        rules.append(GITHUB_ISSUE_INTAKE_GUARD)
     if _github_event_ops_guard_applies(normalized_query, query_tokens):
         rules.append(GITHUB_EVENT_OPS_GUARD)
     deliverable_package_applies = _deliverable_package_guard_applies(
@@ -7041,8 +7129,39 @@ def _coding_handoff_status_guard_applies(
     return explicit_phrase or (executor and work and control)
 
 
+def _github_issue_intake_guard_applies(normalized_query: str, query_tokens: set[str]) -> bool:
+    # Pre-creation filing only: issue-to-PR and pull-request event language
+    # stays with github-event-ops, classification-only reports with
+    # feedback-triage.
+    if _contains_phrase(
+        normalized_query,
+        (
+            "into a pr",
+            "issue to pr",
+            "for a pr",
+            "pr-ready",
+            "pr ready",
+            "pull request",
+            "pr 만들",
+            "pr로",
+        ),
+    ):
+        return False
+    if _contains_phrase(normalized_query, _GITHUB_ISSUE_INTAKE_EXPLICIT_PHRASES):
+        return True
+    github_context = _contains_phrase(normalized_query, ("github", "깃허브", "repository", "repo", "저장소", "레포"))
+    issue_target = _contains_phrase(normalized_query, ("issue", "이슈", "bug report", "버그 리포트"))
+    filing_verb = bool(_GITHUB_ISSUE_INTAKE_TOKENS & query_tokens) or _contains_phrase(
+        normalized_query,
+        ("올려", "등록", "생성", "만들어"),
+    )
+    return github_context and issue_target and filing_verb
+
+
 def _github_event_ops_guard_applies(normalized_query: str, query_tokens: set[str]) -> bool:
     if _visual_summary_guard_applies(normalized_query, query_tokens):
+        return False
+    if _github_issue_intake_guard_applies(normalized_query, query_tokens):
         return False
     if _contains_phrase(normalized_query, _GITHUB_EVENT_OPS_PHRASES):
         return True

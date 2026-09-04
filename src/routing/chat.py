@@ -57,6 +57,7 @@ from .policy import _explicit_skill_candidate_is_negated
 from .policy import _greenfield_project_bootstrap_requested
 from .policy import _hermes_setup_guide_requested
 from .policy import _github_event_ops_guard_applies
+from .policy import _github_issue_intake_guard_applies
 from .policy import _invocation_token
 from .recommend import has_strong_named_catalog_owner, recommendation_for_definition, recommend_skills
 from .route_plan import (
@@ -3404,6 +3405,24 @@ _OPERATOR_SURFACE_FAST_PATH_RULES: tuple[tuple[str, tuple[str, ...], str, str], 
         "Clear PR/CI event request; prepare GitHub event ops without scoring every workflow.",
     ),
     (
+        "github-issue-intake",
+        (
+            "file this as an issue",
+            "file this as a github issue",
+            "file a github issue",
+            "open a github issue",
+            "create a github issue",
+            "submit a github issue",
+            "report a bug as an issue",
+            "이슈로 올려줘",
+            "깃허브 이슈로 올려줘",
+            "깃허브 이슈 등록해줘",
+            "깃허브 이슈 만들어줘",
+        ),
+        "operator_surface_fast_path:github_issue_intake",
+        "Clear pre-creation issue filing request; prepare intake without scoring every workflow.",
+    ),
+    (
         "memory-new",
         (
             "memory-new",
@@ -4396,6 +4415,10 @@ def _operator_surface_preempting_guard(
     if selected_skill == "skill-scout" and _is_skill_scout_candidate_alias_intent(normalized_query):
         return None
     query_tokens = routing_tokens(normalized_query)
+    # An explicit pre-creation filing request owns its lane: generic setup or
+    # source readiness guards must not preempt the intake fast path.
+    if selected_skill == "github-issue-intake" and _github_issue_intake_guard_applies(normalized_query, query_tokens):
+        return None
     for guard in active_routing_guard_rules(normalized_query, query_tokens):
         if not guard.preferred_skills:
             continue
@@ -4445,6 +4468,8 @@ def _operator_surface_extra_markers(skill: str, phrase: str) -> tuple[str, ...]:
         return ("guard:doctor_health", "guard_fast_path:doctor_health_before_skill_catalog")
     if skill == "github-event-ops":
         return ("guard:github_event_ops",)
+    if skill == "github-issue-intake":
+        return ("guard:github_issue_intake",)
     if skill == "memory-new":
         return ("guard:memory_new", "guard_fast_path:memory_new_before_existing_memory_curation")
     if skill == "memory-sync":

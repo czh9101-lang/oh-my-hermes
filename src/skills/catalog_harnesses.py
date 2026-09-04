@@ -3176,6 +3176,38 @@ _FEATURE_SURFACE_HARNESSES = (
         ),
         overclaim_guard="A workflow learning artifact, store route, or export bundle is not automatic model training, memory mutation, skill mutation, wiki write, automation creation, execution, verification, review, CI, merge, or proof that future behavior is fixed.",
     ),
+    HarnessDefinition(
+        "github-issue-intake",
+        "Turn a public support-chat report into a confirmed GitHub issue package with duplicate search, direction check, and read-back verification.",
+        "Use when a public chat report should become a new GitHub issue through a bounded interview, confirmation gate, and authorized connector handoff.",
+        ("public report or summary", "source boundary", "explicit target repository", "confirmation state"),
+        ("github_issue_intake/v1", "direction check", "duplicate status", "confirmation state", "connector request", "read-back result or blocker"),
+        ("card is prepared or a missing decision is surfaced", "observed evidence is separated from prepared guidance"),
+        ("validate required fields", "check not-evidence boundaries", "record only observed external actions"),
+        "If a connector, credential, or confirmation is missing, show the complete package with an explicit blocker instead of claiming an issue was filed.",
+        ("github_issue_intake/v1", "direction check", "duplicate status", "confirmation state", "connector request", "read-back result or blocker"),
+        "Record this harness as Hermes-retained orchestration; the single scoped create_issue write and its read-back require an authorized Hermes-native/wrapper connector and are never core OMH network calls.",
+        "metadata_only",
+        quality_tier="workflow-surface-gated",
+        quality_bar=(
+            "Name the workflow objective, owner, input boundary, next action, and stop condition.",
+            "Represent prepared, observed, blocked, and missing evidence as separate states.",
+            "Never upgrade a card, blueprint, or readiness check into external execution proof.",
+        ),
+        evidence_ladder=(
+            "report_received",
+            "report_classified",
+            "repo_inspected_read_only",
+            "duplicates_searched",
+            "direction_confirmed",
+            "creation_observed_when_available",
+            "read_back_verified_when_available",
+        ),
+        wrapper_actions=("show_direction_check", "confirm_issue_creation", "record_connector_result", "record_read_back", "show_status"),
+        overclaim_guards=(
+            "A prepared issue package is not issue creation, label application, or any GitHub mutation evidence; only connector read-back of repository, author, title, body, labels, and URL is observed evidence.",
+        ),
+    ),
 )
 
 
@@ -3250,6 +3282,7 @@ _PRIMARY_HARNESSES = {
 }
 _PRIMARY_HARNESSES.update(
     {
+        "github-issue-intake": "github-issue-intake",
         "github-event-ops": "github-event-ops",
         "agent-board": "agent-board",
         "memory-new": "memory-new",

@@ -127,6 +127,7 @@ _FAMILY_DEFINITIONS = (
             "production-audit",
             "automation-blueprint",
             "github-event-ops",
+            "github-issue-intake",
             "agent-board",
             "gateway-intent-card",
             "voice-operator",

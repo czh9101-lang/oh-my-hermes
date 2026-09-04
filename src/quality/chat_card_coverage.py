@@ -202,6 +202,14 @@ CHAT_CARD_COVERAGE_CASES: tuple[ChatCardCoverageCase, ...] = (
         "prepare_github_event_ops_card",
     ),
     ChatCardCoverageCase(
+        "github-issue-intake",
+        "GitHub issue intake",
+        "please file this as an issue: omh setup fails on Windows",
+        "github-issue-intake",
+        "github_issue_intake",
+        "prepare_github_issue_intake",
+    ),
+    ChatCardCoverageCase(
         "executor-runtime-readiness",
         "Executor runtime readiness",
         "Should I use Codex or Claude Code for this coding task?",

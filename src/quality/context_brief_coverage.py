@@ -59,6 +59,13 @@ CONTEXT_BRIEF_COVERAGE_CASES: tuple[ContextBriefCoverageCase, ...] = (
         "prepare_github_event_ops_card",
     ),
     ContextBriefCoverageCase(
+        "github-issue-intake-filing",
+        "GitHub issue intake filing",
+        "please file this as an issue: omh setup fails on Windows",
+        "github-issue-intake",
+        "prepare_github_issue_intake",
+    ),
+    ContextBriefCoverageCase(
         "coding-progress-status",
         "Coding progress status",
         "Codex 작업이 어디까지 진행됐는지 알려줘",

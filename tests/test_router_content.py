@@ -77,6 +77,7 @@ FLAGSHIP_SKILLS = {
 FEATURE_SURFACE_EXPOSURES = {
     "automation-blueprint": ("workflow_skill", True),
     "github-event-ops": ("workflow_skill", True),
+    "github-issue-intake": ("workflow_skill", True),
     "agent-board": ("workflow_skill", True),
     "memory-new": ("workflow_skill", True),
     "memory-sync": ("workflow_skill", True),
@@ -429,10 +430,10 @@ class RouterContentTests(unittest.TestCase):
         # 25,300 -> 26,000: workflow-registry.md carries one row per routable
         # workflow (25,456 measured with the `inference-serving` row); one row
         # per new skill, ~2% headroom kept.
-        # 26,000 -> 26,700: the omh-docs row measures the registry at 26,096;
-        # this restores the same bounded per-row headroom.
+        # 26,000 -> 27,500: omh-docs and github-issue-intake each add one
+        # measured registry row while preserving bounded per-row headroom.
         for template in builtin_skill_reference_templates():
-            self.assertLess(len(template.content.encode("utf-8")), 26_700, template.relative_path)
+            self.assertLess(len(template.content.encode("utf-8")), 27_500, template.relative_path)
 
         schemas = (
             OMH_CAPABILITIES_SCHEMA,
@@ -1561,6 +1562,7 @@ class RouterContentTests(unittest.TestCase):
                 "qa-specialist",
                 "docs-specialist",
                 "github-event-ops",
+                "github-issue-intake",
                 "agent-board",
                 "memory-new",
                 "memory-sync",
@@ -3503,6 +3505,43 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("Evidence ladder", reference)
         self.assertIn("Overclaim guards", reference)
 
+    def test_skill_source_registry_pins_codebase_uml_review_to_the_teavm_commit(self) -> None:
+        # The upstream tracker diffs `reviewed_ref` against plantuml/plantuml
+        # HEAD, so this row is the machine record of the 2026-09-04 review
+        # through the TeaVM smetana commit (issue #1251).
+        row = next(
+            line
+            for line in Path("docs/SKILL-SOURCES.md").read_text(encoding="utf-8").splitlines()
+            if line.startswith("| `codebase-uml`")
+        )
+
+        self.assertIn("b2392e6230a1782e477a45d250b7cb9a569f95da", row)
+        self.assertIn("2026-09-04", row)
+
+    def test_skill_source_registry_records_the_browser_teavm_exclusion(self) -> None:
+        # Browser/TeaVM rendering is out of scope for `codebase-uml`; the two
+        # upstream commit hashes and the `maxSvgSize` token are the machine
+        # record that stops the browser path being re-proposed without new
+        # evidence (issue #1251).
+        registry = Path("docs/SKILL-SOURCES.md").read_text(encoding="utf-8")
+
+        self.assertIn("736e6cc", registry)
+        self.assertIn("b2392e6", registry)
+        self.assertIn("maxSvgSize", registry)
+
+    def test_codebase_uml_skill_declares_java_only_render_surface(self) -> None:
+        # The render surface is the local Java CLI or `PLANTUML_JAR`
+        # invocation only (issue #1251): the excluded runtime is named in the
+        # safety rules, and the browser-only size-limit option never leaks
+        # into the generated skill body.
+        definitions = {definition.name: definition for definition in builtin_definitions()}
+
+        self.assertIn("TeaVM", " ".join(definitions["codebase-uml"].safety_rules))
+
+        skill = Path("skills/omh-codebase-uml/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("TeaVM", skill)
+        self.assertNotIn("maxSvgSize", skill)
+
     def test_generated_public_content_avoids_legacy_product_branding(self) -> None:
         forbidden = ("oh-my-" + "co" + "dex",)
         combined = "\n".join(skill.content for skill in builtin_skill_templates()).lower()
@@ -3886,8 +3925,8 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("`deep-interview`, `ralplan`, `loop`", docs_readme)
         # Retired engines must not be presented as current planning skills.
         self.assertNotIn("`ultragoal`", docs_readme)
-        # The generated omh-docs addition raises the measured installable catalog to 117.
-        self.assertIn("**117 installable skills**", docs_readme)
+        # omh-docs and github-issue-intake raise the measured catalog to 118.
+        self.assertIn("**118 installable skills**", docs_readme)
         self.assertIn("**Retain knowledge**", docs_readme)
         # The unit suite runs through the deterministic sharding tools (issue
         # #1294): plan once, run per shard plus the serial quarantine, then

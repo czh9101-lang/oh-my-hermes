@@ -28,7 +28,7 @@ Rules:
 
 | OMH skill | Category | Upstream repo | Paths studied | License | reviewed_on | reviewed_ref |
 | --- | --- | --- | --- | --- | --- | --- |
-| `codebase-uml` (PR #1230) | planning | https://github.com/plantuml/plantuml | CLI flags/pragmas/size limits (docs, `src/main/java/net/sourceforge/plantuml/cli/CliFlag.java`) | GPL-3.0 (external tool, invoked not vendored) | 2026-09-01 | v1.2026.7 |
+| `codebase-uml` (PR #1230) | planning | https://github.com/plantuml/plantuml | CLI flags/pragmas/size limits (docs, `src/main/java/net/sourceforge/plantuml/cli/CliFlag.java`) | GPL-3.0 (external tool, invoked not vendored) | 2026-09-04 | b2392e6230a1782e477a45d250b7cb9a569f95da |
 | `code-review` spec axis + smell baseline (PR #1237) | review | https://github.com/mattpocock (code-review skill, plugin dist 1.2.3) | `skills/engineering/code-review/SKILL.md` | plugin dist | 2026-09-01 | plugin 1.2.3 |
 | `ai-slop-cleaner` taxonomy + passes (PR #1239) | maintenance | https://github.com/Effeilo/claude-code-frontend-skills | `front-refactor/SKILL.md`, `front-refactor/front-refactor-rules.md` | MIT | 2026-09-01 | 3c9d5a0501ff |
 | `frontend-refactor` (PR #1238) | maintenance | https://github.com/Effeilo/claude-code-frontend-skills | `front-refactor/*` (preview/apply mode contract, DEAD→NAMING→SIMPLIFY→MODERN) | MIT | 2026-09-01 | 3c9d5a0501ff |
@@ -47,6 +47,18 @@ Rules:
 | `accessibility-audit` rule IDs + fix partition (issue #1261) | accessibility | https://github.com/Effeilo/claude-code-frontend-skills | `front-a11y/front-a11y-rules.md` (rule-ID scheme, severity split, auto-fixable partition) | MIT (see the API false-negative rule above) | 2026-09-02 | 3c9d5a0501ff |
 | `agent-evaluation` self-evaluation loops (issue #1263) | evaluation | https://github.com/github/awesome-copilot | `skills/agentic-eval/SKILL.md` (loop shapes, stop rules, judging strategies) | MIT | 2026-09-02 | 6a8fa297b0fe |
 | `frontend` web-vitals budgets (issue #1262) | frontend | https://github.com/rohitg00/awesome-claude-code-toolkit | `skills/frontend-excellence/SKILL.md` (CWV threshold table, field-vs-lab note) | Apache-2.0 | 2026-09-02 | ebdf1d596d2c |
+
+Note on the `codebase-uml` row (issue #1251): the review was advanced through
+`b2392e6230a1782e477a45d250b7cb9a569f95da` on 2026-09-04, which includes two
+browser-only commits — `736e6cc` (per-request `maxSvgSize` render option for the
+TeaVM JavaScript build, 8192 px default, `0` disables the check) and `b2392e6`
+(TeaVM honors `!pragma layout smetana` in the browser build). Both were
+reviewed and intentionally excluded: `codebase-uml` prepares Java CLI/JAR
+render plans and OMH has no browser renderer, so no OMH surface can exercise
+them. `maxSvgSize` is a browser request option, not a replacement for the Java
+CLI's `-DPLANTUML_LIMIT_SIZE`, and must not be confused with it; the skill text
+therefore never mentions it. The Java CLI's smetana support was already in the
+skill and is unchanged by these commits.
 
 Note on the `agent-evaluation` row: the lead was found through
 `kodustech/awesome-agent-skills`, which publishes no license and is an index
