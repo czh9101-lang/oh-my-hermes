@@ -15,6 +15,15 @@ from omh.coding.fanout_dispatch import dispatch_fanout
 from omh.system.paths import OmhPaths
 
 _GOAL = "admit a ready frontier through an adaptive window"
+# Upper bound on every wait that expects dispatch to make progress. Each
+# unit's worktree is a real `git worktree add`, and the Windows CI runner has
+# been observed taking well over the previous 5s bound for a handful of them
+# (main run 33850199554: two different waits in this file timed out on two
+# attempts of the same commit, then passed on the third). A generous bound
+# costs nothing on a passing run -- every wait returns as soon as its
+# condition holds -- while a tight one turns runner speed into a failure.
+# Waits that assert NOTHING more starts keep their short, deliberate bound.
+_PROGRESS_WAIT_SECONDS = 60.0
 
 
 class _FakeCompleted:
@@ -43,7 +52,7 @@ class _ControlledRunner:
             self._condition.notify_all()
             released = self._condition.wait_for(
                 lambda: self._release_future or unit_id in self._released,
-                timeout=5,
+                timeout=_PROGRESS_WAIT_SECONDS,
             )
             self.active -= 1
             self._condition.notify_all()
@@ -51,7 +60,7 @@ class _ControlledRunner:
             raise AssertionError(f"timed out waiting to release {unit_id}")
         return _FakeCompleted()
 
-    def wait_for_started(self, count: int, timeout: float = 2.0) -> bool:
+    def wait_for_started(self, count: int, timeout: float = _PROGRESS_WAIT_SECONDS) -> bool:
         with self._condition:
             return self._condition.wait_for(
                 lambda: len(set(self.started)) >= count,
@@ -130,7 +139,7 @@ class FanoutAdaptiveSchedulerTests(unittest.TestCase):
                 runner.release(runner.started[0])
                 self.assertTrue(runner.wait_for_started(4))
                 runner.release_all()
-                summary = future.result(timeout=5)
+                summary = future.result(timeout=_PROGRESS_WAIT_SECONDS)
 
         self.assertEqual(runner.max_active, 3)
         self.assertTrue(all(unit["status"] == "completed" for unit in summary["units"]))
@@ -240,7 +249,7 @@ class _RetryControlledRunner:
             self._condition.notify_all()
             released = self._condition.wait_for(
                 lambda: self._release_future or key in self._released,
-                timeout=5,
+                timeout=_PROGRESS_WAIT_SECONDS,
             )
         if not released:
             raise AssertionError(f"timed out waiting to release {key}")
@@ -248,14 +257,14 @@ class _RetryControlledRunner:
             return _FakeLimitCompleted()
         return _FakeCompleted()
 
-    def wait_for_distinct_units(self, count: int, timeout: float = 2.0) -> bool:
+    def wait_for_distinct_units(self, count: int, timeout: float = _PROGRESS_WAIT_SECONDS) -> bool:
         with self._condition:
             return self._condition.wait_for(
                 lambda: len({unit_id for unit_id, _attempt in self.started}) >= count,
                 timeout=timeout,
             )
 
-    def wait_for_attempt(self, unit_id: str, attempt: int, timeout: float = 2.0) -> bool:
+    def wait_for_attempt(self, unit_id: str, attempt: int, timeout: float = _PROGRESS_WAIT_SECONDS) -> bool:
         with self._condition:
             return self._condition.wait_for(
                 lambda: (unit_id, attempt) in self.started,
@@ -350,7 +359,7 @@ class FanoutRecoveredPressureIntegrationTests(unittest.TestCase):
                 runner.release("b-pressure", 2)
                 self.assertFalse(runner.wait_for_distinct_units(5, timeout=0.2))
                 runner.release_all()
-                summary = future.result(timeout=5)
+                summary = future.result(timeout=_PROGRESS_WAIT_SECONDS)
 
         pressure = next(
             row
@@ -401,7 +410,7 @@ class FanoutInterruptedAdmissionTests(unittest.TestCase):
 
             def interrupt_after_completion(futures, **_kwargs):
                 for future in futures:
-                    future.result(timeout=5)
+                    future.result(timeout=_PROGRESS_WAIT_SECONDS)
                 raise KeyboardInterrupt
 
             with patch(
