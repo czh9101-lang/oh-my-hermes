@@ -8,7 +8,7 @@ from _cli_harness import run_cli
 from _local_package import load_local_package
 
 load_local_package()
-from omh.config_adapter import plugin_enablement, plugin_is_enabled
+from omh.config_adapter import ensure_plugin_enabled, plugin_enablement, plugin_is_enabled
 from omh.maintenance.doctor import run_doctor
 from omh.paths import resolve_paths
 from omh.plugin_pack import PLUGIN_NAME
@@ -56,6 +56,63 @@ class PluginEnablementReaderTests(unittest.TestCase):
     def test_enablement_reports_both_lists(self) -> None:
         listed = plugin_enablement("plugins:\n  enabled:\n    - omh\n  disabled:\n    - browser\n")
         self.assertEqual(listed, {"enabled": ["omh"], "disabled": ["browser"]})
+
+
+    def test_level_indented_list_items_are_read(self) -> None:
+        # Issue #1322: `  - omh` (item level with its key) is valid YAML and
+        # what a hand-edited config used; the reader saw it as a key line and
+        # reported an empty list, so doctor blocked on a plugin that was on.
+        level = "plugins:\n  enabled:\n  - omh\n  - agentiker-plan-follow\n  disabled:\n  - github-prs\n"
+        self.assertEqual(plugin_enablement(level), {"enabled": ["omh", "agentiker-plan-follow"], "disabled": ["github-prs"]})
+        self.assertTrue(plugin_is_enabled(level, PLUGIN_NAME))
+
+    def test_level_indented_items_stay_with_their_own_key(self) -> None:
+        level = "plugins:\n  enabled:\n  - other\n  disabled:\n  - omh\n  entries:\n    omh:\n      allow_tool_override: false\n"
+        self.assertEqual(plugin_enablement(level), {"enabled": ["other"], "disabled": ["omh"]})
+        self.assertFalse(plugin_is_enabled(level, PLUGIN_NAME))
+
+    def test_items_under_an_untracked_key_are_ignored(self) -> None:
+        text = "plugins:\n  order:\n  - omh\n  enabled: []\n"
+        self.assertEqual(plugin_enablement(text), {"enabled": [], "disabled": []})
+
+
+class EnsurePluginEnabledMatchesTheFilesIndentTests(unittest.TestCase):
+    """A new list item takes the indent the file's plugin lists already use.
+
+    Writing `    - omh` into a file whose items sit at `  - ` puts items at
+    two depths under one key, which YAML reads as two nodes, not one list.
+    """
+
+    def test_level_style_file_gets_a_level_item(self) -> None:
+        text = "plugins:\n  enabled:\n  - other\n  disabled:\n  - github-prs\n"
+        change = ensure_plugin_enabled(text, PLUGIN_NAME)
+        self.assertEqual((change.changed, change.text), (True, "plugins:\n  enabled:\n  - omh\n  - other\n  disabled:\n  - github-prs\n"))
+        self.assertTrue(plugin_is_enabled(change.text, PLUGIN_NAME))
+
+    def test_nested_style_file_keeps_a_nested_item(self) -> None:
+        change = ensure_plugin_enabled(DISABLED_CONFIG, PLUGIN_NAME)
+        self.assertEqual((change.changed, change.text), (True, ENABLED_CONFIG))
+
+    def test_empty_enabled_follows_the_sibling_list(self) -> None:
+        text = "plugins:\n  enabled:\n  disabled:\n  - github-prs\n"
+        change = ensure_plugin_enabled(text, PLUGIN_NAME)
+        self.assertEqual(change.text, "plugins:\n  enabled:\n  - omh\n  disabled:\n  - github-prs\n")
+
+    def test_inline_expansion_follows_the_sibling_list(self) -> None:
+        text = "plugins:\n  enabled: [other]\n  disabled:\n  - github-prs\n"
+        change = ensure_plugin_enabled(text, PLUGIN_NAME)
+        self.assertEqual(change.text, "plugins:\n  enabled:\n  - other\n  - omh\n  disabled:\n  - github-prs\n")
+
+    def test_a_file_without_items_defaults_to_the_hermes_style(self) -> None:
+        change = ensure_plugin_enabled("plugins:\n  enabled: []\n", PLUGIN_NAME)
+        self.assertEqual(change.text, "plugins:\n  enabled:\n    - omh\n")
+        change = ensure_plugin_enabled("plugins:\n  entries: {}\n", PLUGIN_NAME)
+        self.assertEqual(change.text, "plugins:\n  enabled:\n    - omh\n  entries: {}\n")
+
+    def test_a_level_item_never_reads_as_already_enabled_for_another_key(self) -> None:
+        text = "plugins:\n  disabled:\n  - other\n"
+        change = ensure_plugin_enabled(text, PLUGIN_NAME)
+        self.assertEqual(change.text, "plugins:\n  enabled:\n  - omh\n  disabled:\n  - other\n")
 
 
 class DoctorPluginEnabledCheckTests(unittest.TestCase):
