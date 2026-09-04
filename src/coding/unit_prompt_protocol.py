@@ -58,6 +58,7 @@ from __future__ import annotations
 from typing import Any, Final, Mapping
 
 from .coding_contracts import STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE
+from .model_contracts import contract_model_id
 
 # Policy ceiling for a fully-assembled unit prompt (bytes of UTF-8). The
 # worst-case combination across roles, owners, and calibration blocks is
@@ -323,15 +324,56 @@ MAIN_AGENT_COMPOSITION_CALIBRATIONS: Final[dict[str, str]] = {
 }
 
 
+# Exact-model overrides, resolved BEFORE the family tables. A generation whose
+# documented traits differ from its family's (GPT-6 Astra against the GPT-5.6
+# guidance) gets its own counter here without touching the family block, so
+# the older generation's prompts stay byte-stable. Keyed by the exact model
+# id after the provider prefix is stripped (`contract_model_id`); the two
+# tables share one key set (parity-tested) for the same reason the family
+# tables do. Resolution order everywhere: exact model -> family -> generic.
+MODEL_HIGH_EFFORT_CALIBRATIONS: Final[dict[str, str]] = {
+    # GPT-6 Astra, per OpenAI's latest-model guide (2026-09): asks more
+    # readily, follows instructions more strictly and pauses on conflicting
+    # skill text, delegates less than a harness expects, and tests more
+    # broadly than a change needs. Each sentence counters one of those; the
+    # universal echo-back, criteria, one-pass verification, and repair caps
+    # are not restated. No monitoring language, no chain-of-thought requests.
+    "gpt-6-astra": (
+        "High-effort calibration: the user's instructions outrank any skill or guideline text, and "
+        "the numbered criteria are the complete task — carry them to completion instead of pausing "
+        "for sign-off on work the boundary already authorizes. Ask one focused question only when a "
+        "missing input would materially change the result; otherwise state the assumption and "
+        "proceed. Size tests to the change: a reversible, low-impact edit that mirrors its "
+        "implementation needs no new test, and a green check is re-run only when its inputs changed."
+    ),
+}
+MODEL_COMPOSITION_CALIBRATIONS: Final[dict[str, str]] = {
+    "gpt-6-astra": (
+        "Composition calibration: write the user's intent into each unit prompt above any skill "
+        "text, so a delegate that meets conflicting guidance follows the unit contract rather than "
+        "pausing. Delegate every unit that is independent of the work you keep — this model "
+        "delegates less than a fanout expects, and an undelegated independent unit is latency you "
+        "chose. Set each unit's effort from its task state: the documented floor for routine "
+        "follow-ups, deeper only while a criterion holds unresolved hard reasoning or contradictory "
+        "evidence, and a change of effort lands on the next prepared unit rather than on a claimed "
+        "mid-conversation switch."
+    ),
+}
+
+
 def composition_calibration_for_model(model_id: str) -> str:
     """Return the main-agent composition calibration for the composer's own model.
 
-    Family comes from `model_family()` (provider-prefixed ids welcome);
-    unknown or blank families get the generic block — a composer never goes
-    without discipline just because the table has not met its model.
+    Exact-model overrides win, then family from `model_family()`
+    (provider-prefixed ids welcome); unknown or blank families get the
+    generic block — a composer never goes without discipline just because
+    the table has not met its model.
     """
     from .model_routing import model_family
 
+    override = MODEL_COMPOSITION_CALIBRATIONS.get(contract_model_id(str(model_id or "")))
+    if override:
+        return override
     family = model_family(str(model_id or ""))
     return MAIN_AGENT_COMPOSITION_CALIBRATIONS.get(
         family, MAIN_AGENT_COMPOSITION_CALIBRATIONS["generic"]
@@ -409,14 +451,20 @@ def calibration_for_route(model_route: Mapping[str, Any] | None) -> str:
     """Return the high-effort calibration block for a routed unit, or ''.
 
     Selected only when the route's effective reasoning effort is in the high
-    tier; family comes from the already-recorded `model_family` (falling back
-    to generic for unknown/blank families).
+    tier; an exact-model override on the recorded `selected_model` wins, then
+    family comes from the already-recorded `model_family` (falling back to
+    generic for unknown/blank families).
     """
     if not isinstance(model_route, Mapping):
         return ""
     effort = str(model_route.get("selected_reasoning_effort", "") or "").casefold()
     if effort not in HIGH_EFFORT_TIER:
         return ""
+    override = MODEL_HIGH_EFFORT_CALIBRATIONS.get(
+        contract_model_id(str(model_route.get("selected_model", "") or ""))
+    )
+    if override:
+        return override
     family = str(model_route.get("model_family", "") or "").casefold()
     return HIGH_EFFORT_CALIBRATIONS.get(family, HIGH_EFFORT_CALIBRATIONS["generic"])
 

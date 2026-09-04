@@ -121,6 +121,18 @@ _SOL = _candidate(
     reasoning="Editorial reasoning recommendation; not a benchmark claim.",
 )
 _SOL_XHIGH = dict(_SOL, reasoning_effort="xhigh")
+# GPT-6 Astra (2026-09-03) heads the slots GPT-5.6 Sol held as the GPT
+# frontier; Sol stays directly behind it as fall-through so a machine the
+# staged rollout has not reached keeps resolving to the GPT ecosystem (same
+# rule as GLM 5.2 behind 5.3 and Fable 5 behind 5.1). The Terra and Luna
+# lanes are cost-tier picks and stay as they were: Astra lists at 8x Sol.
+_ASTRA = _candidate(
+    "gpt-6-astra",
+    "gpt",
+    ("openai-codex", "openai"),
+    reasoning_effort="xhigh",
+    reasoning="Editorial GPT frontier recommendation; staged rollout, not a benchmark claim.",
+)
 _TERRA = _candidate(
     "gpt-5.6-terra",
     "gpt",
@@ -200,7 +212,7 @@ def _with_effort(candidate: Mapping[str, object], effort: str) -> dict[str, obje
 SHIPPED_MODEL_RECOMMENDATIONS: Final[dict[str, object]] = {
     "schema_version": MODEL_RECOMMENDATION_CATALOG_SCHEMA_VERSION,
     "categories": {
-        "ultrabrain": [deepcopy(_SOL_XHIGH)],
+        "ultrabrain": [deepcopy(_ASTRA), deepcopy(_SOL_XHIGH)],
         # DeepSeek gives deep a reasoning-capable budget fallback from a
         # fourth provider ecosystem — before it, deep sat entirely on GPT
         # and one rejected ecosystem exhausted the chain (owner rule below).
@@ -213,6 +225,7 @@ SHIPPED_MODEL_RECOMMENDATIONS: Final[dict[str, object]] = {
             _with_effort(_FABLE_51, "xhigh"),
             _with_effort(_MYTHOS_51, "xhigh"),
             _with_effort(_FABLE_5, "xhigh"),
+            _with_effort(_ASTRA, "xhigh"),
             _with_effort(_SOL, "xhigh"),
             _with_effort(_KIMI_K3, "xhigh"),
         ],
@@ -269,6 +282,7 @@ SHIPPED_MODEL_RECOMMENDATIONS: Final[dict[str, object]] = {
             deepcopy(_MYTHOS_51),
             deepcopy(_OPUS_5),
             deepcopy(_FABLE_5),
+            deepcopy(_ASTRA),
             deepcopy(_SOL),
             deepcopy(_TERRA),
         ],

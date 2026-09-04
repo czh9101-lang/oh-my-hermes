@@ -43,7 +43,7 @@ identical prompt. Nothing else about the pipeline changes per model.
 
 | Family | Matched by | Example ids |
 | --- | --- | --- |
-| `gpt` | `gpt-`; design-qualified alias `openai-gpt-` | `gpt-5.6-sol`, `digitalocean/openai-gpt-5.6-sol` |
+| `gpt` | `gpt-`; design-qualified alias `openai-gpt-` | `gpt-6-astra`, `gpt-5.6-sol`, `digitalocean/openai-gpt-5.6-sol` |
 | `claude` | `claude-`; design-qualified alias `anthropic-claude-`; bare tiers `opus`/`sonnet`/`haiku`/`fable`/`mythos` | `claude-fable-5-1`, `claude-mythos-5-1`, `digitalocean/anthropic-claude-opus-5` |
 | `gemini` | `gemini-` | `gemini-3.1-pro` |
 | `kimi` | `kimi-` | `kimi-k3`, `kimi-k3-ultrafast` |
@@ -67,6 +67,36 @@ models.dev catalog used by OpenCode lists, for example,
 `anthropic/claude-opus-5`. After the serving provider segment is stripped,
 those aliases therefore select the existing `gpt` and `claude` calibrations;
 they do not create vendor-wide calibration families.
+
+### Exact-model contracts and overrides
+
+Family is the default grain, and two exact-model surfaces sit in front of
+it for a generation whose documented interface or traits differ from its
+family's:
+
+- **`MODEL_CONTRACTS`** in `src/coding/model_contracts.py` records what the
+  vendor documents about one exact id — effort ladder and floor, limits,
+  tool-calling API, unsupported parameters, dynamic-effort mechanism, list
+  price, sources and the date they were read. `omh coding model-contract
+  --model <id>` prints it. The route resolver consults it before the
+  catalog: a requested effort the contract documents as unsupported is
+  raised to the documented floor and the route says so
+  (`effort_change.kind = floor_raised`), on every executor profile, so an
+  unsupported rung never reaches a provider silently. A model without a
+  contract is treated exactly as before — by family and catalog alone.
+- **`MODEL_HIGH_EFFORT_CALIBRATIONS` / `MODEL_COMPOSITION_CALIBRATIONS`**
+  in `src/coding/unit_prompt_protocol.py` are calibration overrides keyed by
+  exact id. `calibration_for_route()` resolves the recorded `selected_model`
+  against them before falling back to `model_family`, and
+  `composition_calibration_for_model()` does the same for the composer, so
+  the family block — and every older generation's prompt — stays
+  byte-stable when a new generation gets its own counter. The two tables
+  share one key set (parity-tested) and every key has a contract.
+
+The keys are served ids after the provider prefix is stripped, so
+`openai/gpt-6-astra` and `gpt-6-astra` resolve alike. Bare chat names are
+not aliased for GPT generations (`astra`, like `sol`, classifies `unknown`);
+users name the served id.
 
 ## Universal protocols (every model, every family)
 
@@ -220,6 +250,82 @@ pairing so a benchmark claim can never mix in other prompt changes.
   that loses an invariant is a worse prompt.
 - **Source:** adapted research (oh-my-openagent stop-condition findings on
   high-effort models), one of the two original calibration entries.
+- **Version rule:** the block above is written for the 5.6 generation and
+  is what every `gpt-` id receives unless an exact-model override exists.
+  GPT-6 Astra has one, below; the 5.6 prompts are byte-stable across it.
+
+### `gpt-6-astra` (GPT-6 Astra, exact-model override on the `gpt` family)
+
+- **Documented contract:** `gpt-6-astra` (released 2026-09-03, staged
+  rollout); 1,050,000-token context, 922,000 max input, 128,000 max output,
+  knowledge cutoff 2026-04-30; reasoning effort `low`, `medium`, `high`,
+  `xhigh`, `max` — `none` returns HTTP 400 and the migration guide sends
+  `none`/`minimal` callers to `low`, so `low` is the floor OMH raises
+  `off`/`minimal` requests to (recorded as `floor_raised`); no default
+  effort, so a route names one; tool calling on the Responses API only;
+  `temperature`, `top_p`, `top_logprobs` unsupported; `configuration_update`
+  can change effort between responses in standard single-agent mode only,
+  not alongside automatic compaction or truncation. Full record and sources
+  in `src/coding/model_contracts.py`; `omh coding model-contract --model
+  gpt-6-astra` prints it.
+- **Model trait (official, latest-model guide):** asks a clarifying question
+  more readily when more input could materially change the result; follows
+  instructions more strictly and may pause on unclear or conflicting
+  skill-file guidance; may delegate less often than a harness expects; may
+  write broader tests than the change requires. The GPT-5.6 counter
+  (re-deriving settled facts, re-verifying for reassurance) is not what the
+  guide describes for Astra, which is why the override exists.
+- **What OMH injects (subagent):** the user's instructions outrank skill or
+  guideline text and the numbered criteria are the complete task — carry
+  them to completion instead of pausing for sign-off on authorized work; ask
+  one focused question only when a missing input would materially change
+  the result, otherwise state the assumption and proceed; size tests to the
+  change — a reversible, low-impact edit that mirrors its implementation
+  needs no new test, and a green check is re-run only when its inputs
+  changed. Two constraint sentences; under the per-block ceiling.
+- **What OMH injects (composer):** write the user's intent into each unit
+  prompt above any skill text; delegate every unit that is independent of
+  the work you keep (an undelegated independent unit is chosen latency);
+  set each unit's effort from its task state — the documented floor for
+  routine follow-ups, deeper only while a criterion holds unresolved hard
+  reasoning or contradictory evidence — and land an effort change on the
+  next prepared unit rather than on a claimed mid-conversation switch.
+- **Effort policy:** `dynamic_effort_guidance()` emits the
+  `configuration_update` (mid-conversation) policy only for an executor
+  profile the contract names as compatible; no prepared profile is, so
+  every profile today gets the per-turn policy and no prepared text claims
+  a mid-conversation change happened. `omh coding composition-guide --model
+  gpt-6-astra --executor <profile>` shows which one applies. The universal
+  echo-back, criteria, TODO reconciliation, one-pass verification, and
+  bounded repair cycles are unchanged and not restated in the override.
+- **What is deliberately absent:** no "you are being monitored" language,
+  no request for or storage of raw chain of thought. OpenAI's monitorability
+  evaluation observed fewer textual CoT tokens under monitoring awareness in
+  an adversarial honeypot setting, where some attacks moved into tool calls
+  with no textual CoT; that is not evidence of less overthinking, lower
+  latency, or better task results, and a test pins the override free of it.
+- **Throughput overlay:** unchanged. The `gpt_sol_codex_handoff` overlay stays
+  gated to `*-sol` and the Hermes `ultrawork` overlay stays family-wide;
+  neither has an Astra measurement, so Astra on codex gets the base rules.
+- **Routing:** heads `ultrabrain` and the GPT slot of `architect` in both
+  lanes with GPT-5.6 Sol directly behind it as fall-through (the same
+  generation rule as GLM 5.2 behind 5.3); the Terra and Luna lanes are
+  cost-tier picks and stay as they were. An account the staged rollout has
+  not reached gets a provider rejection and the chain falls through.
+- **Pricing:** `APPROX_PRICE_PER_MTOK` carries the documented 10/50 (cached
+  input at the default tenth). The $12.5/M cache-write rate and the 2x
+  input / 1.5x output multiplier above 272K input tokens have no column in
+  that table and are documented in the contract instead of flattened.
+- **Source:** official (the OpenAI model reference, latest-model guide,
+  reasoning guide, async tool calling and steering guides, monitorability
+  evaluation, and system card, read 2026-09-04). Not yet measured: the
+  named follow-up is a same-corpus, same-effort, counterbalanced paired run
+  of the inherited `gpt` calibration against this override on
+  `benchmarks/live-model-tools/v1` (targeted manifest, one GPT family
+  entry), recording criteria pass, wall time, token usage, tool-call,
+  clarification, delegation, and verification counts, and reopened
+  criteria; a variant that measures worse than the inherited block is
+  revised or removed in the change that reports the number.
 
 ### `claude` (Fable 5.1, Mythos 5.1, Fable 5, Opus 5, Sonnet, Haiku)
 
@@ -498,8 +604,9 @@ pairing so a benchmark claim can never mix in other prompt changes.
 
 ### When the calibration is (and is not) applied
 
-`calibration_for_route()` appends the family block **only when the routed
-reasoning effort is `high`, `xhigh`, or `max`**. The calibrations exist to
+`calibration_for_route()` appends the calibration block **only when the routed
+reasoning effort is `high`, `xhigh`, or `max`** — an exact-model override
+where one exists, the family block otherwise. The calibrations exist to
 counter the over-verification inertia of high-effort routes; low-effort
 routes do not exhibit that inertia, and every byte rides a prepared prompt
 whose worst-case assembled size is policy-gated in tests
@@ -610,6 +717,7 @@ gate requires a completed paired run on the intended execution surface.
 | Family | Recognized | Calibrated (both tables) | Status |
 | --- | --- | --- | --- |
 | `gpt`, `claude`, `gemini`, `grok`, `kimi`, `glm`, `qwen`, `deepseek`, `mistral`, `llama`, `codestral`, `solar` | yes | yes | full guidance, provenance above (#1051/#1052 closed the last four) |
+| `gpt-6-astra` (exact-model override) | yes → `gpt` | yes, both override tables, resolved before the family block | documented contract plus counters for the four official traits; paired measurement is the named follow-up |
 | `openai-gpt-`, `anthropic-claude-` (design-qualified aliases) | yes → `gpt` / `claude` | yes, through the design family | concrete models.dev/OpenCode serving ids carry these sub-prefixes; their catalog `base_model` fields establish the underlying design family |
 | other `openai-`, `anthropic-` vendor-qualified ids | recognized as model targets, family `unknown` | no → `generic` | vendor qualification alone does not establish a design; O-series, image, and emerging ids remain uncalibrated |
 | emerging families | no → `unknown` | no → `generic` | add a prefix and a calibration pair when one lands (the #1051/#1052 pattern) |

@@ -817,7 +817,8 @@ omh coding category-maestro clear <profile> <category>
 omh coding category-maestro interview          # guided per-profile walk (terminal only)
 omh coding model-inventory [--json]
 omh coding complexity <request> [--skill <workflow>] [--model <id>] [--effort <level>] [--json]
-omh coding composition-guide [--model <id>] [--json]
+omh coding composition-guide [--model <id>] [--executor <profile>] [--json]
+omh coding model-contract --model <id> [--executor <profile>] [--json]
 ```
 
 `--units` and `--goal-file` accept `-` for stdin. `--dry-run` resolves

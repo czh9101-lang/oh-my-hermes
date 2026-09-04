@@ -32,7 +32,12 @@ uv run python -m omh.cli coding model-route --executor hermes --model <id> --eff
 
 Read `model_family` and `effort_change.kind`. Probe every id as served
 (`claude-fable-5-1`, `anthropic/claude-fable-5-1`) and every bare name users
-type in chat (`fable`, `mythos`). A bare name that classifies `unknown` gets
+type in chat (`fable`, `mythos`). When the vendor documents an effort
+vocabulary that differs from the family's (GPT-6 Astra: `none` is HTTP 400,
+`low` is the floor), record it as an exact-model contract in
+`src/coding/model_contracts.py` and probe the unsupported rungs too — the
+route must answer `floor_raised`, never pass the rung through;
+`omh coding model-contract --model <id>` prints the record. A bare name that classifies `unknown` gets
 generic discipline; add it to `_CLAUDE_TIER_ALIASES` (Claude) or the prefix
 tables in `src/coding/model_routing.py`, with a `model_family` test.
 
@@ -52,8 +57,13 @@ contract.
 
 `src/coding/unit_prompt_protocol.py` holds two tables keyed by family:
 `HIGH_EFFORT_CALIBRATIONS` (subagent) and `MAIN_AGENT_COMPOSITION_CALIBRATIONS`
-(composer). Write the counter for a documented trait, version-aware where
-generations differ, and keep counters the guide says to keep even when it
+(composer), and two keyed by exact model id that resolve before them:
+`MODEL_HIGH_EFFORT_CALIBRATIONS` and `MODEL_COMPOSITION_CALIBRATIONS`. Write
+the counter for a documented trait, version-aware where generations differ
+— in the family table when the trait holds across the family, in the
+exact-model table when the new generation's documented traits differ from
+the family's and the older generation's prompts must stay byte-stable (GPT-6
+Astra over GPT-5.6) — and keep counters the guide says to keep even when it
 reads as redundant (for Claude 5.1: the single verification pass). Do not
 restate universal protocol rules inside a family entry. Then:
 
