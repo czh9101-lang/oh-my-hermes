@@ -91,6 +91,22 @@ def _passthrough_backend(argv: tuple[str, ...], *_args: Path | str | bool | tupl
     return argv
 
 
+def _scenario_diagnostics(outcome: runner.AdapterRunReceipt, elapsed: float) -> str:
+    # When a scenario is misclassified the interesting facts are how long the
+    # child lived and what the host does with a dying process (issue #1321:
+    # `crash` read as `process_timeout` on Linux shards); put them in the
+    # assertion message so a red run explains itself.
+    core_pattern = Path("/proc/sys/kernel/core_pattern")
+    pattern = core_pattern.read_text(encoding="utf-8").strip() if core_pattern.exists() else "n/a"
+    rep = outcome.repetitions[0] if outcome.repetitions else None
+    return (
+        f"elapsed={elapsed:.2f}s core_pattern={pattern!r} "
+        f"status={getattr(rep, 'process_status', None)} exit={getattr(rep, 'exit_code', None)} "
+        f"group_terminated={getattr(rep, 'process_group_terminated', None)} "
+        f"stdout_bytes={getattr(rep, 'stdout_bytes', None)} stderr_bytes={getattr(rep, 'stderr_bytes', None)}"
+    )
+
+
 class _RunnerMixin(unittest.TestCase):
     def _run_fake_adapter(self, request: AdapterRequest, spec: ExecutionSpec, output: runner.OutputContract) -> runner.AdapterRunReceipt:
         with patch("src.quality.cross_harness_adapters._backend_available", return_value=True), patch("src.quality.cross_harness_adapters._sandbox_command", _passthrough_backend), patch("src.quality.cross_harness_adapters._preflight", return_value=(True, "test-backend")):
@@ -264,8 +280,16 @@ class FailClosedAdapterRunnerTests(_RunnerMixin):
         }
         for scenario, reason in expected.items():
             with self.subTest(scenario=scenario):
-                outcome = self._run(scenario)
-                self.assertEqual(outcome.reason_code, reason)
+                # Only `timeout` has to finish inside the 2-second default; it
+                # is the one scenario the deadline is the point of. The others
+                # exit on their own, and `crash` in particular was read as
+                # `process_timeout` on Linux CI shards under that budget on
+                # five of seven runs (issue #1321), the same tightness the
+                # crash-descendant test had already hit. They get the 5s
+                # budget that test uses.
+                started = time.monotonic()
+                outcome = self._run(scenario, timeout_seconds=2 if scenario == "timeout" else 5)
+                self.assertEqual(outcome.reason_code, reason, msg=_scenario_diagnostics(outcome, time.monotonic() - started))
                 self.assertNotEqual(outcome.status, "observed_success")
                 if scenario == "timeout":
                     self.assertEqual((outcome.repetitions[0].process_group_terminated, outcome.repetitions[0].inventory[0].path), (True, "work/descendant-heartbeat"))
