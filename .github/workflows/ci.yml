@@ -6,11 +6,47 @@ on:
     branches: [main]
 
 jobs:
+  # Shard planner (issue #1294). Static source discovery never imports test
+  # modules; syntax or unsupported dynamic discovery shapes fail here before
+  # any shard runs. Identical inventory + timing history is byte-identical.
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Prepare committed timing fallback
+        run: |
+          mkdir -p timings-history
+          cp tools/test_sharding/timings.json timings-history/timings.json
+      - name: Restore bounded timing history
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: timings-history
+          key: test-sharding-timings-${{ github.run_id }}
+          restore-keys: test-sharding-timings-
+      - name: Plan test shards
+        run: >-
+          python tools/test_sharding/plan.py --shards 2
+          --durations timings-history/timings.json
+          --quarantine tools/test_sharding/quarantine.json
+          --out shard-plan/plan.json
+      - name: Upload shard plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shard-plan
+          path: shard-plan/plan.json
+
   test:
+    needs: plan
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
+        shard: [0, 1]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -32,41 +68,73 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Install package
         run: python -m pip install -e .
+      - name: Download shard plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: shard-plan
+          path: shard-plan
+      # Every discovered test is assigned to exactly one shard by the plan;
+      # each matrix leg runs only its own list and uploads its result even
+      # on failure, so the aggregate job can reconcile exact-once coverage.
+      - name: Unit tests (shard ${{ matrix.shard }})
+        run: >-
+          python tools/test_sharding/run.py --plan shard-plan/plan.json
+          --lane linux-${{ matrix.python-version }} --shard ${{ matrix.shard }}
+          --out results/result-linux-${{ matrix.python-version }}-${{ matrix.shard }}.json
+      - name: Upload shard result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shard-result-linux-${{ matrix.python-version }}-${{ matrix.shard }}
+          path: results/result-linux-${{ matrix.python-version }}-${{ matrix.shard }}.json
+      # Non-test gates run once per python-version (shard 0) instead of once
+      # per shard; sharding them would duplicate cost without new signal.
       - name: Static analysis (ruff)
-        if: matrix.python-version == '3.11'
+        if: matrix.python-version == '3.11' && matrix.shard == 0
         run: uv run --group lint ruff check src tests tools packaging
-      - name: Unit tests
-        run: python -m unittest discover -s tests
       - name: Compile package
+        if: matrix.shard == 0
         run: python -m compileall src
       - name: Generated workflow docs check
+        if: matrix.shard == 0
         run: python -m omh.cli docs workflows --check
       - name: Generated role docs check
+        if: matrix.shard == 0
         run: python -m omh.cli docs roles --check
       - name: Generated capability families check
+        if: matrix.shard == 0
         run: python -m omh.cli docs capability-families --check
       - name: Generated ULW README region check
+        if: matrix.shard == 0
         run: python -m omh.cli docs ulw-inventory --check
       - name: Generated ULW site region check
+        if: matrix.shard == 0
         run: python -m omh.cli docs ulw-site --check
       - name: Whitespace and conflict-marker check
-        if: matrix.python-version == '3.11' && github.event_name == 'pull_request'
+        if: matrix.python-version == '3.11' && matrix.shard == 0 && github.event_name == 'pull_request'
         run: git diff --check "origin/${{ github.base_ref }}...HEAD"
       - name: Dry-run install smoke
+        if: matrix.shard == 0
         run: python -m omh.cli --omh-home /tmp/omh-smoke --hermes-home /tmp/hermes-smoke install --dry-run
       - name: Stable-channel dry-run smoke
+        if: matrix.shard == 0
         run: python -m omh.cli --omh-home /tmp/omh-smoke --hermes-home /tmp/hermes-smoke install --dry-run --channel stable --version 0.1.0
       - name: Capability probe smoke
+        if: matrix.shard == 0
         run: python -m omh.cli --omh-home /tmp/omh-smoke --hermes-home /tmp/hermes-smoke probe
       - name: Hermes release smoke plan
+        if: matrix.shard == 0
         run: python -m omh.cli release hermes-smoke
       - name: Release readiness checklist
+        if: matrix.shard == 0
         run: python -m omh.cli release checklist --json
       - name: Installed OMH command smoke
+        if: matrix.shard == 0
         run: |
           omh --help
           omh --omh-home /tmp/omh-smoke --hermes-home /tmp/hermes-smoke release hermes-smoke --install-path setup --omh-command omh --include-command-smoke
       - name: Runtime artifact smoke
+        if: matrix.shard == 0
         run: |
           run_json="$(python -m omh.cli --omh-home /tmp/omh-smoke --hermes-home /tmp/hermes-smoke runtime record --skill oh-my-hermes --harness coding-handling --status started)"
           run_id="$(printf '%s' "$run_json" | python -c 'import json,sys; print(json.load(sys.stdin)["run"]["run_id"])')"
@@ -83,7 +151,11 @@ jobs:
     # handling, and byte-stable managed-file writes. Since #781 made the
     # suite Windows-green, the full suite runs here as an enforcing gate;
     # POSIX-only surfaces skip through the tests/_platform_support guards.
+    needs: plan
     runs-on: windows-latest
+    strategy:
+      matrix:
+        shard: [0, 1]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
@@ -99,11 +171,26 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Install package
         run: python -m pip install -e .
-      - name: Unit tests (full suite)
+      - name: Download shard plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: shard-plan
+          path: shard-plan
+      - name: Unit tests (shard ${{ matrix.shard }})
         env:
           PYTHONPATH: tests
-        run: python -m unittest discover -s tests
+        run: >-
+          python tools/test_sharding/run.py --plan shard-plan/plan.json
+          --lane windows-3.12 --shard ${{ matrix.shard }}
+          --out results/result-windows-3.12-${{ matrix.shard }}.json
+      - name: Upload shard result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shard-result-windows-3.12-${{ matrix.shard }}
+          path: results/result-windows-3.12-${{ matrix.shard }}.json
       - name: Compile package
+        if: matrix.shard == 0
         run: python -m compileall src
       # install.ps1 cannot be parsed or executed anywhere else, so its only
       # oracle is this job. Parse first for a precise syntax error, then run it
@@ -115,6 +202,7 @@ jobs:
       # is stricter about native argument passing. A parse error in either is a
       # broken installer for somebody.
       - name: Windows installer syntax (PowerShell 7)
+        if: matrix.shard == 0
         shell: pwsh
         run: |
           $errors = $null
@@ -128,6 +216,7 @@ jobs:
           }
           Write-Host "install.ps1 parsed clean on $($PSVersionTable.PSVersion)"
       - name: Windows installer syntax (Windows PowerShell 5.1)
+        if: matrix.shard == 0
         shell: powershell
         run: |
           $errors = $null
@@ -141,6 +230,7 @@ jobs:
           }
           Write-Host "install.ps1 parsed clean on $($PSVersionTable.PSVersion)"
       - name: Windows installer end-to-end
+        if: matrix.shard == 0
         shell: pwsh
         env:
           OMH_CHANNEL: local
@@ -165,6 +255,7 @@ jobs:
           & $shim --help | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'omh.cmd shim did not run' }
       - name: Windows managed-command round trip
+        if: matrix.shard == 0
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -187,6 +278,7 @@ jobs:
       # [Environment]::SetEnvironmentVariable would silently turn it from
       # REG_EXPAND_SZ to REG_SZ and flatten every %VAR% entry on the machine.
       - name: Windows installer default locations and PATH
+        if: matrix.shard == 0
         shell: pwsh
         env:
           OMH_CHANNEL: local
@@ -207,6 +299,112 @@ jobs:
           $stored = $key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
           if ($stored -notlike '*omh\bin*') { throw 'installer did not add its bin dir to the user PATH' }
           Write-Host 'default locations and user PATH edit verified'
+
+  # Serial quarantine (issue #1294): shared-state tests (process-wide
+  # signal handlers, spawned child processes, bound sockets) run here,
+  # isolated from the parallel shards but still on every required
+  # platform/version. Entries in tools/test_sharding/quarantine.json carry
+  # owner + reason metadata; a stale or metadata-less entry fails the plan.
+  test-quarantine:
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+            lane: linux-3.11
+          - os: ubuntu-latest
+            python-version: "3.12"
+            lane: linux-3.12
+          - os: windows-latest
+            python-version: "3.12"
+            lane: windows-3.12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Download shard plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: shard-plan
+          path: shard-plan
+      - name: Quarantined tests (serial)
+        env:
+          PYTHONPATH: tests
+        run: >-
+          python tools/test_sharding/run.py --plan shard-plan/plan.json
+          --lane ${{ matrix.lane }} --quarantine
+          --out results/result-quarantine-${{ matrix.os }}-${{ matrix.python-version }}.json
+      - name: Upload quarantine result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shard-result-quarantine-${{ matrix.os }}-${{ matrix.python-version }}
+          path: results/result-quarantine-${{ matrix.os }}-${{ matrix.python-version }}.json
+
+  # Fail-closed reconciliation (issue #1294). Runs no matter how the shard
+  # jobs ended: a failed or cancelled leg is red here even if its result
+  # artifact never arrived, and the aggregate re-proves that discovered ==
+  # sharded + quarantined == accounted, with no missing or duplicate tests.
+  # Make this job (with test, test-windows, and test-quarantine) a required
+  # status check so no shard outcome can produce a partial green.
+  aggregate:
+    needs: [test, test-windows, test-quarantine]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Require green shard jobs
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          TEST_WINDOWS_RESULT: ${{ needs.test-windows.result }}
+          QUARANTINE_RESULT: ${{ needs.test-quarantine.result }}
+        run: |
+          for result in "$TEST_RESULT" "$TEST_WINDOWS_RESULT" "$QUARANTINE_RESULT"; do
+            if [ "$result" != "success" ]; then
+              echo "required test job did not succeed: $result"
+              exit 1
+            fi
+          done
+      - name: Download shard plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: shard-plan
+          path: shard-plan
+      - name: Download shard results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: shard-result-*
+          path: results
+          merge-multiple: true
+      - name: Reconcile shard results
+        run: >-
+          python tools/test_sharding/aggregate.py --plan shard-plan/plan.json
+          --quarantine tools/test_sharding/quarantine.json
+          --results-dir results
+          --lanes linux-3.11,linux-3.12,windows-3.12
+          --timings-out timings-merged/timings.json
+      # Timing history is performance data only. Successful main runs save a
+      # bounded immutable cache entry; the next plan restores it over the
+      # committed empty-or-reviewed fallback without writing repository state.
+      - name: Stage bounded timing history
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p timings-history
+          cp timings-merged/timings.json timings-history/timings.json
+      - name: Save bounded timing history
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: timings-history
+          key: test-sharding-timings-${{ github.run_id }}
 
   distribution:
     runs-on: ${{ matrix.os }}

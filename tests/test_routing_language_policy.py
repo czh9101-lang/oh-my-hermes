@@ -114,6 +114,7 @@ FROZEN_HANGUL_TRIGGERS_BY_SKILL: dict[str, int] = {
     "frontend": 16,
     "gateway-intent-card": 10,
     "github-event-ops": 9,
+    "github-issue-intake": 8,
     "harness-session-inventory": 10,
     "idea-to-deploy": 8,
     "img-summary": 55,

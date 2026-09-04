@@ -1121,6 +1121,7 @@ _CODING_INTENT_BY_SKILL = {
 }
 _CODING_INTENT_BY_SKILL.update(
     {
+        "github-issue-intake": "planning",
         "github-event-ops": "planning",
         "agent-board": "planning",
         "memory-new": "planning",

@@ -101,15 +101,31 @@ export default function register(sdk) {
     const cost = rows.reduce((sum, row) => sum + (Number.isFinite(row.cost_usd) ? row.cost_usd : 0), 0)
     const tokens = rows.reduce((sum, row) => sum + (Number.isFinite(row.tokens) ? row.tokens : 0), 0)
     const approximate = rows.some(row => row.cost_approximate)
+    // A zero sum earns a figure only when a row vouched for its own zero
+    // with recorded provenance (status first, else source -- whatever word
+    // the host recorded; this surface does not enumerate a status
+    // vocabulary). Same rule the row segment applies, so header and row
+    // never disagree about whether a zero may show.
+    const zeroCostProvenance = rows
+      .map(row => (Number.isFinite(row.cost_usd) && row.cost_usd === 0 && !row.cost_approximate
+        ? safeText(row.cost_status) || safeText(row.cost_source)
+        : ''))
+      .find(Boolean) || ''
     const main = Array.isArray(payload.maestro?.rows) ? payload.maestro.rows[0] : null
     const ctx = main && Number.isFinite(main.context_percentage)
       ? main.context_percentage
       : rows.map(row => row.context_percentage).filter(Number.isFinite)[0]
     return {
-      // Subscription-billed hosts record no per-call cost; the reader's
-      // token-derived approximation carries a `~`, and a true zero with no
-      // approximation renders nothing (a constant $0.000 read as broken).
-      cost: cost > 0 ? `${approximate ? '~' : ''}$${cost.toFixed(3)}` : '',
+      // A positive sum speaks for itself; token-derived approximations
+      // (subscription-billed hosts record no per-call cost) carry a `~`. A
+      // confirmed zero renders with its provenance marker and never a `~` --
+      // an exact zero is not an approximation. A zero no row vouches for
+      // renders nothing (a constant $0.000 read as broken).
+      cost: cost > 0
+        ? `${approximate ? '~' : ''}$${cost.toFixed(3)}`
+        : zeroCostProvenance
+          ? `$${cost.toFixed(3)} (${zeroCostProvenance})`
+          : '',
       // Summed observed subagent tokens in the host gauge's own idiom
       // (184.8k tokens). A summed zero still renders (`0 tokens`) whenever any
       // row carried a figure: that zero is observed agent consumption, and
@@ -137,6 +153,21 @@ export default function register(sdk) {
       // slot stays wired so a future writer lights it up; the dash goes.
       ctx: Number.isFinite(ctx) ? `ctx ${ctx}%` : '',
     }
+  }
+
+  // The row's cost figure: a positive observed cost renders bare, a
+  // token-derived approximation carries a `~` so it never reads as billing
+  // truth, and a confirmed zero renders with the provenance that earns it
+  // (`$0.0000 (included)`) -- status first, else source, whatever word the
+  // host recorded. A zero with no provenance renders nothing: the reader
+  // only sends a bare zero it can vouch for, but the check stays so this
+  // surface never states a billing fact the row does not carry.
+  function costSegmentText(row) {
+    if (!Number.isFinite(row.cost_usd)) return ''
+    if (row.cost_usd > 0) return `${row.cost_approximate ? '~' : ''}$${row.cost_usd.toFixed(4)}`
+    if (row.cost_approximate) return ''
+    const provenance = safeText(row.cost_status) || safeText(row.cost_source)
+    return provenance ? `$${row.cost_usd.toFixed(4)} (${provenance})` : ''
   }
 
   function hudStateLabel(active, agents) {
@@ -312,18 +343,11 @@ export default function register(sdk) {
       metricSegment('cache', observedPercent('cache', row.cache_hit_percentage), 2),
       metricSegment('context', observedPercent('ctx', row.context_percentage), 3),
       metricSegment('turn', turnTools, 4),
-      // A subscription-billed host records no per-call cost, so the reader
-      // supplies a token-derived approximation flagged cost_approximate —
-      // rendered with a `~` so it never reads as billing truth. A true zero
-      // with no approximation renders nothing (the old permanent $0.0000
-      // read as broken).
-      metricSegment(
-        'cost',
-        Number.isFinite(row.cost_usd) && row.cost_usd > 0
-          ? `${row.cost_approximate ? '~' : ''}$${row.cost_usd.toFixed(4)}`
-          : '',
-        5,
-      ),
+      // The figure's honesty rules live in costSegmentText: approximation
+      // keeps its `~`, a confirmed zero shows its provenance marker, an
+      // unvouched zero shows nothing (the old permanent $0.0000 read as
+      // broken).
+      metricSegment('cost', costSegmentText(row), 5),
     ].filter(segment => segment.text)
     const running = !row.state || row.state === 'running'
     // A running row's elapsed ticks in real time: the snapshot's value plus

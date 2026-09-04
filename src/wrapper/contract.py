@@ -427,6 +427,10 @@ VISIBLE_ACTIONS = (
     "prepare_material_package",
     "prepare_deliverable_package",
     "prepare_github_event_ops_card",
+    "prepare_github_issue_intake",
+    "show_direction_check",
+    "confirm_issue_creation",
+    "record_read_back",
     "prepare_agent_board_card",
     "prepare_executor_runtime_readiness",
     "prepare_memory_new",
@@ -852,6 +856,11 @@ _HUMAN_ACK_BODY_BY_SKILL = {
         "I will classify the GitHub PR, issue, review, or CI event into triage, review, label, or fix-handoff "
         "actions. Webhook delivery and GitHub mutations stay unobserved until a wrapper records them."
     ),
+    "github-issue-intake": (
+        "I will classify the report, ask at most three decision-changing questions, search duplicates, and present "
+        "a direction check. Issue creation stays disabled until you confirm, and only an authorized connector's "
+        "read-back counts as observed evidence."
+    ),
     "memory-sync": (
         "I will review existing claims in English, with concise Korean help labels when useful, and prepare a native "
         "write diff. No OMH surface invokes, applies, or observes a MEMORY.md or USER.md write — an approved diff is "
@@ -1010,6 +1019,10 @@ _ACK_PRIMARY_ACTIONS_BY_NEXT_ACTION = {
     "prepare_visual_qa": ("prepare_visual_qa", "Prepare visual QA"),
     "prepare_deliverable_package": ("prepare_deliverable_package", "Prepare deliverable"),
     "prepare_github_event_ops_card": ("prepare_github_event_ops_card", "Open event card"),
+    "prepare_github_issue_intake": ("prepare_github_issue_intake", "Open intake card"),
+    "show_direction_check": ("show_direction_check", "Show direction check"),
+    "confirm_issue_creation": ("confirm_issue_creation", "Confirm issue creation"),
+    "record_read_back": ("record_read_back", "Record read-back"),
     "prepare_agent_board_card": ("prepare_agent_board_card", "Open agent board"),
     "prepare_executor_runtime_readiness": ("prepare_executor_runtime_readiness", "Check runtime"),
     "prepare_memory_new": ("prepare_memory_new", "Add memory"),
@@ -3329,6 +3342,49 @@ _WORKFLOW_OPERATIONS_CHAT_CARDS: dict[str, dict[str, object]] = {
             "CI",
             "docs sync",
             "merge",
+        ],
+    },
+    "github-issue-intake": {
+        "kind": "github_issue_intake",
+        "headline": "I can prepare this GitHub issue without claiming anything was filed.",
+        "body": (
+            "I will prepare the intake card: classification, a bounded interview of at most three decision-changing "
+            "questions, duplicate search status, a direction check with observed evidence versus inference, and the "
+            "scoped issue package. Issue creation runs only after your explicit confirmation through an authorized "
+            "connector, and only its read-back counts as observed evidence."
+        ),
+        "phase": "github_issue_intake_prepared",
+        "next_action": "prepare_github_issue_intake",
+        "artifact_schema": "github_issue_intake/v1",
+        "claim_boundary_suffix": "It is not issue creation, label application, GitHub mutation, coding, PR, merge, or deployment evidence.",
+        "actions": [
+            {"id": "prepare_github_issue_intake", "label": "Open intake card", "style": "primary"},
+            {"id": "show_direction_check", "label": "Show direction check", "style": "secondary"},
+            {
+                "id": "confirm_issue_creation",
+                "label": "Confirm issue creation",
+                "style": "secondary",
+                "enabled": False,
+                "payload": {"requires": "confirmed direction check and authorized connector"},
+            },
+            {"id": "show_status", "label": "Show status", "style": "secondary"},
+        ],
+        "recommended_flow": [
+            "classify_report",
+            "run_bounded_interview",
+            "search_duplicates",
+            "present_direction_check",
+            "confirm_then_hand_off_to_authorized_connector",
+            "verify_read_back",
+        ],
+        "evidence_not_observed": [
+            "issue creation",
+            "GitHub mutation",
+            "label application",
+            "coding execution",
+            "PR",
+            "merge",
+            "deployment",
         ],
     },
     "design-orchestration": {

@@ -93,6 +93,7 @@ _GUARDRAIL_CANDIDATE_INJECTION_IDS = frozenset(
         # needs a candidate to boost.
         "jit_learn_before_generic_research_or_review",
         "github_event_ops_before_generic_planning",
+        "github_issue_intake_before_event_ops_or_feedback",
         "live_info_operator_before_generic_current_facts",
         "research_brief_before_wiki",
         "loop_goal_before_generic_clarification",
@@ -1068,6 +1069,19 @@ _SKILL_POLICIES.update(
             next_action="prepare_github_event_ops_card",
             evidence_boundary="A GitHub event ops card is not webhook delivery, API mutation, label application, review completion, CI rerun, or fix execution evidence.",
             wrapper_guidance="Classify PR, issue, review, and CI events into triage/review/label/fix-handoff actions; record GitHub mutations only when observed.",
+        ),
+        "github-issue-intake": RecommendationPolicy(
+            next_action="prepare_github_issue_intake",
+            evidence_boundary=(
+                "A prepared github_issue_intake/v1 package is not issue creation, label application, or any GitHub "
+                "mutation evidence; only authorized-connector read-back of repository, author, title, body, labels, "
+                "and URL is observed evidence."
+            ),
+            wrapper_guidance=(
+                "Classify the report, ask at most three decision-changing questions, search duplicates, present the "
+                "direction check, and require explicit confirmation before handing the scoped create_issue package "
+                "to an authorized connector; with no connector, return the complete package plus an explicit blocker."
+            ),
         ),
         "agent-board": RecommendationPolicy(
             next_action="prepare_agent_board_card",

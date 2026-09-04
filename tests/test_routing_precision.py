@@ -25,12 +25,12 @@ class RoutingPrecisionTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["overroute_count"], 0)
         self.assertEqual(payload["summary"]["catalog_picker_count"], 0)
         self.assertEqual(payload["summary"]["generic_ack_count"], 0)
-        self.assertEqual(payload["summary"]["intervention_case_count"], 291)
-        self.assertEqual(payload["summary"]["intervention_passing_count"], 291)
+        self.assertEqual(payload["summary"]["intervention_case_count"], 295)
+        self.assertEqual(payload["summary"]["intervention_passing_count"], 295)
         self.assertEqual(payload["summary"]["missed_intervention_count"], 0)
         self.assertEqual(payload["summary"]["intervention_generic_ack_count"], 0)
-        self.assertEqual(payload["summary"]["total_case_count"], 458)
-        self.assertEqual(payload["summary"]["total_passing_count"], 458)
+        self.assertEqual(payload["summary"]["total_case_count"], 462)
+        self.assertEqual(payload["summary"]["total_passing_count"], 462)
         self.assertEqual(routing_precision_errors(payload), [])
         self.assertIn("over-intervention and missed-intervention guards", payload["claim_boundary"])
 
@@ -428,7 +428,7 @@ class RoutingPrecisionTests(unittest.TestCase):
         self.assertEqual(stderr, "")
         self.assertIn("OMH routing precision", stdout)
         self.assertIn("167/167 negative-control cases passing", stdout)
-        self.assertIn("Interventions: 291/291 expected workflow cases passing", stdout)
+        self.assertIn("Interventions: 295/295 expected workflow cases passing", stdout)
         self.assertIn("overroutes: 0", stdout)
         self.assertIn("catalog pickers: 0", stdout)
         self.assertIn("generic ack: 0", stdout)
@@ -508,6 +508,30 @@ class TrivialMessageGuardTests(unittest.TestCase):
             with self.subTest(message=message):
                 route = route_chat_message(message, source="slack")
                 self.assertNotEqual(route["reason"], DIRECT_ANSWER_REASON)
+
+    def test_github_issue_filing_requires_context_for_generic_english(self) -> None:
+        # Given: generic issue wording outside GitHub
+        from omh.routing.chat import route_chat_message
+
+        # When: landlord and payroll requests are routed
+        for message in ("file an issue about my landlord", "open an issue for payroll"):
+            with self.subTest(message=message):
+                route = route_chat_message(message, source="discord")
+                # Then: ordinary issue language never enters the GitHub filing lane
+                self.assertNotEqual(route["selected_skill"], "github-issue-intake")
+
+    def test_github_issue_filing_keeps_explicit_and_korean_requests(self) -> None:
+        # Given: explicit workflow, filing, and Korean GitHub requests
+        from omh.routing.chat import route_chat_message
+
+        # When/Then: each identifies the bounded intake lane
+        for message in (
+            "github-issue-intake: setup crashes",
+            "file this as an issue: setup crashes",
+            "이 버그를 깃허브 이슈로 올려줘",
+        ):
+            with self.subTest(message=message):
+                self.assertEqual(route_chat_message(message, source="discord")["selected_skill"], "github-issue-intake")
 
 
 if __name__ == "__main__":

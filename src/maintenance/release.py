@@ -185,7 +185,11 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # current-source product documentation; one row, not per-section padding.
 # 387367 -> 387378: use the unambiguous `product-docs` canonical identifier
 # while keeping `omh-docs` as the public label.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 387378
+# 387378 -> 390713: `github-issue-intake` is a new installable skill (the
+# public-chat issue intake workflow with a bounded interview, duplicate
+# search, and confirmation-gated connector handoff); one new capability
+# section for one new workflow, not per-section padding; warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 390713
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -212,7 +216,9 @@ FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 109590 -> 110495: one measured standalone capability row for omh-docs.
 # 110495 -> 110519: the canonical `product-docs` identifier removes the generic
 # `docs` routing exception and preserves display-name symmetry.
-STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 110519
+# 110519 -> 111483: one standalone capability row for the new
+# `github-issue-intake` skill; warranted growth.
+STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 111483
 STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ULW fold context ceiling (issue #954, PR D). The limit is the pre-D measured
 # value of the full profile's `skill_body` chars on `main` @ acb9a060, in the
@@ -637,7 +643,20 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # 882271 -> 882729: source-accuracy fixes document project-scoped OMH homes,
 # the doctor state-write side effect, and the metadata-only Hermes-memory
 # comparison boundary; this is measured product documentation, not padding.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 882729
+# 882729 -> 890353: `github-issue-intake` is one new installable skill body
+# (classification, the three-question bounded interview, duplicate search,
+# the confirmation gate, and the connector read-back boundary), plus its
+# lane name on the automation_and_status skills' Workflow Lane lines;
+# warranted growth.
+# 890353 -> 890777: one safety rule on `github-issue-intake` encoding the
+# hardened lifecycle (confirmation requires a complete direction check plus
+# a completed duplicate search; any blocker stops confirmation and handoff
+# and cannot be cleared by a later observed result); one rule, not padding;
+# warranted growth.
+# 890777 -> 891138: the final template, security-redirect, privacy-projection,
+# authenticated-maintainer, and idempotent-handoff rules complete that same
+# workflow contract; one bounded workflow correction, not padding.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 891138
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

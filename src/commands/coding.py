@@ -2099,6 +2099,13 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
         except FanoutJournalError as exc:
             raise OmhError(f"{exc} ({exc.reason_code})") from exc
     goal_text = sys.stdin.read() if args.goal_file == "-" else Path(args.goal_file).expanduser().read_text(encoding="utf-8")
+    if bool(args.integration_worktree) != bool(args.integration_revision):
+        raise OmhError("--integration-worktree and --integration-revision must be supplied together")
+    if args.integration_worktree and not args.run_verification:
+        raise OmhError("--integration-worktree and --integration-revision require --run-verification")
+    integrated_worktree = (
+        Path(args.integration_worktree).expanduser().resolve() if args.integration_worktree else None
+    )
     repo_root = Path(args.repo_root).expanduser().resolve()
     try:
         preflight = fanout_dispatch_preflight(
@@ -2127,6 +2134,8 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             only_units=args.unit,
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
+            integrated_worktree=integrated_worktree,
+            integrated_revision=args.integration_revision or None,
             resume_journal=resume_journal,
             goal_attempt_id=args.goal_attempt_id,
             goal_attempt_progressed=bool(args.goal_attempt_progressed),
@@ -2166,6 +2175,8 @@ def cmd_coding_fanout_dispatch(args: argparse.Namespace) -> int:
             only_units=args.unit,
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
+            integrated_worktree=integrated_worktree,
+            integrated_revision=args.integration_revision or None,
             resume_journal=resume_journal,
             goal_attempt_id=args.goal_attempt_id,
             goal_attempt_progressed=bool(args.goal_attempt_progressed),
@@ -2663,6 +2674,16 @@ def _add_coding_commands(sub) -> None:
         "--run-verification",
         action="store_true",
         help="Run each unit's contract verification_commands in its worktree after its sidecar validates.",
+    )
+    fanout_dispatch.add_argument(
+        "--integration-worktree",
+        default="",
+        help="Explicit clean checkout containing the integrated producer result for full gates.",
+    )
+    fanout_dispatch.add_argument(
+        "--integration-revision",
+        default="",
+        help="Exact HEAD^{tree} expected for --integration-worktree; required with it.",
     )
     fanout_dispatch.add_argument(
         "--goal-attempt-id",

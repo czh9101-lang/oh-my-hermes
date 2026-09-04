@@ -40,6 +40,7 @@ def _build_state_db(
     children: list[dict],
     *,
     delegation_states: dict[str, str] | None = None,
+    include_cost_provenance: bool = True,
 ) -> None:
     connection = sqlite3.connect(home / "state.db")
     connection.executescript(
@@ -56,6 +57,7 @@ def _build_state_db(
             cache_read_tokens INTEGER NOT NULL DEFAULT 0,
             actual_cost_usd REAL NOT NULL DEFAULT 0,
             estimated_cost_usd REAL NOT NULL DEFAULT 0,
+            cost_status TEXT, cost_source TEXT,
             first_seen REAL, last_seen REAL
         );
         CREATE TABLE async_delegations (
@@ -64,6 +66,9 @@ def _build_state_db(
         );
         """
     )
+    if not include_cost_provenance:
+        connection.execute("ALTER TABLE session_model_usage DROP COLUMN cost_status")
+        connection.execute("ALTER TABLE session_model_usage DROP COLUMN cost_source")
     connection.execute(
         "INSERT INTO sessions VALUES (?, ?, ?, ?)",
         (PARENT_ID, "gpt-5.6-sol", "", NOW - 4000),
@@ -77,21 +82,24 @@ def _build_state_db(
             "INSERT INTO sessions VALUES (?, ?, ?, ?)",
             (child["id"], child["model"], json.dumps(config), child["started_at"]),
         )
-        usage = child.get("usage")
-        if usage:
+        usages = child.get("usages")
+        if usages is None:
+            single = child.get("usage")
+            usages = [single] if single else []
+        for usage in usages:
             connection.execute(
-                "INSERT INTO session_model_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    child["id"],
-                    child["model"],
-                    usage.get("api_calls", 0),
-                    usage.get("input_tokens", 0),
-                    usage.get("output_tokens", 0),
-                    usage.get("cache_read_tokens", 0),
-                    usage.get("actual_cost_usd", 0.0),
+                    "INSERT INTO session_model_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    if include_cost_provenance
+                    else "INSERT INTO session_model_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                (
+                    child["id"], child["model"], usage.get("api_calls", 0),
+                    usage.get("input_tokens", 0), usage.get("output_tokens", 0),
+                    usage.get("cache_read_tokens", 0), usage.get("actual_cost_usd", 0.0),
                     usage.get("estimated_cost_usd", 0.0),
-                    usage.get("first_seen"),
-                    usage.get("last_seen"),
+                    *(([usage.get("cost_status"), usage.get("cost_source")] if include_cost_provenance else [])),
+                    usage.get("first_seen"), usage.get("last_seen"),
                 ),
             )
     for delegation_id, state in (delegation_states or {}).items():
@@ -552,6 +560,174 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
         self.assertEqual(row["tokens"], 15_000)
         self.assertNotIn("cost_usd", row)
         self.assertNotIn("cost_approximate", row)
+
+    def test_mixed_billed_and_included_rows_keep_the_positive_aggregate(self):
+        # Given: one child whose usage rows mix a billed $12.50 row with an
+        # included zero row, so MAX(cost_status) surfaces "included" while
+        # SUM(actual_cost_usd) is still positive
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_mixed001",
+                "model": "gpt-5.6-sol",
+                "started_at": NOW - 60,
+                "usages": [
+                    {
+                        "input_tokens": 100_000,
+                        "output_tokens": 20_000,
+                        "actual_cost_usd": 12.50,
+                        "cost_status": "billed",
+                        "cost_source": "gateway",
+                        "first_seen": NOW - 55,
+                        "last_seen": NOW - 30,
+                    },
+                    {
+                        "input_tokens": 10_000,
+                        "output_tokens": 4_000,
+                        "actual_cost_usd": 0.0,
+                        "cost_status": "included",
+                        "cost_source": "subscription",
+                        "first_seen": NOW - 25,
+                        "last_seen": NOW - 5,
+                    },
+                ],
+            }],
+        )
+        _write_manifest(self.home, "deleg_mixed", ["mixed lane"], started=NOW - 65, log_mtime=NOW - 5)
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: the positive observed aggregate stands -- a provenance word
+        # may annotate a zero, it may never erase an observed figure
+        self.assertEqual(row["cost_usd"], 12.50)
+        self.assertNotIn("cost_approximate", row)
+
+    def test_a_billed_zero_status_keeps_the_zero_exact(self):
+        # Given: a host that confirms it billed nothing, in a status word OMH
+        # does not know (provenance is host-vocabulary-neutral)
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_billedzero",
+                "model": "gpt-5.6-sol",
+                "started_at": NOW - 60,
+                "usage": {
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "actual_cost_usd": 0.0,
+                    "cost_status": "billed_zero",
+                    "cost_source": "gateway",
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_bz", ["billed-zero lane"], started=NOW - 65, log_mtime=NOW - 5)
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: the confirmed zero stays exact -- any recorded provenance
+        # vouches for it, so no approximation may overwrite it
+        self.assertEqual(row["cost_usd"], 0.0)
+        self.assertEqual(row["cost_status"], "billed_zero")
+        self.assertEqual(row["cost_source"], "gateway")
+        self.assertNotIn("cost_approximate", row)
+
+    def test_source_only_provenance_keeps_the_zero_exact(self):
+        # Given: a zero whose only provenance is a recorded source (the
+        # status column stayed NULL on every usage row)
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_srconly1",
+                "model": "gpt-5.6-sol",
+                "started_at": NOW - 60,
+                "usage": {
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "actual_cost_usd": 0.0,
+                    "cost_status": None,
+                    "cost_source": "subscription",
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_src", ["source lane"], started=NOW - 65, log_mtime=NOW - 5)
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: source-only provenance still vouches for the zero
+        self.assertEqual(row["cost_usd"], 0.0)
+        self.assertNotIn("cost_status", row)
+        self.assertEqual(row["cost_source"], "subscription")
+        self.assertNotIn("cost_approximate", row)
+
+    def test_a_confirmed_billed_zero_keeps_exact_zero_and_provenance(self):
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_zero0001",
+                "model": "gpt-5.6-sol",
+                "started_at": NOW - 60,
+                "usage": {
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "actual_cost_usd": 0.0,
+                    "cost_status": "included",
+                    "cost_source": "subscription",
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_zero", ["zero lane"], started=NOW - 65, log_mtime=NOW - 5)
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["cost_usd"], 0.0)
+        self.assertEqual(row["cost_status"], "included")
+        self.assertEqual(row["cost_source"], "subscription")
+        self.assertNotIn("cost_approximate", row)
+
+    def test_absent_cost_provenance_still_approximates_zero(self):
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_absent01",
+                "model": "gpt-5.6-sol",
+                "started_at": NOW - 60,
+                "usage": {
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "actual_cost_usd": 0.0,
+                    "estimated_cost_usd": 0.0,
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_absent", ["absent lane"], started=NOW - 65, log_mtime=NOW - 5)
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertGreater(row["cost_usd"], 0.0)
+        self.assertTrue(row["cost_approximate"])
+        self.assertNotIn("cost_status", row)
+        self.assertNotIn("cost_source", row)
+
+    def test_legacy_schema_preserves_usage_and_approximates_zero(self):
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_legacy01",
+                "model": "gpt-5.6-sol",
+                "started_at": NOW - 60,
+                "usage": {
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "actual_cost_usd": 0.0,
+                    "last_seen": NOW - 5,
+                },
+            }],
+            include_cost_provenance=False,
+        )
+        _write_manifest(self.home, "deleg_legacy", ["legacy lane"], started=NOW - 65, log_mtime=NOW - 5)
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["tokens"], 14_000)
+        self.assertGreater(row["cost_usd"], 0.0)
+        self.assertTrue(row["cost_approximate"])
+        self.assertNotIn("cost_status", row)
+        self.assertNotIn("cost_source", row)
 
     def test_an_observed_host_cost_is_never_replaced_by_the_approximation(self):
         _build_state_db(

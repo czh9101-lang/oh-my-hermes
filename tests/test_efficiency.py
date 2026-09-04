@@ -227,11 +227,10 @@ class EfficiencyContractTests(unittest.TestCase):
         # to 866,062 bytes on the merged tree. The ceiling restores ~12k
         # headroom; the exact value is ratcheted in
         # `FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`.
-        # 878,000 -> 893,000: omh-docs measures 882,271 bytes in the full
-        # profile after its research-and-ops lane projection. The ceiling
-        # restores the existing ~11k standing headroom; 882,271 remains the
-        # exact release ratchet.
-        self.assertLess(full["skill_body"]["bytes"], 893_000)
+        # 878,000 -> 902,000: omh-docs and github-issue-intake take the
+        # combined full profile to the exact release ratchet below 891k.
+        # The ceiling preserves roughly 11k standing headroom.
+        self.assertLess(full["skill_body"]["bytes"], 902_000)
         self.assertLess(full["repeated"]["share_percent"], 38.0)
 
         # References are progressive disclosure, counted outside the always-loaded body.
