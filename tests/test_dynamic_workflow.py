@@ -20,6 +20,7 @@ from omh.dynamic_workflow import (
     write_dynamic_coding_workflow,
 )
 from omh.paths import resolve_paths
+from omh.coding.dynamic_workflow_specs import parse_agent_spec
 from omh.coding.executor_capability_snapshots import (
     KNOWN_CAPABILITY_NAMES,
     LOCAL_WORKFLOW_CAPABILITY_NAME,
@@ -438,6 +439,25 @@ class DynamicWorkflowTests(unittest.TestCase):
 
                 self.assertFalse(outside.exists())
                 self.assertTrue((workflow_dir / "workflow.json").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class MiniMaxTargetClassificationTests(unittest.TestCase):
+    def test_minimax_ids_classify_as_model_targets(self) -> None:
+        # Mirrors `_MODEL_FAMILY_PREFIXES` in model_routing: both classifier
+        # surfaces must name the family the same way.
+        for target in ("MiniMax-M3", "minimax-m2.7", "minimax"):
+            with self.subTest(target=target):
+                self.assertEqual(parse_agent_spec(target).target_type, "model")
+                self.assertEqual(parse_agent_spec(target).cost_tier, "operator-selected" if "-" in target else "unknown")
+
+    def test_minimax_near_misses_keep_their_own_classification(self) -> None:
+        self.assertEqual(parse_agent_spec("minimaxi-m3").target_type, "agent")
+        self.assertEqual(parse_agent_spec("minimax-runtime").target_type, "model")
+        self.assertEqual(parse_agent_spec("minimax-review-agent").target_type, "model")
 
 
 if __name__ == "__main__":
