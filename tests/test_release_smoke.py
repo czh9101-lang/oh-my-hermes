@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import json
+import re
 import sys
 import subprocess
 import unittest
@@ -1018,6 +1019,24 @@ class VersionSurfaceParityTests(unittest.TestCase):
             if line.startswith("version = ")
         ]
         self.assertEqual(versions, [package_version])
+
+    def test_site_hero_badge_version_matches_the_package(self) -> None:
+        # The landing page's hero badge is the first version a visitor sees.
+        # It sat at v1.0.6 through the 2.0.0 release because nothing gated it;
+        # the static markup and every i18n locale string must carry the
+        # current version, while historical "as of vX" prose stays free.
+        site = Path(__file__).resolve().parents[1] / "site"
+        index_badges = re.findall(
+            r'data-i18n="hero\.badge">[^<]*?· v(\d+\.\d+\.\d+)</span>',
+            (site / "index.html").read_text(encoding="utf-8"),
+        )
+        self.assertEqual(index_badges, [package_version])
+        i18n = (site / "i18n.js").read_text(encoding="utf-8")
+        block = re.search(r'"hero\.badge": \{(.*?)\}', i18n, re.DOTALL)
+        self.assertIsNotNone(block)
+        locale_versions = re.findall(r'(\w+): "[^"]*?· v(\d+\.\d+\.\d+)"', block.group(1))
+        self.assertEqual(sorted(locale for locale, _ in locale_versions), ["en", "ja", "ko", "zh"])
+        self.assertEqual({version for _, version in locale_versions}, {package_version})
 
 
 if __name__ == "__main__":
