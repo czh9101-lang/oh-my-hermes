@@ -108,13 +108,21 @@ active to stale to expired; they never prove results.
 _Avoid_: process handle, job
 
 **Plan todo**:
-The declared checklist at `$OMH_HOME/runtime/todo.json` that HUD surfaces
-render above the Hermes prompt input. Items are plan declarations; a done mark
-never upgrades into observed evidence. The artifact is global to the OMH home
-but the panel is scoped to the session that declared the plan: a record
-stamped with `session_ref` renders only for the live Hermes TUI session that
-owns it, an unstamped record is scoped by write time, and a host that cannot
-say which session is live keeps the age-only behavior.
+The declared checklist HUD surfaces render above the Hermes prompt input.
+Items are plan declarations; a done mark never upgrades into observed
+evidence. One record per declaring session: a plan stamped with `session_ref`
+lives at `$OMH_HOME/runtime/todos/<session key>.json` and renders only for
+the session that owns it — the TUI widget names its own session from the
+host's active-session file, the plugin tool and hooks from the session that
+invoked them — so a plan declared from Slack, Discord, or a second TUI is
+neither shown in nor overwritten by another session. An unstamped record
+(`omh runtime todo set` without `--session`) keeps the home-wide
+`$OMH_HOME/runtime/todo.json`, scoped by write time against the reading
+session's start; a reader with no live TUI row to date it against (a gateway
+session), or a host that cannot say which session is reading, keeps the
+age-only behavior. A widget reference that names no live TUI row and owns no
+record — a fresh session's transport id — reads as the most recently active
+live TUI would.
 _Avoid_: task list as evidence, TodoWrite (that is another product's tool name)
 
 ### Coding delegation

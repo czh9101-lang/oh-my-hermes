@@ -14,6 +14,7 @@ def build_hud_payload(
     limit: int = 3,
     token_metadata: dict[str, Any] | None = None,
     graph_preference: str = "auto",
+    session_ref: str = "",
 ) -> dict[str, Any]:
     return read_omh_hud(
         omh_home=paths.omh_home,
@@ -23,4 +24,5 @@ def build_hud_payload(
         token_metadata=token_metadata or {},
         package_version=__version__,
         graph_preference=graph_preference,
+        session_ref=session_ref,
     )

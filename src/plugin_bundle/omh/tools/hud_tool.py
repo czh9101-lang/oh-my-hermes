@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ..host_observation import OBSERVATION_SCHEMA, attach_public_observation, observe_plugin_tool_call
+from ..host_observation import (
+    OBSERVATION_SCHEMA,
+    attach_public_observation,
+    host_session_id,
+    observe_plugin_tool_call,
+)
 from ..runtime_reader import read_omh_hud
 
 OMH_HUD_SCHEMA = {
@@ -77,5 +82,6 @@ def omh_hud_handler(args: dict[str, Any], **kwargs) -> str:
         preset=str(args.get("preset", "focused") or "focused"),
         limit=args.get("limit") or 3,
         token_metadata=token_metadata,
+        session_ref=host_session_id(kwargs),
     )
     return json.dumps(attach_public_observation(payload, observation), sort_keys=True)

@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ..host_observation import OBSERVATION_SCHEMA, attach_public_observation, observe_plugin_tool_call
+from ..host_observation import (
+    OBSERVATION_SCHEMA,
+    attach_public_observation,
+    host_session_id,
+    observe_plugin_tool_call,
+)
 from ..runtime_reader import default_omh_home, read_omh_todo
 from ..todo_store import (
     TODO_CLAIM_BOUNDARY,
@@ -18,7 +23,9 @@ OMH_TODO_SCHEMA = {
     "name": "omh_todo",
     "description": (
         "Declare, clear, or read the metadata-only plan todo list that OMH HUD surfaces render "
-        "above the Hermes prompt input. Initialize it BEFORE starting engine work (todo init): "
+        "above the Hermes prompt input. The list belongs to the session that declares it: "
+        "another TUI, Slack, or Discord session neither sees nor overwrites it. "
+        "Initialize it BEFORE starting engine work (todo init): "
         "declare numbered phases in delivery order (e.g. 'I. Bootstrap' through 'VI. Evidence "
         "and Cleanup') that cover the whole lifecycle — setup, one implement/verify/deliver "
         "task per work unit, independent review lanes, and an evidence-and-cleanup close — "
@@ -88,21 +95,13 @@ OMH_TODO_SCHEMA = {
 }
 
 
-def _observed_session_ref(observation: dict[str, Any] | None) -> str:
-    """The host session id this write belongs to, when the host supplied one.
-
-    Hermes passes its stable session/thread id as observation metadata on
-    every tool call, so a plan declared in chat can record which session
-    declared it. A host that supplies none leaves this empty and the record
-    stays unstamped, exactly like a CLI write.
-    """
-    if not isinstance(observation, dict):
-        return ""
-    return str(observation.get("session_id", "") or "")
-
-
 def omh_todo_handler(args: dict[str, Any], **kwargs) -> str:
     observation = observe_plugin_tool_call("omh_todo", args, kwargs)
+    # Hermes passes its stable session/thread id as a keyword on every tool
+    # call, so a plan declared in chat is stored for, and read back for, the
+    # session that declared it. A host that supplies none leaves this empty:
+    # the record is the home-wide one, exactly like a CLI write.
+    session_ref = host_session_id(kwargs)
     home_arg = str(args.get("omh_home", "") or "")
     action = str(args.get("action", ""))
     payload: dict[str, Any] = {
@@ -116,7 +115,7 @@ def omh_todo_handler(args: dict[str, Any], **kwargs) -> str:
     if action in {"set", "clear"} and home_arg:
         payload["status"] = "invalid_todo"
         payload["error"] = "omh_home override is read-only; set and clear use the configured OMH home"
-        payload["todo"] = read_omh_todo()
+        payload["todo"] = read_omh_todo(session_ref=session_ref)
         return json.dumps(attach_public_observation(payload, observation), sort_keys=True)
     if action == "set":
         try:
@@ -124,7 +123,7 @@ def omh_todo_handler(args: dict[str, Any], **kwargs) -> str:
                 args.get("title", ""),
                 args.get("items"),
                 source="omh_todo",
-                session_ref=_observed_session_ref(observation),
+                session_ref=session_ref,
             )
             write_todo(default_omh_home(), record)
             payload["status"] = "written"
@@ -133,7 +132,9 @@ def omh_todo_handler(args: dict[str, Any], **kwargs) -> str:
             payload["error"] = str(error)
     elif action == "clear":
         try:
-            payload["status"] = "cleared" if clear_todo(default_omh_home()) else "already_absent"
+            payload["status"] = (
+                "cleared" if clear_todo(default_omh_home(), session_ref) else "already_absent"
+            )
         except TodoStoreError as error:
             payload["status"] = "invalid_todo"
             payload["error"] = str(error)
@@ -142,5 +143,5 @@ def omh_todo_handler(args: dict[str, Any], **kwargs) -> str:
     else:
         payload["status"] = "invalid_action"
         payload["error"] = "action must be set, clear, or show"
-    payload["todo"] = read_omh_todo(home_arg or None)
+    payload["todo"] = read_omh_todo(home_arg or None, session_ref=session_ref)
     return json.dumps(attach_public_observation(payload, observation), sort_keys=True)

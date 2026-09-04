@@ -39,6 +39,7 @@ from .todo_store import (
     MAX_TODO_TITLE_CHARS,
     TODO_ITEM_STATES,
     TODO_SCHEMA_VERSION,
+    TODO_STALE_SECONDS,
     strip_control_characters,
     todo_path,
 )
@@ -46,7 +47,6 @@ from .todo_store import (
 STATUS_SCHEMA_VERSION = "omh_status/v1"
 HUD_SCHEMA_VERSION = "omh_hud/v1"
 HUD_PRESETS = {"minimal", "focused", "full"}
-TODO_STALE_SECONDS = 86400
 # How long a fully-done plan keeps rendering after its last update.
 ALL_DONE_TODO_LINGER_SECONDS = 15 * 60
 TODO_DISPLAY_ITEM_LIMIT = 3
@@ -752,7 +752,19 @@ def read_omh_hud(
     token_metadata: dict[str, Any] | None = None,
     package_version: str = "",
     graph_preference: str = "auto",
+    session_ref: str = "",
+    tui_session_ref: str = "",
 ) -> dict[str, Any]:
+    """The HUD payload for one reading session.
+
+    ``session_ref`` is the reader's own durable session id, as the host
+    dispatched it (plugin tool, hook, operator flag), and is trusted as-is.
+    ``tui_session_ref`` is what the host's active-session file reports for
+    the TUI a widget renders in; on a freshly created session that file
+    holds the gateway's transport id rather than the durable key, so a value
+    that neither names a live TUI row nor owns a record falls back to the
+    most recently active live TUI row instead of rendering nothing.
+    """
     safe_preset = preset if preset in HUD_PRESETS else "focused"
     home = _expand_path(omh_home) if omh_home else _default_omh_home()
     hermes = _expand_path(hermes_home) if hermes_home else _default_hermes_home()
@@ -780,10 +792,10 @@ def read_omh_hud(
         "runtime": _hud_runtime_summary(status_payload, latest_run),
         "achievements": _achievements_summary(hermes),
         "tokens": _token_summary(token_metadata or {}),
-        # Scoped to the live TUI session: one OMH home holds one plan todo, so
-        # without that scope a previous session's unfinished checklist renders
-        # in every new session.
-        "todo": _todo_summary(home, hermes),
+        # Scoped to the reading session: the widget names its own session
+        # (`session_ref`), and a caller that cannot falls back to the live
+        # TUI row, so one session's checklist never renders in another.
+        "todo": _todo_summary(home, hermes, session_ref, tui_session_ref),
         # Concurrent tool-call batches observed by the pre_tool_call hook;
         # the [OMH] status line brands a fresh batch as a parallel shot.
         "parallel_shot": tool_calls["parallel_shot"],
@@ -1687,12 +1699,19 @@ def _evidence_state(run: dict[str, Any]) -> str:
 
 
 def read_omh_todo(
-    omh_home: str | Path | None = None, hermes_home: str | Path | None = None
+    omh_home: str | Path | None = None,
+    hermes_home: str | Path | None = None,
+    session_ref: str = "",
 ) -> dict[str, Any]:
-    """Public todo projection for tools and hosts that only need the panel."""
+    """Public todo projection for tools and hosts that only need the panel.
+
+    ``session_ref`` names the session the caller is reading for -- the plugin
+    tool passes the host session that invoked it, the pre-LLM hook the
+    session whose turn is starting. Empty falls back to the live TUI row.
+    """
     home = _expand_path(omh_home) if omh_home else _default_omh_home()
     hermes = _expand_path(hermes_home) if hermes_home else _default_hermes_home()
-    return _todo_summary(home, hermes)
+    return _todo_summary(home, hermes, session_ref)
 
 
 def default_omh_home() -> Path:
@@ -1700,7 +1719,12 @@ def default_omh_home() -> Path:
     return _default_omh_home()
 
 
-def _todo_summary(home: Path, hermes: Path | None = None) -> dict[str, Any]:
+def _todo_summary(
+    home: Path,
+    hermes: Path | None = None,
+    session_ref: str = "",
+    tui_session_ref: str = "",
+) -> dict[str, Any]:
     empty = {
         "status": "absent",
         "title": "",
@@ -1712,7 +1736,19 @@ def _todo_summary(home: Path, hermes: Path | None = None) -> dict[str, Any]:
         "display_phase": "",
         "more_count": 0,
     }
-    record = _read_hud_json(todo_path(home), root=home)
+    session_id, session = _reading_session(hermes, session_ref or tui_session_ref)
+    record, own_record = _own_todo_record(home, session_id)
+    if not own_record and not session_ref and tui_session_ref and session is None:
+        # The widget's reference places no TUI: it is neither a live row nor
+        # the owner of a record, which is what a fresh session's transport id
+        # looks like. Read as a widget with no identity would, rather than
+        # hiding the plan this TUI is most likely looking at.
+        session_id, session = _reading_session(hermes, "")
+        record, own_record = _own_todo_record(home, session_id)
+    if not own_record:
+        # No per-session record: the home-wide file answers, gated below by
+        # the identity or write-time rule so another session's plan stays out.
+        record = _read_hud_json(todo_path(home), root=home)
     if record.get("schema_version") != TODO_SCHEMA_VERSION:
         return empty
     items: list[dict[str, Any]] = []
@@ -1771,7 +1807,9 @@ def _todo_summary(home: Path, hermes: Path | None = None) -> dict[str, Any]:
     if age is None or age > TODO_STALE_SECONDS:
         summary["status"] = "stale"
         return summary
-    if _todo_belongs_to_another_session(record, summary["updated_at"], hermes):
+    if not own_record and _todo_belongs_to_another_session(
+        record, summary["updated_at"], session_id, session
+    ):
         summary["status"] = "stale"
         return summary
     if counts["done"] == counts["total"]:
@@ -1820,47 +1858,73 @@ def _todo_summary(home: Path, hermes: Path | None = None) -> dict[str, Any]:
     return summary
 
 
-def _todo_belongs_to_another_session(
-    record: dict[str, Any], updated_at: str, hermes: Path | None
-) -> bool:
-    """Whether this plan was declared by a session other than the live one.
-
-    The plan todo is one artifact per OMH home, so nothing about the file
-    itself says which session declared it. Wall-clock age alone cannot answer
-    that: an INCOMPLETE plan written hours ago is inside every age bound and
-    so greeted every new session with a checklist it never created (a 4/7 plan
-    from one session observed rendering in a fresh one the next day).
-
-    The host's own ``state.db`` does say it. Scoped to the live TUI session
-    (`live_session.live_tui_session_rows`), a stamped record answers by
-    identity and an unstamped legacy or CLI record answers by write time --
-    a plan written before the current session started belongs to an earlier
-    one.
-
-    Unanswerable reads to False on purpose: no state.db, no live TUI row, an
-    unreadable one, or a row too old to describe anyone's session all keep the
-    age-only gates. A legitimately current plan must never be hidden on
-    missing evidence. The narrow known gap is two concurrently live TUI
-    sessions -- the widget poll carries no session identity, so the most
-    recently active row answers for both, and the other session's plan
-    returns as soon as that session is touched again.
-    """
-    if hermes is None:
-        return False
-    session = next(iter(live_tui_session_rows(str(hermes))), None)
-    if session is None:
-        return False
-    session_id = str(session.get("id") or "")
+def _own_todo_record(home: Path, session_id: str) -> tuple[dict[str, Any], bool]:
+    """The per-session record for ``session_id``, and whether it is one."""
     if not session_id:
-        return False
+        return {}, False
+    record = _read_hud_json(todo_path(home, session_id), root=home)
+    return record, record.get("schema_version") == TODO_SCHEMA_VERSION
+
+
+def _reading_session(
+    hermes: Path | None, session_ref: str
+) -> tuple[str, dict[str, Any] | None]:
+    """The session a todo read is for: its id, and its live TUI row if any.
+
+    An explicit ``session_ref`` is the reader's own identity -- the widget
+    reads it off the host's active-session file, the plugin tool and the
+    pre-LLM hook off the session that invoked them -- and is trusted as-is,
+    whether or not state.db lists it as a TUI session (a Slack or Discord
+    gateway session is a valid reader with no TUI row). Without one, the
+    most recently active live TUI row answers, as before, and a host that
+    cannot say returns no identity at all.
+    """
+    reference = strip_control_characters(session_ref)[:MAX_TODO_SESSION_REF_CHARS]
+    rows = live_tui_session_rows(str(hermes)) if hermes is not None else []
+    if reference:
+        return reference, next((row for row in rows if str(row.get("id") or "") == reference), None)
+    session = rows[0] if rows else None
+    if session is None:
+        return "", None
+    session_id = str(session.get("id") or "")
     activity = session.get("activity")
-    if not isinstance(activity, (int, float)) or (
+    if not session_id or not isinstance(activity, (int, float)) or (
         _utc_epoch_now() - float(activity) > LIVE_TUI_SESSION_FRESH_SECONDS
     ):
+        return "", None
+    return session_id, session
+
+
+def _todo_belongs_to_another_session(
+    record: dict[str, Any],
+    updated_at: str,
+    session_id: str,
+    session: dict[str, Any] | None,
+) -> bool:
+    """Whether a home-wide plan was declared by a session other than the reader.
+
+    The home-wide ``todo.json`` says nothing about who declared it, and
+    wall-clock age alone cannot answer: an INCOMPLETE plan written hours ago
+    is inside every age bound and so greeted every new session with a
+    checklist it never created (a 4/7 plan from one session observed
+    rendering in a fresh one the next day).
+
+    A stamped record answers by identity. An unstamped legacy or CLI record
+    answers by write time against the reader's own TUI row -- a plan written
+    before the session started belongs to an earlier one.
+
+    Unanswerable reads to False on purpose: no reader identity, or an
+    unstamped record with no row to date it against, keeps the age-only
+    gates. A legitimately current plan must never be hidden on missing
+    evidence.
+    """
+    if not session_id:
         return False
     reference = strip_control_characters(record.get("session_ref", ""))[:MAX_TODO_SESSION_REF_CHARS]
     if reference:
         return reference != session_id
+    if session is None:
+        return False
     started_at = session.get("started_at")
     written_at = _epoch_seconds(updated_at)
     if not isinstance(started_at, (int, float)) or written_at is None:

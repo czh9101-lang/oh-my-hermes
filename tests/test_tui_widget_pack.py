@@ -241,6 +241,22 @@ class TuiWidgetPackTests(unittest.TestCase):
             self.assertEqual(unrelated.read_text(encoding="utf-8"), "personal\n")
             self.assertEqual(json.loads(stdout)["tui_widget"]["status"], "removed")
 
+    def test_widget_names_its_own_session_on_every_poll(self) -> None:
+        # Two live TUIs used to share one panel answer because the poll
+        # carried no identity. The host writes this TUI's session id to the
+        # file named by HERMES_TUI_ACTIVE_SESSION_FILE; the widget reads it
+        # per poll (the session moves on /new and /resume) and hands it to
+        # the reader as the todo scope, without widening the env allowlist.
+        widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
+
+        self.assertIn("process.env.HERMES_TUI_ACTIVE_SESSION_FILE", widget)
+        self.assertIn("const sessionRef = activeSessionRef()", widget)
+        self.assertIn("{ ...READER_ENV, OMH_HUD_TUI_SESSION_REF: sessionRef }", widget)
+        self.assertIn("tui_session_ref=os.environ.get('OMH_HUD_TUI_SESSION_REF', '')", widget)
+        # A malformed value is dropped, never mutated into a different key.
+        self.assertIn("SESSION_REF_SHAPE.test(sessionId) ? sessionId : ''", widget)
+        self.assertNotIn("...process.env", widget)
+
     def test_widget_frames_the_composer_and_docks_the_plan_on_top(self) -> None:
         # Changed on purpose (this used to pin a single dock-bottom app and
         # forbid dock-top). The single bottom dock framed the OMH section

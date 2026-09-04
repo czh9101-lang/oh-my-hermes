@@ -25,12 +25,29 @@ class TodoReconciliationReminderTest(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.home = str(Path(self._tmp.name) / "omh")
 
-    def _write_plan(self, states):
+    def _write_plan(self, states, session_ref=""):
         items = [
             {"text": f"task {index}", "state": state, "phase": "Review"}
             for index, state in enumerate(states)
         ]
-        write_todo(Path(self.home), build_todo_record("plan", items, source="test"))
+        write_todo(
+            Path(self.home),
+            build_todo_record("plan", items, source="test", session_ref=session_ref),
+        )
+
+    def test_the_reminder_binds_to_the_turn_session_own_plan(self):
+        # A Slack session's open plan is not the TUI session's open work:
+        # each turn reconciles against the plan its own session declared.
+        self._write_plan(["done", "active", "pending"], session_ref="tui-session")
+        self._write_plan(["done", "done"], session_ref="slack-session")
+
+        self.assertIn(
+            "[OMH plan todo] 1/3 done",
+            open_todo_reminder(omh_home=self.home, session_ref="tui-session"),
+        )
+        self.assertEqual(open_todo_reminder(omh_home=self.home, session_ref="slack-session"), "")
+        payload = pre_llm_call(user_message="다 됐어?", omh_home=self.home, session_id="slack-session")
+        self.assertNotIn("[OMH plan todo]", str((payload or {}).get("context", "")))
 
     def test_an_open_plan_yields_one_compact_line(self):
         self._write_plan(["done", "active", "pending"])
