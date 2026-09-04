@@ -533,9 +533,18 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertNotIn("elapsedCoarse", widget)
         self.assertIn("row.cost_usd > 0", widget)
         # Token-derived approximations (subscription-billed hosts record no
-        # per-call cost) render with a `~`; true zeros render nothing.
+        # per-call cost) render with a `~`; a zero renders only with the
+        # recorded provenance that earns it (status first, else source —
+        # whatever word the host wrote, never a vocabulary this surface
+        # enumerates), and never with a `~`, because an exact zero is not an
+        # approximation. Row and header apply the same rule.
         self.assertIn("row.cost_approximate ? '~' : ''", widget)
-        self.assertIn("cost > 0 ? `${approximate ? '~' : ''}$${cost.toFixed(3)}` : ''", widget)
+        self.assertIn("function costSegmentText(row)", widget)
+        self.assertIn("$${row.cost_usd.toFixed(4)} (${provenance})", widget)
+        self.assertIn("safeText(row.cost_status) || safeText(row.cost_source)", widget)
+        self.assertIn("const zeroCostProvenance", widget)
+        self.assertIn("$${cost.toFixed(3)} (${zeroCostProvenance})", widget)
+        self.assertIn("`${approximate ? '~' : ''}$${cost.toFixed(3)}`", widget)
         # Claude Code's token-counter idiom (184.8k, 2.1m): observed subagent
         # token counts render per row and summed on the header, one decimal
         # with trailing .0 trimmed. The row segment sits BEFORE cost so the
@@ -587,7 +596,7 @@ class TuiWidgetPackTests(unittest.TestCase):
         # cache, ctx, turn, cost on screen.
         self.assertLess(widget.index("metricSegment('rate'"), widget.index("metricSegment('cache'"))
         self.assertLess(widget.index("metricSegment('cache'"), widget.index("metricSegment('turn'"))
-        self.assertLess(widget.index("metricSegment('turn'"), widget.index("        'cost',"))
+        self.assertLess(widget.index("metricSegment('turn'"), widget.index("metricSegment('cost'"))
         # Screen position stopped being shed priority when rate moved left, so
         # each segment carries a `drop` rank and the loop sheds the highest --
         # rate first, then cost, then turn -- exactly the order the tail's

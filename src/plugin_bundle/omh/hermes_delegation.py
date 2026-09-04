@@ -1207,11 +1207,20 @@ def _query_state_db(state_db: Path, *, now: float) -> dict[str, Any]:
 
         if children:
             placeholders = ",".join("?" for _ in children)
+            columns = {
+                str(row[1])
+                for row in connection.execute(
+                    'PRAGMA table_info("session_model_usage")'
+                ).fetchall()
+            }
+            cost_status = "MAX(cost_status)" if "cost_status" in columns else "NULL"
+            cost_source = "MAX(cost_source)" if "cost_source" in columns else "NULL"
             cursor = connection.execute(
                 f"""
                 SELECT session_id, SUM(api_call_count), SUM(input_tokens),
                        SUM(output_tokens), SUM(cache_read_tokens),
                        SUM(actual_cost_usd), SUM(estimated_cost_usd),
+                       {cost_status}, {cost_source},
                        MIN(first_seen), MAX(last_seen)
                 FROM session_model_usage
                 WHERE session_id IN ({placeholders})
@@ -1228,8 +1237,10 @@ def _query_state_db(state_db: Path, *, now: float) -> dict[str, Any]:
                     "cache_read_tokens": _finite(row[4]),
                     "actual_cost_usd": _finite(row[5]),
                     "estimated_cost_usd": _finite(row[6]),
-                    "first_seen": _finite(row[7]),
-                    "last_seen": _finite(row[8]),
+                    "cost_status": _text(row[7]) or None,
+                    "cost_source": _text(row[8]) or None,
+                    "first_seen": _finite(row[9]),
+                    "last_seen": _finite(row[10]),
                 }
             for child in children:
                 child["usage"] = usage.get(child["session_id"], {})
@@ -1378,28 +1389,46 @@ def read_hermes_native_subagents(
         cache_hit = None
         if cache_read and (cache_read + input_tokens) > 0:
             cache_hit = round(100.0 * cache_read / (cache_read + input_tokens), 1)
+        cost_status = usage.get("cost_status")
+        cost_source = usage.get("cost_source")
+        # Provenance is host-vocabulary-neutral: OMH does not enumerate the
+        # status strings a host may write ("included", "billed_zero", ...).
+        # ANY recorded status or source vouches for the recorded figure,
+        # zero included, so the split below is "some provenance" versus
+        # "none" -- never a match on one host's word. Matching on a word is
+        # what let a mixed group (billed $12.50 rows beside included zero
+        # rows) collapse to a fake zero when MAX(cost_status) surfaced the
+        # hardcoded word, and let a host's confirmed billed-zero get
+        # approximated over because its status was not that word.
+        cost_provenance = cost_status or cost_source
+        # A positive observed aggregate always stands as recorded; only a
+        # zero consults provenance at all.
         cost = usage.get("actual_cost_usd") or usage.get("estimated_cost_usd")
-        # Subscription-billed hosts record no per-call cost; the owner asked
-        # for an approximation there rather than a blank. Token-derived, and
-        # flagged approximate so the widget can render it as `~$…`.
+        # Hosts that record no per-call cost (subscription billing bills
+        # nothing per call) reach here as a zero; the owner asked for an
+        # approximation there rather than a blank. Token-derived, and flagged
+        # approximate so the widget can render it as `~$…`.
         #
         # `session_model_usage` declares both cost columns NOT NULL DEFAULT 0,
         # so a host that billed zero and a host that recorded nothing reach
-        # this line as the same 0.0 -- the distinction is destroyed before OMH
-        # can read it, which is why the approximation fires on a falsy cost at
-        # all. What must NOT happen is the third case: no recorded cost AND no
-        # price for the model (`_approximate_cost_usd` returns None for an
-        # unpriced model, and for a run with no tokens). That left `cost` at
-        # 0.0 with no approximate flag, so the row claimed the run was free.
-        # An unknown cost is unknown: send None and let the surface say
-        # nothing rather than state a zero it cannot support.
+        # this line as the same 0.0 -- cost_status/cost_source are the only
+        # fields that tell them apart, and they are nullable, so unlike the
+        # summed costs they CAN distinguish "recorded" from "absent". The
+        # approximation therefore fires only on a zero with NO provenance.
+        # What must NOT happen is the third case: no recorded cost, no
+        # provenance, AND no price for the model (`_approximate_cost_usd`
+        # returns None for an unpriced model, and for a run with no tokens).
+        # That left `cost` at 0.0 with no approximate flag, so the row
+        # claimed the run was free. An unknown cost is unknown: send None and
+        # let the surface say nothing rather than state a zero it cannot
+        # support.
         cost_approximate = False
         # A figure derived from the operator's own rate and one derived from
         # our shipped ballpark are both approximations, but they are not
         # equally arguable: only the first is a number the operator chose.
         # The row says which, so a surface can tell them apart.
         cost_override = _text(child["model"]).casefold() in price_overrides
-        if not cost:
+        if not cost and cost_provenance is None:
             approx = _approximate_cost_usd(
                 child["model"], input_tokens, output_tokens, cache_read, price_overrides
             )
@@ -1478,6 +1507,10 @@ def read_hermes_native_subagents(
         api_calls = usage.get("api_calls")
         if api_calls is not None:
             row["turn_count"] = int(api_calls)
+        if cost_status is not None:
+            row["cost_status"] = cost_status
+        if cost_source is not None:
+            row["cost_source"] = cost_source
         if cost is not None:
             row["cost_usd"] = cost
             if cost_approximate:
