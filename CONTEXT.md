@@ -33,8 +33,10 @@ _Avoid_: using it for OMH runtime state
 
 **OMH home**:
 `$OMH_HOME`, default `~/.omh` — OMH's state root; managed skills and the
-runtime metadata the HUD reads live here.
-_Avoid_: `.omh` inside a repo (that is not a thing), Hermes home
+runtime metadata the HUD reads live here. Exactly one home is active per
+invocation: the user-scope default, `OMH_HOME`, `--omh-home`, or
+`--scope project`, which resolves to the repository's own `./.omh`.
+_Avoid_: probing several guessed homes, Hermes home
 
 ### Skills and routing
 

@@ -1604,7 +1604,7 @@ def _with_canonical_display_names(routing_message: str) -> str:
     skill. Names the catalog does not own are left alone.
     """
     if _explicit_skill_candidate_is_negated(routing_message, "omh-docs", "product-docs") or (
-        "omh-docs" in normalized_phrase(routing_message) and not is_omh_docs_question(routing_message)
+        contains_cue_phrase(routing_message, ("omh-docs",)) and not is_omh_docs_question(routing_message)
     ):
         routing_message = canonical_display_mentions(routing_message, {"omh-docs": ""})
     return canonical_display_mentions(routing_message, _canonical_skill_by_display_name())
