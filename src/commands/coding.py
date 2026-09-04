@@ -1316,11 +1316,57 @@ def cmd_coding_complexity(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coding_model_contract(args: argparse.Namespace) -> int:
+    from ..coding.model_contracts import dynamic_effort_guidance, model_contract
+    from ..coding.model_routing import model_family
+
+    model = str(args.model or "").strip()
+    contract = model_contract(model)
+    if contract is None:
+        raise OmhError(
+            f"no documented contract for `{model}`; the route resolver keeps treating it by family "
+            f"(`{model_family(model) or 'unknown'}`) and the catalog alone"
+        )
+    executor = str(getattr(args, "executor", "") or "").strip()
+    payload: dict[str, object] = {
+        "schema_version": "model_contract_report/v1",
+        "requested_model": model,
+        "family": model_family(model) or "unknown",
+        "contract": dict(contract),
+        "effort_policy": dynamic_effort_guidance(model, executor),
+    }
+    if _wants_json(args):
+        _print_json(payload)
+        return 0
+    print(f"Documented contract for `{contract['model_id']}` ({payload['family']} family):")
+    print(f"- reasoning efforts: {', '.join(contract['reasoning_efforts'])} (floor `{contract['effort_floor']}`)")
+    for effort, detail in dict(contract.get("unsupported_efforts", {})).items():
+        print(f"- `{effort}`: {detail}")
+    print(f"- tool calling: {contract['tool_calling']['api']} API — {contract['tool_calling']['note']}")
+    print(f"- unsupported parameters: {', '.join(contract['unsupported_parameters'])}")
+    print(
+        f"- context {contract['context_window_tokens']:,} tokens; input {contract['max_input_tokens']:,}; "
+        f"output {contract['max_output_tokens']:,}; knowledge cutoff {contract['knowledge_cutoff']}"
+    )
+    policy = payload["effort_policy"]
+    if isinstance(policy, dict):
+        print(f"- effort policy ({policy['mode']}): {policy['mechanism']}")
+        if policy.get("note"):
+            print(f"  {policy['note']}")
+    print(f"- sources ({contract['sources_read']}):")
+    for source in contract["sources"]:
+        print(f"  {source}")
+    print(str(contract["claim_boundary"]))
+    return 0
+
+
 def cmd_coding_composition_guide(args: argparse.Namespace) -> int:
+    from ..coding.model_contracts import dynamic_effort_guidance
     from ..coding.model_routing import model_family
     from ..coding.unit_prompt_protocol import (
         GOAL_ECHO_PROTOCOL,
         MAIN_AGENT_COMPOSITION_CALIBRATIONS,
+        MODEL_COMPOSITION_CALIBRATIONS,
         PROMPT_CACHE_COMPOSITION_PROTOCOL,
         REVIEW_ROLE_PROTOCOL,
         VERIFICATION_STOP_PROTOCOL,
@@ -1347,11 +1393,16 @@ def cmd_coding_composition_guide(args: argparse.Namespace) -> int:
             "calibration": composition_calibration_for_model(model),
             "delegation_protocol": delegation_protocol,
         }
+        effort_policy = dynamic_effort_guidance(model, str(getattr(args, "executor", "") or ""))
+        if effort_policy is not None:
+            payload["effort_policy"] = effort_policy
         if _wants_json(args):
             _print_json(payload)
             return 0
         print(f"Composition guidance for `{model}` ({payload['family']} family):")
         print(str(payload["calibration"]))
+        if effort_policy is not None:
+            print(f"Effort policy ({effort_policy['mode']}): {effort_policy['mechanism']}")
         print("Delegation protocol (embed in every delegated or reviewer prompt, runtime-native included):")
         print(f"- {GOAL_ECHO_PROTOCOL}")
         print(f"- {VERIFICATION_STOP_PROTOCOL}")
@@ -1361,6 +1412,7 @@ def cmd_coding_composition_guide(args: argparse.Namespace) -> int:
     payload = {
         "schema_version": "composition_guide/v1",
         "calibrations": dict(MAIN_AGENT_COMPOSITION_CALIBRATIONS),
+        "model_calibrations": dict(MODEL_COMPOSITION_CALIBRATIONS),
         "delegation_protocol": delegation_protocol,
     }
     if _wants_json(args):
@@ -2912,8 +2964,26 @@ def _add_coding_commands(sub) -> None:
         default=None,
         help="The main agent's own model id (for example claude-fable-5-1, gpt-5.6-sol, kimi-k3); omit to list all families.",
     )
+    composition_guide.add_argument(
+        "--executor",
+        default=None,
+        help="Executor profile the composer prepares for; selects the per-turn or mid-conversation effort policy for models with a documented contract.",
+    )
     composition_guide.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
     composition_guide.set_defaults(func=cmd_coding_composition_guide)
+
+    model_contract = coding_sub.add_parser(
+        "model-contract",
+        help="Print the vendor-documented contract for one exact model id (efforts, limits, tool API, pricing, sources); metadata only.",
+    )
+    model_contract.add_argument("--model", required=True, help="Exact model id, provider prefix welcome (for example gpt-6-astra, openai/gpt-6-astra).")
+    model_contract.add_argument(
+        "--executor",
+        default=None,
+        help="Executor profile to resolve the effort policy against; omit for the per-turn policy.",
+    )
+    model_contract.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
+    model_contract.set_defaults(func=cmd_coding_model_contract)
 
     add_hermes_child_command(coding_sub)
     add_coding_status_board_command(coding_sub)

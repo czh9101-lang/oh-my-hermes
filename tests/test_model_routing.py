@@ -58,7 +58,7 @@ class ResearchRoleTests(unittest.TestCase):
         # nothing until someone asks for it.
         self.assertEqual(deep["selected_reasoning_effort"], "xhigh")
         deep_codex = resolve_model_route("codex", role="research", requested_depth="deep")
-        self.assertEqual(deep_codex["selected_model"], "gpt-5-codex")
+        self.assertEqual(deep_codex["selected_model"], "gpt-6-astra")
         self.assertEqual(deep_codex["selected_reasoning_effort"], "xhigh")
         outcomes = {entry["stage"]: entry["outcome"] for entry in deep["attempted"]}
         self.assertEqual(outcomes["research_depth"], "applied")

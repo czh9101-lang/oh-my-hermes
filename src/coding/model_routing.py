@@ -26,6 +26,8 @@ from __future__ import annotations
 import re
 from typing import Final, Iterable, Mapping
 
+from .model_contracts import EFFORT_FLOOR_KIND, contract_effort_floor
+
 CODING_MODEL_ROUTE_SCHEMA_VERSION: Final[str] = "coding_model_route/v2"
 # The frozen v1 identifier: referenced only for reading persisted payloads.
 CODING_MODEL_ROUTE_V1_SCHEMA_VERSION: Final[str] = "coding_model_route/v1"
@@ -86,6 +88,12 @@ EFFORT_CHANGE_KINDS: Final[tuple[str, ...]] = (
     "catalog_no_authority_passthrough",
     "unknown_vocabulary_passthrough",
     "rejected_unsafe_shape",
+    # The requested effort sits below an exact model's DOCUMENTED ladder
+    # (`src/coding/model_contracts.py`); it is raised to the documented floor
+    # and the record says so, so an unsupported rung never reaches a provider
+    # silently and never leaves the route effort-less on a model whose
+    # contract has no default.
+    EFFORT_FLOOR_KIND,
 )
 
 # Canonical weakest-to-strongest reasoning vocabulary. Consumers may compare
@@ -138,6 +146,19 @@ MODEL_CATALOG_KINDS: Final[tuple[str, ...]] = (
 
 EXECUTOR_MODEL_OPTIONS: Final[dict[str, tuple[dict[str, object], ...]]] = {
     "codex": (
+        {
+            # GPT-6 Astra (2026-09-03): the documented ladder starts at `low`
+            # (`none` is HTTP 400, `minimal` migrates to `low`); the exact
+            # contract lives in `model_contracts.py`. Listed first because it
+            # heads the frontier chains below; the codex rows behind it stay
+            # the fall-through so an account the staged rollout has not
+            # reached keeps resolving to the GPT ecosystem.
+            "model_id": "gpt-6-astra",
+            "label": "GPT-6 Astra (frontier reasoning; staged rollout)",
+            "tier": "frontier",
+            "recommended_roles": ("brain", "review", "design_visual"),
+            "reasoning_efforts": ("low", "medium", "high", "xhigh", "max"),
+        },
         {
             "model_id": "gpt-5-codex",
             "label": "Codex frontier coding model",
@@ -307,11 +328,20 @@ def _CLAUDE_FRONTIER_CHAIN(effort: str) -> tuple[dict[str, str], ...]:
 BUILTIN_CATEGORY_MODELS: Final[dict[str, dict[str, tuple[dict[str, str], ...]]]] = {
     # Codex: gpt-5-codex is the frontier CODING model, gpt-5 the general one.
     # Every category that means "do the work well" therefore names the coding
-    # model, and the light categories name the general one.
+    # model, and the light categories name the general one. GPT-6 Astra heads
+    # the two full-depth categories (the slots the previous GPT frontier held)
+    # with gpt-5-codex as fall-through, mirroring the Hermes lane; the cost-tier
+    # categories keep their cheaper picks (Astra lists at 8x gpt-5.6-sol).
     "codex": {
-        "ultrabrain": ({"model_id": "gpt-5-codex", "reasoning_effort": "xhigh"},),
+        "ultrabrain": (
+            {"model_id": "gpt-6-astra", "reasoning_effort": "xhigh"},
+            {"model_id": "gpt-5-codex", "reasoning_effort": "xhigh"},
+        ),
         "deep": ({"model_id": "gpt-5-codex", "reasoning_effort": "high"},),
-        "architect": ({"model_id": "gpt-5-codex", "reasoning_effort": "xhigh"},),
+        "architect": (
+            {"model_id": "gpt-6-astra", "reasoning_effort": "xhigh"},
+            {"model_id": "gpt-5-codex", "reasoning_effort": "xhigh"},
+        ),
         "unspecified-high": ({"model_id": "gpt-5-codex", "reasoning_effort": ""},),
         "unspecified-low": ({"model_id": "gpt-5", "reasoning_effort": ""},),
         "quick": ({"model_id": "gpt-5", "reasoning_effort": "low"},),
@@ -1051,6 +1081,14 @@ def _resolve_hermes_recommendation_route(
 
     selected = str(chain[0]["model_id"])
     selected_effort = requested_effort or str(chain[0].get("reasoning_effort", ""))
+    effort_change: dict[str, str] | None = None
+    if requested_effort:
+        # Same contract rule as the catalog path: a requested rung the exact
+        # model documents as unsupported is raised to its floor, on record.
+        floor = contract_effort_floor(selected, requested_effort)
+        if floor is not None:
+            selected_effort, reason = floor
+            effort_change = _effort_change(requested_effort, selected_effort, EFFORT_FLOOR_KIND, reason)
     last_resort = str(recommendation.get("source", "")) == "last_resort_chain"
     attempted.append(
         {
@@ -1071,6 +1109,7 @@ def _resolve_hermes_recommendation_route(
         role=role,
         selected_model=selected,
         selected_reasoning_effort=selected_effort,
+        effort_change=effort_change,
         catalog_kind="editorial_recommendations",
         domain=requested_domain,
         depth=requested_depth,
@@ -1572,7 +1611,14 @@ def _selected_effort(
                 "automatic_passthrough",
                 "`auto` delegates effort selection to the executor contract",
             )
-        if normalized_effort in supported:
+        # A documented contract for the exact model outranks both catalog
+        # authority and the union fallback: a rung the vendor documents as
+        # unsupported is raised to the documented floor, recorded as such.
+        floor = contract_effort_floor(model_id, normalized_effort)
+        if floor is not None:
+            rung, reason = floor
+            return rung, _effort_change(requested_effort, rung, EFFORT_FLOOR_KIND, reason)
+        if normalized_effort in supported and authority == "exact_model":
             kind = "legacy_alias_normalized" if normalized_effort != requested_effort else "unchanged"
             reason = (
                 "legacy `none` normalized to canonical `off`"

@@ -318,7 +318,10 @@ class CategoryMaestroFanoutTests(unittest.TestCase):
             [self._unit(category="ultrabrain")],
         )
         route = contract["units"][0]["handoff"]["model_route"]
-        self.assertEqual(route["selected_model"], "gpt-5-codex")
+        self.assertEqual(route["selected_model"], "gpt-6-astra")
+        self.assertEqual(
+            [entry["model_id"] for entry in route["chain"]], ["gpt-6-astra", "gpt-5-codex"]
+        )
         self.assertEqual(route["catalog_kind"], "built_in_defaults")
 
     def test_unit_scale_survives_normalization_into_routing(self) -> None:
@@ -377,7 +380,7 @@ class CategoryMaestroCliTests(unittest.TestCase):
                 output_json=False,
             )
             self.assertEqual((status, stderr), (0, ""))
-            self.assertEqual(json.loads(stdout)["selected_model"], "gpt-5-codex")
+            self.assertEqual(json.loads(stdout)["selected_model"], "gpt-6-astra")
 
     def test_colon_tagged_model_ids_stay_intact_and_efforts_still_split(self) -> None:
         with TemporaryDirectory() as tmp:

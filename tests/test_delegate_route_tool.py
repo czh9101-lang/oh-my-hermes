@@ -222,14 +222,14 @@ class DelegateRouteToolTest(unittest.TestCase):
 
     def test_a_routed_alias_dispatches_the_providers_own_model_name(self):
         self._write_provider_routes(
-            {"gpt-5.6-sol": {"provider": "gateway", "model": "vendor/gpt-5.6-sol"}}
+            {"gpt-6-astra": {"provider": "gateway", "model": "vendor/gpt-6-astra"}}
         )
         result = self._call(action="set", category="ultrabrain")
         self.assertEqual(
             result["applied"],
             {
-                "alias": "gpt-5.6-sol",
-                "model": "vendor/gpt-5.6-sol",
+                "alias": "gpt-6-astra",
+                "model": "vendor/gpt-6-astra",
                 "provider": "gateway",
                 "reasoning_effort": "xhigh",
             },
@@ -243,8 +243,8 @@ class DelegateRouteToolTest(unittest.TestCase):
         self.assertEqual(
             result["applied"],
             {
-                "alias": "gpt-5.6-sol",
-                "model": "gpt-5.6-sol",
+                "alias": "gpt-6-astra",
+                "model": "gpt-6-astra",
                 "reasoning_effort": "xhigh",
             },
         )
@@ -526,8 +526,8 @@ class DelegateRouteToolTest(unittest.TestCase):
         self.assertEqual(
             result["applied"],
             {
-                "alias": "gpt-5.6-sol",
-                "model": "gpt-5.6-sol",
+                "alias": "gpt-6-astra",
+                "model": "gpt-6-astra",
                 "reasoning_effort": "xhigh",
             },
         )
@@ -535,7 +535,7 @@ class DelegateRouteToolTest(unittest.TestCase):
         self.assertIn("Prepared route only", result["evidence_boundary"])
         self.assertEqual(
             read_delegation_route(self.home),
-            {"model": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
+            {"model": "gpt-6-astra", "reasoning_effort": "xhigh"},
         )
 
     def test_every_category_now_routes_an_explicit_effort(self):

@@ -185,13 +185,18 @@ class ChainSurfaceConsistencyTests(unittest.TestCase):
             self.assertEqual(state["entitlements_path"], str(provider_entitlements_path(home)))
             architect = next(row for row in state["categories"] if row["category"] == "architect")
             self.assertTrue(architect["entitlement_shaped"])
-            self.assertEqual(architect["chain"][0]["model"], "gpt-5.6-sol")
+            # Both GPT entries are served by the confirmed openai-codex
+            # provider and lead in chain order (Astra ahead of Sol); the
+            # Claude entries follow as unserved.
+            self.assertEqual(architect["chain"][0]["model"], "gpt-6-astra")
+            self.assertEqual(architect["chain"][1]["model"], "gpt-5.6-sol")
             self.assertTrue(architect["chain"][0]["served"])
-            self.assertFalse(architect["chain"][1]["served"])
+            self.assertTrue(architect["chain"][1]["served"])
+            self.assertFalse(architect["chain"][2]["served"])
             out = io.StringIO()
             with redirect_stdout(out):
                 _print_state(state)
-            self.assertIn("architect: gpt-5.6-sol:xhigh", out.getvalue())
+            self.assertIn("architect: gpt-6-astra:xhigh, gpt-5.6-sol:xhigh", out.getvalue())
             self.assertIn("(reordered by provider entitlements)", out.getvalue())
             self.assertIn(f"Provider entitlements: {provider_entitlements_path(home)} [applied]", out.getvalue())
 
@@ -206,11 +211,13 @@ class ChainSurfaceConsistencyTests(unittest.TestCase):
             common = {"omh_home": str(home), "hermes_home": str(hermes_home)}
             routed = json.loads(omh_delegate_route_handler({"action": "set", "category": "architect", **common}))
             self.assertEqual(routed["status"], "routed", routed)
-            self.assertEqual(routed["applied"]["alias"], "gpt-5.6-sol")
+            self.assertEqual(routed["applied"]["alias"], "gpt-6-astra")
+            fallback = json.loads(omh_delegate_route_handler({"action": "fallback", "category": "architect", **common}))
+            self.assertEqual(fallback["applied"]["alias"], "gpt-5.6-sol")
             fallback = json.loads(omh_delegate_route_handler({"action": "fallback", "category": "architect", **common}))
             self.assertEqual(fallback["applied"]["alias"], "claude-fable-5-1")
             status = json.loads(omh_delegate_route_handler({"action": "status", **common}))
-            self.assertEqual(status["categories"]["architect"][0]["alias"], "gpt-5.6-sol")
+            self.assertEqual(status["categories"]["architect"][0]["alias"], "gpt-6-astra")
 
 
 class ConfigReaderTests(unittest.TestCase):

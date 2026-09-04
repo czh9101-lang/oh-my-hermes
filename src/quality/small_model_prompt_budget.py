@@ -126,6 +126,8 @@ def dispatched_prompt_blocks() -> dict[str, str]:
         GOAL_ECHO_PROTOCOL,
         HIGH_EFFORT_CALIBRATIONS,
         MAIN_AGENT_COMPOSITION_CALIBRATIONS,
+        MODEL_COMPOSITION_CALIBRATIONS,
+        MODEL_HIGH_EFFORT_CALIBRATIONS,
         PROMPT_CACHE_COMPOSITION_PROTOCOL,
         REVIEW_ROLE_PROTOCOL,
         UNIT_RESULT_RETURN_PROTOCOL,
@@ -144,6 +146,10 @@ def dispatched_prompt_blocks() -> dict[str, str]:
         blocks[f"HIGH_EFFORT_CALIBRATIONS[{family}]"] = text
     for family, text in MAIN_AGENT_COMPOSITION_CALIBRATIONS.items():
         blocks[f"MAIN_AGENT_COMPOSITION_CALIBRATIONS[{family}]"] = text
+    for model_id, text in MODEL_HIGH_EFFORT_CALIBRATIONS.items():
+        blocks[f"MODEL_HIGH_EFFORT_CALIBRATIONS[{model_id}]"] = text
+    for model_id, text in MODEL_COMPOSITION_CALIBRATIONS.items():
+        blocks[f"MODEL_COMPOSITION_CALIBRATIONS[{model_id}]"] = text
     return blocks
 
 

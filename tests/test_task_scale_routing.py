@@ -68,13 +68,24 @@ class TaskScaleVocabularyTests(unittest.TestCase):
             with self.subTest(profile=profile):
                 self.assertEqual(set(TASK_SCALE_CHAINS.get(profile, {})), {"small", "large"})
 
-    def test_every_scale_chain_model_exists_in_that_profiles_role_chains(self) -> None:
+    def test_every_scale_chain_model_exists_in_that_profiles_category_table(self) -> None:
+        # A scale chain merges categories from the profile's own table, so it
+        # can never name a model the table does not. It CAN name one the
+        # default role chains reserve: `ultrabrain` is reachable only by
+        # declaring it (scale `large`, `research:deep`), and GPT-6 Astra
+        # heads it on codex without heading any default role chain.
         for profile, scales in TASK_SCALE_CHAINS.items():
             known = {
+                entry["model_id"]
+                for chain in BUILTIN_CATEGORY_MODELS[profile].values()
+                for entry in chain
+            }
+            role_known = {
                 entry["model_id"]
                 for chain in ROLE_MODEL_CHAINS[profile].values()
                 for entry in chain
             }
+            self.assertLessEqual(role_known, known, profile)
             for scale, chain in scales.items():
                 for entry in chain:
                     with self.subTest(profile=profile, scale=scale, model=entry["model_id"]):
@@ -91,7 +102,7 @@ class TaskScaleResolutionTests(unittest.TestCase):
         self.assertEqual(small["selected_reasoning_effort"], "low")
         self.assertEqual(standard["selected_model"], "gpt-5-codex")
         self.assertEqual(standard["selected_reasoning_effort"], "")
-        self.assertEqual(large["selected_model"], "gpt-5-codex")
+        self.assertEqual(large["selected_model"], "gpt-6-astra")
         self.assertEqual(large["selected_reasoning_effort"], "xhigh")
 
     def test_scale_moves_the_selected_model_on_claude_code(self) -> None:
@@ -126,7 +137,7 @@ class TaskScaleResolutionTests(unittest.TestCase):
         route = resolve_model_route(
             "codex", role="research", requested_scale="large", requested_depth="deep"
         )
-        self.assertEqual(route["selected_model"], "gpt-5-codex")
+        self.assertEqual(route["selected_model"], "gpt-6-astra")
         stage = _scale_stage(route)
         self.assertEqual(stage["outcome"], "skipped")
         self.assertIn("depth dial", stage["reason"])

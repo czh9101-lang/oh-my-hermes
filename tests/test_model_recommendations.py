@@ -186,7 +186,7 @@ class RecommendationCatalogTests(unittest.TestCase):
 
         self.assertEqual(aliases("role_suggestions", "main"), [
             "kimi-k3", "claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5", "claude-fable-5",
-            "gpt-5.6-sol", "gpt-5.6-terra",
+            "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra",
         ])
         # A chain that would otherwise sit in one provider ecosystem ends on
         # a comparable-tier candidate from another (owner rule, 2026-08-19)
@@ -196,13 +196,15 @@ class RecommendationCatalogTests(unittest.TestCase):
             ["glm-5.3", "glm-5.2", "glm-5.2-ultrafast", "deepseek-v3.2", "claude-opus-5"],
         )
         self.assertEqual(aliases("categories", "unspecified-high"), ["kimi-k3", "claude-opus-5"])
-        self.assertEqual(aliases("categories", "ultrabrain"), ["gpt-5.6-sol"])
+        # GPT-6 Astra heads the GPT frontier slots (2026-09-03) with Sol as
+        # fall-through, the same generation rule as GLM 5.2 behind 5.3.
+        self.assertEqual(aliases("categories", "ultrabrain"), ["gpt-6-astra", "gpt-5.6-sol"])
         # DeepSeek closes deep's single-ecosystem exposure with a
         # reasoning-capable budget fallback (owner request, 2026-08-21).
         self.assertEqual(aliases("categories", "deep"), ["gpt-5.6-terra", "deepseek-v3.2"])
         self.assertEqual(
             aliases("categories", "architect"),
-            ["claude-fable-5-1", "claude-mythos-5-1", "claude-fable-5", "gpt-5.6-sol", "kimi-k3"],
+            ["claude-fable-5-1", "claude-mythos-5-1", "claude-fable-5", "gpt-6-astra", "gpt-5.6-sol", "kimi-k3"],
         )
         self.assertEqual(
             aliases("categories", "quick"),
@@ -243,7 +245,7 @@ class RecommendationCatalogTests(unittest.TestCase):
             "grok-code-fast", "kimi-k3", "gemini-3.1-pro",
         ])
         main = catalog["role_suggestions"]["main"]
-        self.assertEqual([entry["reasoning_effort"] for entry in main[-2:]], ["medium", "high"])
+        self.assertEqual([entry["reasoning_effort"] for entry in main[-3:]], ["xhigh", "medium", "high"])
         self.assertEqual(catalog["categories"]["ultrabrain"][0]["reasoning_effort"], "xhigh")
         self.assertEqual(catalog["categories"]["deep"][0]["reasoning_effort"], "high")
         for section in ("categories", "role_suggestions", "domain_affinities"):

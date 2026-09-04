@@ -43,7 +43,10 @@ from typing import Any
 # touching code by writing the mixture_chain_overrides/v1 document at
 # ~/.omh/routing/model-chains.json (see effective_mixture_category_chains).
 HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
-    "ultrabrain": (("gpt-5.6-sol", "xhigh"),),
+    # GPT-6 Astra heads the GPT frontier slots (2026-09-03); Sol stays as
+    # fall-through so a machine the staged rollout has not reached keeps
+    # resolving to the GPT ecosystem.
+    "ultrabrain": (("gpt-6-astra", "xhigh"), ("gpt-5.6-sol", "xhigh")),
     # DeepSeek closes deep's single-ecosystem exposure (the owner rule below
     # applied to a chain that sat entirely on GPT) with a reasoning-capable
     # budget candidate from a fourth provider ecosystem.
@@ -61,6 +64,7 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
         ("claude-fable-5-1", "xhigh"),
         ("claude-mythos-5-1", "xhigh"),
         ("claude-fable-5", "xhigh"),
+        ("gpt-6-astra", "xhigh"),
         ("gpt-5.6-sol", "xhigh"),
         ("kimi-k3", "xhigh"),
     ),
@@ -277,6 +281,7 @@ HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
     "claude-fable-5": ("ccapi", "anthropic", "openrouter"),
     "claude-fable-5-1": ("ccapi", "anthropic", "openrouter"),
     "claude-mythos-5-1": ("ccapi", "anthropic", "openrouter"),
+    "gpt-6-astra": ("openai-codex", "openai"),
     "gpt-5.6-sol": ("openai-codex", "openai"),
     "gpt-5.6-terra": ("openai-codex", "openai"),
     "gpt-5.6-luna": ("openai-codex", "openai"),
@@ -816,6 +821,11 @@ APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     # went stale before anyone noticed.
     # OpenAI list prices (openai.com/api/pricing, 2026-08):
     "gpt-5.6-sol": (1.25, 10.0),
+    # OpenAI list price (developers.openai.com/api/docs/models/gpt-6-astra,
+    # 2026-09): 10/50; cached input 1 (the default tenth). The $12.5 cache
+    # write and the 2x/1.5x multiplier above 272K input have no column in
+    # this table and stay documented in `src/coding/model_contracts.py`.
+    "gpt-6-astra": (10.0, 50.0),
     "gpt-5.6-terra": (1.25, 10.0),
     "gpt-5.6-luna": (0.25, 2.0),
     # Anthropic first-party list prices (docs.claude.com pricing, 2026-09):
