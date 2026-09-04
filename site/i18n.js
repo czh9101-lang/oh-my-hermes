@@ -24,10 +24,10 @@ window.OMH_I18N = {
 
     /* --------------------------------------------------------------- hero */
     "hero.badge": {
-      en: "For Hermes Agent · v1.0.6",
-      ko: "Hermes Agent 전용 · v1.0.6",
-      ja: "Hermes Agent のための · v1.0.6",
-      zh: "为 Hermes Agent 打造 · v1.0.6"
+      en: "For Hermes Agent · v2.0.0",
+      ko: "Hermes Agent 전용 · v2.0.0",
+      ja: "Hermes Agent のための · v2.0.0",
+      zh: "为 Hermes Agent 打造 · v2.0.0"
     },
     "hero.tagline": {
       en: 'Power intelligence and <em>agentic memory</em> for Hermes Agent.',

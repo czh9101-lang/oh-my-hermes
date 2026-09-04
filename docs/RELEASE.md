@@ -107,8 +107,9 @@ The release bump commit must move every current-version surface together.
 | --- | --- |
 | `pyproject.toml` `version` | wheel and package metadata |
 | `src/plugin_bundle/omh/plugin.yaml` `version` | the installed Hermes plugin manifest — `hermes plugins doctor` and the plugin listing report this value, so leaving it behind under-reports every install (issue #1079: it sat at 1.0.5 through the 1.0.6 and 1.0.7 releases) |
+| `site/index.html` and `site/i18n.js` `hero.badge` | the landing page's first visible version — the static markup plus all four locale strings (it sat at v1.0.6 through the 2.0.0 release) |
 
-`VersionSurfaceParityTests` in `tests/test_release_smoke.py` gates both: a bump
+`VersionSurfaceParityTests` in `tests/test_release_smoke.py` gates all three: a bump
 commit that misses one fails the suite instead of shipping the drift. Version
 strings quoted in README/docs prose and CLI help examples are illustrative and
 deliberately not parity-gated — update them in the bump commit, but a stale
