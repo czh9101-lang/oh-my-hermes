@@ -14473,6 +14473,36 @@ class RuntimeTodoCliTests(unittest.TestCase):
             self.assertEqual(status, 0)
             self.assertEqual(json.loads(stdout)["todo"]["status"], "absent")
 
+    def test_runtime_todo_session_flag_addresses_one_session_record(self) -> None:
+        with TemporaryDirectory() as tmp:
+            omh_home = str(Path(tmp) / ".omh")
+            base = ["--omh-home", omh_home, "runtime", "todo"]
+            status, stdout, _ = run_cli(
+                base + ["set", "--session", "20260831_153632_11fc69", "--title", "Own", "--item", "first"]
+            )
+            self.assertEqual(status, 0)
+            written = json.loads(stdout)
+            self.assertEqual(written["todo"]["status"], "established")
+            self.assertEqual(
+                Path(written["path"]).resolve().parent,
+                (Path(omh_home) / "runtime" / "todos").resolve(),
+            )
+            self.assertFalse((Path(omh_home) / "runtime" / "todo.json").exists())
+
+            # Without a session (and no live TUI row to fall back to) the
+            # home-wide projection is empty: the record belongs to one session.
+            status, stdout, _ = run_cli(base + ["show"])
+            self.assertEqual(json.loads(stdout)["todo"]["status"], "absent")
+            status, stdout, _ = run_cli(base + ["show", "--session", "20260831_153632_11fc69"])
+            self.assertEqual(json.loads(stdout)["todo"]["title"], "Own")
+            status, stdout, _ = run_cli(base + ["show", "--session", "another-session"])
+            self.assertEqual(json.loads(stdout)["todo"]["status"], "absent")
+
+            status, stdout, _ = run_cli(base + ["clear", "--session", "another-session"])
+            self.assertEqual(json.loads(stdout)["status"], "already_absent")
+            status, stdout, _ = run_cli(base + ["clear", "--session", "20260831_153632_11fc69"])
+            self.assertEqual(json.loads(stdout)["status"], "cleared")
+
     def test_runtime_todo_set_supports_repeated_pending_items(self) -> None:
         with TemporaryDirectory() as tmp:
             omh_home = str(Path(tmp) / ".omh")

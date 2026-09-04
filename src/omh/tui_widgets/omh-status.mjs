@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { readFileSync, statSync } from 'node:fs'
 
 export default function register(sdk) {
   const { Box, Text, defineWidgetApp, h, openWidget, updateWidget } = sdk
@@ -20,8 +21,35 @@ export default function register(sdk) {
     'import json,os,sys',
     "sys.path.insert(0, os.path.join(os.environ['HERMES_HOME'], 'plugins'))",
     'from omh.runtime_reader import read_omh_hud',
-    "print(json.dumps(read_omh_hud(os.environ.get('OMH_HOME'), os.environ.get('HERMES_HOME'), graph_preference=os.environ.get('OMH_SUBAGENT_GRAPH', 'auto'))))",
+    "print(json.dumps(read_omh_hud(os.environ.get('OMH_HOME'), os.environ.get('HERMES_HOME'), graph_preference=os.environ.get('OMH_SUBAGENT_GRAPH', 'auto'), tui_session_ref=os.environ.get('OMH_HUD_TUI_SESSION_REF', ''))))",
   ].join(';')
+  // This TUI's own session id. The host writes it to the file named by
+  // HERMES_TUI_ACTIVE_SESSION_FILE whenever it creates, resumes, or switches
+  // a session, and this widget runs inside that same TUI process, so the
+  // file is the one identity the poll can carry that no other TUI shares.
+  // The reader scopes the plan todo to it. After a resume or switch the
+  // file holds the durable session key; on a freshly created session it
+  // holds the gateway's transport id instead, which the reader detects
+  // (no live row, no record) and answers as an identity-less poll would.
+  // A missing, unreadable, or malformed value is passed as nothing rather
+  // than as a mutated string that would select the wrong record.
+  const ACTIVE_SESSION_FILE = process.env.HERMES_TUI_ACTIVE_SESSION_FILE || ''
+  const SESSION_REF_SHAPE = /^[\p{L}\p{N}_.:@-]{1,160}$/u
+  const ACTIVE_SESSION_FILE_MAX_BYTES = 4096
+  const activeSessionRef = () => {
+    if (!ACTIVE_SESSION_FILE) return ''
+    try {
+      // A regular, tiny file only: this runs on the TUI loop every poll, so
+      // a FIFO or a large file behind the env var must not stall it.
+      const info = statSync(ACTIVE_SESSION_FILE)
+      if (!info.isFile() || info.size > ACTIVE_SESSION_FILE_MAX_BYTES) return ''
+      const parsed = JSON.parse(readFileSync(ACTIVE_SESSION_FILE, 'utf8'))
+      const sessionId = typeof parsed?.session_id === 'string' ? parsed.session_id : ''
+      return SESSION_REF_SHAPE.test(sessionId) ? sessionId : ''
+    } catch {
+      return ''
+    }
+  }
 
   const sanitizeText = value => String(value ?? '')
     .replace(/[^\p{L}\p{N} .:/_·|+\[\]!\-]/gu, '')
@@ -125,12 +153,16 @@ export default function register(sdk) {
     return parts.join(' · ')
   }
   const readHud = () => new Promise(resolve => {
+    // Re-read per poll: /new and /resume move this TUI to another session
+    // without restarting the widget, and the todo must follow.
+    const sessionRef = activeSessionRef()
+    const env = sessionRef ? { ...READER_ENV, OMH_HUD_TUI_SESSION_REF: sessionRef } : READER_ENV
     execFile(
       __OMH_PYTHON_EXECUTABLE__,
       ['-I', '-c', READER],
       {
         encoding: 'utf8',
-        env: READER_ENV,
+        env,
         // Headroom over the payload's worst case (todo panel included) so an
         // oversized snapshot degrades to null instead of blanking the HUD.
         maxBuffer: 65536,

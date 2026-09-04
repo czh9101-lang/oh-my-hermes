@@ -25,9 +25,14 @@ TODO_RECONCILIATION_RULE = (
 )
 
 
-def open_todo_reminder(*, omh_home: str = "") -> str:
-    """One compact context line while an established plan has open items."""
-    todo = read_omh_todo(omh_home or None)
+def open_todo_reminder(*, omh_home: str = "", session_ref: str = "") -> str:
+    """One compact context line while an established plan has open items.
+
+    ``session_ref`` is the session whose turn is starting; its own plan is
+    the one a completion claim must reconcile against, never another
+    session's.
+    """
+    todo = read_omh_todo(omh_home or None, session_ref=session_ref)
     if todo.get("status") != "established":
         return ""
     counts = todo.get("counts") if isinstance(todo.get("counts"), dict) else {}

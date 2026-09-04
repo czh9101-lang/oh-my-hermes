@@ -968,24 +968,44 @@ does not load TUI widget files, so this panel is a modern-TUI-only surface.
 merge evidence; an all-done list collapses to a single header line and a list
 untouched for 24 hours is hidden as stale.
 
-The panel is also scoped to the session that declared the plan. One OMH home
-holds one todo list, so without that scope an unfinished checklist from an
-earlier session — or one another live session is writing to the same OMH home
-right now — renders in every session, as state the reader never created. When
-Hermes declares a plan through `omh_todo` it stamps the record with its own
-session id, and the HUD projects the plan only for the live Hermes TUI session
-that owns it; a plan belonging to another session reads as stale and is not
-rendered. Records written without a session id — `omh runtime todo set`, or
-anything predating the field — are scoped by write time instead: a plan
-written before the live session started belongs to an earlier one.
+The panel belongs to the session that declared the plan. When Hermes
+declares a plan through `omh_todo`, the record is stored for that session
+(`$OMH_HOME/runtime/todos/<session key>.json`) and read back only for it: the
+modern TUI widget names its own session from the host's active-session file
+on every poll, and the plugin tools (`omh_todo`, `omh_hud`) and the pre-LLM
+reminder name the session Hermes dispatched them for — never one named in
+tool arguments, so a model cannot address another session's record. A plan declared from a Slack or Discord gateway session,
+or from a second TUI open at the same time, is its own record, so it neither
+renders in another session's panel nor overwrites that session's checklist.
+Per-session records are pruned on write once they pass the 24-hour stale
+bound; nothing else in that directory is touched. `omh runtime todo set|clear|show --session
+<id>` addresses one session's record from the command line.
 
-The scope only applies where the host can answer it. With no
-`$HERMES_HOME/state.db`, an unreadable one, or no live TUI session recorded in
-it, the projection keeps the age-only behavior above and shows the plan, since
-hiding a legitimately current checklist on missing evidence is the worse
-failure. Two TUI sessions live at once share one panel answer — the most
-recently active session owns it, and the other session's plan returns as soon
-as that session is used again.
+Records written without a session id — `omh runtime todo set` with no
+`--session`, or anything predating the field — are the home-wide
+`$OMH_HOME/runtime/todo.json`, scoped by write time instead: a plan written
+before the reading session started belongs to an earlier one and reads as
+stale. That fallback only applies where the host can answer it. With no
+`$HERMES_HOME/state.db`, an unreadable one, no live TUI session recorded in
+it, or a reading session it does not list as a TUI (a gateway session has no
+row to date the record against), the projection keeps the age-only behavior
+above and shows the plan, since hiding a legitimately current checklist on
+missing evidence is the worse failure. The widget's identity likewise needs
+a host that sets `HERMES_TUI_ACTIVE_SESSION_FILE` for the TUI process; on a
+Hermes that does not, the widget carries no identity and the panel answers
+for the most recently active live TUI session, as it did before.
+
+The widget's own identity has one known alias. After a resume or session
+switch the host's active-session file holds the durable session key; on a
+freshly created session it holds the gateway's transport id, which no record
+and no `state.db` row carries. The reader treats a widget reference that
+names no live TUI row and owns no record as that case and answers as an
+identity-less poll would — the most recently active live TUI session — so a
+fresh TUI still renders the plan it declares. Two TUIs both freshly created
+and not yet resumed therefore still share that answer — the pre-existing
+most-recently-active rule — until each is resumed or switched and the file
+carries its durable key; the plugin tools and the reminder are unaffected
+because Hermes dispatches them with the durable key.
 
 #### Status model: no-run, prepared-handoff, observed-run
 

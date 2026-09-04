@@ -191,7 +191,9 @@ def pre_llm_call(**kwargs) -> dict[str, object] | None:
     # carries the reconciliation line so a completion claim cannot part ways
     # with the HUD checklist unnoticed. Honors the caller's awareness opt-out.
     if include_awareness:
-        todo_reminder = open_todo_reminder(omh_home=str(kwargs.get("omh_home", "") or ""))
+        todo_reminder = open_todo_reminder(
+            omh_home=str(kwargs.get("omh_home", "") or ""), session_ref=session_id
+        )
         if todo_reminder:
             context_parts.append(todo_reminder)
 

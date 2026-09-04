@@ -1508,23 +1508,8 @@ class TodoHudTests(unittest.TestCase):
             self.assertEqual(len(payload["display"]["todo_lines"]), 2)
 
 
-class TodoSessionScopeTests(unittest.TestCase):
-    """A plan belongs to the session that declared it, not to the OMH home.
-
-    The plan todo is ONE artifact per OMH home, and wall-clock age was its
-    only gate: a 24h staleness bound, plus a 15-minute linger that applies
-    only once every item is done. An INCOMPLETE plan written hours ago sat
-    inside both, so it projected `established` into every new Hermes session —
-    observed live, where a checklist declared in one session greeted a fresh
-    one the next day as state that session never created.
-
-    The host's own `state.db` knows which TUI session is live. A record
-    stamped with `session_ref` answers by identity; an unstamped legacy or CLI
-    record answers by write time. When state.db cannot answer — absent,
-    unreadable, no live TUI row, or a row too old to describe anyone's
-    session — the age-only gates stand, because hiding a legitimately current
-    plan on missing evidence is the worse failure.
-    """
+class _TodoSessionFixture:
+    """Shared fixture for the session-scope and session-isolation suites."""
 
     NOW = 1788158400.0
 
@@ -1600,6 +1585,25 @@ class TodoSessionScopeTests(unittest.TestCase):
         from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
 
         return read_omh_hud(self.omh_home, self.hermes_home)["todo"]
+
+
+class TodoSessionScopeTests(_TodoSessionFixture, unittest.TestCase):
+    """A plan belongs to the session that declared it, not to the OMH home.
+
+    The plan todo is ONE artifact per OMH home, and wall-clock age was its
+    only gate: a 24h staleness bound, plus a 15-minute linger that applies
+    only once every item is done. An INCOMPLETE plan written hours ago sat
+    inside both, so it projected `established` into every new Hermes session —
+    observed live, where a checklist declared in one session greeted a fresh
+    one the next day as state that session never created.
+
+    The host's own `state.db` knows which TUI session is live. A record
+    stamped with `session_ref` answers by identity; an unstamped legacy or CLI
+    record answers by write time. When state.db cannot answer — absent,
+    unreadable, no live TUI row, or a row too old to describe anyone's
+    session — the age-only gates stand, because hiding a legitimately current
+    plan on missing evidence is the worse failure.
+    """
 
     def test_an_incomplete_plan_from_a_previous_session_is_hidden(self) -> None:
         # The reported bug, in the shape it was observed: a checklist declared
@@ -1727,6 +1731,11 @@ class TodoSessionScopeTests(unittest.TestCase):
             self.assertEqual(open_todo_reminder(omh_home=str(self.omh_home)), "")
 
     def test_the_plugin_tool_stamps_the_host_session_that_declared_the_plan(self) -> None:
+        # Hermes dispatches every plugin tool as handler(args, session_id=...)
+        # with no host, so the session is read off that keyword. A session id
+        # inside the model-supplied observation argument is NOT the writer's
+        # identity: honoring it would let a model address another session's
+        # record.
         import os
 
         from omh.plugin_bundle.omh.tools.todo_tool import omh_todo_handler
@@ -1743,18 +1752,24 @@ class TodoSessionScopeTests(unittest.TestCase):
                         "items": [{"text": "Inspect routing fixtures", "state": "active"}],
                         "observation": {
                             "host": "hermes-agent",
-                            "session_id": "20260831_153632_11fc69",
+                            "session_id": "someone-else",
                         },
-                    }
+                    },
+                    session_id="20260831_153632_11fc69",
                 )
             )
 
         self.assertEqual(written["status"], "written")
+        from omh.plugin_bundle.omh.todo_store import todo_path
+
+        # A stamped record is that session's own file, not the home-wide one.
+        self.assertFalse((self.omh_home / "runtime" / "todo.json").exists())
         record = json.loads(
-            (self.omh_home / "runtime" / "todo.json").read_text(encoding="utf-8")
+            todo_path(self.omh_home, "20260831_153632_11fc69").read_text(encoding="utf-8")
         )
         self.assertEqual(record["session_ref"], "20260831_153632_11fc69")
         self.assertEqual(record["schema_version"], "omh_todo/v1")
+        self.assertFalse(todo_path(self.omh_home, "someone-else").exists())
 
     def test_an_unstamped_write_stays_byte_identical_to_the_pre_field_record(self) -> None:
         # session_ref is additive-optional inside omh_todo/v1: a writer that
@@ -1784,6 +1799,284 @@ class TodoSessionScopeTests(unittest.TestCase):
 
         self.assertEqual(len(record["session_ref"]), MAX_TODO_SESSION_REF_CHARS)
         self.assertTrue(record["session_ref"].startswith("s[2J9"))
+
+
+class TodoSessionIsolationTests(_TodoSessionFixture, unittest.TestCase):
+    """One plan per declaring session, read back only by that session.
+
+    The scope tests above keep the home-wide file honest. They could not fix
+    the sharper report: a plan declared from a Slack session, or from a
+    second TUI open at the same time, replaced the one file every session
+    shared, and the widget poll carried no identity to tell two live TUIs
+    apart. A stamped record is now its own file under `runtime/todos/`, the
+    widget names its own session, and every reader resolves its own plan.
+    """
+
+    TUI_A = "20260831_153632_11fc69"
+    TUI_B = "20260831_160102_9a1c22"
+    SLACK = "slack:C0123ABC:1725100000.000100"
+
+    def _declare(self, session_id: str, title: str, states=("done", "active", "pending")) -> dict:
+        import os
+
+        from omh.plugin_bundle.omh.tools.todo_tool import omh_todo_handler
+
+        with patch.dict(
+            os.environ,
+            {"OMH_HOME": str(self.omh_home), "HERMES_HOME": str(self.hermes_home)},
+        ):
+            return json.loads(
+                omh_todo_handler(
+                    {
+                        "action": "set",
+                        "title": title,
+                        "items": [
+                            {"text": f"{title} step {index}", "state": state}
+                            for index, state in enumerate(states)
+                        ],
+                    },
+                    session_id=session_id,
+                )
+            )
+
+    def _todo_for(self, session_ref: str) -> dict:
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        return read_omh_hud(self.omh_home, self.hermes_home, session_ref=session_ref)["todo"]
+
+    def test_two_live_tuis_each_render_only_their_own_plan(self) -> None:
+        # Both TUIs are live; B was touched last, so B is the MRU row that
+        # used to answer for both. With the widget naming its own session,
+        # A reads A's plan and B reads B's, and neither write clobbered the
+        # other.
+        self._build_state_db(
+            [
+                (self.TUI_A, self._epoch(-600), self._epoch(-120)),
+                (self.TUI_B, self._epoch(-300), self._epoch(-5)),
+            ]
+        )
+        self.assertEqual(self._declare(self.TUI_A, "Alpha")["status"], "written")
+        self.assertEqual(self._declare(self.TUI_B, "Beta")["status"], "written")
+
+        alpha = self._todo_for(self.TUI_A)
+        beta = self._todo_for(self.TUI_B)
+
+        self.assertEqual((alpha["status"], alpha["title"]), ("established", "Alpha"))
+        self.assertEqual((beta["status"], beta["title"]), ("established", "Beta"))
+        # A poll that carries no identity still falls back to the MRU row.
+        self.assertEqual(self._todo()["title"], "Beta")
+
+    def test_a_slack_session_plan_neither_replaces_nor_reaches_the_tui(self) -> None:
+        # The reported bug: a gateway session (source != 'tui', so it never
+        # appears as a TUI row) declares a plan into the same OMH home. The
+        # TUI's own checklist must survive, and the Slack session must read
+        # its own plan back even though state.db lists no TUI row for it.
+        self._build_state_db([(self.TUI_A, self._epoch(-600), self._epoch(-5))])
+        self._declare(self.TUI_A, "Tui plan")
+        self._declare(self.SLACK, "Slack plan")
+
+        tui = self._todo_for(self.TUI_A)
+        slack = self._todo_for(self.SLACK)
+
+        self.assertEqual((tui["status"], tui["title"]), ("established", "Tui plan"))
+        self.assertEqual((slack["status"], slack["title"]), ("established", "Slack plan"))
+        self.assertEqual(self._todo()["title"], "Tui plan")
+        # A gateway session that declared nothing has nothing: its own
+        # identity never falls through to the TUI's plan.
+        self.assertEqual(self._todo_for("slack:C0123ABC:1725100000.000200")["status"], "absent")
+
+    def test_a_fresh_tui_whose_widget_carries_the_transport_id_still_renders(self) -> None:
+        # On session.create the host's active-session file holds the gateway
+        # transport id (uuid4 hex[:8]), not the durable session key the tool
+        # stamps with; only resume/switch write the key. A widget reference
+        # that is neither a live TUI row nor the owner of a record is that
+        # case, and reads as an identity-less poll would -- the MRU live row
+        # -- so the plan the fresh TUI just declared is not hidden.
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        self._build_state_db([(self.TUI_A, self._epoch(-60), self._epoch(-5))])
+        self._declare(self.TUI_A, "Fresh")
+
+        as_widget = read_omh_hud(self.omh_home, self.hermes_home, tui_session_ref="3f9a1c2b")["todo"]
+        self.assertEqual((as_widget["status"], as_widget["title"]), ("established", "Fresh"))
+        # The durable key placed by the file after a resume reads directly.
+        as_resumed = read_omh_hud(self.omh_home, self.hermes_home, tui_session_ref=self.TUI_A)["todo"]
+        self.assertEqual(as_resumed["title"], "Fresh")
+        # The strict identity (tool, hook, operator flag) never falls through.
+        self.assertEqual(self._todo_for("3f9a1c2b")["status"], "absent")
+
+    def test_the_hud_tool_reads_the_todo_for_its_dispatching_session(self) -> None:
+        import os
+
+        from omh.plugin_bundle.omh.tools.hud_tool import omh_hud_handler
+
+        self._build_state_db([(self.TUI_A, self._epoch(-60), self._epoch(-5))])
+        self._declare(self.TUI_A, "Tui plan")
+        self._declare(self.SLACK, "Slack plan")
+        with patch.dict(
+            os.environ,
+            {"OMH_HOME": str(self.omh_home), "HERMES_HOME": str(self.hermes_home)},
+        ):
+            slack_view = json.loads(omh_hud_handler({}, session_id=self.SLACK))
+            tui_view = json.loads(omh_hud_handler({}, session_id=self.TUI_A))
+
+        self.assertEqual(slack_view["todo"]["title"], "Slack plan")
+        self.assertEqual(tui_view["todo"]["title"], "Tui plan")
+
+    def test_the_plugin_tool_reads_and_clears_its_own_session_only(self) -> None:
+        import os
+
+        from omh.plugin_bundle.omh.todo_store import todo_path
+        from omh.plugin_bundle.omh.tools.todo_tool import omh_todo_handler
+
+        self._declare(self.TUI_A, "Alpha")
+        self._declare(self.SLACK, "Slack plan")
+        with patch.dict(
+            os.environ,
+            {"OMH_HOME": str(self.omh_home), "HERMES_HOME": str(self.hermes_home)},
+        ):
+            shown = json.loads(omh_todo_handler({"action": "show"}, session_id=self.SLACK))
+            cleared = json.loads(omh_todo_handler({"action": "clear"}, session_id=self.SLACK))
+            again = json.loads(omh_todo_handler({"action": "clear"}, session_id=self.SLACK))
+
+        self.assertEqual(shown["todo"]["title"], "Slack plan")
+        self.assertEqual(cleared["status"], "cleared")
+        self.assertEqual(cleared["todo"]["status"], "absent")
+        self.assertEqual(again["status"], "already_absent")
+        self.assertFalse(todo_path(self.omh_home, self.SLACK).exists())
+        self.assertEqual(self._todo_for(self.TUI_A)["title"], "Alpha")
+
+    def test_a_session_clears_the_home_wide_record_it_stamped_before_the_upgrade(self) -> None:
+        # Pre-upgrade layout: a stamped record in the home-wide file. The
+        # session that owns it can still clear it; another session cannot.
+        from omh.plugin_bundle.omh.todo_store import clear_todo
+
+        self._write_todo(self._record(session_ref=self.TUI_A))
+
+        self.assertFalse(clear_todo(self.omh_home, self.TUI_B))
+        self.assertTrue((self.omh_home / "runtime" / "todo.json").exists())
+        self.assertTrue(clear_todo(self.omh_home, self.TUI_A))
+        self.assertFalse((self.omh_home / "runtime" / "todo.json").exists())
+
+    def test_a_session_clears_the_operator_record_it_is_looking_at(self) -> None:
+        # An unstamped `omh runtime todo set` record renders to the live
+        # session by write time, so that session's clear must remove it --
+        # otherwise the tool answers already_absent beside an established
+        # panel, and the operator's plan cannot be dismissed from chat.
+        import os
+
+        from omh.plugin_bundle.omh.tools.todo_tool import omh_todo_handler
+
+        self._build_state_db([(self.TUI_A, self._epoch(-600), self._epoch(-5))])
+        self._write_todo(self._record(title="Operator", source="cli", updated_at=self._stamp(-60)))
+        self.assertEqual(self._todo_for(self.TUI_A)["title"], "Operator")
+
+        with patch.dict(
+            os.environ,
+            {"OMH_HOME": str(self.omh_home), "HERMES_HOME": str(self.hermes_home)},
+        ):
+            cleared = json.loads(omh_todo_handler({"action": "clear"}, session_id=self.TUI_A))
+
+        self.assertEqual((cleared["status"], cleared["todo"]["status"]), ("cleared", "absent"))
+        self.assertFalse((self.omh_home / "runtime" / "todo.json").exists())
+
+    def test_an_own_record_wins_over_the_home_wide_file(self) -> None:
+        self._build_state_db([(self.TUI_A, self._epoch(-600), self._epoch(-5))])
+        self._write_todo(self._record(title="Operator", source="cli"))
+        self._declare(self.TUI_A, "Own")
+
+        self.assertEqual(self._todo_for(self.TUI_A)["title"], "Own")
+
+    def test_a_named_session_without_its_own_record_keeps_the_home_wide_gates(self) -> None:
+        # Explicit identity, no per-session file: the home-wide record is
+        # gated exactly as before -- by stamp, else by write time against
+        # the named session's own row.
+        self._build_state_db([(self.TUI_A, self._epoch(-300), self._epoch(-5))])
+
+        self._write_todo(self._record(session_ref=self.TUI_B))
+        self.assertEqual(self._todo_for(self.TUI_A)["status"], "stale")
+
+        self._write_todo(self._record(source="cli", updated_at=self._stamp(-3600)))
+        self.assertEqual(self._todo_for(self.TUI_A)["status"], "stale")
+
+        self._write_todo(self._record(source="cli", updated_at=self._stamp(-60)))
+        self.assertEqual(self._todo_for(self.TUI_A)["status"], "established")
+
+        # A reader state.db does not list (a gateway session) cannot date an
+        # unstamped record, so it keeps the age-only answer.
+        self.assertEqual(self._todo_for(self.SLACK)["status"], "established")
+
+    def test_session_keys_are_filesystem_safe_and_distinct(self) -> None:
+        from omh.plugin_bundle.omh.todo_store import todo_path, todo_session_key
+
+        plain = todo_session_key(self.TUI_A)
+        slack = todo_session_key(self.SLACK)
+        dotted = todo_session_key("../..:evil")
+
+        self.assertEqual(plain, todo_session_key(self.TUI_A))
+        self.assertTrue(plain.startswith(self.TUI_A))
+        self.assertNotEqual(plain, slack)
+        for key in (plain, slack, dotted):
+            self.assertRegex(key, r"^[A-Za-z0-9_-]+$")
+        self.assertEqual(todo_session_key(""), "")
+        self.assertEqual(todo_path(self.omh_home), self.omh_home / "runtime" / "todo.json")
+        self.assertEqual(
+            todo_path(self.omh_home, self.SLACK).parent, self.omh_home / "runtime" / "todos"
+        )
+
+    def test_per_session_records_are_pruned_only_when_stale_and_only_our_own(self) -> None:
+        # A stale record and a crash-left temporary file go; a fresh record
+        # from any number of other sessions stays (one session, one file --
+        # the stale window is the bound), and a file this module did not
+        # name is never touched even when it is old.
+        import os
+
+        from omh.plugin_bundle.omh.todo_store import (
+            TODO_STALE_SECONDS,
+            todo_path,
+            todo_session_dir,
+        )
+
+        self._declare("old-session", "Old")
+        old = todo_path(self.omh_home, "old-session")
+        directory = todo_session_dir(self.omh_home)
+        leftover = directory / ".todo.json.123-abcd.tmp"
+        leftover.write_text("{", encoding="utf-8")
+        foreign = directory / "operator-notes.json"
+        foreign.write_text("{}", encoding="utf-8")
+        stale_at = self._epoch(-(TODO_STALE_SECONDS + 60))
+        for path in (old, leftover, foreign):
+            os.utime(path, (stale_at, stale_at))
+        for index in range(40):
+            self._declare(f"session-{index}", f"Plan {index}")
+
+        survivors = sorted(path.name for path in directory.iterdir())
+        self.assertFalse(old.exists())
+        self.assertFalse(leftover.exists())
+        self.assertTrue(foreign.exists())
+        self.assertEqual(len(survivors), 41)
+        for index in range(40):
+            self.assertIn(todo_path(self.omh_home, f"session-{index}").name, survivors)
+
+    def test_a_symlinked_session_directory_is_refused_on_write_and_read(self) -> None:
+        from omh.plugin_bundle.omh.todo_store import (
+            TodoStoreError,
+            build_todo_record,
+            todo_session_dir,
+            write_todo,
+        )
+
+        outside = self.root / "outside"
+        outside.mkdir()
+        runtime_dir = self.omh_home / "runtime"
+        runtime_dir.mkdir(parents=True)
+        todo_session_dir(self.omh_home).symlink_to(outside, target_is_directory=True)
+        record = build_todo_record("Foundation", [{"text": "x"}], source="omh_todo", session_ref=self.TUI_A)
+
+        with self.assertRaises(TodoStoreError):
+            write_todo(self.omh_home, record)
+        (outside / (todo_session_dir(self.omh_home) / "x").name).write_text("{}", encoding="utf-8")
+        self.assertEqual(self._todo_for(self.TUI_A)["status"], "absent")
 
 
 class ActivityRowOrderTests(unittest.TestCase):

@@ -86,6 +86,19 @@ def observe_plugin_tool_call(tool_name: str, args: dict[str, Any], kwargs: dict[
     return _record_observation(metadata, event="tool_call", tool=tool_name, hook="")
 
 
+def host_session_id(kwargs: dict[str, Any]) -> str:
+    """The session the host dispatched this tool call for.
+
+    Hermes passes ``session_id`` as a keyword on every tool dispatch and no
+    ``host`` alongside it, while an observation record needs both, so a tool
+    that keeps per-session state must read the id here or it never learns
+    its session. Only the keyword counts: tool ``args`` are model-supplied,
+    and a per-session store must not let the model name another session's
+    record to read, replace, or clear.
+    """
+    return str(kwargs.get("session_id", "") or "").strip()
+
+
 def observe_plugin_hook_call(hook_name: str, kwargs: dict[str, Any]) -> dict[str, Any] | None:
     metadata = _observation_metadata({}, kwargs)
     return _record_observation(metadata, event="hook_call", tool="", hook=hook_name)

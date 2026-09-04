@@ -1249,8 +1249,9 @@ def cmd_runtime_todo_set(args: argparse.Namespace) -> int:
             return 1
     else:
         items = [{"text": text, "state": "pending"} for text in args.items]
+    session_ref = args.session_ref
     try:
-        record = build_todo_record(args.title, items, source="cli")
+        record = build_todo_record(args.title, items, source="cli", session_ref=session_ref)
         write_todo(paths.omh_home, record)
     except (TodoValidationError, TodoStoreError) as error:
         _print_json({"status": "invalid_todo", "error": str(error)})
@@ -1258,8 +1259,8 @@ def cmd_runtime_todo_set(args: argparse.Namespace) -> int:
     _print_json(
         {
             "status": "written",
-            "path": str(todo_path(paths.omh_home)),
-            "todo": build_hud_payload(paths)["todo"],
+            "path": str(todo_path(paths.omh_home, session_ref)),
+            "todo": build_hud_payload(paths, session_ref=session_ref)["todo"],
             "claim_boundary": TODO_CLAIM_BOUNDARY,
         }
     )
@@ -1268,17 +1269,23 @@ def cmd_runtime_todo_set(args: argparse.Namespace) -> int:
 
 def cmd_runtime_todo_clear(args: argparse.Namespace) -> int:
     paths = _paths(args)
+    session_ref = args.session_ref
     try:
-        cleared = clear_todo(paths.omh_home)
+        cleared = clear_todo(paths.omh_home, session_ref)
     except TodoStoreError as error:
         _print_json({"status": "invalid_todo", "error": str(error)})
         return 1
-    _print_json({"status": "cleared" if cleared else "already_absent", "path": str(todo_path(paths.omh_home))})
+    _print_json(
+        {
+            "status": "cleared" if cleared else "already_absent",
+            "path": str(todo_path(paths.omh_home, session_ref)),
+        }
+    )
     return 0
 
 
 def cmd_runtime_todo_show(args: argparse.Namespace) -> int:
-    payload = build_hud_payload(_paths(args))
+    payload = build_hud_payload(_paths(args), session_ref=args.session_ref)
     _print_json(
         {
             "status": "read",
@@ -1596,3 +1603,13 @@ def _add_runtime_commands(sub) -> None:
     todo_clear.set_defaults(func=cmd_runtime_todo_clear)
     todo_show = todo_sub.add_parser("show", help="Read the current todo projection exactly as HUD surfaces see it.")
     todo_show.set_defaults(func=cmd_runtime_todo_show)
+    for todo_command in (todo_set, todo_clear, todo_show):
+        todo_command.add_argument(
+            "--session",
+            dest="session_ref",
+            default="",
+            help=(
+                "Hermes session id the todo belongs to. Omit for the home-wide list; "
+                "show without it reads as the live TUI session would."
+            ),
+        )
