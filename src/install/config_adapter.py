@@ -154,6 +154,15 @@ def plugin_enablement(config_text: str) -> dict[str, list[str]]:
             continue
         if not in_plugins or not stripped:
             continue
+        # A list item belongs to the key above it whether it sits under that
+        # key (`    - omh`, Hermes' own style) or level with it (`  - omh`,
+        # equally valid YAML). Checking the item shape before the key shape is
+        # what keeps a level item from being read as a new key and emptying
+        # the list (issue #1322).
+        if stripped.startswith("- "):
+            if current:
+                lists[current].append(stripped[2:].strip().strip("\"'"))
+            continue
         if line.startswith("  ") and not line.startswith("    "):
             key, _, rest = stripped.partition(":")
             key = key.strip()
@@ -163,10 +172,22 @@ def plugin_enablement(config_text: str) -> dict[str, list[str]]:
                 current = ""
                 continue
             current = key if key in lists else ""
-            continue
-        if current and stripped.startswith("- "):
-            lists[current].append(stripped[2:].strip().strip("\"'"))
     return lists
+
+
+def _plugin_list_item_indent(lines: list[str], plugins_index: int) -> str:
+    """The indent the file already uses for `plugins.*` list items.
+
+    Hermes writes `    - name`; a hand-edited file may use `  - name`. A new
+    item has to match whichever is there, or the list ends up with items at
+    two depths and YAML reads it as two different nodes.
+    """
+    for line in lines[plugins_index + 1:]:
+        if line.strip() and not line.startswith(" "):
+            break
+        if line.strip().startswith("- "):
+            return line[: len(line) - len(line.lstrip(" "))]
+    return "    "
 
 
 def configured_provider_ids(config_text: str) -> list[str]:
@@ -228,22 +249,25 @@ def ensure_plugin_enabled(config_text: str, name: str) -> ConfigChange:
         text = (config_text.rstrip() + f"\n\nplugins:\n  enabled:\n    - {name}\n").lstrip("\n")
         return ConfigChange(True, "appended plugins.enabled", text)
 
+    indent = _plugin_list_item_indent(lines, plugins_index)
     for idx in range(plugins_index + 1, len(lines)):
         line = lines[idx]
         if line.strip() and not line.startswith(" "):
             break
+        if line.strip().startswith("- "):
+            continue
         if line.startswith("  ") and not line.startswith("    "):
             key, _, rest = line.strip().partition(":")
             if key.strip() != "enabled":
                 continue
             inline = _parse_inline_list(rest.strip()) if rest.strip() else None
             if inline is not None:
-                lines[idx:idx + 1] = ["  enabled:", *[f"    - {value}" for value in [*inline, name]]]
+                lines[idx:idx + 1] = ["  enabled:", *[f"{indent}- {value}" for value in [*inline, name]]]
                 return ConfigChange(True, "expanded inline plugins.enabled", "\n".join(lines) + "\n")
-            lines.insert(idx + 1, f"    - {name}")
+            lines.insert(idx + 1, f"{indent}- {name}")
             return ConfigChange(True, "added plugin to plugins.enabled", "\n".join(lines) + "\n")
 
-    lines.insert(plugins_index + 1, f"    - {name}")
+    lines.insert(plugins_index + 1, f"{indent}- {name}")
     lines.insert(plugins_index + 1, "  enabled:")
     return ConfigChange(True, "inserted plugins.enabled", "\n".join(lines) + "\n")
 
