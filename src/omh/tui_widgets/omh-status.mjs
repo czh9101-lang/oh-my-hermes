@@ -330,11 +330,19 @@ export default function register(sdk) {
     return dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route)
   }
 
-  // The route column takes the widest identity in the list (0 = no column):
-  // the label is never truncated, the action column yields the width
-  // instead. `category:architect(anthropic/` with the model cut off was the
-  // owner's report; a route that cannot be read is not worth its cells.
-  const routeColumnWidth = rows => rows.reduce((width, row) => Math.max(width, cellWidth(routeIdentity(row).text)), 0)
+  // The route column takes the widest identity in the list (0 = no column)
+  // and the label is NEVER truncated: category, model and effort are what
+  // the column is for ('category, modelname, effort만 잘 나오면 되니까'),
+  // so the action title yields the width instead. `full` measures the
+  // documented `category:name(model:effort)` shape; `compact` the same list
+  // with the `category:` literal shed, the fallback for a terminal that
+  // cannot hold the full shape.
+  const ROUTE_PREFIX = 'category:'
+  const routeCompact = text => text.startsWith(ROUTE_PREFIX) ? text.slice(ROUTE_PREFIX.length) : text
+  const routeColumnWidth = rows => rows.reduce((width, row) => {
+    const text = routeIdentity(row).text
+    return { compact: Math.max(width.compact, cellWidth(routeCompact(text))), full: Math.max(width.full, cellWidth(text)) }
+  }, { compact: 0, full: 0 })
 
   const activityLayout = (row, columns, main, extraSeconds, tokensColumn, routeColumn) => {
     const state = safeText(row.state) || 'running'
@@ -403,22 +411,22 @@ export default function register(sdk) {
     // row without a route holds the grid with blank cells so the tail after
     // it stays on the same screen column, and a wave with no routes at all
     // spends none of the width.
-    // `routeColumn` is the widest identity in the list, so the label is
-    // padded, never truncated; only a terminal too narrow for the prefix,
-    // the tail and an 8-cell action column clips it at all.
-    const routeCap = Math.min(routeColumn, Math.max(10, budget - cellWidth(prefix) - tailWidth - cellWidth(separator) - 8 - 2))
-    const routeWidth = routeColumn ? cellWidth(separator) + routeCap : 0
-    // When even that is too narrow, the `category:` prefix goes before the
-    // model does: `architect(claude-fable-5-1:xhigh)` still says which model
-    // ran, `category:architect(claude-` does not.
-    const routeText = cellWidth(routeSegment.text) > routeCap && routeSegment.text.startsWith('category:')
-      ? routeSegment.text.slice('category:'.length)
-      : routeSegment.text
-    const routeCell = routeColumn
-      ? `${separator}${padCells(truncateCells(routeText, routeCap), routeCap)}`
+    // The full `category:name(model:effort)` shape renders whenever it fits
+    // beside the prefix, the tail and an 8-cell action title; otherwise the
+    // `category:` literal is shed for the WHOLE list (one column shape per
+    // wave) and the label is still padded, never truncated — the action
+    // title is what shrinks. `architect(claude-fable-5-1:xhigh)` still says
+    // which lane, model and effort ran; `category:architect(claude-` does not.
+    const routeRoom = budget - cellWidth(prefix) - tailWidth - cellWidth(separator) - 8 - 2
+    const routeShedPrefix = routeColumn.full > routeRoom
+    const routeCap = routeShedPrefix ? routeColumn.compact : routeColumn.full
+    const routeWidth = routeCap ? cellWidth(separator) + routeCap : 0
+    const routeText = routeShedPrefix ? routeCompact(routeSegment.text) : routeSegment.text
+    const routeCell = routeCap
+      ? `${separator}${padCells(routeText, routeCap)}`
       : ''
     const actionCap = Math.max(10, Math.min(48, Math.floor(columns * 0.4)))
-    const actionWidth = Math.max(8, Math.min(actionCap, budget - cellWidth(prefix) - routeWidth - tailWidth - 2))
+    const actionWidth = Math.max(4, Math.min(actionCap, budget - cellWidth(prefix) - routeWidth - tailWidth - 2))
     const fixedWidth = cellWidth(prefix) + actionWidth + routeWidth + tailWidth
     const segments = [...optional]
     while (segments.length) {

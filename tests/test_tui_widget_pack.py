@@ -574,16 +574,24 @@ class TuiWidgetPackTests(unittest.TestCase):
         # and only then rate, cache, turn and cost, which the drop loop still
         # sheds by rank without ever touching the tail.
         self.assertIn("` · ${tokenText.padStart(6)} tokens`", widget)
-        # The route column is never truncated: it takes the widest identity
-        # in the list and the action column yields the width. The old
-        # percentage cap cut `category:architect(claude-fable-5-1:xhigh)`
-        # mid-model on every ordinary terminal (the owner's second report).
-        self.assertIn("const routeColumnWidth = rows => rows.reduce((width, row) => Math.max(width, cellWidth(routeIdentity(row).text)), 0)", widget)
-        self.assertIn("const routeCap = Math.min(routeColumn, Math.max(10, budget - cellWidth(prefix) - tailWidth - cellWidth(separator) - 8 - 2))", widget)
+        # The route column is never truncated: category, model and effort are
+        # the column's whole purpose ('category, modelname, effort만 잘
+        # 나오면 되니까'). It takes the widest identity in the list; when the
+        # full `category:name(model:effort)` shape does not fit beside the
+        # prefix, the tail and an 8-cell title, the `category:` literal is
+        # shed for the whole list and the action title shrinks (to 4 cells at
+        # the floor). The old percentage caps cut the model mid-name.
+        self.assertIn("const ROUTE_PREFIX = 'category:'", widget)
+        self.assertIn("const routeCompact = text => text.startsWith(ROUTE_PREFIX) ? text.slice(ROUTE_PREFIX.length) : text", widget)
+        self.assertIn("return { compact: Math.max(width.compact, cellWidth(routeCompact(text))), full: Math.max(width.full, cellWidth(text)) }", widget)
+        self.assertIn("const routeShedPrefix = routeColumn.full > routeRoom", widget)
+        self.assertIn("const routeCap = routeShedPrefix ? routeColumn.compact : routeColumn.full", widget)
+        self.assertIn("? `${separator}${padCells(routeText, routeCap)}`", widget)
+        self.assertNotIn("truncateCells(routeText", widget)
+        self.assertNotIn("truncateCells(routeSegment.text", widget)
+        self.assertIn("const actionWidth = Math.max(4, Math.min(actionCap, budget - cellWidth(prefix) - routeWidth - tailWidth - 2))", widget)
         self.assertNotIn("Math.floor(columns * 0.3)", widget)
         self.assertNotIn("Math.floor(columns * 0.24)", widget)
-        # Below that floor the `category:` prefix is shed before the model is.
-        self.assertIn("? routeSegment.text.slice('category:'.length)", widget)
         # The label names the model, never its provider: `anthropic/` ate the
         # column and truncated to `category:architect(anthropic/`, hiding
         # whether the lane ran opus or fable. Only the segment after the last
