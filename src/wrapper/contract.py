@@ -235,6 +235,10 @@ VISIBLE_ACTIONS = (
     "prepare_curriculum_design",
     "prepare_localization_review",
     "prepare_sales_development",
+    "prepare_decision_prototype",
+    "prepare_lifecycle_growth",
+    "prepare_product_discovery_validation",
+    "prepare_sales_pipeline_review",
     "prepare_product_brief",
     "prepare_frontend_handoff",
     "prepare_backend_handoff",
@@ -1017,6 +1021,10 @@ _ACK_PRIMARY_ACTIONS_BY_NEXT_ACTION = {
     "prepare_curriculum_design": ("prepare_curriculum_design", "Prepare curriculum"),
     "prepare_localization_review": ("prepare_localization_review", "Prepare localization review"),
     "prepare_sales_development": ("prepare_sales_development", "Prepare sales brief"),
+    "prepare_decision_prototype": ("prepare_decision_prototype", "Prepare decision prototype"),
+    "prepare_lifecycle_growth": ("prepare_lifecycle_growth", "Prepare lifecycle plan"),
+    "prepare_product_discovery_validation": ("prepare_product_discovery_validation", "Prepare discovery validation"),
+    "prepare_sales_pipeline_review": ("prepare_sales_pipeline_review", "Prepare pipeline review"),
     "prepare_product_brief": ("prepare_product_brief", "Prepare product brief"),
     "prepare_frontend_handoff": ("prepare_frontend_handoff", "Prepare frontend"),
     "prepare_backend_handoff": ("prepare_backend_handoff", "Prepare backend contract"),
@@ -3791,6 +3799,70 @@ _WORKFLOW_OPERATIONS_CHAT_CARDS.update(
             "recommended_flow": ["scope_account_segment_buyer_and_evidence_gaps", "prepare_discovery_and_qualification_questions", "draft_value_and_objection_hypotheses", "name_owned_non_executing_next_steps"],
             "evidence_not_observed": ["company fact retrieval", "prospect contact", "CRM mutation", "meeting booking", "revenue progress"],
         },
+        "decision-prototype": {
+            "kind": "decision_prototype",
+            "headline": "I can prepare one bounded prototype to answer a decision before planning.",
+            "body": "I will frame one falsifiable question, the smallest disposable experiment, a scratch-workspace boundary, budgets, stop conditions, and a receipt that separates observed results from interpretation. This does not run an experiment, approve a plan, promote prototype code, or establish implementation, validation, review, CI, or merge evidence.",
+            "phase": "decision_prototype_prepared",
+            "next_action": "prepare_decision_prototype",
+            "artifact_schema": "decision_prototype_card/v1",
+            "claim_boundary_suffix": "It is not execution, cleanup, approval, implementation, validation, review, CI, or merge evidence.",
+            "actions": [
+                {"id": "prepare_decision_prototype", "label": "Prepare decision prototype", "style": "primary"},
+                {"id": "prepare_context_budget_review", "label": "Review experiment boundary", "style": "secondary"},
+                {"id": "show_status", "label": "Show status", "style": "secondary"},
+            ],
+            "recommended_flow": ["frame_one_falsifiable_decision", "bound_disposable_experiment_and_workspace", "prepare_measurement_and_stop_conditions", "record_receipt_for_later_planning"],
+            "evidence_not_observed": ["executor dispatch", "prototype execution", "workspace cleanup", "observed result", "plan acceptance", "implementation or production promotion"],
+        },
+        "lifecycle-growth": {
+            "kind": "lifecycle_growth",
+            "headline": "I can prepare an evidence-bounded lifecycle journey and experiment plan.",
+            "body": "I will define the target behavior and baseline, eligible audience and exclusions, consent and frequency policy, treatment and holdout, measurement readout, approval gate, and stop decision. This does not identify users, send a message, schedule work, change a flag, launch an experiment, or prove delivery, exposure, outcome, or causality.",
+            "phase": "lifecycle_growth_prepared",
+            "next_action": "prepare_lifecycle_growth",
+            "artifact_schema": "lifecycle_growth_card/v1",
+            "claim_boundary_suffix": "It is not consent confirmation, a send, schedule, feature-flag change, launch, delivery, exposure, outcome, or causal evidence.",
+            "actions": [
+                {"id": "prepare_lifecycle_growth", "label": "Prepare lifecycle plan", "style": "primary"},
+                {"id": "prepare_data_analysis_card", "label": "Prepare baseline analysis", "style": "secondary"},
+                {"id": "show_status", "label": "Show status", "style": "secondary"},
+            ],
+            "recommended_flow": ["define_target_behavior_baseline_and_owner", "bound_audience_consent_suppression_and_frequency", "design_treatment_holdout_and_actual_exposure", "prepare_approval_gated_readout_and_disposition"],
+            "evidence_not_observed": ["audience eligibility", "consent or suppression confirmation", "message send or schedule", "feature-flag mutation or experiment launch", "delivery, display, action, outcome, or causality"],
+        },
+        "product-discovery-validation": {
+            "kind": "product_discovery_validation",
+            "headline": "I can prepare evidence-bounded product discovery before a PRD or delivery plan.",
+            "body": "I will frame the problem and segment, classify evidence, rank the riskiest assumptions, prepare customer-evidence re-entry and bounded tests, and record a kill, pivot, persevere, or inconclusive decision. This does not recruit or contact participants, create a survey, validate demand, build a prototype, approve a PRD, write code, or launch a product.",
+            "phase": "product_discovery_validation_prepared",
+            "next_action": "prepare_product_discovery_validation",
+            "artifact_schema": "product_discovery_validation_card/v1",
+            "claim_boundary_suffix": "It is not customer contact, customer validation, product-market-fit, PRD acceptance, prototype execution, implementation, or launch evidence.",
+            "actions": [
+                {"id": "prepare_product_discovery_validation", "label": "Prepare discovery validation", "style": "primary"},
+                {"id": "prepare_product_brief", "label": "Prepare product brief", "style": "secondary", "enabled": False},
+                {"id": "show_status", "label": "Show status", "style": "secondary"},
+            ],
+            "recommended_flow": ["frame_problem_segment_owner_and_learning_boundary", "classify_evidence_and_prepare_customer_reentry", "rank_assumptions_and_precommit_tests", "record_decision_before_a_prd"],
+            "evidence_not_observed": ["customer recruitment or contact", "customer evidence re-entry", "validated problem or demand", "product-market fit", "PRD acceptance", "prototype, implementation, or launch"],
+        },
+        "sales-pipeline-review": {
+            "kind": "sales_pipeline_review",
+            "headline": "I can prepare an evidence-bounded pipeline health, forecast, and follow-up review.",
+            "body": "I will validate the supplied snapshot's freshness and definitions, separate stage, seller forecast, scenario, and buyer commitment, then prepare aging, slips, concentration, calibration limits, and owned proposed follow-ups. This does not retrieve CRM data, mutate CRM records, create a seller commitment, book revenue, send outreach, or establish a financial forecast.",
+            "phase": "sales_pipeline_review_prepared",
+            "next_action": "prepare_sales_pipeline_review",
+            "artifact_schema": "sales_pipeline_review_card/v1",
+            "claim_boundary_suffix": "It is not CRM retrieval or mutation, seller commitment, outreach, revenue, authoritative forecast, approval, or customer outcome evidence.",
+            "actions": [
+                {"id": "prepare_sales_pipeline_review", "label": "Prepare pipeline review", "style": "primary"},
+                {"id": "prepare_sales_development", "label": "Prepare account follow-up", "style": "secondary"},
+                {"id": "show_status", "label": "Show status", "style": "secondary"},
+            ],
+            "recommended_flow": ["validate_snapshot_freshness_and_definitions", "assess_movement_aging_slips_and_concentration", "separate_seller_forecast_scenarios_and_commitment", "prepare_owned_followups_without_crm_mutation"],
+            "evidence_not_observed": ["CRM retrieval or mutation", "source freshness confirmation", "buyer commitment", "seller forecast calibration", "outreach or follow-up completion", "revenue or customer outcome"],
+        },
     }
 )
 
@@ -5130,6 +5202,8 @@ def _operating_brief_chat_response(
     thread_key: str,
     workflow_explanation_reason: str,
 ) -> dict[str, object] | None:
+    if selected in _WORKFLOW_OPERATIONS_CHAT_CARDS:
+        return None
     workflow = selected if selected in _OPERATING_BRIEF_CHAT_CARDS else _OPERATING_BRIEF_WORKFLOW_BY_NEXT_ACTION.get(policy_next_action, "")
     if not workflow:
         return None

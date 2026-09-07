@@ -77,6 +77,31 @@ SPECIALIST_DOMAIN_TRIGGERS: dict[str, tuple[str, ...]] = {
         "고객사 계획",
         "아웃바운드 메시지",
     ),
+    "decision-prototype": (
+        "prototype before planning",
+        "run a small spike",
+        "test the risky assumption",
+    ),
+    "lifecycle-growth": (
+        "lifecycle growth",
+        "lifecycle marketing",
+        "onboarding journey",
+        "growth experiment",
+    ),
+    "product-discovery-validation": (
+        "product discovery validation",
+        "product discovery",
+        "customer discovery",
+        "kill pivot persevere",
+        "is this idea worth building",
+    ),
+    "sales-pipeline-review": (
+        "pipeline review",
+        "pipeline health",
+        "forecast calibration",
+        "deal review",
+        "stale deals",
+    ),
     "product-brief": (
         "product requirements document",
         "PRD",
@@ -95,6 +120,9 @@ _DOMAIN_ROUTE_CUE_GROUPS: tuple[tuple[str, tuple[tuple[str, ...], ...]], ...] = 
     ("curriculum-design", (("curriculum", "learning objectives"), ("커리큘럼", "학습 목표"))),
     ("localization-review", (("terminology consistency", "cultural fit"), ("한국어 결제", "현지화"))),
     ("sales-development", (("discovery plan", "qualification questions"), ("미드마켓", "발견 질문"))),
+    ("lifecycle-growth", (("activation", "consent"),)),
+    ("product-discovery-validation", (("customer problem", "write a prd"),)),
+    ("sales-pipeline-review", (("pipeline", "slipped deals"),)),
     ("product-brief", (("prd", "prioritization"), ("prd", "로드맵 우선순위"))),
 )
 
@@ -287,6 +315,14 @@ _INCLUSIVE_NEGATION_FOLLOWERS = frozenset({"just", "only"})
 _LOCAL_NEGATION_TOKEN_RANGE = 4
 _CLAUSE_SEPARATOR_PATTERN = re.compile(r"[,;.!?\n]+|\band\b")
 _ENGLISH_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+_PROSE_ONLY_DOMAIN_REFERENCE_PATTERN = re.compile(
+    r"^(?:say|call|term|phrase|use)\s+.+?\s*,?\s+not\s+",
+)
+
+
+def _is_prose_only_domain_reference(message: str) -> bool:
+    """Keep terminology contrast prose out of specialist dispatch lanes."""
+    return _PROSE_ONLY_DOMAIN_REFERENCE_PATTERN.search(_fold_for_match(message).strip()) is not None
 
 
 _STRUCTURED_OPERATOR_ACTIONS: tuple[
@@ -433,6 +469,8 @@ def specialist_domain_route_signal(message: str) -> DomainRouteSignal | None:
 
 def specialist_domain_route_signals(message: str) -> tuple[DomainRouteSignal, ...]:
     """Return every positive catalog-domain signal in declaration order."""
+    if _is_prose_only_domain_reference(message):
+        return ()
     matched_by_skill: dict[str, list[str]] = {}
     for skill, triggers in SPECIALIST_DOMAIN_TRIGGERS.items():
         matched = tuple(trigger for trigger in triggers if _contains_positive_cue_phrase(message, trigger))
@@ -442,6 +480,8 @@ def specialist_domain_route_signals(message: str) -> tuple[DomainRouteSignal, ..
         for cues in cue_groups:
             if all(_contains_positive_cue_phrase(message, cue) for cue in cues):
                 matched_by_skill.setdefault(skill, []).extend(cues)
+    if "product-discovery-validation" in matched_by_skill:
+        matched_by_skill.pop("product-brief", None)
     return tuple(
         DomainRouteSignal(skill=skill, matched_cues=tuple(dict.fromkeys(cues)))
         for skill, cues in matched_by_skill.items()
@@ -461,6 +501,8 @@ def excluded_specialist_domain_skills(message: str) -> frozenset[str]:
         for skill, cue_groups in _DOMAIN_ROUTE_CUE_GROUPS
         if any(all(_contains_cue_phrase(message, cue) for cue in cues) for cues in cue_groups)
     )
+    if _is_prose_only_domain_reference(message):
+        return frozenset(matched_skills)
     return frozenset(matched_skills - positive_skills)
 
 

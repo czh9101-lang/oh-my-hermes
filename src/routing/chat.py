@@ -23,6 +23,7 @@ from .decision_contract import build_route_decision_contract
 from .domain_signals import (
     DomainRouteSignal,
     classify_clarification_relevance,
+    excluded_specialist_domain_skills,
     specialist_domain_operator_override,
     specialist_domain_route_signal,
 )
@@ -1707,7 +1708,11 @@ def _route_chat_message_cached(
     if fast_explicit_skill_decision is not None:
         return fast_explicit_skill_decision.to_dict()
     specialist_domain_signal = specialist_domain_route_signal(routing_message)
-    compound_domain_signals = distinct_complete_domain_signals(routing_message)
+    compound_domain_signals = tuple(
+        signal
+        for signal in distinct_complete_domain_signals(routing_message)
+        if signal.skill not in excluded_specialist_domain_skills(routing_message)
+    )
     if len(compound_domain_signals) == 1:
         specialist_domain_signal = compound_domain_signals[0]
     specialist_operator_override = specialist_domain_operator_override(

@@ -136,9 +136,9 @@ NON_SKILL_BACKTICKS = frozenset(
 # statement), three new pairs; the two rewritten statements already counted.
 # `omh-docs` adds three measured mutation-deference cases and pairs, with
 # `product-docs` as one new deferring owner.
-EXPECTED_DEFERENCE_CASES = 191
-EXPECTED_DEFERENCE_PAIRS = 204
-EXPECTED_DEFERRING_OWNERS = 61
+EXPECTED_DEFERENCE_CASES = 231
+EXPECTED_DEFERENCE_PAIRS = 244
+EXPECTED_DEFERRING_OWNERS = 67
 
 # The ratchet. Recording a new inversion must be a visible edit to this number,
 # not one more dict line with a plausible sentence attached.

@@ -173,7 +173,7 @@ def _receipt(
         )
     }
     classifications = [
-        {"name": name, "classification": _classification(name, full), "reason": reasons.get(name, ("parent_not_approved", "parent"))[0], "provenance": reasons.get(name, ("parent_not_approved", "parent"))[1]}
+        {"name": name, "classification": _classification(name, full), "reason": reasons.get(name, ("parent_not_approved", "parent"))[0], "policy_source": reasons.get(name, ("parent_not_approved", "parent"))[1]}
         for name in sorted(set().union(*full.values()))
     ]
     digest = sha256(json.dumps([CHILD_ENVIRONMENT_POLICY_SCHEMA_VERSION, owner, purpose, compatibility, full, classifications], separators=(",", ":"), sort_keys=True).encode("utf-8")).hexdigest()

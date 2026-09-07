@@ -35,6 +35,11 @@ from .catalog_types import (
     LLM_APP_DEV_PUBLIC_BOARD_ACTIONS,
     LLM_APP_DEV_RAILS,
 )
+from .llm_app_references import (
+    LLM_APP_DEV_CONDITIONAL_CONTRACTS,
+    LLM_APP_DEV_STATEFUL_CONTRACTS_REFERENCE_PATH,
+    llm_app_stateful_contracts_reference,
+)
 from .expert_question_rendering import (
     copy_expert_question_payloads,
     expert_question_payloads,
@@ -602,7 +607,31 @@ def _router_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
             "references/structural-code-search.md",
             _router_structural_code_search_reference(),
         ),
+        SkillReferenceTemplate("oh-my-hermes", "references/workflow-artifacts.md", _router_workflow_artifacts_reference()),
     )
+
+
+def _router_workflow_artifacts_reference() -> str:
+    from ..workflows.workflow_artifact_operations import WORKFLOW_ARTIFACT_OPERATIONS
+    operations = "\n".join(f"- `{workflow}`: {', '.join(f'`{operation}`' for operation in values)}" for workflow, values in WORKFLOW_ARTIFACT_OPERATIONS.items())
+    return f"""# Workflow Artifact Operator Reference
+
+Agent/operator surface only. Normal users remain chat-first: ask Hermes for the outcome. No command below executes work or implies approval.
+
+```sh
+omh runtime workflow-artifact <workflow> <operation> --input <json-file-or->
+```
+
+The bounded JSON result is `workflow_artifact_operation_result/v1`; the CLI is metadata-only and never invokes providers, subprocesses, schedulers, CRM mutation, or production promotion.
+
+## Closed registry
+
+{operations}
+
+Public contract and synthetic command inputs: [`docs/WORKFLOW-ARTIFACTS.md`](https://github.com/rlaope/oh-my-hermes/blob/main/docs/WORKFLOW-ARTIFACTS.md).
+
+`build` derives schemas, statuses, metadata, and discovery hashes; `validate` is structural, not readiness. `prepare`/`evaluate` apply gates, so lifecycle may return `HOLD` for unknown consent and synthetic discovery remains `inconclusive`. Preparation does not persist; only explicit producer-owned `persist` or `append` writes validated metadata. `handoff` is proposed and executor-neutral and never dispatches, executes, or approves implementation.
+""".rstrip() + "\n"
 
 
 def _router_skill_common_rail_reference() -> str:
@@ -1871,22 +1900,20 @@ until executed against that deployment. Static Compose inspection is not E2E
 evidence.
 """
 
-def workflow_skill_from_definition(definition: SkillDefinition, name: str) -> SkillTemplate:
-    """Render one workflow skill from an explicit definition.
+_PROGRESSIVE_WORKFLOW_OPERATIONS = {
+    "decision-prototype": "prepare",
+    "lifecycle-growth": "build",
+    "product-discovery-validation": "build",
+    "sales-pipeline-review": "prepare",
+}
 
-    Production entry point added for the ULW contract-equivalence gate
-    (issue #954, PR D): a renderer that can only render the global catalog
-    cannot be exercised against a mutated definition, so the mutation tests in
-    `tests/test_ulw_equivalence.py` route hypothetical `SkillDefinition`
-    mutants through this function instead of monkeypatching the cached
-    catalog lookup. `workflow_skill` below stays the catalog-backed path and
-    byte-parity between the two is pinned by
-    `test_workflow_skill_paths_are_byte_identical`.
-    """
+
+def _workflow_full_body(definition: SkillDefinition, name: str) -> str:
+    """Render the complete catalog contract for ordinary workflow bodies."""
     title = name.replace("-", " ").title()
     triggers = ", ".join(f"`{trigger}`" for trigger in definition.triggers)
     primary_harness = primary_harness_for_skill(name)
-    body = f"""# {title}
+    return f"""# {title}
 
 This is a Hermes-native `{name}` workflow skill.
 
@@ -1906,6 +1933,116 @@ This is a Hermes-native `{name}` workflow skill.
 
 {_common_rail_sections(definition, primary_harness)}
 """
+
+
+def _progressive_workflow_full_contract(definition: SkillDefinition, name: str) -> str:
+    """Render skill-specific detail without copying the compact body's shared rails."""
+    title = name.replace("-", " ").title()
+    triggers = ", ".join(f"`{trigger}`" for trigger in definition.triggers)
+    return f"""# {title}
+
+Load this on-demand contract after the compact `{name}` body identifies the
+workflow. The main body owns routing signals, shared rules, the runtime
+operation, delegation fallback, and completion/recovery pointers; this file
+holds the workflow-specific detail without copying those shared rails.
+
+{_quality_rubric_sections(definition)}
+
+## Use When
+
+{definition.use_when}
+
+Routing signals: {triggers}
+
+## Workflow Contract
+
+Category: `{definition.category}`
+Phase: `{definition.phase}`
+Hermes role: `{definition.hermes_role}`
+Quality tier: `{definition.quality_tier}`
+Reasoning demand: `{definition.reasoning_demand}`
+
+Quality bar:
+
+{_tuple_list(definition.quality_bar)}
+
+Handoff policy:
+
+{definition.handoff_policy}{_executor_readiness_skill_note(definition)}{_delegation_transparency_skill_note(definition)}
+
+Required inputs:
+
+{_tuple_list(definition.required_inputs)}
+
+Expected outputs:
+
+{_tuple_list(definition.expected_outputs)}
+
+Artifact expectations:
+
+{_tuple_list(definition.artifact_expectations)}{_artifact_contract_block(definition)}
+
+Safety rules:
+
+{_tuple_list(definition.safety_rules)}
+
+Detailed procedure steps: `references/procedure.md`.
+"""
+
+
+def _progressive_workflow_body(definition: SkillDefinition, name: str) -> str:
+    """Keep the routing and action boundary in the always-loaded workflow body."""
+    operation = _PROGRESSIVE_WORKFLOW_OPERATIONS[name]
+    title = name.replace("-", " ").title()
+    compact_contracts = {
+        "decision-prototype": "Required: one decision, a bounded experiment, an isolated scratch boundary, and a measurement method. Output: a decision record, prepared handoff, observation ledger, and receipt.",
+        "lifecycle-growth": "Required: lifecycle objective, audience/events, consent, budget, and owner. Output: a brief, audience/safety policy, experiment, readout, and handoff.",
+        "product-discovery-validation": "Required: problem, segment/evidence, owner, learning budget, and criteria. Output: a decision frame, evidence and customer plan, test portfolio, receipt, and GTM hypothesis.",
+        "sales-pipeline-review": "Required: supplied snapshot and as-of time, definitions, prior outcomes, and owner. Output: scope, health, forecast, supported annexes, and follow-up handoff.",
+    }
+    verb = "builds" if operation == "build" else "prepares"
+    return f"""# {title}
+
+{compact_contracts[name]}
+
+**HOLD:** Missing inputs or failed contract gates. Prepared OMH routing is not execution or approval. **Completion:** Follow the full-contract checklist.
+
+Shared product, routing, compatibility, and evidence rules: `omh-routing/references/skill-common-rail.md`.
+
+Agent/operator: `omh runtime workflow-artifact {name} {operation} --input <json-file-or->` {verb} bounded metadata only. Shared operator reference: `omh-routing/references/workflow-artifacts.md`.
+
+Contract: `references/full-contract.md`. Procedure: `references/procedure.md`.
+
+## Completion Checklist
+
+- Preserve workflow intent and stop conditions; load the full contract before claiming completion.
+- Record observed delegation results; otherwise return `not_available` or `not_observed`.
+- Use Hermes-native subagent/delegation features when available: native subagents -> Hermes delegation when available, otherwise sequential lanes.
+
+## Recovery Notes
+
+- If a required input, authority, or runtime capability is unavailable, HOLD and name the smallest safe next action; do not invent observation or approval.
+
+## Workflow Lane
+
+advisory local context
+"""
+
+
+def workflow_full_contract_reference(definition: SkillDefinition, name: str) -> str:
+    """Return the complete contract moved out of an opted-in workflow body."""
+    if not definition.progressive_disclosure:
+        raise ValueError(f"{name} does not opt into progressive disclosure")
+    return _progressive_workflow_full_contract(definition, name).rstrip() + "\n"
+
+
+def workflow_skill_from_definition(definition: SkillDefinition, name: str) -> SkillTemplate:
+    """Render one workflow skill from an explicit definition."""
+    body = (
+        _progressive_workflow_body(definition, name)
+        if definition.progressive_disclosure
+        else _workflow_full_body(definition, name)
+    )
     return SkillTemplate(name, _frontmatter(name, definition.description) + "\n" + body)
 
 
@@ -3084,6 +3221,11 @@ def _llm_app_dev_reference_templates_cached() -> tuple[SkillReferenceTemplate, .
         SkillReferenceTemplate("llm-app-dev", "references/build-rails.md", _llm_app_build_rails_reference()),
         SkillReferenceTemplate("llm-app-dev", "references/eval-harness.md", _llm_app_eval_harness_reference()),
         SkillReferenceTemplate("llm-app-dev", "references/public-board.md", _llm_app_public_board_reference()),
+        SkillReferenceTemplate(
+            "llm-app-dev",
+            LLM_APP_DEV_STATEFUL_CONTRACTS_REFERENCE_PATH,
+            llm_app_stateful_contracts_reference(),
+        ),
     )
 
 
@@ -3095,6 +3237,10 @@ def _llm_app_build_rails_reference() -> str:
     two different disciplines.
     """
     rails = ", ".join(f"`{rail}`" for rail in LLM_APP_DEV_RAILS)
+    conditional_triggers = "\n".join(
+        f"- It **{trigger}**, which needs the {contract} contract."
+        for trigger, contract in LLM_APP_DEV_CONDITIONAL_CONTRACTS
+    )
     return f"""# LLM App Build Rails
 
 Load this reference when preparing the build handoff. The always-loaded skill body states the rules; this is the per-rail decision, what it costs to defer, and the failure mode that shows up when the rail is missing.
@@ -3153,6 +3299,20 @@ Named here for ordering; the shape of the deliverables and the comparison record
 
 The rule that belongs on this rail: the eval suite is part of the feature, not a follow-up ticket. A feature that ships without a golden set has no way to answer whether the next prompt edit helped, and the answer defaults to whoever tried it and liked the output.
 
+## Conditional Contracts: Records, Limits, Memory
+
+The five rails cover every LLM feature. Three further contracts apply only when the feature touches live state, and they are kept in `{LLM_APP_DEV_STATEFUL_CONTRACTS_REFERENCE_PATH}` so an extractor or a RAG answerer does not carry requirements it cannot use. Load that reference when the feature has any of these properties:
+
+{conditional_triggers}
+
+The short form of each, so the handoff can say which apply and which do not:
+
+- **Records.** A valid-looking record ID is a lookup candidate, not authority. The host tracks how each record entered scope, authorization is rechecked for the current operation, authoritative fields come from the owning backend, and follow-up references such as "the second one" resolve against a host-issued receipt of the final visible order. A missing or stale receipt means refresh or ask, never guess. A provisional render authorizes nothing and proves no delivery.
+- **Limits.** A business limit constrains the resulting state, so its scope is named (resource, person, account, tenant, or window) and the owning backend rechecks authorization, approval, policy, target version, live state, and idempotency inside one atomic apply boundary. A conflict means no partial write.
+- **Memory.** Only the user's own assertions or explicit confirmations are stored, person and tenant scope stay distinct, the user can inspect, correct, delete, and disable, and a delayed extractor checks fact versions and the deletion generation in the same transaction that writes.
+
+A feature with none of these properties records that fact in the handoff and moves on. Forcing these contracts onto a feature that never renders a record, never shares a limit, and never remembers a person is noise, and noise is what gets skipped when it matters.
+
 ## Evidence Boundary
 
 A rail decision, a schema, a prompt layout, or an eval design is prepared work. It is not implementation, an observed eval run, review, CI, or merge evidence. Token counts, latency, and cost belong to runs; a figure no run reported stays null and is never estimated from a pricing table.
@@ -3194,19 +3354,52 @@ Prefer the most deterministic validator the task allows, and climb only when the
 
 A task-level verdict is pass or fail per case. Aggregate scores hide which case broke; keep the per-case results.
 
-## 3. The Comparison Record
+Grade with code wherever a field decides correctness: the arguments a write tool received, the business state after the run, and the identifiers and order of what was rendered. A rubric is for the semantic remainder. Pin a specific tool call or ordering only when it is part of the contract, such as a grounding read that must precede a write or an authorization check that must precede a side effect; otherwise accept any route that reaches the required outcome without breaking a safety invariant.
+
+## 3. Stateful Fixtures
+
+A case is a message list plus the state that made the decision. A stateless model API does not make the feature stateless, and a transcript alone must never be able to recreate authority.
+
+Each case restores, as committed fixture data with a fixture version:
+
+- the messages;
+- the record provenance in scope, meaning which records entered through which authorized read, under which principal and tenant, at which version;
+- the identity, tenant, and current permissions of the caller;
+- approval records and pending staged changes with their target versions;
+- stored user facts, their versions, and the current deletion generation;
+- the latest presentation receipt: the final visible ordering, the acknowledged revision, and omitted items.
+
+Restore these together, so no fixture grants a record the transcript mentions but the provenance store does not. Inject busy, long, or contradictory preconditions directly into the state rather than replaying turns to build them up, unless carrying state across turns is itself the behavior under test. A simulated conversation is a way to discover a failure; the committed case is the controlled reduction of it.
+
+For a feature that loaded `references/stateful-contracts.md`, the golden set contains these contract cases:
+
+- **Record access.** An invented ID, an ID copied from another session, an ID the caller saw before a permission was revoked, an ID that has expired from scope, and an ID that only a read-only delegate read. Each exercises a separate check, and no case may grant a write because the record was once visible. The only passing path is the parent's own scoped read followed by a current authorization check.
+- **Rendered references.** "The second one" after the host filtered an unauthorized record, after the client re-sorted, and after pagination. The expected answer is the item at that position in the acknowledged final order, with the authoritative fields and required disclosures that were rendered. With the receipt stale or missing, the expected behavior is a refresh or a clarifying question, never a positional guess.
+- **Resulting-state limits.** Two sequential requests each under the cap that together exceed it; two concurrent workers targeting the same resource; a staged change applied after the target moved; a staged change applied after the approval expired. Each must end in a conflict or limit result with no partial mutation, and the fixture asserts the final business state, not the tool's reply.
+- **Memory lifecycle.** A user assertion that is stored; a tool result, a retrieved document, and a third-party claim the assistant repeated, each rejected; the same fact requested from a different person on a shared account and from a different tenant, each isolated; a correction that supersedes; a deletion that removes the fact from every read path; a retention expiry; and a delayed extractor whose window predates a deletion or a newer correction, which must be fenced rather than applied.
+
+## 4. Paired And Cross-Capability Cases
+
+Every required behavior gets a neighbor where the behavior must be absent: serve beside refuse, act beside ask, load a skill beside skip it, save a fact beside reject one. A suite of only required behaviors rewards a feature that always acts; the pair is what catches it.
+
+Add cases that span two contracts in one request and assert both obligations in one outcome: a positional reference to a rendered item followed by a write against it, a stored preference that changes which record is recommended, a limit check on a record that entered scope through a delegate. Separate suites for records, limits, and memory can each pass while a single request that crosses them fails at the seam.
+
+## 5. The Comparison Record
 
 Run the regression **before** the swap, not after it.
 
 - **Same set, same validators, both sides.** Baseline and candidate run against the identical golden set. A comparison whose two sides ran different cases is not a comparison.
-- **Pin both sides.** Record the exact model ID and the prompt version for baseline and for candidate. This is the reason both rails exist.
+- **Pin both sides.** Record the exact model ID, the prompt version, the tool bundle, and the fixture version for baseline and for candidate. This is the reason both rails exist.
 - **Capture tokens and cost per run.** Prompt tokens, completion tokens, and cost belong in the record, because a candidate that is two points better and four times more expensive is a decision, not a win.
+- **Cost is per successful task.** When comparing models or effort settings, divide total cost including failed attempts by tasks that passed; a cheaper call that fails more often is not cheaper. Report time to first useful rendered output and full-task latency separately, with tail percentiles beside the median, and report difficult-task failures on their own line instead of averaging them away.
+- **Configuration first, then calibrated prompts.** Hold the harness and prompt fixed to isolate a model or effort change; only afterward allow comparable prompt tuning per candidate on separate tuning cases, and report the held-out result with each prompt version. Keeping the two comparisons distinct stops a prompt fitted to one model from settling the selection.
 - **Report per-case movement.** Which cases newly pass, which newly fail. A net-positive run that broke a case someone reported last month is not an improvement.
 - **Missing telemetry stays null.** If the harness did not report tokens, latency, or cost, the field is null and the report says the harness did not report it. Never reconstruct a token count from a pricing table or a character count; an estimate presented beside observed numbers reads as observed.
 
-## 4. What A Result Is Not
+## 6. What A Result Is Not
 
-- A designed comparison is not a result. Until the run happened and its output was observed, every number is absent, not zero.
+- A designed comparison is not a result.
+- A committed fixture is not a run. Restoring runtime state proves the case is replayable, not that it was replayed. Until the run happened and its output was observed, every number is absent, not zero.
 - A passing eval is not implementation, review, CI, or merge evidence.
 - A golden-set pass rate is a statement about the golden set. It bounds the claim to the cases in the file, and the honest report says so.
 
@@ -3220,6 +3413,9 @@ Run the regression **before** the swap, not after it.
 | Golden set written up front, never grown | It ossifies around the failures imagined on day one and misses every real one. |
 | Comparing a candidate against a remembered baseline | The baseline was a different prompt, a different model, or a different day. Re-run it. |
 | Estimating cost from a pricing page | An estimate placed beside observed metrics is read as observed. Leave it null. |
+| Fixtures that restore messages only | The transcript recreated authority the provenance store never granted, so the case passes for the wrong reason. |
+| Required behaviors with no paired absence | A feature that always acts passes every "should act" case and fails every user it should have asked. |
+| Comparing per-call price | Failed attempts are free in that arithmetic; cost per successful task is the number that decides. |
 """
 
 

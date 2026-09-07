@@ -24,6 +24,7 @@ from ..skills.catalog import (
     harness_quality_contract,
     routable_definitions,
 )
+from .decision_receipt_handoffs import DecisionArtifact, build_decision_receipt_handoff
 from .workflow_composition import (
     CODING_OWNER_CHOICE_PENDING,
     WORKFLOW_COMPOSITION_CODING_OWNERS,
@@ -116,6 +117,7 @@ def build_hermes_plan_payload(
     limit: int = 3,
     source_metadata: dict[str, str] | None = None,
     executor_target: str = "codex",
+    decision_artifact: DecisionArtifact | None = None,
 ) -> dict[str, object]:
     task = message.strip()
     if not task:
@@ -128,7 +130,7 @@ def build_hermes_plan_payload(
         raise ValueError("hermes plan --limit must be at least 1")
 
     metadata_items = tuple(sorted((key, value) for key, value in (source_metadata or {}).items() if value))
-    return _clone_jsonish(
+    payload = _clone_jsonish(
         _build_hermes_plan_payload_cached(
             task,
             source,
@@ -137,6 +139,11 @@ def build_hermes_plan_payload(
             metadata_items,
         )
     )
+    if decision_artifact is not None:
+        payload["decision_receipt_handoff"] = build_decision_receipt_handoff(
+            decision_artifact, target_workflow="ralplan"
+        )
+    return payload
 
 
 @lru_cache(maxsize=2048)

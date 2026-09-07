@@ -47,6 +47,7 @@ from .render import (
     ultrawork_skill,
     wiki_reference_templates,
     wiki_skill,
+    workflow_full_contract_reference,
     workflow_skill,
 )
 
@@ -78,6 +79,15 @@ def builtin_skill_reference_templates() -> list[SkillReferenceTemplate]:
             )
             for definition in workflow_reference_definitions()
             if definition.procedure_steps
+        ],
+        *[
+            SkillReferenceTemplate(
+                definition.name,
+                "references/full-contract.md",
+                workflow_full_contract_reference(definition, definition.name),
+            )
+            for definition in workflow_reference_definitions()
+            if definition.progressive_disclosure
         ],
         *research_reference_templates(),
         *design_reference_templates(),

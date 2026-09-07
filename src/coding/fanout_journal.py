@@ -293,8 +293,8 @@ def _environment_policy_flags(value: object, names: tuple[str, ...]) -> bool:
 def _environment_policy_classifications(value: object) -> bool:
     allowed = {"approved", "denied", "missing", "passed", "removed"}
     reasons = {"portable_base", "lineage_metadata", "project_variable", "owner_state", "owner_capability", "verification_capability", "command_override", "override_not_granted", "parent_not_approved", "dispatcher_metadata"}
-    provenance = {"policy", "dispatcher", "declaration", "override", "parent"}
-    return isinstance(value, list) and len(value) <= 64 and all(isinstance(entry, Mapping) and set(entry) == {"name", "classification", "reason", "provenance"} and isinstance(entry["name"], str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", entry["name"]) and entry["classification"] in allowed and entry["reason"] in reasons and entry["provenance"] in provenance for entry in value)
+    policy_sources = {"policy", "dispatcher", "declaration", "override", "parent"}
+    return isinstance(value, list) and len(value) <= 64 and all(isinstance(entry, Mapping) and set(entry) == {"name", "classification", "reason", "policy_source"} and isinstance(entry["name"], str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", entry["name"]) and entry["classification"] in allowed and entry["reason"] in reasons and entry["policy_source"] in policy_sources for entry in value)
 
 
 def build_fanout_run_journal(summary: Mapping[str, Any]) -> dict[str, Any]:

@@ -1,0 +1,44 @@
+{
+  "alternatives": [
+    "sqlite",
+    "redis"
+  ],
+  "budget": {
+    "command_count": 1,
+    "file_count": 2,
+    "time_seconds": 300,
+    "tool_count": 1
+  },
+  "commands": [
+    {
+      "command": "uv run python probe.py --synthetic-latency-target-ms 25",
+      "expected_observation": "latency-ms"
+    }
+  ],
+  "context_decision_ref": "frontier-cache-choice",
+  "decision_id": "cache-backend",
+  "executor": {
+    "available": false,
+    "capability_limits": [
+      "no_network"
+    ],
+    "profile": "generic"
+  },
+  "experiment_kind": "timing_probe",
+  "hypothesis": "sqlite completes the synthetic lookup within the declared limit",
+  "measurement_method": "Measure synthetic lookup latency against the declared threshold.",
+  "question": "Does sqlite meet the declared synthetic lookup latency target?",
+  "stop_conditions": [
+    "hypothesis_supported",
+    "timeout"
+  ],
+  "target": {
+    "kind": "task",
+    "ref": "synthetic-lookup"
+  },
+  "workspace": {
+    "identity": "scratch-cache-probe",
+    "kind": "scratch_directory",
+    "write_boundary": "declared_workspace_only"
+  }
+}

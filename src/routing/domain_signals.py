@@ -9,11 +9,13 @@ from ..plugin_bundle.omh.domain_signals import (
     domain_tokens_are_locally_negated,
     DomainOperatorOverride,
     DomainRouteSignal,
-    excluded_specialist_domain_skills,
-    specialist_domain_operator_override,
-    specialist_domain_route_signal,
+    excluded_specialist_domain_skills as _excluded_specialist_domain_skills,
+    specialist_domain_operator_override as _specialist_domain_operator_override,
+    specialist_domain_route_signal as _specialist_domain_route_signal,
     specialist_domain_route_signals,
 )
+from .localization import normalized_phrase, routing_tokens
+from .visual_qa_cues import contains_cue_phrase
 
 RELEVANCE_POLICY = "shared_domain_signal/v1"
 
@@ -53,6 +55,123 @@ _UNOWNED_SPECIALIST_CUES = (
     ("rules-distill", ("four-fifths rule", "4/5 rule")),
     ("curriculum-design", ("bloom backward design", "bloom taxonomy")),
 )
+
+_DOWNSTREAM_PRD_ACTION_TOKENS = frozenset({"write", "create", "draft", "prepare"})
+_DOWNSTREAM_PRD_CUES = ("prd", "product requirements document")
+_DISCOVERY_EVIDENCE_CUES = ("findings", "evidence", "receipt")
+_DISCOVERY_EVIDENCE_SOURCE_CUES = (
+    "from these",
+    "from the",
+    "based on",
+    "using these",
+    "using the",
+    "supplied",
+    "provided",
+)
+_DISCOVERY_VALIDATION_ACTION_TOKENS = frozenset(
+    {"validate", "validation", "test", "testing", "interview", "interviews"}
+)
+_DISCOVERY_VALIDATION_SUBJECT_CUES = (
+    "customer interview",
+    "customer interviews",
+    "interview customers",
+    "customer problem",
+    "problem hypothesis",
+    "this idea",
+    "the idea",
+    "an idea",
+)
+_DISCOVERY_COMPLETION_TOKENS = frozenset(
+    {"already", "validated", "completed", "supplied", "provided"}
+)
+_COPY_ACTION_TOKENS = frozenset({"write", "create", "draft", "prepare", "rewrite"})
+_COPY_DELIVERABLE_CUES = ("email", "email copy", "copy", "message copy", "push copy", "banner copy")
+_COMPLETED_LIFECYCLE_TOKENS = frozenset({"approved", "planned"})
+_LIFECYCLE_DESIGN_CUES = (
+    "design",
+    "designing",
+    "experiment design",
+    "journey design",
+    "audience",
+    "consent",
+    "frequency",
+    "measurement",
+    "holdout",
+    "treatment",
+    "segment",
+)
+
+
+def _is_downstream_product_brief_request(message: str) -> bool:
+    """Return whether supplied discovery evidence is being turned into a PRD."""
+    normalized = normalized_phrase(message)
+    tokens = routing_tokens(normalized)
+    return (
+        bool(tokens & _DOWNSTREAM_PRD_ACTION_TOKENS)
+        and contains_cue_phrase(normalized, _DOWNSTREAM_PRD_CUES)
+        and contains_cue_phrase(normalized, _DISCOVERY_EVIDENCE_CUES)
+        and contains_cue_phrase(normalized, _DISCOVERY_EVIDENCE_SOURCE_CUES)
+    )
+
+
+def _is_active_product_discovery_validation_request(message: str) -> bool:
+    """Return whether customer or idea validation is requested before a PRD."""
+    normalized = normalized_phrase(message)
+    tokens = routing_tokens(normalized)
+    return (
+        bool(tokens & _DISCOVERY_VALIDATION_ACTION_TOKENS)
+        and "before" in tokens
+        and contains_cue_phrase(normalized, _DOWNSTREAM_PRD_CUES)
+        and contains_cue_phrase(normalized, _DISCOVERY_VALIDATION_SUBJECT_CUES)
+        and not bool(tokens & _DISCOVERY_COMPLETION_TOKENS)
+    )
+
+
+def _is_completed_lifecycle_copy_request(message: str) -> bool:
+    """Return whether a completed lifecycle plan needs only a copy deliverable."""
+    normalized = normalized_phrase(message)
+    tokens = routing_tokens(normalized)
+    return (
+        bool(tokens & _COPY_ACTION_TOKENS)
+        and bool(tokens & _COMPLETED_LIFECYCLE_TOKENS)
+        and contains_cue_phrase(normalized, _COPY_DELIVERABLE_CUES)
+        and not contains_cue_phrase(normalized, _LIFECYCLE_DESIGN_CUES)
+    )
+
+
+def specialist_domain_route_signal(message: str) -> DomainRouteSignal | None:
+    """Keep active discovery validation ahead of, and completed evidence behind, a PRD."""
+    signal = _specialist_domain_route_signal(message)
+    if _is_active_product_discovery_validation_request(message):
+        return DomainRouteSignal(
+            skill="product-discovery-validation",
+            matched_cues=("active customer or idea validation", "before prd"),
+        )
+    if signal is not None and signal.skill == "product-discovery-validation" and _is_downstream_product_brief_request(message):
+        return DomainRouteSignal(skill="product-brief", matched_cues=("supplied discovery evidence", "prd"))
+    return signal
+
+
+def excluded_specialist_domain_skills(message: str) -> frozenset[str]:
+    """Keep the discovery-to-PRD boundary available in both directions."""
+    excluded = _excluded_specialist_domain_skills(message)
+    if _is_active_product_discovery_validation_request(message):
+        return (excluded - {"product-discovery-validation"}) | {"product-brief"}
+    if _is_downstream_product_brief_request(message):
+        return (excluded - {"product-brief"}) | {"product-discovery-validation"}
+    return excluded
+
+
+def specialist_domain_operator_override(
+    message: str,
+    signal: DomainRouteSignal | None = None,
+) -> DomainOperatorOverride | None:
+    """Let a downstream copy task leave a completed lifecycle-design workflow."""
+    if signal is None:
+        signal = specialist_domain_route_signal(message)
+    if signal is not None and signal.skill == "lifecycle-growth" and _is_completed_lifecycle_copy_request(message):
+        return DomainOperatorOverride(skill="content-operator", matched_cues=("completed lifecycle copy",))
+    return _specialist_domain_operator_override(message, signal)
 
 
 @dataclass(frozen=True)

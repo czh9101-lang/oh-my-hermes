@@ -1,0 +1,156 @@
+{
+  "schema_version": "llm_app_stateful_fixture/v1",
+  "fixture_version": "llm-app-stateful-contract/v1",
+  "model_id": "synthetic-fixture-model/v1",
+  "prompt_id": "stateful-contract-prompt/v1",
+  "tool_bundle_id": "synthetic-fixture-host/v1",
+  "observations": {
+    "provider": null,
+    "cost_usd": null,
+    "user_visible_latency_ms": null
+  },
+  "sequential": {
+    "initial": {
+      "value": 6,
+      "limit": 10,
+      "version": 1
+    },
+    "requests": [
+      {
+        "amount": 3,
+        "expected_version": 1,
+        "idempotency_key": "seq-1",
+        "authorized": true,
+        "approved": true,
+        "policy_allows": true
+      },
+      {
+        "amount": 3,
+        "expected_version": 2,
+        "idempotency_key": "seq-2",
+        "authorized": true,
+        "approved": true,
+        "policy_allows": true
+      }
+    ],
+    "expected_outcomes": [
+      "applied",
+      "resulting_limit"
+    ],
+    "expected_final": {
+      "value": 9,
+      "version": 2
+    }
+  },
+  "concurrent": {
+    "initial": {
+      "value": 6,
+      "limit": 10,
+      "version": 1
+    },
+    "requests": [
+      {
+        "amount": 4,
+        "expected_version": 1,
+        "idempotency_key": "concurrent-a",
+        "authorized": true,
+        "approved": true,
+        "policy_allows": true
+      },
+      {
+        "amount": 4,
+        "expected_version": 1,
+        "idempotency_key": "concurrent-b",
+        "authorized": true,
+        "approved": true,
+        "policy_allows": true
+      }
+    ],
+    "expected_outcomes": [
+      "applied",
+      "stale_version"
+    ],
+    "expected_final": {
+      "value": 10,
+      "version": 2
+    }
+  },
+  "gate_cases": [
+    {
+      "id": "authorization-rechecked",
+      "pair_role": "forbidden",
+      "request": {
+        "amount": 1,
+        "expected_version": 1,
+        "idempotency_key": "gate-auth",
+        "authorized": false,
+        "approved": true,
+        "policy_allows": true
+      },
+      "expected": "authorization_denied"
+    },
+    {
+      "id": "approval-rechecked",
+      "pair_role": "forbidden",
+      "request": {
+        "amount": 1,
+        "expected_version": 1,
+        "idempotency_key": "gate-approval",
+        "authorized": true,
+        "approved": false,
+        "policy_allows": true
+      },
+      "expected": "approval_missing"
+    },
+    {
+      "id": "policy-rechecked",
+      "pair_role": "forbidden",
+      "request": {
+        "amount": 1,
+        "expected_version": 1,
+        "idempotency_key": "gate-policy",
+        "authorized": true,
+        "approved": true,
+        "policy_allows": false
+      },
+      "expected": "policy_denied"
+    },
+    {
+      "id": "stale-stage-no-partial-write",
+      "pair_role": "forbidden",
+      "request": {
+        "amount": 1,
+        "expected_version": 0,
+        "idempotency_key": "gate-stale",
+        "authorized": true,
+        "approved": true,
+        "policy_allows": true
+      },
+      "expected": "stale_version"
+    }
+  ],
+  "messages": [],
+  "idempotent_replay": {
+    "initial": {
+      "value": 6,
+      "limit": 10,
+      "version": 1
+    },
+    "request": {
+      "amount": 2,
+      "expected_version": 1,
+      "idempotency_key": "replay-1",
+      "authorized": true,
+      "approved": true,
+      "policy_allows": true
+    },
+    "expected_outcomes": [
+      "applied",
+      "idempotent_replay"
+    ],
+    "expected_final": {
+      "value": 8,
+      "version": 2
+    }
+  }
+}

@@ -20,6 +20,16 @@ from ..workflows.operations_contracts import ArtifactContractRef, artifact_contr
 OMH_DESCRIPTION_PREFIX = "[omh] "
 
 
+# Shared retained-specialist evidence boundary. Catalog definition modules and
+# canonical specialist data import this here so catalog registration cannot
+# introduce a dependency cycle.
+SPECIALIST_DOMAIN_HANDOFF_BOUNDARY = (
+    "Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. "
+    "A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, "
+    "implementation, review, CI, or merge claim. Prepare a connector, file, coding, or human-review handoff only when "
+    "the user explicitly accepts that next step; report it only from observed evidence."
+)
+
 def omh_description(description: str) -> str:
     text = description.strip()
     if text.lower().startswith(OMH_DESCRIPTION_PREFIX):
@@ -808,6 +818,10 @@ class SkillDefinition:
     # against this definition; check IDs resolve against procedure_checks.
     procedure_checks: tuple[ProcedureCheck, ...] = ()
     procedure_steps: tuple[ProcedureStep, ...] = ()
+    # Keep the full rendered workflow contract available on demand when its
+    # detail would otherwise make every installed prompt carry it. The compact
+    # body retains routing, inputs, outputs, authority, and completion cues.
+    progressive_disclosure: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "description", omh_description(self.description))

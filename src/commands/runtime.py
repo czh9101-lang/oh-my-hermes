@@ -1303,6 +1303,7 @@ def _add_runtime_commands(sub) -> None:
     from .run_efficiency import add_runtime_efficiency_command
     from .run_health import add_runtime_health_summary_command
     from .runtime_artifact_shape import add_runtime_artifacts_show_shape_command
+    from .workflow_artifacts import add_runtime_workflow_artifact_commands
 
     runtime = sub.add_parser("runtime", help="Read and record local prepared-vs-observed runtime evidence.")
     runtime_sub = runtime.add_subparsers(dest="runtime_command", required=True)
@@ -1555,6 +1556,7 @@ def _add_runtime_commands(sub) -> None:
     add_runtime_artifacts_show_shape_command(runtime_artifacts_sub)
 
     add_runtime_decision_gate_commands(runtime_sub)
+    add_runtime_workflow_artifact_commands(runtime_sub)
 
     runtime_validate = runtime_sub.add_parser("validate")
     runtime_validate.add_argument("--run", dest="run_id", default=None)

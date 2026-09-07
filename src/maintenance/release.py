@@ -197,7 +197,7 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # same pass -- naming the armed wait costs fewer chars than the example clause
 # it replaced -- so the net is one shared constant's worth of instruction lines,
 # not per-section padding; warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 395663
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 410980
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -227,7 +227,7 @@ FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 110519 -> 111483: one standalone capability row for the new
 # `github-issue-intake` skill; warranted growth.
 # 111483 -> 112443: apple-design adds one standalone capability row.
-STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 112443
+STANDALONE_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 116240
 STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # ULW fold context ceiling (issue #954, PR D). The limit is the pre-D measured
 # value of the full profile's `skill_body` chars on `main` @ acb9a060, in the
@@ -688,7 +688,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # per check too late. The capability ladder table, the terminal-state list, and
 # the schema pointer live in the on-demand `references/skill-common-rail.md`,
 # outside this budget; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 904072
+# 945164 -> 914399: the four issue workflows retain exact frontmatter and
+# triggers on demand, brief inputs/outputs, HOLD/authority/completion/recovery
+# and delegation fallback contracts, and real artifact CLI pointers in their
+# bodies. Their complete skill-specific contracts move to per-skill references;
+# shared rails remain referenced rather than copied.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 914399
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

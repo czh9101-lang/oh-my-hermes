@@ -224,7 +224,7 @@ class ChildEnvironmentPolicyTests(unittest.TestCase):
         classified = {entry["name"]: entry for entry in decision.receipt["classifications"]}
         self.assertEqual(classified["OWNER_TOKEN"]["classification"], "denied")
         self.assertEqual(classified["OWNER_TOKEN"]["reason"], "owner_capability")
-        self.assertEqual(classified["OWNER_TOKEN"]["provenance"], "declaration")
+        self.assertEqual(classified["OWNER_TOKEN"]["policy_source"], "declaration")
         self.assertNotIn("must-not-persist", str(decision.receipt))
 
     def test_lineage_receipt_matches_the_effective_child_environment(self) -> None:

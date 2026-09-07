@@ -3293,6 +3293,10 @@ _PRIMARY_HARNESSES = {
     "localization-review": "critic",
     "sales-development": "ops-review",
     "product-brief": "planning",
+    "decision-prototype": "coding-handling",
+    "lifecycle-growth": "planning",
+    "product-discovery-validation": "strategy-synthesis",
+    "sales-pipeline-review": "ops-review",
 }
 _PRIMARY_HARNESSES.update(
     {
