@@ -574,7 +574,16 @@ class TuiWidgetPackTests(unittest.TestCase):
         # and only then rate, cache, turn and cost, which the drop loop still
         # sheds by rank without ever touching the tail.
         self.assertIn("` · ${tokenText.padStart(6)} tokens`", widget)
-        self.assertIn("const routeCap = Math.max(10, Math.min(30, Math.floor(columns * 0.24)))", widget)
+        self.assertIn("const routeCap = Math.max(10, Math.min(44, Math.floor(columns * 0.3)))", widget)
+        # The label names the model, never its provider: `anthropic/` ate the
+        # column and truncated to `category:architect(anthropic/`, hiding
+        # whether the lane ran opus or fable. Only the segment after the last
+        # slash reaches the label (both the category route and the maestro
+        # dispatch identity); `row.provider` stays a separate reader field.
+        self.assertIn("const modelName = safeText(row.model).split('/').pop()", widget)
+        self.assertIn("const model = [modelName, safeText(row.effort)].filter(Boolean).join(':')", widget)
+        self.assertIn("${modelName ? ` ${truncateCells(modelName, 20)}` : ''}", widget)
+        self.assertNotIn("truncateCells(row.model, 20)", widget)
         # The route column reserves its width per LIST, exactly like tokens:
         # otherwise a row without a category would slide its tail left and
         # break the very alignment this ordering exists to keep.

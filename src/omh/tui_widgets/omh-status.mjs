@@ -292,7 +292,14 @@ export default function register(sdk) {
     const state = safeText(row.state) || 'running'
     const stateText = columns < 100 ? ({ running: 'run', blocked: 'block', failed: 'fail' })[state] || state : state
     const taskId = truncateCells(safeText(row.task_id) || safeText(row.role) || 'agent', 8).padEnd(8)
-    const model = [safeText(row.model), safeText(row.effort)].filter(Boolean).join(':')
+    // The route column shows WHICH model runs, not who serves it: a
+    // provider-prefixed id (`anthropic/claude-opus-5`) spent the whole
+    // column on the prefix and truncated to `category:architect(anthropic/`,
+    // so opus and fable were indistinguishable (the owner's report). The
+    // reader still carries `provider` as its own field for anything that
+    // needs it; the label keeps only the segment after the last slash.
+    const modelName = safeText(row.model).split('/').pop()
+    const model = [modelName, safeText(row.effort)].filter(Boolean).join(':')
     // A row `omh coding fanout dispatch` opened (the Maestro lane spawning an
     // external CLI directly, not a Hermes-native delegate_task child) carries
     // `dispatch_lane` from the reader. It renders like every other row in
@@ -303,7 +310,7 @@ export default function register(sdk) {
     const dispatchLane = safeText(row.dispatch_lane)
     const dispatchExecutor = safeText(row.executor_profile)
     const dispatchIdentity = dispatchLane
-      ? `(${MAESTRO_EXECUTOR_SHORT_NAMES[dispatchExecutor] || dispatchExecutor}/${dispatchLane}${safeText(row.model) ? ` ${truncateCells(row.model, 20)}` : ''})`
+      ? `(${MAESTRO_EXECUTOR_SHORT_NAMES[dispatchExecutor] || dispatchExecutor}/${dispatchLane}${modelName ? ` ${truncateCells(modelName, 20)}` : ''})`
       : ''
     const category = safeText(row.category)
     // Prepared-route provenance from the reader, rendered as one shape:
@@ -386,7 +393,9 @@ export default function register(sdk) {
     // row without a route holds the grid with blank cells so the tail after
     // it stays on the same screen column, and a wave with no routes at all
     // spends none of the width.
-    const routeCap = Math.max(10, Math.min(30, Math.floor(columns * 0.24)))
+    // Sized so `category:architect(claude-fable-5-1:xhigh)` survives on a
+    // wide terminal and the model family is still readable on a narrow one.
+    const routeCap = Math.max(10, Math.min(44, Math.floor(columns * 0.3)))
     const routeWidth = routeColumn ? cellWidth(separator) + routeCap : 0
     const routeCell = routeColumn
       ? `${separator}${padCells(truncateCells(routeSegment.text, routeCap), routeCap)}`
