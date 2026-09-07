@@ -101,10 +101,17 @@ def _reenter(root: Path, generation: Path, args: Any, runner: Runner, platform: 
     if not same_existing_path(pointed, trusted):
         raise OmhError("cannot re-enter an untrusted self-update generation")
     env = dict(os.environ, OMH_UPDATE_COMMAND_PACKAGE_REENTERED="1", OMH_SELF_UPDATE_GENERATION=str(trusted))
+    command = [_python(root / "current", platform), "-m", "omh.cli", *_reentry_argv()]
+    # stdout stays on the terminal so the re-entered update's own progress and
+    # prompts show live; stderr is captured so the failure that stops the
+    # update reaches the summary line, then replayed so nothing is lost.
     try:
-        checked = _run(runner, [_python(root / "current", platform), "-m", "omh.cli", *_reentry_argv()], env=env, timeout=REENTRY_TIMEOUT_SECONDS, capture=False)
+        checked = runner(command, text=True, stdout=None, stderr=subprocess.PIPE, env=env, timeout=REENTRY_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired):
         return False, "post-activation re-entry timed out"
+    if checked.stderr:
+        sys.stderr.write(str(checked.stderr))
+        sys.stderr.flush()
     return (checked.returncode == 0, _detail(checked, "post-activation re-entry failed"))
 
 
