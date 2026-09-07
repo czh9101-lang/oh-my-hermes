@@ -288,11 +288,15 @@ export default function register(sdk) {
   const observedPercent = (label, value) =>
     Number.isFinite(value) ? `${label} ${value}%` : ''
 
-  const activityLayout = (row, columns, main, extraSeconds, tokensColumn, routeColumn) => {
-    const state = safeText(row.state) || 'running'
-    const stateText = columns < 100 ? ({ running: 'run', blocked: 'block', failed: 'fail' })[state] || state : state
-    const taskId = truncateCells(safeText(row.task_id) || safeText(row.role) || 'agent', 8).padEnd(8)
-    const model = [safeText(row.model), safeText(row.effort)].filter(Boolean).join(':')
+  const routeIdentity = row => {
+    // The route column shows WHICH model runs, not who serves it: a
+    // provider-prefixed id (`anthropic/claude-opus-5`) spent the whole
+    // column on the prefix and truncated to `category:architect(anthropic/`,
+    // so opus and fable were indistinguishable (the owner's report). The
+    // reader still carries `provider` as its own field for anything that
+    // needs it; the label keeps only the segment after the last slash.
+    const modelName = safeText(row.model).split('/').pop()
+    const model = [modelName, safeText(row.effort)].filter(Boolean).join(':')
     // A row `omh coding fanout dispatch` opened (the Maestro lane spawning an
     // external CLI directly, not a Hermes-native delegate_task child) carries
     // `dispatch_lane` from the reader. It renders like every other row in
@@ -303,7 +307,7 @@ export default function register(sdk) {
     const dispatchLane = safeText(row.dispatch_lane)
     const dispatchExecutor = safeText(row.executor_profile)
     const dispatchIdentity = dispatchLane
-      ? `(${MAESTRO_EXECUTOR_SHORT_NAMES[dispatchExecutor] || dispatchExecutor}/${dispatchLane}${safeText(row.model) ? ` ${truncateCells(row.model, 20)}` : ''})`
+      ? `(${MAESTRO_EXECUTOR_SHORT_NAMES[dispatchExecutor] || dispatchExecutor}/${dispatchLane}${modelName ? ` ${modelName}` : ''})`
       : ''
     const category = safeText(row.category)
     // Prepared-route provenance from the reader, rendered as one shape:
@@ -323,6 +327,19 @@ export default function register(sdk) {
       ? `category:${displayCategory}${routeDetail ? `(${routeDetail})` : ''}`
       : model
     const routeKind = routeOrigin === 'fallback' || routeOrigin === 'exhausted_to_inherit' ? 'route-fallback' : 'route'
+    return dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route)
+  }
+
+  // The route column takes the widest identity in the list (0 = no column):
+  // the label is never truncated, the action column yields the width
+  // instead. `category:architect(anthropic/` with the model cut off was the
+  // owner's report; a route that cannot be read is not worth its cells.
+  const routeColumnWidth = rows => rows.reduce((width, row) => Math.max(width, cellWidth(routeIdentity(row).text)), 0)
+
+  const activityLayout = (row, columns, main, extraSeconds, tokensColumn, routeColumn) => {
+    const state = safeText(row.state) || 'running'
+    const stateText = columns < 100 ? ({ running: 'run', blocked: 'block', failed: 'fail' })[state] || state : state
+    const taskId = truncateCells(safeText(row.task_id) || safeText(row.role) || 'agent', 8).padEnd(8)
     const turn = Number.isFinite(row.turn_count) ? `turn ${row.turn_count}` : ''
     const tools = Number.isFinite(row.tool_count) ? `${row.tool_count} tools` : ''
     const turnTools = turn && tools ? `${turn} (${tools})` : turn || tools
@@ -332,7 +349,7 @@ export default function register(sdk) {
     // state/elapsed/tokens block the owner asked to move beside it, padded
     // to a constant width so the token figures still line up vertically
     // from row to row.
-    const routeSegment = dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route)
+    const routeSegment = routeIdentity(row)
     const optional = [
       metricSegment('fallback', Number.isFinite(row.fallback_count) && row.fallback_count > 0 ? `fallback:${row.fallback_count}` : '', 1),
       // Rate reads immediately after the tail's token count ('tokens, tok/s,
@@ -386,10 +403,19 @@ export default function register(sdk) {
     // row without a route holds the grid with blank cells so the tail after
     // it stays on the same screen column, and a wave with no routes at all
     // spends none of the width.
-    const routeCap = Math.max(10, Math.min(30, Math.floor(columns * 0.24)))
+    // `routeColumn` is the widest identity in the list, so the label is
+    // padded, never truncated; only a terminal too narrow for the prefix,
+    // the tail and an 8-cell action column clips it at all.
+    const routeCap = Math.min(routeColumn, Math.max(10, budget - cellWidth(prefix) - tailWidth - cellWidth(separator) - 8 - 2))
     const routeWidth = routeColumn ? cellWidth(separator) + routeCap : 0
+    // When even that is too narrow, the `category:` prefix goes before the
+    // model does: `architect(claude-fable-5-1:xhigh)` still says which model
+    // ran, `category:architect(claude-` does not.
+    const routeText = cellWidth(routeSegment.text) > routeCap && routeSegment.text.startsWith('category:')
+      ? routeSegment.text.slice('category:'.length)
+      : routeSegment.text
     const routeCell = routeColumn
-      ? `${separator}${padCells(truncateCells(routeSegment.text, routeCap), routeCap)}`
+      ? `${separator}${padCells(truncateCells(routeText, routeCap), routeCap)}`
       : ''
     const actionCap = Math.max(10, Math.min(48, Math.floor(columns * 0.4)))
     const actionWidth = Math.max(8, Math.min(actionCap, budget - cellWidth(prefix) - routeWidth - tailWidth - 2))
@@ -496,7 +522,7 @@ export default function register(sdk) {
     // Same rule for the route/category column, which now carries the grid:
     // it is what the fixed tail is anchored against, so every row reserves
     // it as soon as one row has a route to show.
-    const routeColumn = [...mainRows, ...rows].some(row => safeText(row.category) || safeText(row.model) || safeText(row.dispatch_lane))
+    const routeColumn = routeColumnWidth([...mainRows, ...rows])
     return h(
       Box,
       { flexDirection: 'column', width: '100%' },
