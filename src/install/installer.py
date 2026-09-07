@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -112,6 +113,22 @@ def _write_skill_reference(
     atomic_write_text(target_file, template.content)
 
 
+def _manifest_describes(manifest: dict | None, skills_dir: Path) -> bool:
+    """Whether ``manifest`` records the pack that lives in ``skills_dir``.
+
+    Real paths on both sides: the legacy bootstrap generation reaches the old
+    ``<omh_home>/skills`` through a directory link, and that is still the same
+    pack. A manifest without a recorded directory predates generations and can
+    only describe the one pack directory that existed then.
+    """
+    if not manifest:
+        return False
+    recorded = manifest.get("skills_dir")
+    if not recorded:
+        return True
+    return os.path.realpath(str(recorded)) == os.path.realpath(str(skills_dir))
+
+
 def _overwrite_allowed(force: bool) -> bool:
     """The DECISION for every installer overwrite/removal guard in this module.
 
@@ -182,6 +199,14 @@ def install_skill_pack(
             template for template in reference_templates if template.skill_name in refreshable
         ]
     manifest = read_manifest(paths.manifest_path)
+    # A staged self-update renders the candidate pack into its own generation
+    # directory while the home manifest still describes the generation that is
+    # active. That manifest cannot witness local edits in a directory it never
+    # recorded, so judging the candidate by it flagged every skill the catalog
+    # had changed since the last install as a "local modification", refused the
+    # post-activation re-entry, and rolled the whole update back.
+    if not _manifest_describes(manifest, paths.skills_dir):
+        manifest = None
     modified = local_modifications(manifest, paths.skills_dir)
     if modified and not _overwrite_allowed(force):
         raise OmhError("local modifications detected; rerun with --force or resolve: " + ", ".join(modified))
