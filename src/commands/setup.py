@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import cast
+from typing import Any, cast
 import unicodedata
 
 try:
@@ -851,8 +851,31 @@ def _run_command_package_self_update(args: argparse.Namespace, plan: dict[str, o
     elif result.get("ok"):
         print("OMH update complete: command and workflow pack activated together.")
     else:
-        print(f"OMH update stopped during {result.get('phase')}; the known-good generation remains active.")
+        for line in _self_update_stop_lines(result):
+            print(line)
     return 0 if result.get("ok") else 1
+
+
+def _self_update_stop_lines(result: dict[str, Any]) -> list[str]:
+    """Say why the transaction stopped, not only where.
+
+    The phase alone was the whole report, and "stopped during post_activation"
+    sent people to a bug tracker: the re-entered update had printed its own
+    error, but nothing tied that error to the rollback. The failing phase's
+    recorded reason closes that gap; its last line is the one that names the
+    cause, and the full text stays in the JSON result.
+    """
+    phase = str(result.get("phase") or "unknown")
+    lines = [f"OMH update stopped during {phase}; the known-good generation remains active."]
+    detail = result.get(phase)
+    reason = str(detail.get("reason") or "").strip() if isinstance(detail, dict) else ""
+    if reason:
+        lines.append(f"  reason: {reason.splitlines()[-1].strip()}")
+    restored = str((result.get("rollback") or {}).get("restored") or "")
+    if restored:
+        lines.append(f"  rolled back to generation {restored}")
+    lines.append("  Resolve the reason above, then rerun `omh update`.")
+    return lines
 
 
 def _run_package_manager_self_update(

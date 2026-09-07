@@ -212,6 +212,10 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 self.assertFalse(result["ok"])
                 self.assertEqual(result["phase"], "post_activation")
                 self.assertTrue(result["rollback"]["performed"])
+                # The re-entered update's stderr is the only place the cause
+                # is written; it has to reach the result, not just the terminal.
+                expected_reason = "post failed" if failure == "post" else "post-activation re-entry timed out"
+                self.assertEqual(result["post_activation"]["reason"], expected_reason)
                 self.assertEqual(sum("--command-package-updated" in call and "update" not in call for call in calls), 2)
                 self._assert_pair(root, previous)
 
@@ -700,15 +704,73 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 self.assertFalse(result["ok"])
                 self.assertNotEqual(result["post_activation"]["status"], "ok")
         output = io.StringIO()
-        failed = {"ok": False, "phase": "post_activation"}
+        failed = {
+            "ok": False,
+            "phase": "post_activation",
+            "post_activation": {"status": "failed", "reason": "Traceback line\nerror: local modifications detected; rerun with --force"},
+            "rollback": {"performed": True, "restored": "bootstrap-legacy"},
+        }
         with (
             patch("omh.install.self_update.run_installer_self_update", return_value=failed),
             contextlib.redirect_stdout(output),
         ):
             status = _run_command_package_self_update(SimpleNamespace(json=False), {"method": "installer"})
         self.assertEqual(status, 1)
-        self.assertIn("stopped during post_activation", output.getvalue())
-        self.assertNotIn("update complete", output.getvalue().lower())
+        printed = output.getvalue()
+        self.assertIn("stopped during post_activation", printed)
+        # The phase alone sent people to the bug tracker; the line names the cause.
+        self.assertIn("reason: error: local modifications detected; rerun with --force", printed)
+        self.assertNotIn("Traceback line", printed)
+        self.assertIn("rolled back to generation bootstrap-legacy", printed)
+        self.assertIn("rerun `omh update`", printed)
+        self.assertNotIn("update complete", printed.lower())
+        bare = io.StringIO()
+        with (
+            patch("omh.install.self_update.run_installer_self_update", return_value={"ok": False, "phase": "staging"}),
+            contextlib.redirect_stdout(bare),
+        ):
+            _run_command_package_self_update(SimpleNamespace(json=False), {"method": "installer"})
+        self.assertIn("stopped during staging", bare.getvalue())
+        self.assertNotIn("reason:", bare.getvalue())
+
+    def test_reentry_judges_the_candidate_pack_by_its_own_manifest(self):
+        # The home manifest describes the active generation's pack. Rendering
+        # the candidate into a new generation and then judging it by that
+        # manifest turned every catalog change since the last install into a
+        # "local modification" and rolled the update back (reported on 2.0.1).
+        from omh.install.installer import install_skill_pack
+        from omh.system.paths import OmhPaths
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = OmhPaths(omh_home=root / "omh", hermes_home=root / "hermes")
+            install_skill_pack(home)
+            manifest_path = root / "omh" / "manifest.json"
+            recorded = json.loads(manifest_path.read_text())
+            self.assertEqual(recorded["skills_dir"], str(root / "omh" / "skills"))
+            candidate = root / "generations" / "candidate" / "skills"
+            smoke_home = OmhPaths(omh_home=root / "smoke-omh", hermes_home=root / "smoke-hermes", managed_skills_dir=candidate)
+            install_skill_pack(smoke_home)
+            # The active generation was installed from an older catalog.
+            recorded["skills"][0]["sha256"] = "0" * 64
+            manifest_path.write_text(json.dumps(recorded))
+            reentry = OmhPaths(omh_home=root / "omh", hermes_home=root / "hermes", managed_skills_dir=candidate)
+            written = install_skill_pack(reentry)
+            self.assertEqual(written["skills_dir"], str(candidate))
+            self.assertEqual(json.loads(manifest_path.read_text())["skills_dir"], str(candidate))
+            # The same manifest still guards the directory it does describe.
+            (root / "omh" / "skills" / Path(recorded["skills"][0]["path"])).write_text("edited")
+            manifest_path.write_text(json.dumps(recorded))
+            with self.assertRaisesRegex(OmhError, "local modifications detected"):
+                install_skill_pack(home)
+            # A bootstrap generation reaching the legacy pack through a link is
+            # the same pack, so its edits are still seen.
+            bootstrap = root / "generations" / "bootstrap-legacy"
+            bootstrap.mkdir(parents=True)
+            (bootstrap / "skills").symlink_to(root / "omh" / "skills", target_is_directory=True)
+            linked = OmhPaths(omh_home=root / "omh", hermes_home=root / "hermes", managed_skills_dir=bootstrap / "skills")
+            with self.assertRaisesRegex(OmhError, "local modifications detected"):
+                install_skill_pack(linked)
 
 
 class ManagedWorkflowRegistrationTests(unittest.TestCase):
