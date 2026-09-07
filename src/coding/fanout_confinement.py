@@ -176,16 +176,17 @@ class FanoutFilesystemConfinement:
             write_roots=self.write_roots,
         )
 
-    def command_environment(self) -> dict[str, str]:
+    def command_environment(self, environment: Mapping[str, str] | None = None) -> dict[str, str]:
         """Keep macOS toolchain scratch writes within the confined worktree."""
+        selected_environment = self.environment if environment is None else environment
         if (
             self.receipt.get("enforced") is not True
             or self.child is None
             or self.selected != "sandbox-exec"
         ):
-            return dict(self.environment)
+            return dict(selected_environment)
         return {
-            **self.environment,
+            **selected_environment,
             "TMPDIR": str(self.child.work / _FANOUT_MACOS_TOOLCHAIN_TEMP_DIRECTORY),
         }
 

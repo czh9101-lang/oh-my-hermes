@@ -484,6 +484,25 @@ class FanoutFilesystemConfinementTests(unittest.TestCase):
             self.assertTrue(inside.is_file())
             self.assertFalse(outside.exists())
 
+    def test_command_environment_uses_the_dispatcher_filtered_mapping(self) -> None:
+        from omh.coding.fanout_confinement import FanoutFilesystemConfinement
+
+        confinement = FanoutFilesystemConfinement(
+            selected="unsupported",
+            roots=(),
+            write_roots=(),
+            write_literals=(),
+            child=None,
+            environment={"PARENT_SECRET": "must-not-reach-command"},
+            backend_digest="",
+            executables={},
+            receipt={"enforced": False},
+        )
+
+        environment = confinement.command_environment({"PATH": "/usr/bin"})
+
+        self.assertEqual(environment, {"PATH": "/usr/bin"})
+
 
 if __name__ == "__main__":
     unittest.main()

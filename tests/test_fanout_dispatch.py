@@ -3582,6 +3582,7 @@ _PY = shlex.quote(sys.executable)
 _PASSING_COMMAND = f"{_PY} -c pass"
 _FAILING_COMMAND = f"{_PY} -c 'import sys; sys.stdout.write(\"boom\"); sys.exit(3)'"
 _ENV_COMMAND = f"OMH_VERIFY=1 {_PY} -c 'import os,sys; sys.exit(0 if os.environ.get(\"OMH_VERIFY\") else 1)'"
+_VERIFY_NARROW_COMMAND = f"{_PY} -c 'import os,sys; sys.exit(0 if os.environ.get(\"VERIFY_TOKEN\") and not os.environ.get(\"CODEX_TOKEN\") else 1)'"
 # Well over the 300-byte verification tail, so the dispatcher has to spill.
 _FLOODING_COMMAND = f"{_PY} -c 'import sys; sys.stdout.write(\"flood\" * 900); sys.exit(4)'"
 _FLOODING_OUTPUT = "flood" * 900
@@ -3731,6 +3732,33 @@ class FanoutDispatchVerificationTests(unittest.TestCase):
             self.assertTrue(core["unit_verification_observed"])
             self.assertTrue(core["integration_ready"])
             self.assertEqual(len(runner.verified), 2)
+
+    def test_verification_receives_only_its_declared_capability_not_the_owner_capability(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, runner = self._setup(tmp, [_VERIFY_NARROW_COMMAND])
+
+            core = self._dispatch(
+                paths,
+                repo,
+                sha,
+                contract,
+                runner,
+                run_verification=True,
+                env={
+                    "PATH": os.environ["PATH"],
+                    "CODEX_TOKEN": "owner-sentinel",
+                    "VERIFY_TOKEN": "verification-sentinel",
+                },
+                environment_policy={
+                    "owner_capabilities": {"codex": ["CODEX_TOKEN"]},
+                    "verification_capabilities": ["VERIFY_TOKEN"],
+                },
+            )
+
+        self.assertEqual(core["verification_status"], "passed")
+        self.assertTrue(all("CODEX_TOKEN" not in env for env in runner.verification_envs))
+        self.assertTrue(all(env["VERIFY_TOKEN"] == "verification-sentinel" for env in runner.verification_envs))
+        self.assertNotIn("verification-sentinel", str(core["child_environment_policy"]))
 
     def test_a_failing_command_keeps_the_unit_short_of_integration_ready(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -4066,6 +4094,53 @@ class FanoutDispatchPlannedVerificationTests(unittest.TestCase):
             )
             self.assertTrue(core["unit_verification_observed"])
             self.assertTrue(core["integration_ready"])
+
+    def test_integration_verification_uses_the_same_narrow_capability_grant(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, original_runner = self._two_unit_setup(
+                tmp,
+                [
+                    {"command": _PASSING_COMMAND, "id": "unit", "safety": "read_only"},
+                    {"command": _VERIFY_NARROW_COMMAND, "id": "integration", "tier": "integration"},
+                ],
+            )
+            verification_envs: list[dict[str, str]] = []
+
+            def runner(argv, **kwargs):
+                completed = original_runner(argv, **kwargs)
+                if argv[:2] == [sys.executable, "-c"]:
+                    verification_envs.append(dict(kwargs.get("env") or {}))
+                return completed
+
+            revision = subprocess.run(
+                ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                runner=runner,
+                readiness=_ready,
+                run_verification=True,
+                integrated_worktree=repo,
+                integrated_revision=revision,
+                env={
+                    "PATH": os.environ["PATH"],
+                    "CODEX_TOKEN": "owner-sentinel",
+                    "VERIFY_TOKEN": "integration-sentinel",
+                },
+                environment_policy={
+                    "owner_capabilities": {"codex": ["CODEX_TOKEN"]},
+                    "verification_capabilities": ["VERIFY_TOKEN"],
+                },
+            )
+
+        self.assertEqual({entry["unit_id"]: entry for entry in summary["units"]}["core"]["verification_status"], "passed")
+        self.assertTrue(verification_envs)
+        self.assertTrue(all("CODEX_TOKEN" not in env for env in verification_envs))
+        self.assertTrue(all(env["VERIFY_TOKEN"] == "integration-sentinel" for env in verification_envs))
 
     def test_selected_lane_fan_in_runs_an_integrated_gate_without_unselected_units(self) -> None:
         # Given a two-unit contract where only core is selected for this dispatch
@@ -4707,6 +4782,28 @@ class FanoutSpawnGuardTests(unittest.TestCase):
             lineages,
             {f"{contract['fanout_id']}:core", f"{contract['fanout_id']}:docs"},
         )
+
+    def test_dispatch_receipt_excludes_an_unrelated_parent_secret_before_spawn(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp, self._TWO_UNITS[:1])
+            runner = _env_capturing_runner()
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=runner,
+                readiness=_ready,
+                env={"PATH": "/usr/bin", "UNRELATED_PROVIDER_TOKEN": "spawn-sentinel"},
+            )
+
+        core = summary["units"][0]
+        self.assertNotIn("UNRELATED_PROVIDER_TOKEN", runner.envs[0])
+        receipt = core["child_environment_policy"]
+        self.assertIn("UNRELATED_PROVIDER_TOKEN", receipt["removed"])
+        self.assertNotIn("spawn-sentinel", str(summary))
 
     def test_a_nested_lineage_is_appended_not_replaced(self) -> None:
         # Depth 0 with an inherited lineage is the shape a wrapper produces

@@ -60,10 +60,12 @@ is a much larger claim than deciding what is eligible to run.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from ..system.local_store import atomic_write_json, utc_now
+from .fanout_environment import CHILD_ENVIRONMENT_POLICY_CLAIM_BOUNDARY
 from .fanout_retry import (
     REPLAY_SAFE,
     REPLAY_UNSAFE_SIDE_EFFECTS,
@@ -234,7 +236,65 @@ def journal_unit_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
         choice = entry.get("recovery_choice")
         if isinstance(choice, Mapping):
             row["awaiting_retry_kind"] = str(choice.get("failure_kind", ""))
+    receipt = _child_environment_policy_receipt(entry.get("child_environment_policy"))
+    if receipt is not None:
+        row["child_environment_policy"] = receipt
     return row
+
+
+def _child_environment_policy_receipt(value: object) -> dict[str, object] | None:
+    """Keep only a validated, bounded name-only policy receipt in a resume journal."""
+    if not isinstance(value, Mapping) or value.get("schema_version") != "child_environment_policy/v1":
+        return None
+    names = ("approved", "denied", "missing", "passed", "removed")
+    name_lists = {name: _environment_policy_names(value.get(name)) for name in names}
+    counts = value.get("counts")
+    truncated = value.get("truncated")
+    if (
+        any(entries is None for entries in name_lists.values())
+        or value.get("status") not in {"ready", "not_ready"}
+        or not isinstance(value.get("owner"), str)
+        or re.fullmatch(r"[a-z0-9-]{1,64}", str(value.get("owner"))) is None
+        or value.get("purpose") not in {"owner", "verification"}
+        or value.get("compatibility") not in {"least_privilege", "compatibility_explicit"}
+        or not isinstance(value.get("policy_digest"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", str(value.get("policy_digest"))) is None
+        or value.get("claim_boundary") != CHILD_ENVIRONMENT_POLICY_CLAIM_BOUNDARY
+        or not _environment_policy_counts(counts, names)
+        or not _environment_policy_flags(truncated, names)
+        or not _environment_policy_classifications(value.get("classifications"))
+        or not isinstance(value.get("classifications_truncated"), bool)
+    ):
+        return None
+    return {
+        "schema_version": value["schema_version"], "status": value["status"], "owner": value["owner"],
+        "purpose": value["purpose"], "compatibility": value["compatibility"],
+        **{name: name_lists[name] for name in names}, "counts": dict(counts), "truncated": dict(truncated),
+        "classifications": list(value["classifications"]),
+        "classifications_truncated": value["classifications_truncated"],
+        "policy_digest": value["policy_digest"], "claim_boundary": value["claim_boundary"],
+    }
+
+
+def _environment_policy_names(value: object) -> list[str] | None:
+    if not isinstance(value, list) or len(value) > 64:
+        return None
+    return list(value) if all(isinstance(item, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", item) for item in value) else None
+
+
+def _environment_policy_counts(value: object, names: tuple[str, ...]) -> bool:
+    return isinstance(value, Mapping) and set(value) == set(names) and all(isinstance(value[name], int) and not isinstance(value[name], bool) and value[name] >= 0 for name in names)
+
+
+def _environment_policy_flags(value: object, names: tuple[str, ...]) -> bool:
+    return isinstance(value, Mapping) and set(value) == set(names) and all(isinstance(value[name], bool) for name in names)
+
+
+def _environment_policy_classifications(value: object) -> bool:
+    allowed = {"approved", "denied", "missing", "passed", "removed"}
+    reasons = {"portable_base", "lineage_metadata", "project_variable", "owner_state", "owner_capability", "verification_capability", "command_override", "override_not_granted", "parent_not_approved", "dispatcher_metadata"}
+    provenance = {"policy", "dispatcher", "declaration", "override", "parent"}
+    return isinstance(value, list) and len(value) <= 64 and all(isinstance(entry, Mapping) and set(entry) == {"name", "classification", "reason", "provenance"} and isinstance(entry["name"], str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", entry["name"]) and entry["classification"] in allowed and entry["reason"] in reasons and entry["provenance"] in provenance for entry in value)
 
 
 def build_fanout_run_journal(summary: Mapping[str, Any]) -> dict[str, Any]:

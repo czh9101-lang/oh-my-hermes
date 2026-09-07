@@ -90,6 +90,11 @@ from .fanout_confinement import (
     planned_fanout_filesystem_confinement,
     prepare_fanout_filesystem_confinement,
 )
+from .fanout_environment import (
+    ChildEnvironmentDecision,
+    finalize_child_environment,
+    resolve_child_environment,
+)
 from .diagnostic_execution import DiagnosticExecutionEngine
 from .fanout_contracts import (
     FANOUT_CLAIM_BOUNDARY,
@@ -123,11 +128,7 @@ from .fanout_retry import (
 from .unit_prompt_protocol import shared_unit_preamble_lines, unit_protocol_lines
 from .verification_execution import VerificationExecutionGate
 from .verification_integration import run_post_integration_verification
-from .verification_plan import (
-    VERIFICATION_PLAN_SCHEMA_VERSION,
-    compile_verification_plan,
-    verification_execution_environment,
-)
+from .verification_plan import VERIFICATION_PLAN_SCHEMA_VERSION, compile_verification_plan
 from .verification_receipts import SingleFlight
 from .verification_runner import PlanRunContext, run_verification_plan
 from .fanout_unit_results import (
@@ -468,6 +469,45 @@ def read_fanout_depth(env: Mapping[str, str]) -> int:
     return int(raw)
 
 
+def fanout_child_environment(
+    base_env: Mapping[str, str],
+    *,
+    depth: int,
+    fanout_id: str,
+    unit_id: str,
+    owner: str = "",
+    purpose: str = "owner",
+    declaration: Mapping[str, object] | None = None,
+) -> ChildEnvironmentDecision:
+    """Build one policy-filtered child environment before confinement or spawn."""
+    decision = resolve_child_environment(
+        base_env,
+        owner=owner,
+        purpose=purpose,
+        declaration=declaration,
+    )
+    if not decision.ready:
+        return decision
+    lineage_step = f"{fanout_id or 'unrecorded'}:{unit_id}"
+    parent_lineage = str(base_env.get(FANOUT_LINEAGE_ENV_VAR, "") or "").strip()
+    lineage = f"{parent_lineage}/{lineage_step}" if parent_lineage else lineage_step
+    child_env = {
+        **decision.environment,
+        FANOUT_DEPTH_ENV_VAR: str(depth + 1),
+        FANOUT_LINEAGE_ENV_VAR: lineage[-_MAX_LINEAGE_CHARS:],
+    }
+    if owner == "omo-runtime" and purpose == "owner":
+        host = omo_runtime_host()
+        environment_variable = {"pi": "PI_CODING_AGENT_DIR", "senpi": "SENPI_CODING_AGENT_DIR"}.get(host)
+        if environment_variable is not None:
+            state_directories = owner_state_directories(owner, child_env)
+            if len(state_directories) == 1:
+                # A direct pi/senpi spawn must not inherit an ambient Senpi brand.
+                child_env.pop("SENPI_BRAND", None)
+                child_env[environment_variable] = str(state_directories[0])
+    return finalize_child_environment(decision, child_env)
+
+
 def fanout_child_env(
     base_env: Mapping[str, str],
     *,
@@ -476,34 +516,14 @@ def fanout_child_env(
     unit_id: str,
     owner: str = "",
 ) -> dict[str, str]:
-    """`base_env` plus this dispatcher's lineage and owner-state pins, for one child spawn.
-
-    Every process this module starts gets the stamp, verification commands
-    included: a guard a child sidesteps by shelling out one more level is not
-    a guard.
-    """
-    lineage_step = f"{fanout_id or 'unrecorded'}:{unit_id}"
-    parent_lineage = str(base_env.get(FANOUT_LINEAGE_ENV_VAR, "") or "").strip()
-    lineage = f"{parent_lineage}/{lineage_step}" if parent_lineage else lineage_step
-    child_env = {
-        **dict(base_env),
-        FANOUT_DEPTH_ENV_VAR: str(depth + 1),
-        FANOUT_LINEAGE_ENV_VAR: lineage[-_MAX_LINEAGE_CHARS:],
-    }
-    if owner != "omo-runtime":
-        return child_env
-    host = omo_runtime_host()
-    environment_variable = {"pi": "PI_CODING_AGENT_DIR", "senpi": "SENPI_CODING_AGENT_DIR"}.get(host)
-    if environment_variable is None:
-        return child_env
-    state_directories = owner_state_directories(owner, child_env)
-    if len(state_directories) != 1:
-        return child_env
-    # A direct pi/senpi spawn must not inherit an ambient Senpi brand: it
-    # changes both the config directory and environment-prefix precedence.
-    child_env.pop("SENPI_BRAND", None)
-    child_env[environment_variable] = str(state_directories[0])
-    return child_env
+    """Compatibility view of the policy-filtered owner child environment."""
+    return fanout_child_environment(
+        base_env,
+        depth=depth,
+        fanout_id=fanout_id,
+        unit_id=unit_id,
+        owner=owner,
+    ).environment
 
 
 class _SpawnLedger:
@@ -1183,6 +1203,7 @@ def _run_verification_command(
     spill_dir: Path | None = None,
     timeout: int | None = None,
     confinement: FanoutFilesystemConfinement | None = None,
+    environment_policy: Mapping[str, object] | None = None,
 ) -> tuple[str, str, dict[str, Any] | None]:
     """Run one command in the unit worktree; return status, bounded tail, truncation record.
 
@@ -1205,7 +1226,18 @@ def _run_verification_command(
     except FanoutContractError as exc:
         return "failed", str(exc), None
     try:
-        environment = {**(os.environ if child_env is None else child_env), **env_overrides}
+        environment_decision = resolve_child_environment(
+            os.environ if child_env is None else child_env,
+            owner="",
+            purpose="verification",
+            declaration=environment_policy,
+            overrides=env_overrides,
+        )
+        if not environment_decision.ready:
+            missing = ", ".join(environment_decision.receipt["missing"])
+            denied = ", ".join(environment_decision.receipt["denied"])
+            return "failed", f"child environment policy not ready: missing={missing}; denied={denied}", None
+        environment = environment_decision.environment
         active_confinement = confinement
         if runner is signal_safe_unit_runner and active_confinement is None:
             active_confinement = prepare_fanout_filesystem_confinement(
@@ -1215,7 +1247,7 @@ def _run_verification_command(
             active_confinement.command(argv) if active_confinement is not None else None
         )
         if active_confinement is not None:
-            environment = {**active_confinement.command_environment(), **env_overrides}
+            environment = active_confinement.command_environment(environment)
         completed = runner(
             argv,
             cwd=str(worktree),
@@ -1275,6 +1307,7 @@ def _run_planned_verification(
     post_integration: bool = False,
     producer_evidence: bool = False,
     confinement: FanoutFilesystemConfinement | None = None,
+    environment_policy: Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
     """Run a metadata-carrying unit's checks through the revision-bound plan engine.
 
@@ -1294,9 +1327,12 @@ def _run_planned_verification(
     revision = _verification_worktree_revision(runner, worktree)
     if required_revision is not None and revision != required_revision:
         revision = None
-    execution_environment = verification_execution_environment(
-        os.environ if child_env is None else child_env
-    )
+    execution_environment = resolve_child_environment(
+        os.environ if child_env is None else child_env,
+        owner=owner,
+        purpose="verification",
+        declaration=environment_policy,
+    ).environment
     context = PlanRunContext(
         paths=paths,
         worktree=worktree,
@@ -1317,6 +1353,7 @@ def _run_planned_verification(
             spill_dir=paths.runtime_output_spills_dir,
             timeout=node.timeout,
             confinement=confinement,
+            environment_policy=environment_policy,
         )
 
     result = (
@@ -1444,6 +1481,9 @@ def _run_integration_verification_wave(
     integrated_revision: str | None,
     execution_gate: VerificationExecutionGate,
     diagnostic_engine: DiagnosticExecutionEngine | None,
+    base_env: Mapping[str, str],
+    dispatch_depth: int,
+    environment_policy: Mapping[str, object] | None,
 ) -> None:
     """Run integration-tier checks once the producer lanes have fanned in.
 
@@ -1473,7 +1513,21 @@ def _run_integration_verification_wave(
         unit = units.get(unit_id)
         if entry is None or unit is None or not entry.get("verification_integration_deferred"):
             continue
-        integration_environment = verification_execution_environment(os.environ)
+        integration_decision = fanout_child_environment(
+            base_env,
+            depth=dispatch_depth,
+            fanout_id=fanout_id,
+            unit_id=unit_id,
+            owner=str(entry.get("owner") or "choose"),
+            purpose="verification",
+            declaration=environment_policy,
+        )
+        if not integration_decision.ready:
+            entry["integration_environment_policy"] = integration_decision.receipt
+            entry["verification_status"] = "failed"
+            entry["verification_failures"] = ["child environment policy not ready for integration verification"]
+            continue
+        integration_environment = integration_decision.environment
         integration_argv: list[list[str]] = []
         for command in declared_verification_commands(unit):
             try:
@@ -1489,7 +1543,7 @@ def _run_integration_verification_wave(
             else None
         )
         if integration_confinement is not None:
-            integration_environment = integration_confinement.command_environment()
+            integration_environment = integration_confinement.command_environment(integration_environment)
         rerun = _run_planned_verification(
             paths,
             unit,
@@ -1507,6 +1561,7 @@ def _run_integration_verification_wave(
             post_integration=True,
             producer_evidence=producer_evidence,
             confinement=integration_confinement,
+            environment_policy=environment_policy,
         )
         if not rerun:
             continue
@@ -1518,6 +1573,7 @@ def _run_integration_verification_wave(
         entry["integration_filesystem_confinement"] = confinement_receipt(
             integration_confinement, integrated_worktree
         )
+        entry["integration_environment_policy"] = integration_decision.receipt
         entry.pop("verification_integration_deferred", None)
         entry.pop("verification_failures", None)
         entry.update(rerun)
@@ -1554,6 +1610,7 @@ def _run_unit_verification(
     wave_width: int = 1,
     execution_gate: VerificationExecutionGate | None = None,
     confinement: FanoutFilesystemConfinement | None = None,
+    environment_policy: Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
     """Run one unit's declared verification commands and record what was observed.
 
@@ -1586,6 +1643,7 @@ def _run_unit_verification(
             execution_gate=execution_gate,
             integration_ready=lambda: False,
             confinement=confinement,
+            environment_policy=environment_policy,
         )
     rows: list[dict[str, object]] = []
     failures: list[str] = []
@@ -1599,6 +1657,7 @@ def _run_unit_verification(
                 child_env,
                 spill_dir=paths.runtime_output_spills_dir,
                 confinement=confinement,
+                environment_policy=environment_policy,
             )
 
         outcome = (
@@ -1683,6 +1742,7 @@ def dispatch_fanout(
     max_depth: int | None = None,
     spawn_ceiling: int | None = None,
     env: Mapping[str, str] | None = None,
+    environment_policy: Mapping[str, object] | None = None,
     # A prior run's terminal-state journal. Present, it decides per unit
     # whether this dispatch attempts it again; absent, every selected unit is
     # attempted exactly as before.
@@ -1943,6 +2003,7 @@ def dispatch_fanout(
         "spawn_ledger": spawn_ledger,
         "dispatch_depth": current_depth,
         "base_env": guard_env,
+        "environment_policy": environment_policy,
         "max_retries": max_retries,
         "rng": rng,
         "sleep": sleep,
@@ -2174,6 +2235,9 @@ def dispatch_fanout(
                 integrated_revision=integrated_revision,
                 execution_gate=verification_execution_gate,
                 diagnostic_engine=diagnostic_engine,
+                base_env=guard_env,
+                dispatch_depth=current_depth,
+                environment_policy=environment_policy,
             )
     finally:
         if verification_execution_gate is not None:
@@ -3203,6 +3267,7 @@ def _dispatch_unit(
     spawn_ledger: _SpawnLedger | None = None,
     dispatch_depth: int = 0,
     base_env: Mapping[str, str] | None = None,
+    environment_policy: Mapping[str, object] | None = None,
     max_retries: int = FANOUT_MAX_RETRIES,
     rng: Callable[[], float] = random.random,
     sleep: Callable[[float], None] = time.sleep,
@@ -3344,6 +3409,34 @@ def _dispatch_unit(
             effective_model_route = {**(model_route or {}), "selected_model": preference}
     argv = build_dispatch_argv(owner, prompt, effective_model_route)
     worktree = _worktree_path(repo_root, unit_id)
+    child_environment = fanout_child_environment(
+        os.environ if base_env is None else base_env,
+        depth=dispatch_depth,
+        fanout_id=fanout_id,
+        unit_id=unit_id,
+        owner=owner,
+        declaration=environment_policy,
+    )
+    verification_environment = fanout_child_environment(
+        os.environ if base_env is None else base_env,
+        depth=dispatch_depth,
+        fanout_id=fanout_id,
+        unit_id=unit_id,
+        owner=owner,
+        purpose="verification",
+        declaration=environment_policy,
+    )
+    if not child_environment.ready or (run_verification and not verification_environment.ready):
+        return {
+            "unit_id": unit_id,
+            "run_ref": run_ref,
+            "owner": owner,
+            "status": "environment_not_ready",
+            "child_environment_policy": child_environment.receipt,
+            "verification_environment_policy": verification_environment.receipt,
+            **_dispatch_status_ladder(),
+            "reason": "required child environment capabilities are missing or denied",
+        }
     if dry_run:
         from .executor_skill_discovery import skill_selection_card, suggested_skill_sequence
 
@@ -3355,6 +3448,8 @@ def _dispatch_unit(
             "status": "dry_run_planned",
             "planned_argv": [part if part != prompt else "<unit prompt>" for part in argv],
             "worktree_path": str(worktree),
+            "child_environment_policy": child_environment.receipt,
+            "verification_environment_policy": verification_environment.receipt,
             "filesystem_confinement": planned_fanout_filesystem_confinement(
                 worktree,
                 owner=owner,
@@ -3443,13 +3538,7 @@ def _dispatch_unit(
                 "review_dispatch_budget": reservation.as_dict(),
                 **_dispatch_status_ladder(),
             }
-    child_env = fanout_child_env(
-        os.environ if base_env is None else base_env,
-        depth=dispatch_depth,
-        fanout_id=fanout_id,
-        unit_id=unit_id,
-        owner=owner,
-    )
+    child_env = child_environment.environment
     from .worktree_creator import ensure_fanout_unit_worktree
 
     worktree_record = ensure_fanout_unit_worktree(
@@ -3867,11 +3956,12 @@ def _dispatch_unit(
             worktree=worktree,
             owner=owner,
             runner=runner,
-            child_env=child_env,
+            child_env=verification_environment.environment,
             fanout_id=fanout_id,
             wave_width=verification_wave_width,
             execution_gate=verification_execution_gate,
             confinement=confinement,
+            environment_policy=environment_policy,
         )
         if health_events is not None:
             health_events.finished(
@@ -3909,6 +3999,8 @@ def _dispatch_unit(
         "exit_code": exit_code,
         "worktree_path": str(worktree),
         "filesystem_confinement": filesystem_confinement,
+        "child_environment_policy": child_environment.receipt,
+        "verification_environment_policy": verification_environment.receipt,
         "shared_artifacts": shared_artifacts,
         **_dispatch_status_ladder(
             process_succeeded=exit_code == 0,

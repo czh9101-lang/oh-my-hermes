@@ -67,6 +67,7 @@ from ..wrapper.lifecycle import (
 )
 from .common import _chat_input_and_metadata, _explicit_source_metadata, _paths, _print_json, _resolved_executor, _wants_json
 from .dynamic_workflow import _add_dynamic_workflow_command, cmd_coding_dynamic_workflow
+from .fanout_environment_parser import add_fanout_environment_arguments, child_environment_policy_from_args
 from .hermes_child import add_hermes_child_command
 from .status_board import add_coding_status_board_command
 
@@ -2292,6 +2293,7 @@ def cmd_coding_fanout_dispatch(
 
     paths = _paths(args)
     recovery_kwargs = _failure_recovery_kwargs(args)
+    environment_policy = child_environment_policy_from_args(args)
     selected_diagnostic_engine = (
         (diagnostic_engine or build_local_diagnostic_engine())
         if args.diagnostics
@@ -2390,6 +2392,7 @@ def cmd_coding_fanout_dispatch(
             diagnostic_engine=selected_diagnostic_engine,
             final_review_engine=selected_final_review_engine,
             emit_health_events=bool(args.health_events),
+            environment_policy=environment_policy,
             **recovery_kwargs,
         )
         _print_json(summary)
@@ -2434,6 +2437,7 @@ def cmd_coding_fanout_dispatch(
             diagnostic_engine=selected_diagnostic_engine,
             final_review_engine=selected_final_review_engine,
             emit_health_events=bool(args.health_events),
+            environment_policy=environment_policy,
             **recovery_kwargs,
         )
     except ValueError as exc:
@@ -2551,6 +2555,7 @@ def cmd_coding_run(args: argparse.Namespace) -> int:
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
     concurrency = resolve_fanout_concurrency(parallelism, None)
+    environment_policy = child_environment_policy_from_args(args)
     try:
         summary = dispatch_fanout(
             paths,
@@ -2568,6 +2573,7 @@ def cmd_coding_run(args: argparse.Namespace) -> int:
             timeout=args.timeout,
             dry_run=bool(args.dry_run),
             run_verification=bool(args.run_verification),
+            environment_policy=environment_policy,
             **_failure_recovery_kwargs(args),
         )
     except ValueError as exc:
@@ -2931,6 +2937,7 @@ def _add_coding_commands(sub) -> None:
         action="store_true",
         help="Run each unit's contract verification_commands in its worktree after its sidecar validates.",
     )
+    add_fanout_environment_arguments(fanout_dispatch)
     diagnostics = fanout_dispatch.add_mutually_exclusive_group()
     diagnostics.add_argument(
         "--diagnostics",
@@ -3090,6 +3097,7 @@ def _add_coding_commands(sub) -> None:
         action="store_true",
         help="Run the unit's contract verification_commands in its worktree after the process exits 0.",
     )
+    add_fanout_environment_arguments(run_cmd)
     run_cmd.add_argument(
         "--model",
         default=None,
