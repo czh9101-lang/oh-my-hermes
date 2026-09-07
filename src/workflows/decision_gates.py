@@ -149,6 +149,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
@@ -753,7 +754,11 @@ def build_decision_gate_answer(
 
 
 def validate_decision_gate(record: dict[str, Any]) -> list[str]:
-    """Every reason one record is not a decision gate."""
+    """Every reason one shared-store record is not a gate or connector receipt."""
+    if isinstance(record, dict) and record.get("schema_version") == "connector_decision_gate_receipt/v1":
+        return _connector_receipt_errors(record)
+    if isinstance(record, dict) and record.get("schema_version") == "connector_decision_gate_transaction/v1":
+        return _connector_transaction_errors(record)
     if not isinstance(record, dict):
         return [f"{_LABEL} must be an object"]
     errors: list[str] = []
@@ -928,6 +933,7 @@ def read_decision_gates(
 ) -> list[dict[str, Any]]:
     """The store, in append order, optionally scoped to one run or one question."""
     records, _ = read_decision_gates_result(paths)
+    records = [record for record in records if record.get("schema_version") == DECISION_GATE_SCHEMA_VERSION]
     if run_id is not None:
         records = [record for record in records if str(record.get("run_id", "")) == run_id]
     if gate_id_value is not None:
@@ -1567,6 +1573,80 @@ def _rendered_choices(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [choice for choice in value if isinstance(choice, str) and choice in GATE_CHOICES]
+
+
+def _connector_receipt_errors(record: dict[str, Any]) -> list[str]:
+    """Validate the extra immutable record type stored beside v1 gate records."""
+    keys = {
+        "actor", "authentication_method", "channel_ref", "choice", "claim_boundary", "connector", "event_id",
+        "expected_approver", "expected_resume_digest", "gate_answer_record_ref", "gate_id", "interaction_ref",
+        "observed_at", "privacy", "receipt_id", "record_id", "schema_version", "supersedes_gate_ref", "thread_ref",
+        "wrapper_expected_revision", "wrapper_session_ref", "payload_digest",
+    }
+    required = keys - {"payload_digest"}
+    errors: list[str] = []
+    extra = sorted(set(record) - keys)
+    if extra:
+        errors.append(f"connector decision receipt has unsupported keys: {extra}")
+    missing = sorted(required - set(record))
+    if missing:
+        errors.append(f"connector decision receipt is missing keys: {missing}")
+    hidden = sorted(key for key in record if str(key).lower() in RAW_OR_HIDDEN_KEYS)
+    if hidden:
+        errors.append(f"connector decision receipt must not carry raw or hidden keys: {hidden}")
+    if record.get("privacy") != "metadata_only":
+        errors.append("connector decision receipt privacy must be metadata_only")
+    if record.get("claim_boundary") != (
+        "A connector decision-gate receipt records authenticated connector metadata bound to one gate answer. "
+        "It is not connector credential proof, dispatch, execution, verification, review, CI, merge-readiness, or merge evidence."
+    ):
+        errors.append("connector decision receipt claim_boundary is invalid")
+    if record.get("choice") not in GATE_CHOICES:
+        errors.append("connector decision receipt choice is invalid")
+    if record.get("authentication_method") not in {"host_authenticated", "signed_connector_event"}:
+        errors.append("connector decision receipt authentication_method is invalid")
+    if record.get("actor") != record.get("expected_approver"):
+        errors.append("connector decision receipt actor must match expected_approver")
+    if not isinstance(record.get("wrapper_expected_revision"), int) or isinstance(record.get("wrapper_expected_revision"), bool) or record.get("wrapper_expected_revision", -1) < 0:
+        errors.append("connector decision receipt wrapper_expected_revision must be a non-negative integer")
+    for key in required - {"claim_boundary", "privacy", "schema_version", "wrapper_expected_revision"}:
+        errors.extend(reference_errors(record.get(key), field=key, label="connector decision receipt", required=True))
+    try:
+        datetime.fromisoformat(str(record.get("observed_at", "")).replace("Z", "+00:00"))
+    except ValueError:
+        errors.append("connector decision receipt observed_at must be an ISO-8601 timestamp")
+    return errors
+
+
+def _connector_transaction_errors(record: dict[str, Any]) -> list[str]:
+    """Validate the durable event-to-answer binding written before an answer."""
+    keys = {
+        "schema_version", "record_id", "transaction_id", "event_id", "payload_digest", "gate_id",
+        "open_gate_record_ref", "decided_at", "privacy", "claim_boundary",
+    }
+    errors: list[str] = []
+    extra = sorted(set(record) - keys)
+    missing = sorted(keys - set(record))
+    if extra:
+        errors.append(f"connector decision transaction has unsupported keys: {extra}")
+    if missing:
+        errors.append(f"connector decision transaction is missing keys: {missing}")
+    if record.get("privacy") != "metadata_only":
+        errors.append("connector decision transaction privacy must be metadata_only")
+    if record.get("claim_boundary") != (
+        "A connector decision-gate receipt records authenticated connector metadata bound to one gate answer. "
+        "It is not connector credential proof, dispatch, execution, verification, review, CI, merge-readiness, or merge evidence."
+    ):
+        errors.append("connector decision transaction claim_boundary is invalid")
+    for key in keys - {"schema_version", "privacy", "claim_boundary"}:
+        errors.extend(reference_errors(record.get(key), field=key, label="connector decision transaction", required=True))
+    if not isinstance(record.get("payload_digest"), str) or not _DIGEST.fullmatch(str(record.get("payload_digest", ""))):
+        errors.append("connector decision transaction payload_digest must be a sha256 hex digest")
+    try:
+        datetime.fromisoformat(str(record.get("decided_at", "")).replace("Z", "+00:00"))
+    except ValueError:
+        errors.append("connector decision transaction decided_at must be an ISO-8601 timestamp")
+    return errors
 
 
 def _record_id(gate_id_value: str, stamp: str, state: str) -> str:

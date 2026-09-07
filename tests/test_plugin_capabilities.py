@@ -163,6 +163,25 @@ class PluginCapabilitiesTests(unittest.TestCase):
             retained = json.loads(handler({"action": "inspect", "id": "retained-cognition", "section": "agent_roles"}))
             self.assertIn("capability not found: retained-cognition", retained["error"])
 
+    def test_installed_plugin_registers_decision_gate_without_claiming_host_authentication(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            status, _, stderr = run_cli([
+                "--omh-home", str(root / ".omh"),
+                "--hermes-home", str(root / ".hermes"),
+                "setup", "--with-plugin",
+            ])
+            self.assertEqual(status, 0, stderr)
+            module = load_installed_plugin(root / ".hermes" / "plugins" / "omh")
+            ctx = FakeHermesContext()
+            module.register(ctx)
+            self.assertIn("omh_decision_gate", ctx.tools)
+            handler = ctx.tools["omh_decision_gate"]["args"][2]
+            payload = json.loads(handler({"gate_id": "gate-opaque", "choice": "approve"}))
+            self.assertEqual(payload["status"], "invalid")
+            self.assertIn(payload["reason_code"], {"invalid_payload", "untrusted_host_context"})
+            self.assertNotIn("authentication_configured", payload)
+
     def test_plugin_tool_and_hook_can_self_record_host_observation_metadata(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
