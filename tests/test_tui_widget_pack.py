@@ -340,7 +340,7 @@ class TuiWidgetPackTests(unittest.TestCase):
         # first droppable metadata entry, so it is bound once and rendered
         # between the title and the measured tail.
         self.assertIn(
-            "const routeSegment = dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route)",
+            "return dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route)",
             widget,
         )
         self.assertIn("layout.routeKind === 'route-fallback' || layout.routeKind === 'maestro'", widget)
@@ -574,7 +574,16 @@ class TuiWidgetPackTests(unittest.TestCase):
         # and only then rate, cache, turn and cost, which the drop loop still
         # sheds by rank without ever touching the tail.
         self.assertIn("` · ${tokenText.padStart(6)} tokens`", widget)
-        self.assertIn("const routeCap = Math.max(10, Math.min(44, Math.floor(columns * 0.3)))", widget)
+        # The route column is never truncated: it takes the widest identity
+        # in the list and the action column yields the width. The old
+        # percentage cap cut `category:architect(claude-fable-5-1:xhigh)`
+        # mid-model on every ordinary terminal (the owner's second report).
+        self.assertIn("const routeColumnWidth = rows => rows.reduce((width, row) => Math.max(width, cellWidth(routeIdentity(row).text)), 0)", widget)
+        self.assertIn("const routeCap = Math.min(routeColumn, Math.max(10, budget - cellWidth(prefix) - tailWidth - cellWidth(separator) - 8 - 2))", widget)
+        self.assertNotIn("Math.floor(columns * 0.3)", widget)
+        self.assertNotIn("Math.floor(columns * 0.24)", widget)
+        # Below that floor the `category:` prefix is shed before the model is.
+        self.assertIn("? routeSegment.text.slice('category:'.length)", widget)
         # The label names the model, never its provider: `anthropic/` ate the
         # column and truncated to `category:architect(anthropic/`, hiding
         # whether the lane ran opus or fable. Only the segment after the last
@@ -582,13 +591,14 @@ class TuiWidgetPackTests(unittest.TestCase):
         # dispatch identity); `row.provider` stays a separate reader field.
         self.assertIn("const modelName = safeText(row.model).split('/').pop()", widget)
         self.assertIn("const model = [modelName, safeText(row.effort)].filter(Boolean).join(':')", widget)
-        self.assertIn("${modelName ? ` ${truncateCells(modelName, 20)}` : ''}", widget)
+        self.assertIn("${modelName ? ` ${modelName}` : ''}", widget)
+        self.assertNotIn("truncateCells(modelName, 20)", widget)
         self.assertNotIn("truncateCells(row.model, 20)", widget)
         # The route column reserves its width per LIST, exactly like tokens:
         # otherwise a row without a category would slide its tail left and
         # break the very alignment this ordering exists to keep.
         self.assertIn(
-            "const routeColumn = [...mainRows, ...rows].some(row => safeText(row.category)",
+            "const routeColumn = routeColumnWidth([...mainRows, ...rows])",
             widget,
         )
         self.assertIn("h(Text, { color: statusColor }, layout.tailState)", widget)
