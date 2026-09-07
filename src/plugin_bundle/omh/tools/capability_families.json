@@ -26,7 +26,9 @@
    "refactor-plan",
    "performance-goal",
    "ultraperf",
-   "product-brief"
+   "product-brief",
+   "decision-prototype",
+   "product-discovery-validation"
   ],
   "route_summary": "Clarify the goal, choose the planning depth, and show the next concrete action.",
   "source_examples": [
@@ -72,7 +74,9 @@
    "legal-compliance-review",
    "support-operations",
    "curriculum-design",
-   "sales-development"
+   "sales-development",
+   "lifecycle-growth",
+   "sales-pipeline-review"
   ],
   "route_summary": "Name the source/synthesis split before summarizing or planning from the material.",
   "source_examples": [

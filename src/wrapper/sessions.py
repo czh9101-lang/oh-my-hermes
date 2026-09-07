@@ -222,6 +222,34 @@ def create_or_resume_wrapper_session(
     }
 
 
+def open_wrapper_session_decision_gate(
+    paths: OmhPaths,
+    *,
+    session_id: str,
+    approver: str,
+    safety_profile_revision: str,
+    now: str = "",
+) -> dict[str, Any]:
+    """Open the only remote-decision gate that can advance this plan revision."""
+    from ..workflows.decision_gate_receipts import wrapper_gate_binding
+    from ..workflows.decision_gates import open_decision_gate
+
+    session = _existing_session(paths, session_id)
+    if str(session.get("status", "")) != "plan_presented":
+        raise WrapperSessionError("a connector decision gate requires a presented wrapper plan")
+    binding = wrapper_gate_binding(session_id, record_revision_of(session))
+    return open_decision_gate(
+        paths,
+        **binding,
+        question_code="accept_plan_direction",
+        risk_class="reversible",
+        choices=("approve", "decline", "defer"),
+        approver=approver,
+        safety_profile_revision=safety_profile_revision,
+        now=now,
+    )
+
+
 def record_plan_decision(
     paths: OmhPaths,
     session_id: str,
@@ -262,6 +290,89 @@ def record_plan_decision(
                 "event": f"plan_{session['decision']}",
                 "message": f"wrapper recorded {session['decision']}",
                 "data": {"status": session["status"], "decision": session["decision"]},
+            },
+        )
+    return {
+        "schema_version": WRAPPER_SESSION_RESULT_SCHEMA_VERSION,
+        "session": session,
+        "status": build_wrapper_session_status(paths, session_id),
+        "replayed": replayed,
+    }
+
+
+def consume_connector_decision_receipt(
+    paths: OmhPaths,
+    *,
+    session_id: str,
+    receipt_id: str,
+    now: str = "",
+) -> dict[str, object]:
+    """Advance only the session and plan revision bound when its gate opened."""
+    from ..workflows.decision_gate_receipts import wrapper_gate_binding
+    from ..workflows.decision_gates import gate_is_expired, latest_gate_in, read_decision_gates, validate_decision_gate
+
+    receipt = next(
+        (
+            record
+            for record in reversed(read_jsonl_objects(paths.runtime_decision_gates_path)[0])
+            if record.get("schema_version") == "connector_decision_gate_receipt/v1"
+            and record.get("receipt_id") == receipt_id
+            and not validate_decision_gate(record)
+        ),
+        {},
+    )
+    if not receipt or str(receipt.get("wrapper_session_ref", "")) != session_id:
+        raise WrapperSessionError("connector decision receipt does not authorize this wrapper session")
+    binding = wrapper_gate_binding(session_id, int(receipt["wrapper_expected_revision"]))
+    answer = latest_gate_in(read_decision_gates(paths), str(receipt.get("gate_id", "")))
+    if (
+        not answer
+        or validate_decision_gate(answer)
+        or str(answer.get("record_id", "")) != str(receipt.get("gate_answer_record_ref", ""))
+        or str(answer.get("resume_digest", "")) != str(receipt.get("expected_resume_digest", ""))
+        or str(answer.get("actor", "")) != str(receipt.get("actor", ""))
+        or str(answer.get("answered_choice", "")) != str(receipt.get("choice", ""))
+        or any(str(answer.get(key, "")) != expected for key, expected in binding.items())
+    ):
+        raise WrapperSessionError("connector decision receipt is not bound to the current wrapper gate answer")
+    decision_by_choice = {"approve": "accept", "decline": "cancel", "defer": "revise"}
+    decision = decision_by_choice.get(str(receipt.get("choice", "")), "")
+    if not decision:
+        raise WrapperSessionError("connector decision receipt choice cannot advance a wrapper session")
+
+    def mutate(current: dict[str, Any]) -> dict[str, Any]:
+        if gate_is_expired(answer, now):
+            raise WrapperSessionError("connector decision receipt expired before wrapper consumption")
+        current_status = str(current.get("status", ""))
+        allowed = PLAN_DECISION_TRANSITIONS.get(current_status, set())
+        if decision not in allowed:
+            raise WrapperSessionError(
+                f"cannot consume connector decision while wrapper session status is {current_status}"
+            )
+        accept_status = _accepted_status_for_session(current)
+        updates = {
+            "accept": {"status": accept_status, "decision": "plan_accepted"},
+            "revise": {"status": "revision_requested", "decision": "plan_revision_requested"},
+            "cancel": {"status": "cancelled", "decision": "plan_cancelled"},
+        }[decision]
+        return build_wrapper_session_record({**current, **updates, "updated_at": utc_now()})
+
+    session, replayed = _guarded_session_update(
+        paths,
+        session_id,
+        mutate,
+        operation="consume_connector_decision_receipt",
+        expected_revision=int(receipt["wrapper_expected_revision"]),
+        mutation_id=f"connector-{receipt_id}",
+        mutation_digest=_mutation_digest("consume_connector_decision_receipt", receipt_id),
+    )
+    if not replayed:
+        append_wrapper_session_event(
+            _session_dir(paths, session_id),
+            {
+                "event": "connector_decision_consumed",
+                "message": "wrapper session consumed a connector-bound decision receipt",
+                "data": {"receipt_id": receipt_id, "decision": session["decision"]},
             },
         )
     return {

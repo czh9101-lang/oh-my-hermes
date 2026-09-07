@@ -103,6 +103,7 @@ from ..plugin_bundle.omh.todo_store import (
     write_todo,
 )
 from .common import _paths, _print_json, _wants_json
+from .decision_gate import add_runtime_decision_gate_commands
 
 
 # The next_actions that mean the run has already passed the gate a record
@@ -1302,6 +1303,7 @@ def _add_runtime_commands(sub) -> None:
     from .run_efficiency import add_runtime_efficiency_command
     from .run_health import add_runtime_health_summary_command
     from .runtime_artifact_shape import add_runtime_artifacts_show_shape_command
+    from .workflow_artifacts import add_runtime_workflow_artifact_commands
 
     runtime = sub.add_parser("runtime", help="Read and record local prepared-vs-observed runtime evidence.")
     runtime_sub = runtime.add_subparsers(dest="runtime_command", required=True)
@@ -1552,6 +1554,9 @@ def _add_runtime_commands(sub) -> None:
     runtime_artifacts.set_defaults(func=cmd_runtime_artifacts)
     runtime_artifacts_sub = runtime_artifacts.add_subparsers(dest="runtime_artifacts_command")
     add_runtime_artifacts_show_shape_command(runtime_artifacts_sub)
+
+    add_runtime_decision_gate_commands(runtime_sub)
+    add_runtime_workflow_artifact_commands(runtime_sub)
 
     runtime_validate = runtime_sub.add_parser("validate")
     runtime_validate.add_argument("--run", dest="run_id", default=None)

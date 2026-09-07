@@ -1436,6 +1436,26 @@ _SKILL_POLICIES.update(
             evidence_boundary="A sales development brief is not observed company research, prospect contact, CRM mutation, opportunity creation, meeting booking, revenue, or progress evidence.",
             wrapper_guidance="Prepare account and buyer hypotheses, evidence gaps, qualification questions, value and objection framing, outreach-draft outline, and an owned non-executing next-step plan.",
         ),
+        "decision-prototype": RecommendationPolicy(
+            next_action="prepare_decision_prototype",
+            evidence_boundary="A decision prototype is a prepared bounded experiment, not implementation, observed execution, product validation, review, CI, or merge evidence.",
+            wrapper_guidance="Frame one falsifiable decision, isolate the scratch boundary, and prepare exact commands and stop conditions; keep results unobserved until recorded evidence exists.",
+        ),
+        "lifecycle-growth": RecommendationPolicy(
+            next_action="prepare_lifecycle_growth",
+            evidence_boundary="A lifecycle-growth plan is not a send, flag mutation, experiment launch, delivery, display, outcome, or causal-result evidence.",
+            wrapper_guidance="Prepare the target behavior, eligible audience, consent and frequency policy, experiment, and readout; require approval and observed evidence before any launch claim.",
+        ),
+        "product-discovery-validation": RecommendationPolicy(
+            next_action="prepare_product_discovery_validation",
+            evidence_boundary="A product-discovery plan is not customer evidence, a prototype, a PRD, implementation, delivery, or product-market-fit evidence.",
+            wrapper_guidance="Frame the customer problem and segment, classify evidence, precommit the smallest disconfirming tests, and preserve the kill, pivot, persevere, or inconclusive decision.",
+        ),
+        "sales-pipeline-review": RecommendationPolicy(
+            next_action="prepare_sales_pipeline_review",
+            evidence_boundary="A sales-pipeline review is not CRM mutation, outreach, revenue, seller commitment, buyer commitment, or authoritative financial-forecast evidence.",
+            wrapper_guidance="Validate the supplied snapshot and definitions, separate seller forecast from scenarios and buyer commitment, and prepare owned follow-ups without mutating CRM records.",
+        ),
         "product-brief": RecommendationPolicy(
             next_action="prepare_product_brief",
             evidence_boundary="A product brief is not stakeholder acceptance, Jira, Linear, or roadmap-system mutation, implementation, test evidence, delivery, or market-commitment evidence.",
@@ -2132,6 +2152,14 @@ _NORMALIZED_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     name: _normalized_trigger_token_holdback(entries) for name, entries in _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS.items()
 }
 
+_SPECIALIST_LANGUAGE_PACK_SKILLS = frozenset(
+    {
+        "lifecycle-growth",
+        "product-discovery-validation",
+        "sales-pipeline-review",
+    }
+)
+
 
 @lru_cache(maxsize=1)
 def _trigger_pack_packs() -> tuple[TriggerLanguagePack, ...]:
@@ -2287,6 +2315,13 @@ def _score_definition(
     if domain_operator_override is not None and definition.name == domain_operator_override.skill:
         score += 72
         matched.update(f"domain_action:{cue}" for cue in domain_operator_override.matched_cues)
+
+    if definition.name in _SPECIALIST_LANGUAGE_PACK_SKILLS and any(
+        not trigger.isascii() and contains_cue_phrase(normalized_query, (trigger,))
+        for trigger in prepared.plain_trigger_phrases
+    ):
+        score += 30
+        matched.add("direct:specialist_language_pack_trigger")
 
     if definition.name == "apple-design" and _apple_design_offers_itself(normalized_query, query_tokens):
         score += 30
@@ -3197,6 +3232,27 @@ def _omh_docs_offers_itself(normalized_query: str, query_tokens: set[str]) -> bo
     return is_omh_docs_question(normalized_query)
 
 
+def _sales_pipeline_review_offers_itself(normalized_query: str, query_tokens: set[str]) -> bool:
+    """Require a portfolio-review cue instead of routing on bare sales-pipeline nouns."""
+    del query_tokens
+    return contains_cue_phrase(
+        normalized_query,
+        (
+            "sales-pipeline-review",
+            "sales pipeline review",
+            "pipeline review",
+            "pipeline health",
+            "forecast calibration",
+            "sales forecast review",
+            "deal review",
+            "stale deals",
+            "slipped deals",
+            "파이프라인 리뷰",
+            "영업 예측 보정",
+        ),
+    )
+
+
 # Skills that withdraw from the shortlist unless their own precondition holds,
 # checked in `_score_definition`. An explicit invocation always overrides this:
 # naming a skill outright is the user overruling its self-assessment.
@@ -3221,4 +3277,5 @@ _SKILL_OFFERS_ITSELF: dict[str, Callable[[str, set[str]], bool]] = {
     "external-connector-readiness": _external_connector_readiness_recommendation_applies,
     "prompt-import-readiness": _prompt_import_readiness_recommendation_applies,
     "physical-device-readiness": _physical_device_readiness_recommendation_applies,
+    "sales-pipeline-review": _sales_pipeline_review_offers_itself,
 }

@@ -1,0 +1,92 @@
+{
+  "audience": {
+    "audience_identity_ref": "identity_account_stable",
+    "audience_identity_state": "known",
+    "canonical_event_schema_ref": "event_activation_completed_v1",
+    "canonical_event_state": "known",
+    "collision_policy": "hold_on_overlap",
+    "entry_condition_ref": "entry_new_account",
+    "exclusion_refs": [
+      "exclude_opted_out"
+    ],
+    "exit_condition_ref": "exit_activation_completed",
+    "idempotency_key_ref": "idempotency_account_journey_v1",
+    "reentry_policy": "after_exit_only"
+  },
+  "brief": {
+    "available_surface_refs": [
+      "surface_in_app"
+    ],
+    "baseline_ref": "baseline_activation_weekly",
+    "decision_owner": "owner_growth",
+    "experiment_budget_ref": "budget_activation_q3",
+    "hypotheses": [
+      "hypothesis_guided_setup"
+    ],
+    "lifecycle_stage": "activation",
+    "non_goals": [
+      "non_goal_external_send"
+    ],
+    "observed_evidence_refs": [
+      "evidence_activation_weekly"
+    ],
+    "target_behavior_ref": "behavior_activation_completed",
+    "target_segment_ref": "segment_new_accounts"
+  },
+  "experiment": {
+    "actual_exposure_event_ref": "event_treatment_displayed_v1",
+    "approval_state": "approved",
+    "assignment_event_ref": "event_assignment_v1",
+    "assignment_unit": "account",
+    "control_ref": "control_existing_setup",
+    "data_health_state": "healthy",
+    "exposure_unit": "account",
+    "guardrail_metric_refs": [
+      "metric_opt_out_rate"
+    ],
+    "holdout_rationale_ref": "rationale_holdout_measurement",
+    "holdout_state": "preserved",
+    "minimum_runtime_days": 14,
+    "pause_condition_refs": [
+      "pause_sample_ratio_mismatch"
+    ],
+    "primary_metric_ref": "metric_activation_rate",
+    "rollback_conditions": [
+      "rollback_guardrail_breach"
+    ],
+    "sticky_assignment_policy": "sticky",
+    "treatment_ref": "treatment_guided_setup"
+  },
+  "handoff": {
+    "action_owner": "owner_lifecycle_ops",
+    "approver": "owner_growth",
+    "connector_evidence_refs": [
+      "evidence_connector_observed"
+    ],
+    "connector_evidence_state": "observed_available",
+    "proposed_action_kinds": [
+      "connector"
+    ],
+    "proposed_action_refs": [
+      "action_connector_prepare"
+    ],
+    "stop_condition_refs": [
+      "stop_consent_changed"
+    ],
+    "timing_state": "not_scheduled"
+  },
+  "lifecycle_growth_id": "lifecycle_activation_q3",
+  "safety": {
+    "campaign_frequency_budget_ref": "budget_activation_weekly",
+    "channel_eligibility_state": "eligible",
+    "consent_state": "unknown",
+    "frequency_state": "eligible",
+    "global_frequency_budget_ref": "budget_global_weekly",
+    "legal_tenant_state": "eligible",
+    "locale_state": "eligible",
+    "preference_policy_ref": "policy_preferences_v1",
+    "quiet_hours_state": "eligible",
+    "suppression_precedence": "suppression_overrides_all",
+    "suppression_state": "eligible"
+  }
+}

@@ -30,6 +30,12 @@ from ..source_finder import (
     SOURCE_FINDER_SOURCE_KINDS,
 )
 
+from .decision_prototype_skill import DEFINITION as DECISION_PROTOTYPE_DEFINITION
+from .lifecycle_growth_skill import DEFINITION as LIFECYCLE_GROWTH_DEFINITION
+from .llm_app_references import LLM_APP_DEV_CONDITIONAL_CONTRACTS, LLM_APP_DEV_STATEFUL_CONTRACTS_REFERENCE_PATH
+from .product_discovery_skill import DEFINITION as PRODUCT_DISCOVERY_DEFINITION
+from .sales_pipeline_skill import DEFINITION as SALES_PIPELINE_DEFINITION
+
 from .catalog_types import (
     ADVERSARIAL_CONSENSUS_BUCKETS,
     ADVERSARIAL_CONSENSUS_MAX_PERSPECTIVES,
@@ -55,13 +61,7 @@ from .catalog_types import (
     _HERMES_SETUP_WRITE_BOUNDARY,
     _MAESTRO_HERMES_OWNER_FINAL_CHECKLIST_NOTE,
     _MAESTRO_RESULT_INTEGRATION_FINAL_CHECKLIST_NOTE,
-)
-
-_SPECIALIST_DOMAIN_HANDOFF_BOUNDARY = (
-    "Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. "
-    "A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, "
-    "implementation, review, CI, or merge claim. Prepare a connector, file, coding, or human-review handoff only when "
-    "the user explicitly accepts that next step; report it only from observed evidence."
+    SPECIALIST_DOMAIN_HANDOFF_BOUNDARY,
 )
 
 _MODEL_SETUP_FIVE_STEP_BAR = (
@@ -567,6 +567,7 @@ _DEFINITIONS = [
         do_not_use_when=(
             "A safe one-term definition or source lookup can be answered directly; use the read-only lookup mode and do not enter the full context interview.",
             "The request is broad ambiguity with no project-language conflict; use `deep-interview`.",
+            "The unresolved decision is empirical and a cheap isolated experiment can answer it; use `decision-prototype` and keep the frontier for the rest.",
             "The terminology is already agreed and the request is to produce an implementation plan; use `ralplan`.",
             "The user wants to capture or curate general retained memory rather than repository terminology; use `memory-new` or `memory-sync`.",
             "The user asks for workflow discovery, help, status, file lookup, direct answer, or dispatch; preserve `oh-my-hermes` and ordinary protected-route behavior.",
@@ -640,6 +641,7 @@ _DEFINITIONS = [
             "The missing information is discoverable from the repository or local artifacts without asking the user.",
             "The user asked for immediate read-only analysis and the ambiguity does not change the answer.",
             "The ambiguity is specifically repository terminology or project-language alignment; use `context` and its direct-lookup/frontier boundary.",
+            "The open question is answerable by a small reversible experiment rather than another interview round; use `decision-prototype`.",
         ),
         good_example=SkillExample(
             prompt="$deep-interview before planning Discord and Slack routing, ask what each channel owns and what evidence counts.",
@@ -925,6 +927,7 @@ _DEFINITIONS = [
             "The work touches the same files or invariants in ways that need one owner.",
             "The plan is not accepted, lane boundaries are unclear, or verification commands are missing.",
             "The user expects Hermes to secretly execute coding lanes instead of preparing explicit selected-runtime handoffs.",
+        "For a decision spike, use `decision-prototype`.",
             "[capability:coordinated_scope] The lanes are exploratory research or QA coordination without an accepted implementation plan; frame them with the `coordinated_scope` capability before parallel delivery.",
             "[capability:single_owner_persistence] The request is a settings-only change, one bounded edit that is explicitly low-risk and has a direct owner and verification path, or a direct answer/diagnosis; use one direct owner instead of opening parallel delivery lanes, a finish-until-done loop, or a goal ledger.",
             "[capability:delivery_boundary] The user wants an open-ended feedback loop or long-horizon campaign; use `loop` instead.",
@@ -1575,6 +1578,7 @@ _DEFINITIONS = [
             "Use the brief to feed strategy or meeting work without calling it execution evidence.",
         ),
         do_not_use_when=(
+            "The user needs to decide whether a customer problem deserves product investment with evidence typing and customer re-entry; use `product-discovery-validation`.",
             "The request is only fresh links, citations, or current facts without a business question or decision audience; use `research`.",
             "Sources have not yet been selected and the user wants source types, candidates, or acquisition state; use `source-finder`.",
         ),
@@ -1803,6 +1807,9 @@ _DEFINITIONS = [
             "When a record is warranted, draft it per `omh-decide/references/decision-records.md` - the `docs/adr/` convention with Context, Drivers, Considered Options, Decision, Consequences with mitigations, and Related - and stop for the user's approval before any file is written.",
             "Never edit an accepted record: status moves Proposed to Accepted to Deprecated or Superseded, supersession is a new record pointing back at the old one, and a Rejected record is kept - it is what `decision-recall` reads later.",
         ),
+        do_not_use_when=(
+            "The strategic question is whether an early idea's customer problem and segment are real, and no validated discovery receipt exists yet; use `product-discovery-validation`.",
+        ),
     ),
     SkillDefinition(
         "meeting-brief",
@@ -1902,6 +1909,8 @@ _DEFINITIONS = [
             "The request already contains an accepted product decision and asks for implementation.",
             "There are no feedback items, source boundary, or product area to classify.",
             "The user wants current market research rather than triage of supplied signals.",
+            "The triage result asks for a retention or activation intervention rather than another cluster; use `lifecycle-growth`.",
+            "The supplied material is opportunity records and the request is portfolio health or forecast review; use `sales-pipeline-review`.",
         ),
         good_example=SkillExample(
             prompt="Cluster these customer payment failure reports and feature requests before we plan fixes.",
@@ -1924,7 +1933,7 @@ _DEFINITIONS = [
         hermes_role="retained-cognition",
         delegation_boundary="retained-catalog-intent",
         handoff_policy=(
-            _SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
+            SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
             + " Calculations are only as authoritative as supplied or observed sources and methods; no ERP, bank, ledger, tax, payment, or filing action is implied."
         ),
         required_inputs=("period", "supplied finance source", "decision question", "calculation assumptions"),
@@ -2026,6 +2035,7 @@ _DEFINITIONS = [
             "The request is for a current quote, exchange rate, crypto price, or other live market lookup; use `live-info-operator`.",
             "The user wants generic exploration of a supplied CSV or table without accounting periods, controls, or finance decision framing; use `data-analysis`.",
             "The user asks to post journal entries, reconcile accounts, approve payments, submit tax filings, or configure an accounting system; use `connector-operator` for an explicit observed action path.",
+            "The user wants pipeline coverage, deal health, or a seller forecast scenario rather than authoritative revenue or close reporting; use `sales-pipeline-review`.",
             "The user needs an enterprise or product direction decision after analysis; route that decision to `strategy-brief`.",
         ),
         good_example=SkillExample(
@@ -2049,7 +2059,7 @@ _DEFINITIONS = [
         hermes_role="retained-cognition",
         delegation_boundary="retained-catalog-intent",
         handoff_policy=(
-            _SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
+            SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
             + " Hermes can prepare fair process guidance and interview artifacts; it cannot claim a candidate was contacted, evaluated, hired, rejected, or recorded in an HR system."
         ),
         required_inputs=("role or people-process outcome", "available evidence", "decision owner", "policy constraints"),
@@ -2104,7 +2114,7 @@ _DEFINITIONS = [
         hermes_role="hybrid-review",
         delegation_boundary="retained-catalog-intent",
         handoff_policy=(
-            _SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
+            SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
             + " The result is a prepared review and escalation aid, not legal advice, counsel sign-off, compliance certification, contract execution, filing, or regulator communication."
         ),
         required_inputs=("jurisdiction", "document or process version", "supplied authority", "review objective"),
@@ -2229,7 +2239,7 @@ _DEFINITIONS = [
         hermes_role="retained-cognition",
         delegation_boundary="retained-catalog-intent",
         handoff_policy=(
-            _SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
+            SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
             + " Reply text is a draft, escalation is a recommendation, and no ticket state, message send, refund, account action, or customer outcome is claimed."
         ),
         required_inputs=("support case", "known facts", "customer impact", "available ownership or escalation path"),
@@ -2284,7 +2294,7 @@ _DEFINITIONS = [
         hermes_role="retained-cognition",
         delegation_boundary="retained-catalog-intent",
         handoff_policy=(
-            _SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
+            SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
             + " Hermes designs an instructional plan; it does not create an LMS course, enroll learners, grade submissions, certify learning, publish materials, or claim learning outcomes occurred."
         ),
         required_inputs=("learners", "learning goal", "prerequisites", "constraints"),
@@ -2405,7 +2415,7 @@ _DEFINITIONS = [
         hermes_role="hybrid-review",
         delegation_boundary="retained-catalog-intent",
         handoff_policy=(
-            _SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
+            SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
             + " Hermes may draft and review language guidance; it does not alter locale files, upload strings, publish translations, validate a rendered build, or claim market approval."
         ),
         required_inputs=("locale", "audience", "source version", "product or content context"),
@@ -2460,7 +2470,7 @@ _DEFINITIONS = [
         hermes_role="retained-cognition",
         delegation_boundary="retained-catalog-intent",
         handoff_policy=(
-            _SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
+            SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
             + " Hermes prepares research, discovery, and message guidance; it does not research unobserved facts as facts, contact prospects, create opportunities, change CRM data, book meetings, or claim revenue or progress."
         ),
         required_inputs=("account or segment", "available evidence", "buyer hypothesis", "sales objective"),
@@ -2555,6 +2565,7 @@ _DEFINITIONS = [
         why_this_exists="`sales-development` prepares evidence-bounded discovery and qualification guidance without claiming sales execution.",
         do_not_use_when=(
             "The user needs a company-level positioning, market-entry, or strategic-options decision rather than account-level discovery; use `strategy-brief`.",
+            "The user supplies a CRM export or pipeline snapshot and needs portfolio health, aging, slipped deals, forecast calibration, or renewal-risk review; use `sales-pipeline-review`.",
             "The user only wants a polished social post, newsletter, or one-off outbound-copy rewrite; use `content-operator`.",
             "The user asks to send outreach, update Salesforce or HubSpot, create an opportunity, or book a meeting; use `connector-operator` with explicit recipient, object, and authority.",
             "The request asks for current competitor or company evidence but supplies no source material; begin with `research` before presenting claims as observed.",
@@ -2580,7 +2591,7 @@ _DEFINITIONS = [
         hermes_role="retained-cognition",
         delegation_boundary="retained-catalog-intent",
         handoff_policy=(
-            _SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
+            SPECIALIST_DOMAIN_HANDOFF_BOUNDARY
             + " A PRD or roadmap is prepared planning, not stakeholder acceptance, Jira or Linear mutation, implementation, test evidence, delivery, or a market commitment."
         ),
         required_inputs=("product evidence", "problem and user", "goal and non-goals", "decision owner"),
@@ -2610,6 +2621,8 @@ _DEFINITIONS = [
         why_this_exists="`product-brief` turns product evidence into a reviewable PRD and prioritization frame before delivery planning without treating a draft as an accepted roadmap commitment.",
         do_not_use_when=(
             "The input is unprocessed feedback, bug reports, or feature asks that first need clustering and evidence boundaries; use `feedback-triage`.",
+            "The product evidence is unvalidated, synthetic, or a founder belief and the problem gate has not returned validated; use `product-discovery-validation` before a PRD.",
+            "The input is a growth hypothesis that still needs an experiment and readout before it becomes a product requirement; use `lifecycle-growth`.",
             "The user needs a company or product strategy decision across high-level options rather than a requirements or roadmap artifact; use `strategy-brief`.",
             "The request is an accepted, code-ready change with repository constraints and verification needs; use `ralplan` or `ultrawork` rather than recreating a PRD.",
             "The user asks to create or update Jira, Linear, Aha!, or a roadmap system directly; use `connector-operator` with explicit target, approval, and observed evidence.",
@@ -2661,6 +2674,7 @@ _DEFINITIONS = [
             "Keep code fixes as explicit follow-up handoffs, not implicit ops-review output.",
         ),
         do_not_use_when=(
+            "The review is over sales stages, forecast categories, deal aging, or seller forecast rather than generic operating status; use `sales-pipeline-review`.",
             "The primary output is durable cadence history, minutes, a decision log, or action history; use `operating-rhythm`.",
         ),
     ),
@@ -3259,6 +3273,7 @@ _DEFINITIONS = [
         ),
         do_not_use_when=(
             "Basic image prompt card only; use `img-summary`.",
+            "The artifact is a throwaway probe whose quality is irrelevant to the decision it answers; use `decision-prototype`.",
             "Ordinary file packaging/export plan only; use `materials-package` or `deliverable-package`.",
             "Pure backend, CLI, data, or text-only research with no visual surface.",
             "The user asks to claim deployment, export, publication, or visual QA without evidence.",
@@ -3501,6 +3516,7 @@ _DEFINITIONS = [
         ),
         do_not_use_when=(
             "The user needs a broad premium-quality gate across web, deck, PDF, poster, or publishing outputs; use `design-quality-gate`.",
+            "The user wants a disposable wireframe or mocked interaction to settle one interaction question before planning; use `decision-prototype`.",
             "The user only needs a file, deck, PDF, spreadsheet, HWP, or attachment package; use `materials-package` or `deliverable-package`.",
             "The user only needs an image card or infographic prompt; use `img-summary`.",
             "The user asks to mark a UI as visually passed without fresh rendered evidence; use `visual-qa` and keep PASS blocked until observed.",
@@ -5270,6 +5286,7 @@ _DEFINITIONS = [
             "without OMH becoming a hidden cron runner, transport bot, source retriever, or executor."
         ),
         do_not_use_when=(
+            "An undecided lifecycle journey or growth experiment needs audience, consent, and measurement design before any schedule; use `lifecycle-growth` first.",
             "The user needs a one-off report or deck; use `report-package` or `materials-package`.",
             "The user asks to review incident metrics once; use `reliability-review`.",
             "The user needs actual code changes; prepare a selected executor/runtime handoff after the blueprint or plan is accepted.",
@@ -5461,6 +5478,7 @@ _DEFINITIONS = [
             "Give every agentic loop its budgets as product features, not prompt advice: step, time, token, cost, and tool-call budgets each with a recorded termination reason, and for recursive delegation the budgets bind the whole tree, not each node separately.",
             "Separate draft from commit for risky side effects: reads and drafts may run autonomously when scoped and labeled, but external writes, deletions, and communications need an approval record outside the prompt - a model's stated intention is never the authorization.",
             f"When the user asks for communication through a public board, treat the destination as a public external disclosure even when the account is authenticated: give {', '.join(LLM_APP_DEV_PUBLIC_BOARD_ACTIONS)} their own authority and outbound-data expectation, show the exact destination, the public-audience label, and the complete outbound payload before a host-recorded approval, and reconcile an ambiguous send by read-back or receipt before any retry. Load `references/public-board.md` for the per-action authority table, the untrusted-peer rules, and what survives compaction and handoff.",
+            f"When the feature {'; '.join(trigger for trigger, _ in LLM_APP_DEV_CONDITIONAL_CONTRACTS)}, load `{LLM_APP_DEV_STATEFUL_CONTRACTS_REFERENCE_PATH}`. Provenance is not authorization, follow-up references resolve against the final-order receipt, limits are checked on resulting state inside one atomic apply boundary, and stored user facts are host-validated and deletable. A feature with none of those properties records that and skips this conditional contract.",
             "Keep design and evidence separate: a prepared schema, prompt layout, or eval plan is not implementation, an observed eval run, review, CI, or merge evidence.",
         ),
         why_this_exists=(
@@ -5721,6 +5739,7 @@ _DEFINITIONS = [
             "The user asks for one full research-plan-implementation-review-PR cycle; use `ultrawork` (its `delivery_boundary` capability) and keep ralplan as the planning stage.",
             "The change is a small local refactor or cleanup with no architectural or regression risk; use `ultrawork`, or `ai-slop-cleaner` when observable behavior must stay identical.",
             "The refactor's direction is already decided and what is missing is its execution shape - which files move in which phase, what verifies each phase, where each phase rolls back to; use `refactor-plan`.",
+            "One plan-blocking choice still needs behavior evidence rather than argument; run `decision-prototype` first and consume its decision receipt without transcript replay.",
             "The user wants a pure source lookup, citation check, or paper explanation with no implementation plan.",
             "The unresolved work is repository terminology alignment or a project-language decision frontier; use `context` before planning.",
         ),
@@ -7412,5 +7431,14 @@ _DEFINITIONS.append(
             expected="Report that creation, labeling, and any GitHub mutation stay unobserved until an authorized connector returns read-back evidence.",
             why="A prepared package is not issue creation, label application, or any GitHub mutation evidence.",
         ),
+    )
+)
+
+_DEFINITIONS.extend(
+    (
+        DECISION_PROTOTYPE_DEFINITION,
+        LIFECYCLE_GROWTH_DEFINITION,
+        PRODUCT_DISCOVERY_DEFINITION,
+        SALES_PIPELINE_DEFINITION,
     )
 )

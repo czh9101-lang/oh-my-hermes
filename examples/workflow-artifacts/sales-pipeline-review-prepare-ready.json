@@ -1,0 +1,130 @@
+{
+  "amount_semantics": "annual_contract_value_minor_units",
+  "cohort_id": "new_business_2026q3",
+  "concentration_limit_basis_points": 6000,
+  "conversion_bases": [],
+  "decision_owner_id": "owner_sales_lead",
+  "forecast_definitions": [
+    {
+      "category_id": "pipeline",
+      "included_scenario_ids": [
+        "upside"
+      ],
+      "meaning": "seller pipeline"
+    },
+    {
+      "category_id": "commit",
+      "included_scenario_ids": [
+        "base",
+        "upside"
+      ],
+      "meaning": "seller commit"
+    }
+  ],
+  "freshness_limit_days": 7,
+  "horizon_end": "2026-09-30",
+  "included_motions": [
+    "new_business"
+  ],
+  "included_owner_ids": [
+    "owner_team_east",
+    "owner_team_west"
+  ],
+  "observed_outcomes": [],
+  "opportunities": [
+    {
+      "account_id": "acct_alpha_01",
+      "amount_minor": 700000,
+      "buyer_commitment_evidence_refs": [
+        "ev_buyer_alpha"
+      ],
+      "buyer_commitment_state": "next_step_observed",
+      "currency": "USD",
+      "exit_criteria": [
+        {
+          "criterion_id": "buyer_review",
+          "evidence_refs": [],
+          "state": "unknown"
+        }
+      ],
+      "expected_close_on": "2026-09-20",
+      "motion_id": "new_business",
+      "next_step": {
+        "action_id": "legal_review",
+        "due_on": "2026-09-05",
+        "evidence_refs": [
+          "ev_next_alpha"
+        ]
+      },
+      "opportunity_id": "opp_alpha_01",
+      "owner_id": "owner_team_east",
+      "previous_close_on": "2026-09-10",
+      "previous_stage_id": "discovery",
+      "seller_forecast_category_id": "commit",
+      "seller_probability_basis_points": 8000,
+      "stage_entered_on": "2026-08-10",
+      "stage_id": "proposal"
+    },
+    {
+      "account_id": "acct_beta_02",
+      "amount_minor": 300000,
+      "buyer_commitment_evidence_refs": [],
+      "buyer_commitment_state": "none_observed",
+      "currency": "USD",
+      "exit_criteria": [
+        {
+          "criterion_id": "buyer_problem",
+          "evidence_refs": [
+            "ev_problem_beta"
+          ],
+          "state": "met"
+        }
+      ],
+      "expected_close_on": "2026-09-28",
+      "motion_id": "new_business",
+      "next_step": null,
+      "opportunity_id": "opp_beta_02",
+      "owner_id": "owner_team_west",
+      "previous_close_on": "",
+      "previous_stage_id": "",
+      "seller_forecast_category_id": "pipeline",
+      "seller_probability_basis_points": null,
+      "stage_entered_on": "2026-08-01",
+      "stage_id": "discovery"
+    }
+  ],
+  "prior_forecasts": [],
+  "renewal_signals": [],
+  "reporting_currency": "USD",
+  "reviewed_at": "2026-09-03T12:00:00Z",
+  "scenario_definitions": [
+    {
+      "meaning": "categories supplied for base scenario",
+      "scenario_id": "base"
+    },
+    {
+      "meaning": "categories supplied for upside scenario",
+      "scenario_id": "upside"
+    }
+  ],
+  "snapshot_as_of": "2026-09-01T12:00:00Z",
+  "source_ref": "crm_snapshot_2026q3_a1b2c3d4",
+  "stage_definitions": [
+    {
+      "meaning": "discovery evidence collected",
+      "required_exit_criteria": [
+        "buyer_problem"
+      ],
+      "stage_id": "discovery",
+      "stall_after_days": 14
+    },
+    {
+      "meaning": "proposal supplied to buyer",
+      "required_exit_criteria": [
+        "buyer_review"
+      ],
+      "stage_id": "proposal",
+      "stall_after_days": 10
+    }
+  ]
+}

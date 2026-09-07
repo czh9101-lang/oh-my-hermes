@@ -164,7 +164,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="chat_card_case_count",
             describe="Chat card coverage cases",
             live=_chat_card_case_count,
-            expected=84,
+            expected=88,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -175,7 +175,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="route_hint_case_count",
             describe="Route hint alignment cases",
             live=_route_hint_case_count,
-            expected=204,
+            expected=208,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -188,7 +188,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             live=_routing_precision_case_count,
             # The public-board contract adds three negative controls: a concept
             # question, a disclosure question, and a team's own board.
-            expected=174,
+            expected=179,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -202,7 +202,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             live=_routing_precision_intervention_case_count,
             # The public-board contract adds two LLM-build interventions and the
             # agent-board cross-lane guard.
-            expected=312,
+            expected=322,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -214,8 +214,8 @@ def count_metrics() -> tuple[CountMetric, ...]:
             name="installable_skill_count",
             describe="Installable workflow skills quoted in reference surfaces",
             live=_installable_skill_count,
-            # omh-docs and github-issue-intake raise the installable catalog to 119.
-            expected=119,
+            # The current workflow additions are part of the installable catalog.
+            expected=123,
             sites=(
                 "docs/README.md",
             ),

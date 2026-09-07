@@ -324,6 +324,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Do not use when:
   - A safe one-term definition or source lookup can be answered directly; use the read-only lookup mode and do not enter the full context interview.
   - The request is broad ambiguity with no project-language conflict; use `deep-interview`.
+  - The unresolved decision is empirical and a cheap isolated experiment can answer it; use `decision-prototype` and keep the frontier for the rest.
   - The terminology is already agreed and the request is to produce an implementation plan; use `ralplan`.
   - The user wants to capture or curate general retained memory rather than repository terminology; use `memory-new` or `memory-sync`.
   - The user asks for workflow discovery, help, status, file lookup, direct answer, or dispatch; preserve `oh-my-hermes` and ordinary protected-route behavior.
@@ -401,6 +402,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The missing information is discoverable from the repository or local artifacts without asking the user.
   - The user asked for immediate read-only analysis and the ambiguity does not change the answer.
   - The ambiguity is specifically repository terminology or project-language alignment; use `context` and its direct-lookup/frontier boundary.
+  - The open question is answerable by a small reversible experiment rather than another interview round; use `decision-prototype`.
 - Strong routing signals: `deep-interview`, `$deep-interview`, `interview`, `don't assume`, `clarify`, `feature shaping`, `ambiguous product request`, `one question`, `要件を詰めて`, `曖昧な要求`, `一問一答で確認`, `オンボーディング`, `온보딩`, `부드럽게`, `모호한 제품 요청`, `기획자`, `개발자 사이`, `澄清需求`, `需求不明确`, `一次问一个问题`
 - Good example:
   - Prompt: $deep-interview before planning Discord and Slack routing, ask what each channel owns and what evidence counts.
@@ -546,6 +548,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The work touches the same files or invariants in ways that need one owner.
   - The plan is not accepted, lane boundaries are unclear, or verification commands are missing.
   - The user expects Hermes to secretly execute coding lanes instead of preparing explicit selected-runtime handoffs.
+  - For a decision spike, use `decision-prototype`.
   - [capability:coordinated_scope] The lanes are exploratory research or QA coordination without an accepted implementation plan; frame them with the `coordinated_scope` capability before parallel delivery.
   - [capability:single_owner_persistence] The request is a settings-only change, one bounded edit that is explicitly low-risk and has a direct owner and verification path, or a direct answer/diagnosis; use one direct owner instead of opening parallel delivery lanes, a finish-until-done loop, or a goal ledger.
   - [capability:delivery_boundary] The user wants an open-ended feedback loop or long-horizon campaign; use `loop` instead.
@@ -1046,6 +1049,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Why this exists: `research-brief` exists to keep `research` work explicit, evidence-backed, and inside the Hermes/executor boundary instead of relying on ad hoc chat narration.
 - Use when: Use when Hermes should scope a business question, gather or summarize source-backed evidence, and preserve evidence/inference boundaries before strategy or handoff.
 - Do not use when:
+  - The user needs to decide whether a customer problem deserves product investment with evidence typing and customer re-entry; use `product-discovery-validation`.
   - The request is only fresh links, citations, or current facts without a business question or decision audience; use `research`.
   - Sources have not yet been selected and the user wants source types, candidates, or acquisition state; use `source-finder`.
 - Strong routing signals: `research-brief`, `business-research`, `business research`, `research brief`, `decision brief`, `pricing decision brief`, `decision-ready brief`, `source-backed business research`, `customer feedback trends`, `feedback trends`, `market evidence`, `data search`, `source scan`, `자료 조사`, `데이터 서치`, `근거 조사`, `피드백 추세`, `고객 피드백 추세`
@@ -1238,8 +1242,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Why this exists: `strategy-brief` exists to keep `strategy` work explicit, evidence-backed, and inside the Hermes/executor boundary instead of relying on ad hoc chat narration.
 - Use when: Use when Hermes should turn goals and evidence into options, tradeoffs, recommendations, and a decision-ready brief.
 - Do not use when:
-  - The request is casual chat, a status-only acknowledgement, or another workflow has stronger routing evidence.
-  - The user needs implementation, review, CI, merge, or external publishing evidence that has not been delegated or observed.
+  - The strategic question is whether an early idea's customer problem and segment are real, and no validated discovery receipt exists yet; use `product-discovery-validation`.
 - Strong routing signals: `strategy-brief`, `strategy brief`, `strategy memo`, `product strategy`, `strategic options`, `decision note`, `leadership strategy`, `next strategy`, `다음 전략`, `전략 정리`, `전략 메모`, `전략 옵션`, `의사결정`, `리더십 회의`
 - Good example:
   - Prompt: strategy-brief: decide whether our onboarding should prioritize solo founders or enterprise buyers.
@@ -1362,6 +1365,8 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The request already contains an accepted product decision and asks for implementation.
   - There are no feedback items, source boundary, or product area to classify.
   - The user wants current market research rather than triage of supplied signals.
+  - The triage result asks for a retention or activation intervention rather than another cluster; use `lifecycle-growth`.
+  - The supplied material is opportunity records and the request is portfolio health or forecast review; use `sales-pipeline-review`.
 - Strong routing signals: `feedback-triage`, `customer-feedback-triage`, `feedback triage`, `customer feedback`, `feedback cluster`, `bug or feature`, `feature request triage`, `payment failure feedback`, `feedback trends`, `payment failure`, `payment failure issue`, `payment failure reports`, `고객 피드백`, `피드백`, `피드백 분류`, `피드백을 모아서`, `결제 실패`, `결제 실패 이슈`, `결제 실패 피드백`, `결제 오류`, `고객 불만`, `버그 제보`, `버그 기능 요청`, `기능 요청`
 - Good example:
   - Prompt: Cluster these customer payment failure reports and feature requests before we plan fixes.
@@ -1421,6 +1426,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The request is for a current quote, exchange rate, crypto price, or other live market lookup; use `live-info-operator`.
   - The user wants generic exploration of a supplied CSV or table without accounting periods, controls, or finance decision framing; use `data-analysis`.
   - The user asks to post journal entries, reconcile accounts, approve payments, submit tax filings, or configure an accounting system; use `connector-operator` for an explicit observed action path.
+  - The user wants pipeline coverage, deal health, or a seller forecast scenario rather than authoritative revenue or close reporting; use `sales-pipeline-review`.
   - The user needs an enterprise or product direction decision after analysis; route that decision to `strategy-brief`.
 - Strong routing signals: `finance analysis`, `budget variance`, `budget vs actual`, `month-end close`, `재무 분석`, `예산 대비 실적`, `월마감`
 - Good example:
@@ -1944,6 +1950,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Use when: Use when a seller or business-development owner needs account context, buyer hypotheses, qualification questions, value narrative, partner/outreach plan, and a non-executing next-step sequence.
 - Do not use when:
   - The user needs a company-level positioning, market-entry, or strategic-options decision rather than account-level discovery; use `strategy-brief`.
+  - The user supplies a CRM export or pipeline snapshot and needs portfolio health, aging, slipped deals, forecast calibration, or renewal-risk review; use `sales-pipeline-review`.
   - The user only wants a polished social post, newsletter, or one-off outbound-copy rewrite; use `content-operator`.
   - The user asks to send outreach, update Salesforce or HubSpot, create an opportunity, or book a meeting; use `connector-operator` with explicit recipient, object, and authority.
   - The request asks for current competitor or company evidence but supplies no source material; begin with `research` before presenting claims as observed.
@@ -2054,6 +2061,8 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Use when: Use when a product owner needs a problem frame, user/outcome definition, PRD, prioritization/roadmap options, dependencies, acceptance shape, and decision record before delivery planning.
 - Do not use when:
   - The input is unprocessed feedback, bug reports, or feature asks that first need clustering and evidence boundaries; use `feedback-triage`.
+  - The product evidence is unvalidated, synthetic, or a founder belief and the problem gate has not returned validated; use `product-discovery-validation` before a PRD.
+  - The input is a growth hypothesis that still needs an experiment and readout before it becomes a product requirement; use `lifecycle-growth`.
   - The user needs a company or product strategy decision across high-level options rather than a requirements or roadmap artifact; use `strategy-brief`.
   - The request is an accepted, code-ready change with repository constraints and verification needs; use `ralplan` or `ultrawork` rather than recreating a PRD.
   - The user asks to create or update Jira, Linear, Aha!, or a roadmap system directly; use `connector-operator` with explicit target, approval, and observed evidence.
@@ -2115,6 +2124,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Why this exists: `ops-review` exists to keep `operations` work explicit, evidence-backed, and inside the Hermes/executor boundary instead of relying on ad hoc chat narration.
 - Use when: Use when Hermes should summarize observed status, risks, blockers, priorities, and follow-up actions for recurring operating work.
 - Do not use when:
+  - The review is over sales stages, forecast categories, deal aging, or seller forecast rather than generic operating status; use `sales-pipeline-review`.
   - The primary output is durable cadence history, minutes, a decision log, or action history; use `operating-rhythm`.
 - Strong routing signals: `ops-review`, `ops review`, `weekly ops review`, `status review`, `operating review`, `release risks`, `risks and blockers`, `priorities`, `weekly status`, `운영 리뷰`, `주간 운영`, `상태 리뷰`, `리스크`, `블로커`, `우선순위`, `릴리즈 리스크`
 - Good example:
@@ -2582,6 +2592,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Use when: Use when web UI, decks, PDFs, posters, or visual packages must beat ordinary output on content, taste, layout, accessibility, and render QA.
 - Do not use when:
   - Basic image prompt card only; use `img-summary`.
+  - The artifact is a throwaway probe whose quality is irrelevant to the decision it answers; use `decision-prototype`.
   - Ordinary file packaging/export plan only; use `materials-package` or `deliverable-package`.
   - Pure backend, CLI, data, or text-only research with no visual surface.
   - The user asks to claim deployment, export, publication, or visual QA without evidence.
@@ -2732,6 +2743,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Use when: Use when Hermes should shape or improve a web/frontend or terminal (TUI) surface before implementation: layout, design system, responsive states, accessibility, performance, motion, and anti-generic visual quality.
 - Do not use when:
   - The user needs a broad premium-quality gate across web, deck, PDF, poster, or publishing outputs; use `design-quality-gate`.
+  - The user wants a disposable wireframe or mocked interaction to settle one interaction question before planning; use `decision-prototype`.
   - The user only needs a file, deck, PDF, spreadsheet, HWP, or attachment package; use `materials-package` or `deliverable-package`.
   - The user only needs an image card or infographic prompt; use `img-summary`.
   - The user asks to mark a UI as visually passed without fresh rendered evidence; use `visual-qa` and keep PASS blocked until observed.
@@ -4094,6 +4106,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Why this exists: `automation-blueprint` exists so Hermes can make recurring operational work feel native and scheduled without OMH becoming a hidden cron runner, transport bot, source retriever, or executor.
 - Use when: Use when Hermes should turn a natural recurring/cron-like request into a scheduled ops blueprint without claiming host automation, platform delivery, source retrieval, or no-agent execution.
 - Do not use when:
+  - An undecided lifecycle journey or growth experiment needs audience, consent, and measurement design before any schedule; use `lifecycle-growth` first.
   - The user needs a one-off report or deck; use `report-package` or `materials-package`.
   - The user asks to review incident metrics once; use `reliability-review`.
   - The user needs actual code changes; prepare a selected executor/runtime handoff after the blueprint or plan is accepted.
@@ -4306,6 +4319,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Give every agentic loop its budgets as product features, not prompt advice: step, time, token, cost, and tool-call budgets each with a recorded termination reason, and for recursive delegation the budgets bind the whole tree, not each node separately.
   - Separate draft from commit for risky side effects: reads and drafts may run autonomously when scoped and labeled, but external writes, deletions, and communications need an approval record outside the prompt - a model's stated intention is never the authorization.
   - When the user asks for communication through a public board, treat the destination as a public external disclosure even when the account is authenticated: give read, search, register, profile, reply, publish their own authority and outbound-data expectation, show the exact destination, the public-audience label, and the complete outbound payload before a host-recorded approval, and reconcile an ambiguous send by read-back or receipt before any retry. Load `references/public-board.md` for the per-action authority table, the untrusted-peer rules, and what survives compaction and handoff.
+  - When the feature presents or acts on business records; enforces a cumulative business limit; stores facts about a person, load `references/stateful-contracts.md`. Provenance is not authorization, follow-up references resolve against the final-order receipt, limits are checked on resulting state inside one atomic apply boundary, and stored user facts are host-validated and deletable. A feature with none of those properties records that and skips this conditional contract.
   - Keep design and evidence separate: a prepared schema, prompt layout, or eval plan is not implementation, an observed eval run, review, CI, or merge evidence.
 - Completion checklist:
   - Every rail - provider boundary, structured output, prompt artifacts, retrieval grounding, evaluation - is either decided or explicitly deferred with a reason.
@@ -4608,6 +4622,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The user asks for one full research-plan-implementation-review-PR cycle; use `ultrawork` (its `delivery_boundary` capability) and keep ralplan as the planning stage.
   - The change is a small local refactor or cleanup with no architectural or regression risk; use `ultrawork`, or `ai-slop-cleaner` when observable behavior must stay identical.
   - The refactor's direction is already decided and what is missing is its execution shape - which files move in which phase, what verifies each phase, where each phase rolls back to; use `refactor-plan`.
+  - One plan-blocking choice still needs behavior evidence rather than argument; run `decision-prototype` first and consume its decision receipt without transcript replay.
   - The user wants a pure source lookup, citation check, or paper explanation with no implementation plan.
   - The unresolved work is repository terminology alignment or a project-language decision frontier; use `context` before planning.
 - Strong routing signals: `ralplan`, `$ralplan`, `consensus plan`, `reviewed plan`, `issue to PR`, `acceptance criteria`, `verification command`, `reviewable PR`, `risky planning`, `dangerous planning`, `unsafe change`, `refactor safety`, `PR로 만들`, `PR로 만들 수 있게`, `위험한 리팩터링`, `리팩터링 위험`, `리스크 있는 리팩터링`, `검증 command`, `리뷰 가능한 단위`, `코드베이스 조사`, `웹리서치 계획`, `대안 비교`, `리스크 검토`
@@ -6230,6 +6245,559 @@ These surfaces are generated command references, not installed Hermes workflow s
   - A prepared issue package is not creation evidence; only connector read-back of repository, author, title, body, labels, and URL is observed evidence.
   - The target repository must be explicit or safely configured; never infer a cross-repository target from context.
   - github_issue_intake/v1 persists bounded metadata, digests, and refs only: no raw title, body, transcript, platform event, credential, prompt, private log, or private content; the complete request remains transient for the connector.
+
+### decision-prototype
+
+[omh] Bounded decision prototype workflow: resolve one uncertain interaction, API, performance, or integration choice with a disposable, isolated experiment whose observed result feeds planning.
+
+- Category: `planning`
+- Phase: `decision-prototype`
+- Hermes role: `planner`
+- Quality tier: `decision-gated`
+- Reasoning demand: `standard`
+- Exposure: `direct_skill`
+- Install visibility: `true`
+- Docs visibility: `primary_workflow_skill`
+- Compatibility alias: `false`
+- Lifecycle stage: `canonical`
+- Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
+- Handoff policy: Keep the decision question, hypothesis, budget, scratch boundary, measurement method, and decision receipt in Hermes. When a selected executor or runtime (Codex, Claude Code, Hermes runtime/handoff, or a generic executor) will run the experiment, prepare an executor-neutral handoff with exact commands and expected observations; it stays `prepared_not_observed` until observed outputs exist. A prototype result is decision grounding only: promotion into production requires a separate accepted `ralplan` plan and its own implementation handoff.
+- Why this exists: `decision-prototype` exists so one empirical uncertainty can be settled by a bounded, disposable experiment instead of endless interviewing or an experiment hidden inside production work; it records observed results apart from interpretation and feeds planning a receipt without claiming the prototype is implementation-ready.
+- Use when: Use when discussion cannot settle one interaction, API, performance, or integration choice and a cheap reversible experiment can answer it before planning; refuse unbounded or multi-feature experiments and ask for or derive one falsifiable decision question.
+- Do not use when:
+  - $context is the explicit-only route for a repository terminology or product decision frontier (`context`); preference or policy decisions that behavior cannot test stay with `deep-interview`.
+  - $context is the explicit-only route for unresolved repository terminology or project language (`context`); hand only an empirical decision here.
+  - The decision is already made and the request is an implementation plan with acceptance criteria; use `ralplan` and consume the decision receipt there.
+  - The user wants the feature built, reviewed, or shipped rather than one question answered; use `ultrawork` after an accepted plan.
+  - The request is UI creation, redesign, or polish of a real surface rather than a throwaway wireframe that answers one interaction question; use `frontend`.
+  - The request is a premium content, layout, or visual quality gate on deliverables; use `design-quality-gate`.
+  - The uncertainty is whether customers have the problem or would adopt the solution, which needs customer evidence rather than a technical or interaction spike; use `product-discovery-validation`.
+  - The request needs QA certification, production-readiness evidence, or a performance baseline for release; prototype results do not generalize beyond their declared fixture and environment.
+- Strong routing signals: `decision-prototype`, `$decision-prototype`, `decision prototype`, `prototype this uncertain choice before planning`, `prototype before planning`, `prototype the uncertain choice`, `run a small spike`, `small spike`, `spike solution`, `decision spike`, `feasibility spike`, `test the risky assumption first`, `test the risky assumption`, `throwaway prototype`, `disposable prototype`, `timing probe`, `api probe`
+- Good example:
+  - Prompt: Run a small spike to check whether the streaming API can hold 500 concurrent connections on one worker before we plan the migration.
+  - Expected behavior: Frame one decision question with a stable id, bound the budget and scratch worktree, prepare a timing probe with exact commands and expected observations, record only observed results, and close with a decision receipt for planning.
+  - Why: One empirical uncertainty blocks planning and a cheap, reversible, isolated probe can answer it without building the migration.
+- Bad example:
+  - Prompt: decision-prototype build the whole notifications feature as a prototype and merge it if it works.
+  - Expected behavior: Refuse the multi-feature scope, ask for the one decision the prototype should settle, and route accepted implementation to `ralplan` then `ultrawork`.
+  - Why: A general feature build is not a bounded experiment, and a successful prototype is never promoted without a separate accepted plan.
+- Quality bar:
+  - Name the decision id, question, alternatives, hypothesis, budget, scratch boundary, measurement method, and stop conditions before any command is prepared.
+  - Select the smallest artifact that can answer the question and state why a larger one was not needed.
+  - Separate prepared handoff, observed outputs, interpretation, confidence, and cleanup state as distinct evidence states.
+  - Preserve the declared task, fixture, environment, and sample limits so the result is not generalized beyond them.
+  - End with a decision receipt that `ralplan` can consume: supported option, rejected option, residual risk, evidence limits, and prototype-code reference permission.
+- Completion checklist:
+  - Exactly one decision question with a stable decision id, alternatives, and a falsifiable hypothesis is recorded, or the request was refused with the missing question named.
+  - Time, tool, file, and command budgets carry units, and the scratch directory or temporary worktree identity matches the observed workspace.
+  - The artifact kind is the smallest that can answer the question, and any expansion into feature implementation was refused.
+  - Execution status is one of prepared_not_observed, observed, timeout, or inconclusive; observed outputs, evidence references, interpretation, and confidence sit in separate fields.
+  - Cleanup is observed before `discarded` is reported, and a cleanup failure is recorded distinctly.
+  - The decision receipt names the supported option, rejected option, residual risk, evidence limits, and prototype-code reference permission, and no implementation handoff was prepared from it.
+- Recovery notes:
+  - If the request spans several decisions or has no falsifiable hypothesis, HOLD and ask for or derive the single question instead of running anything.
+  - If no executor, temporary worktree, browser tool, or device is available, emit the prepared handoff with exact commands and expected observations and report every result as unobserved.
+  - If the observed workspace differs from the declared scratch boundary, stop before the first write and report the mismatch as a blocker.
+  - If the time or command budget runs out, record `timeout` with whatever was observed so far and leave interpretation as unresolved questions.
+  - If observations do not falsify or support the hypothesis, record `inconclusive` with the evidence limits rather than choosing an option.
+  - If cleanup fails, keep the artifact at its last observed cleanup state, name the residual scratch identity, and never report `discarded`.
+  - If the user asks to ship the prototype, summarize the receipt and route to `ralplan`; promotion needs an accepted plan and its own implementation handoff.
+- Required inputs:
+  - decision question
+  - experiment budget
+  - scratch boundary
+  - measurement method
+- Expert clarification questions:
+  - `decision question`
+    - English: Which single decision should this prototype settle, which alternatives are in play, and what observable result would falsify the preferred option?
+    - Korean: 이 프로토타입으로 결정할 단일 의사결정은 무엇이고, 어떤 대안들이 있으며, 어떤 관찰 결과가 나오면 선호 옵션이 틀렸다고 볼 수 있나요?
+  - `experiment budget`
+    - English: What time, tool, file, and command budget bounds the experiment, and which stop condition ends it even without an answer?
+    - Korean: 이 실험을 제한하는 시간, 도구, 파일, 명령 예산은 무엇이고, 답이 없더라도 실험을 끝내는 중단 조건은 무엇인가요?
+  - `scratch boundary`
+    - English: Which scratch directory or temporary worktree receives every write, which executor or runtime is available, and does any write outside that boundary have explicit approval?
+    - Korean: 모든 쓰기가 들어갈 스크래치 디렉터리 또는 임시 워크트리는 무엇이고, 어떤 실행기나 런타임을 사용할 수 있으며, 그 경계 밖 쓰기에 명시적 승인이 있나요?
+  - `measurement method`
+    - English: How will the result be measured, which target user or task applies when usability is involved, and which fixture or sample limits how far the result generalizes?
+    - Korean: 결과를 어떻게 측정하고, 사용성이 걸린 경우 대상 사용자나 과제는 무엇이며, 어떤 픽스처나 샘플이 결과의 일반화 범위를 제한하나요?
+- Expected outputs:
+  - decision_prototype/v1
+  - prepared prototype handoff with exact commands and expected observations
+  - observation ledger separating observed outputs from interpretation and confidence
+  - decision receipt for planning with supported option, rejected option, residual risk, and evidence limits
+- Artifact expectations:
+  - prepared decision_prototype/v1 record when a wrapper captures it: decision id and question, alternatives, hypothesis, target user or task, time/tool/file/command budget, executor or runtime and capability limits, scratch workspace identity, measurement method, stop conditions, observed results, interpretation, confidence, unresolved questions, keep or discard decision, and cleanup status
+  - prepared prototype handoff carrying exact commands and expected observations; it stays prepared_not_observed until a separate observation records outputs
+  - declared scratch workspace identity compatible with the existing worktree_session_isolation/v1 guidance when a temporary worktree is used
+  - metadata-only evidence references for executed runs; raw outputs, secrets, user data, and transcripts stay out of the record
+- Safety rules:
+  - Refuse an experiment that answers more than one decision question or has no falsifiable hypothesis; ask for or derive one question before spending budget.
+  - Read existing production files freely, but write only inside the declared scratch directory or temporary worktree unless the user explicitly approves a different boundary.
+  - Do not manufacture results: without an available executor the output is a prepared handoff and every result field reads unobserved.
+  - Executor or tool success is not product validation; keep measured observations, assumptions, and derived interpretation in separate fields.
+  - Use synthetic fixtures by default and keep secrets and user data out of the record; preserve only bounded metadata and safe evidence references.
+  - Destructive experiments, paid services, external publication, and irreversible side effects require the existing authority and approval gates before any command runs.
+  - No prototype code enters a production branch or implementation handoff without a separate accepted plan; the receipt only states whether prototype code may be referenced.
+  - Report `discarded` only after cleanup is observed; a failed or pending cleanup stays visible in the artifact.
+- Procedure checks:
+  - `prototype_scope_check`
+    - Required result fields: `decision_id`, `decision_question`, `alternatives`, `hypothesis_falsifiable`, `target_user_task`, `scope_disposition`
+    - Criterion: PASS only when exactly one decision question carries a stable decision id, at least two alternatives, and a falsifiable hypothesis; otherwise HOLD, refuse the unbounded or multi-feature experiment, and ask for or derive one question.
+  - `prototype_budget_isolation_check`
+    - Required result fields: `time_budget`, `tool_budget`, `file_budget`, `command_budget`, `executor_runtime`, `capability_limits`, `workspace_identity`, `write_boundary_status`
+    - Criterion: Record every budget with a unit, the selected executor or runtime and its observed capability limits, and the scratch directory or temporary worktree identity; HOLD when a write would leave that boundary without explicit user approval or when the observed workspace does not match the declared one.
+  - `prototype_smallest_artifact_check`
+    - Required result fields: `artifact_kind`, `measurement_method`, `stop_conditions`, `fixture_data_class`, `expansion_refused`
+    - Criterion: Choose the smallest artifact that can answer the question (wireframe, CLI spike, API probe, fixture, timing probe, test harness, or mocked interaction), use synthetic fixtures by default, and refuse expansion into general feature implementation.
+  - `prototype_execution_evidence_check`
+    - Required result fields: `execution_status`, `observed_outputs`, `evidence_refs`, `interpretation`, `confidence`, `unresolved_questions`
+    - Criterion: When no executor is available, emit the prepared handoff and report results as unobserved; when execution occurred, record only observed outputs and bounded evidence references, keep interpretation and confidence separate, and mark timeout or inconclusive runs as such; tool success is never product validation.
+  - `prototype_cleanup_receipt_check`
+    - Required result fields: `keep_discard_decision`, `cleanup_status`, `supported_option`, `rejected_option`, `residual_risk`, `evidence_limits`, `prototype_code_reference_permission`, `promotion_status`
+    - Criterion: Report `discarded` only after cleanup is observed and record cleanup failure distinctly; the receipt names the supported option, rejected option, residual risk, evidence limits, and whether prototype code may be referenced, and promotion stays blocked until a separate accepted plan and implementation handoff exist.
+- Procedure steps:
+  - `prototype_frame_decision` (`analysis`)
+    - Input refs: `decision question`, `measurement method`
+    - Output refs: `decision_prototype/v1`
+    - Check IDs: `prototype_scope_check`
+    - Instruction: Reduce the uncertainty to one decision question with a stable decision id, the alternatives, a falsifiable hypothesis, and the target user or task when usability is involved; refuse or split anything broader before spending budget.
+  - `prototype_bound_experiment` (`analysis`)
+    - Input refs: `experiment budget`, `scratch boundary`, `measurement method`
+    - Output refs: `decision_prototype/v1`
+    - Check IDs: `prototype_budget_isolation_check`, `prototype_smallest_artifact_check`
+    - Instruction: Fix the time, tool, file, and command budget, declare the scratch directory or temporary worktree, name the executor or runtime and its capability limits, and pick the smallest artifact plus measurement method and stop conditions.
+  - `prototype_prepare_handoff` (`production`)
+    - Input refs: `experiment budget`, `scratch boundary`, `measurement method`
+    - Output refs: `prepared prototype handoff with exact commands and expected observations`
+    - Check IDs: `prototype_budget_isolation_check`, `prototype_smallest_artifact_check`
+    - Instruction: Write the exact commands, expected observations, workspace identity, and stop conditions as an executor-neutral handoff; production files are read-only inputs and no result is filled in before it is observed.
+  - `prototype_record_observations` (`validation`)
+    - Input refs: `experiment budget`, `measurement method`
+    - Output refs: `observation ledger separating observed outputs from interpretation and confidence`
+    - Check IDs: `prototype_execution_evidence_check`
+    - Instruction: Ingest only observed outputs and bounded evidence references, then derive interpretation, confidence, and unresolved questions in separate fields; an unavailable executor, timeout, or inconclusive run is recorded as that state, never as a result.
+  - `prototype_close_receipt` (`validation`)
+    - Input refs: `decision question`, `experiment budget`, `scratch boundary`, `measurement method`
+    - Output refs: `decision receipt for planning with supported option, rejected option, residual risk, and evidence limits`, `decision_prototype/v1`
+    - Check IDs: `prototype_scope_check`, `prototype_budget_isolation_check`, `prototype_smallest_artifact_check`, `prototype_execution_evidence_check`, `prototype_cleanup_receipt_check`
+    - Instruction: Decide keep or discard, observe cleanup before reporting `discarded`, and close with a compact decision receipt that `ralplan` can consume without transcript replay and without any implementation handoff.
+
+### lifecycle-growth
+
+[omh] Turn an observed onboarding, activation, retention, re-engagement, referral, or monetization problem into one consent-safe in-app journey or growth experiment plan with a bounded readout and an explicit decision.
+
+- Category: `strategy`
+- Phase: `lifecycle-growth`
+- Hermes role: `operator`
+- Quality tier: `decision-gated`
+- Reasoning demand: `standard`
+- Exposure: `direct_skill`
+- Install visibility: `true`
+- Docs visibility: `primary_workflow_skill`
+- Compatibility alias: `false`
+- Lifecycle stage: `canonical`
+- Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
+- Handoff policy: Keep lifecycle framing, audience and safety policy, experiment design, and readout interpretation in Hermes. A prepared journey or experiment plan is not a send, a flag change, a delivered message, a displayed treatment, a user action, a business outcome, or a causal result. Hand external sends and flag mutations to `connector-operator`, copy to `content-operator`, supplied-data calculation to `data-analysis`, recurring scheduling to `automation-blueprint`, and validated product changes to `product-brief`, each only after the human approval gate and only reported from observed evidence.
+- Why this exists: `lifecycle-growth` exists so audience eligibility, consent and frequency safety, sticky exposure, causal measurement, and the stop decision travel together in one plan instead of being assembled ad hoc from analysis, copy, scheduling, and connector work.
+- Use when: Use when a product or growth owner wants to improve a lifecycle stage and needs the target behavior, eligible audience, safety policy, experiment design, launch/rollback gates, measurement readout, and ship/rollback/review/insufficient_data decision assembled as one evidence-bounded plan.
+- Do not use when:
+  - The user only wants a one-off message, email, banner, or push copy rewrite with no audience, experiment, or decision; use `content-operator`.
+  - The user wants generic exploration or calculation over a supplied cohort, retention, conversion, or segment table with no journey or experiment to design; use `data-analysis`.
+  - The user wants a recurring schedule, cron, or digest cadence for an already-decided operation rather than a lifecycle intervention; use `automation-blueprint`.
+  - The user asks to send a message, change a feature flag, create a segment, or start an experiment in a provider now; use `connector-operator` with explicit authorization and observed results.
+  - The user needs a PRD, prioritization frame, or roadmap for a product change rather than a journey or experiment; use `product-brief`.
+- Strong routing signals: `lifecycle-growth`, `lifecycle growth`, `lifecycle marketing`, `lifecycle messaging`, `in-app journey`, `in-app message campaign`, `onboarding journey`, `onboarding nudge`, `activation campaign`, `activation experiment`, `retention campaign`, `retention experiment`, `re-engagement campaign`, `win-back campaign`, `referral experiment`, `monetization experiment`, `growth experiment`, `holdout experiment`, `product-led growth loop`, `라이프사이클 마케팅`, `온보딩 여정`, `그로스 실험`
+- Good example:
+  - Prompt: Our day-7 retention dropped for new workspace admins; design an in-app onboarding journey and a holdout experiment so we know whether it works.
+  - Expected behavior: Prepare the brief, audience trigger policy, safety policy, experiment plan with sticky assignment and actual exposure, a readout scaffold, and an approval-gated handoff disposition.
+  - Why: The request spans lifecycle stage, audience, treatment, and causal measurement, which is the whole lifecycle-growth loop rather than one sibling's slice.
+- Bad example:
+  - Prompt: Send the re-engagement push to every inactive user tonight.
+  - Expected behavior: Route to `connector-operator` with explicit authorization, or return HOLD if consent, suppression, and frequency eligibility are unknown.
+  - Why: An immediate external send is a connector action, and lifecycle-growth never sends or claims delivery.
+- Quality bar:
+  - Define the value-bearing behavior and its baseline before any campaign or treatment is proposed.
+  - Separate assignment from actual exposure, and eligible, attempted, delivered, displayed, acted, and outcome stages from one another.
+  - Keep copy, supplied-data calculation, recurring scheduling, external sends, and PRD work with their owning workflows.
+  - Require a named human approval before any launch handoff and observed evidence before any delivery or outcome claim.
+- Completion checklist:
+  - The target behavior, baseline, eligible audience, safety policy, experiment design, readout, and decision owner are named or marked HOLD.
+  - Prepared plan, human approval, observed delivery or display, observed user action, observed outcome, and causal claim are reported as separate states.
+  - The readout disposition is exactly `ship`, `rollback`, `review`, or `insufficient_data`, and every proposed handoff names its owning workflow, approver, and stop conditions.
+- Recovery notes:
+  - If consent, suppression, identity, event semantics, denominator, or the decision owner is unknown, return HOLD with the missing fields and ask for the one input that unblocks the smallest next step.
+  - If provider or data evidence for delivery, display, action, or outcome is unavailable, keep every readout stage not_observed and set the disposition to `insufficient_data` or `review` rather than `ship`.
+- Required inputs:
+  - lifecycle objective and stage
+  - target segment
+  - event schema and baseline
+  - channels or product surfaces
+  - consent and policy constraints
+  - experiment budget
+  - decision owner
+- Expert clarification questions:
+  - `lifecycle objective and stage`
+    - English: Which lifecycle stage (onboarding, activation, retention, re-engagement, referral, monetization) and which value-bearing user behavior should improve, from what baseline?
+    - Korean: 어떤 라이프사이클 단계(온보딩, 활성화, 리텐션, 재참여, 추천, 수익화)에서 어떤 가치 있는 사용자 행동을 어느 기준선에서 개선해야 하나요?
+  - `target segment`
+    - English: Which users are eligible, by what stable identity key, and who must be excluded, including already-treated, suppressed, or overlapping-campaign users?
+    - Korean: 어떤 사용자가 대상이며 어떤 안정적인 식별 키를 쓰고, 이미 처리된 사용자, 억제 대상, 겹치는 캠페인 대상 등 누구를 제외해야 하나요?
+  - `event schema and baseline`
+    - English: Which canonical events define entry, exposure, action, and outcome, what do they mean, how fresh is the data, and what baseline and denominator are supplied?
+    - Korean: 진입, 노출, 행동, 성과를 정의하는 표준 이벤트는 무엇이고 각각의 의미, 데이터 최신성, 제공된 기준선과 분모는 무엇인가요?
+  - `channels or product surfaces`
+    - English: Which in-app surfaces, channels, or product treatments are available, and which of them can report actual display or receipt rather than only a send attempt?
+    - Korean: 사용 가능한 인앱 화면, 채널, 제품 처리는 무엇이며 그중 발송 시도가 아니라 실제 표시나 수신을 보고할 수 있는 것은 무엇인가요?
+  - `consent and policy constraints`
+    - English: Which consent basis, suppression lists, user preferences, legal or tenant constraints, quiet hours, locale rules, and frequency budgets apply?
+    - Korean: 어떤 동의 근거, 억제 목록, 사용자 선호, 법적 또는 테넌트 제약, 방해 금지 시간, 로케일 규칙, 발송 빈도 예산이 적용되나요?
+  - `experiment budget`
+    - English: How much traffic, runtime, holdout share, and risk can the experiment spend, and which guardrail breach must pause or roll it back?
+    - Korean: 실험에 쓸 수 있는 트래픽, 실행 기간, 홀드아웃 비율, 위험 한도는 얼마이며 어떤 가드레일 위반 시 중단하거나 롤백해야 하나요?
+  - `decision owner`
+    - English: Who owns the decision, who approves launch, and who may call ship, rollback, review, or insufficient_data on the readout?
+    - Korean: 의사결정 책임자와 출시 승인자는 누구이며 리드아웃에서 ship, rollback, review, insufficient_data를 결정할 수 있는 사람은 누구인가요?
+- Expected outputs:
+  - lifecycle_growth_brief/v1
+  - audience_trigger_policy/v1
+  - lifecycle_safety_policy/v1
+  - growth_experiment_plan/v1
+  - growth_measurement_readout/v1
+  - growth_handoff_disposition/v1
+- Artifact expectations:
+  - prepared lifecycle-growth plan and readout, as metadata-only records with safe references, when a wrapper captures them
+- Safety rules:
+  - Fail closed: unknown consent, suppression, frequency eligibility, event semantics, identity, denominator, or decision owner returns HOLD and blocks a launch-ready handoff.
+  - Consent and suppression come only from supplied records; product usage or the absence of an opt-out never implies either.
+  - Do not claim a message was sent, a flag was changed, a treatment was displayed, a user acted, an outcome moved, or an experiment succeeded without observed provider, runtime, or data evidence.
+  - Delivery and click counts are not product or revenue impact; a causal claim needs a valid observed experiment or another named identification method.
+  - Retain bounded metadata and safe references only; never store user identity, event payloads, message bodies, consent records, or transcripts in durable artifacts.
+  - Treat small samples, novelty effects, seasonality, concurrent interventions, and inconsistent event semantics as blockers or stated uncertainty, not as results.
+- Procedure checks:
+  - `lifecycle_target_behavior_check`
+    - Required result fields: `lifecycle_stage`, `target_behavior`, `baseline_value`, `baseline_window`, `evidence_refs`, `hypotheses`, `non_goals`, `owner`, `disposition`
+    - Criterion: PASS only when one value-bearing activation or retention behavior, its supplied baseline and window, observed evidence refs, and a decision owner are named before any treatment is proposed; otherwise HOLD naming each missing field.
+  - `lifecycle_audience_eligibility_check`
+    - Required result fields: `identity_key`, `canonical_events`, `event_semantics_status`, `entry_conditions`, `exit_conditions`, `exclusions`, `denominator_status`, `idempotency_key`, `reentry_policy`, `collision_policy`, `disposition`
+    - Criterion: HOLD when the identity key, event semantics, or denominator is unknown; every eligible audience must carry entry and exit conditions, exclusions, an idempotency key, a re-entry policy, and a collision policy for overlapping campaigns.
+  - `lifecycle_safety_eligibility_check`
+    - Required result fields: `consent_basis`, `suppression_precedence`, `legal_tenant_constraints`, `user_preferences`, `channel_eligibility`, `quiet_hours`, `locale`, `global_frequency_budget`, `campaign_frequency_budget`, `disposition`
+    - Criterion: Consent and suppression must come from supplied records, never from product usage or a missing opt-out; HOLD when consent, suppression precedence, channel eligibility, or either frequency budget is unknown.
+  - `lifecycle_experiment_validity_check`
+    - Required result fields: `treatment_control`, `assignment_unit`, `assignment_stickiness`, `exposure_unit`, `exposure_definition`, `primary_metric`, `guardrail_metrics`, `holdout_rationale`, `minimum_runtime`, `data_health_checks`, `pause_rollback_conditions`, `approval_state`
+    - Criterion: Require sticky assignment, exposure defined as actual treatment display or receipt rather than send or eligibility, exactly one primary metric, at least one guardrail, a holdout rationale, a minimum runtime, data-health checks, and pause/rollback conditions; approval_state stays unapproved until a named human approves.
+  - `lifecycle_readout_evidence_check`
+    - Required result fields: `eligible_count`, `attempted_count`, `delivered_count`, `displayed_count`, `acted_count`, `outcome_count`, `denominator_status`, `freshness_status`, `sample_ratio_status`, `cross_exposure_status`, `instrumentation_status`, `overlap_status`, `evidence_refs`, `causal_claim_status`, `disposition`
+    - Criterion: Fill each funnel stage only from observed provider or data evidence and keep them separate; pause interpretation on sample-ratio mismatch, cross-exposure, stale data, broken instrumentation, or overlapping interventions; disposition must be exactly one of `ship`, `rollback`, `review`, or `insufficient_data`, and inconclusive data must not force `ship`.
+  - `lifecycle_handoff_boundary_check`
+    - Required result fields: `action_class`, `target_owner`, `approver`, `evidence_refs`, `timing`, `stop_conditions`, `approval_state`, `readiness`, `disposition`
+    - Criterion: Each proposed action must name its class (`connector`, `content`, `analytics`, `product`, `implementation`), owner, approver, evidence refs, timing, and stop conditions; readiness is HOLD while any prior check holds or approval is missing, and no delivery, display, action, outcome, or causal claim may appear without observed evidence.
+- Procedure steps:
+  - `lifecycle_define_target_behavior` (`analysis`)
+    - Input refs: `lifecycle objective and stage`, `event schema and baseline`, `decision owner`
+    - Output refs: `lifecycle_growth_brief/v1`
+    - Check IDs: `lifecycle_target_behavior_check`
+    - Instruction: Name the lifecycle stage, the value-bearing behavior to move, its supplied baseline and window, the observed evidence behind the problem, competing hypotheses, non-goals, and the owner before proposing any message or product treatment.
+  - `lifecycle_scope_audience_triggers` (`analysis`)
+    - Input refs: `target segment`, `event schema and baseline`
+    - Output refs: `audience_trigger_policy/v1`
+    - Check IDs: `lifecycle_audience_eligibility_check`
+    - Instruction: Define the stable identity key, canonical entry and exit events with their semantics, exclusions, denominator, idempotency key, re-entry policy, and collision policy; record any unknown as a HOLD rather than assuming it.
+  - `lifecycle_check_safety_eligibility` (`validation`)
+    - Input refs: `target segment`, `channels or product surfaces`, `consent and policy constraints`
+    - Output refs: `lifecycle_safety_policy/v1`
+    - Check IDs: `lifecycle_safety_eligibility_check`
+    - Instruction: Order suppression precedence above legal and tenant constraints, user preferences, channel eligibility, quiet hours, and locale, then set global and per-campaign frequency budgets; fail closed when any eligibility input is missing.
+  - `lifecycle_design_experiment` (`production`)
+    - Input refs: `lifecycle objective and stage`, `event schema and baseline`, `channels or product surfaces`, `experiment budget`, `decision owner`
+    - Output refs: `growth_experiment_plan/v1`
+    - Check IDs: `lifecycle_target_behavior_check`, `lifecycle_experiment_validity_check`
+    - Instruction: Specify treatment and control, sticky assignment and exposure units, the actual-exposure definition, one primary metric, guardrails, holdout rationale, minimum runtime, data-health checks, pause and rollback conditions, and an approval state that a named human must set before any launch handoff.
+  - `lifecycle_prepare_measurement_readout` (`validation`)
+    - Input refs: `event schema and baseline`, `experiment budget`, `decision owner`
+    - Output refs: `growth_measurement_readout/v1`
+    - Check IDs: `lifecycle_readout_evidence_check`
+    - Instruction: Lay out eligible, attempted, delivered, displayed, acted, and outcome stages with denominator and freshness checks; fill them only from observed evidence, keep causal-claim status separate, and record `ship`, `rollback`, `review`, or `insufficient_data` without forcing a decision on thin data.
+  - `lifecycle_validate_handoff` (`validation`)
+    - Input refs: `lifecycle objective and stage`, `target segment`, `event schema and baseline`, `channels or product surfaces`, `consent and policy constraints`, `experiment budget`, `decision owner`
+    - Output refs: `growth_handoff_disposition/v1`
+    - Check IDs: `lifecycle_target_behavior_check`, `lifecycle_audience_eligibility_check`, `lifecycle_safety_eligibility_check`, `lifecycle_experiment_validity_check`, `lifecycle_readout_evidence_check`, `lifecycle_handoff_boundary_check`
+    - Instruction: Propose connector, content, analytics, product, or implementation actions with owner, approver, evidence refs, timing, and stop conditions; return HOLD readiness while any check holds or approval is missing, route validated product changes to `product-brief`, and never report a send, display, action, outcome, or causal effect that was not observed.
+
+### product-discovery-validation
+
+[omh] Test whether a customer problem, segment, and business hypothesis deserve product investment, ending in kill, pivot, persevere, or inconclusive before any PRD.
+
+- Category: `planning`
+- Phase: `product-discovery-validation`
+- Hermes role: `planner`
+- Quality tier: `decision-gated`
+- Reasoning demand: `standard`
+- Exposure: `direct_skill`
+- Install visibility: `true`
+- Docs visibility: `primary_workflow_skill`
+- Compatibility alias: `false`
+- Lifecycle stage: `canonical`
+- Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
+- Handoff policy: Keep decision framing, evidence classification, assumption ranking, test precommitment, and the discovery decision in Hermes. A prepared plan, ledger, portfolio, or receipt is not participant recruitment, an interview, a survey, a payment, a prototype, a PRD, code, or a launch. Prepare a `product-brief` handoff only from a `persevere` receipt the decision owner accepted; route a single empirical prototype question to `decision-prototype`; reach `idea-to-deploy` only after the resulting product brief and plan are accepted.
+- Why this exists: `product-discovery-validation` gives an early idea a bounded, evidence-typed path to a kill, pivot, persevere, or inconclusive decision so `product-brief` consumes validated inputs instead of judging raw discovery itself.
+- Use when: Use when a founder or product owner brings an early idea and needs the problem, segment, value proposition, and business hypothesis framed, evidence-typed, and tested to an explicit discovery decision before a PRD, prototype, or delivery plan exists.
+- Do not use when:
+  - The user needs market, competitor, pricing, or customer research on named sources without a discovery decision to make; use `research-brief`.
+  - The user is clarifying their own request, requirements, or preferences rather than testing a customer problem with external people; use `deep-interview`.
+  - The user needs a company or product strategy decision across existing options with evidence already in hand; use `strategy-brief`.
+  - The problem, segment, and evidence are already validated and accepted and the user wants a PRD or prioritization; use `product-brief`.
+  - An accepted product brief and plan exist and the user wants implementation, QA, and release gates; use `idea-to-deploy`.
+  - The user has one falsifiable technical or empirical question a disposable prototype can answer; use `decision-prototype`.
+- Strong routing signals: `product-discovery-validation`, `product discovery validation`, `product discovery`, `customer discovery`, `customer discovery plan`, `zero to one validation`, `validate the problem before building`, `problem solution interview`, `customer interview guide`, `riskiest assumption test`, `assumption test portfolio`, `kill pivot persevere`, `kill or pivot decision`, `willingness to pay test`, `business hypothesis validation`, `is this idea worth building`, `고객 발견 검증`, `가정 검증 테스트`, `킬 피벗 지속 결정`
+- Good example:
+  - Prompt: I think freelance designers struggle to chase late invoices. Before we write a PRD, help me test whether this is worth building.
+  - Expected behavior: Frame the decision and kill criteria, classify the existing evidence, plan past-behavior customer interviews, rank the riskiest assumptions with precommitted tests, and stop at an explicit kill, pivot, persevere, or inconclusive receipt.
+  - Why: The request is a pre-PRD discovery decision about a customer problem and segment, not research on named sources, requester clarification, or a PRD.
+- Bad example:
+  - Prompt: Write the PRD for our invoice-chasing feature; the interviews already confirmed the problem.
+  - Expected behavior: Route to `product-brief` and ask for the accepted discovery receipt or evidence rather than rerunning discovery.
+  - Why: Validated, accepted evidence with a PRD request belongs to the PRD owner, not to discovery.
+- Quality bar:
+  - Separate the decision frame, typed evidence, customer re-entry plan, ranked assumptions, and the receipt so each can be reviewed alone.
+  - Keep every kill, pivot, persevere, or inconclusive claim tied to precommitted criteria and observed evidence.
+- Completion checklist:
+  - The problem gate state is recorded as validated, refuted, or inconclusive with the external-human or behavioral-data refs that decided it.
+  - Every assumption test in the portfolio carries its precommitted success, failure, inconclusive, segment, deadline, cost, owner, and evidence re-entry fields.
+  - The receipt names kill, pivot, persevere, or inconclusive, preserves rejected paths, and routes to `product-brief` only from an accepted persevere.
+  - Every artifact is reported as prepared; interviews, tests, and prototypes stay not_observed until re-entered evidence exists.
+- Recovery notes:
+  - If external-human or behavioral-data evidence is absent, hold the problem gate at inconclusive and hand the customer discovery plan to a human owner instead of filling the gap with personas.
+  - If a test passes its deadline or budget without meeting a precommitted condition, record inconclusive with the residual risk and let the decision owner choose a new budget or a kill.
+  - If a pivot changes the problem or segment, open a new decision frame and carry the falsified hypotheses forward as rejected paths.
+- Required inputs:
+  - problem hypothesis
+  - target segment
+  - known evidence and current alternatives
+  - decision owner
+  - learning budget and deadline
+  - success, failure, and stop criteria
+- Expert clarification questions:
+  - `problem hypothesis`
+    - English: Which customer problem or opportunity do you believe exists, for whom, and what would you expect to observe if it were false?
+    - Korean: 어떤 고객 문제 또는 기회가 존재한다고 보시며, 누구에게 해당하고, 그 가설이 틀렸다면 무엇이 관찰될 것으로 예상하시나요?
+  - `target segment`
+    - English: Which target segment, buyer versus user roles, and recruitable participant criteria define who must show the problem?
+    - Korean: 어떤 목표 세그먼트, 구매자와 사용자 구분, 모집 가능한 참여자 기준이 이 문제를 보여야 하는 대상을 정의하나요?
+  - `known evidence and current alternatives`
+    - English: Which evidence already exists, from which source class and date, and which current alternatives or workarounds do those people use today?
+    - Korean: 이미 확보된 근거는 무엇이고 출처 유형과 날짜는 어떠하며, 그 사람들이 지금 사용하는 대안이나 우회 방법은 무엇인가요?
+  - `decision owner`
+    - English: Who owns the kill, pivot, persevere, or inconclusive decision, and who must accept a handoff to a product brief?
+    - Korean: 킬, 피벗, 지속, 미결 결정의 책임자는 누구이며, 제품 브리프로의 인계는 누가 승인해야 하나요?
+  - `learning budget and deadline`
+    - English: What learning budget in time, money, and participant count applies, and by which date must the decision be made?
+    - Korean: 시간, 비용, 참여자 수 기준의 학습 예산은 얼마이며, 어느 날짜까지 결정을 내려야 하나요?
+  - `success, failure, and stop criteria`
+    - English: Which observed conditions would count as success, failure, or a stop before evidence is gathered?
+    - Korean: 근거를 수집하기 전에 어떤 관찰 조건을 성공, 실패, 중단으로 간주할지 정해 두셨나요?
+- Expected outputs:
+  - discovery_decision_frame/v1
+  - discovery_evidence_ledger/v1
+  - customer_discovery_plan/v1
+  - assumption_test_portfolio/v1
+  - discovery_decision_receipt/v1
+  - initial_gtm_hypothesis/v1
+- Artifact expectations:
+  - prepared discovery decision frame, evidence ledger, customer discovery plan, assumption test portfolio, decision receipt, and GTM hypothesis when a wrapper captures them
+- Safety rules:
+  - Do not recruit or contact participants, record interviews, run surveys, scrape communities, buy ads, launch fake doors, accept payments, build a prototype, write a PRD, write code, or deploy anything from this workflow.
+  - Synthetic personas, model-generated interview answers, secondary summaries, prototypes without representative-user observation, and unsupported market-size figures cannot satisfy a customer-validation gate.
+  - Interview praise, stated purchase intent, a waitlist signup, a finished prototype, or one passed experiment is not product-market fit; state what each signal can and cannot establish.
+  - Founder-market fit and strategic preference may inform the decision but never substitute for target-customer evidence.
+- Procedure checks:
+  - `discovery_decision_frame_check`
+    - Required result fields: `problem_hypothesis`, `segment`, `current_alternatives`, `decision`, `constraints`, `owner`, `learning_budget`, `kill_criteria`, `disposition`
+    - Criterion: PASS only when every frame field is supplied by the user or marked unknown; HOLD when the decision, owner, learning budget, or kill criteria are missing, and never infer them.
+  - `discovery_evidence_class_check`
+    - Required result fields: `source_class`, `safe_reference`, `observation_date`, `segment`, `observation`, `direction`, `confidence_limits`, `unresolved_inconsistency`, `pointer_status`
+    - Criterion: Label every item as external-human, behavioral-data, internal-stakeholder, secondary-research, synthetic, or inferred; record direction as supporting or contradicting; assign no confidence from source class alone; keep a source pointer a pointer, not a fresh observation.
+  - `discovery_customer_reentry_check`
+    - Required result fields: `participant_criteria`, `interview_guide_focus`, `consent_privacy_constraints`, `bias_controls`, `human_task_handoff`, `evidence_reentry_contract`, `transcript_exclusion`
+    - Criterion: The guide must ask about past behavior, current workarounds, switching costs, and observed commitments, not praise or future intent; refuse simulated personas or model-generated answers as participants; raw recordings, transcripts, and contact data stay outside durable artifacts.
+  - `discovery_problem_gate_check`
+    - Required result fields: `problem_gate_state`, `supporting_refs`, `contradicting_refs`, `gate_reason`, `solution_work_permitted`
+    - Criterion: Set `problem_gate_state` to validated, refuted, or inconclusive from external-human or behavioral-data entries only; `solution_work_permitted` is true only for validated, and refuted or inconclusive never advances to a solution or MVP recommendation.
+  - `discovery_assumption_precommit_check`
+    - Required result fields: `assumption_category`, `decision_impact`, `evidence_gap`, `rank`, `smallest_disconfirming_test`, `success_condition`, `failure_condition`, `inconclusive_condition`, `segment_sample`, `deadline`, `cost`, `owner`, `evidence_reentry`
+    - Criterion: Rank each value, usability, feasibility, viability, go-to-market, or ethics assumption by decision impact multiplied by evidence gap; every test must carry precommitted success, failure, and inconclusive conditions plus segment, deadline, cost, owner, and evidence re-entry before any observation is accepted.
+  - `discovery_decision_receipt_check`
+    - Required result fields: `decision`, `precommitted_criteria`, `observed_evidence`, `confidence_limits`, `rejected_paths`, `residual_risks`, `next_route`, `promotion_guard`
+    - Criterion: Decision must be kill, pivot, persevere, or inconclusive; missing external evidence, a refuted problem, unresolved contradiction, an expired test, or an inconclusive result must not produce persevere or a `product-brief` route; rejected and falsified hypotheses are preserved, and no raw transcript is replayed.
+  - `discovery_gtm_hypothesis_check`
+    - Required result fields: `beachhead_segment`, `buyer_user_distinction`, `current_alternative`, `value_proposition`, `pricing_wtp_hypothesis`, `initial_channel`, `first_cohort`, `learning_metrics`, `evidence_basis`
+    - Criterion: Every field is a labeled hypothesis with its evidence basis; pricing, willingness-to-pay, and market-size figures require an observed source or behavioral evidence with explicit assumptions, and an unsupported field stays unknown instead of a generic ratio.
+- Procedure steps:
+  - `discovery_frame_decision` (`analysis`)
+    - Input refs: `problem hypothesis`, `target segment`, `decision owner`, `learning budget and deadline`, `success, failure, and stop criteria`
+    - Output refs: `discovery_decision_frame/v1`
+    - Check IDs: `discovery_decision_frame_check`
+    - Instruction: Write the decision the discovery must inform, the problem hypothesis, segment, known current alternatives, constraints, owner, learning budget, and kill criteria before touching any evidence.
+  - `discovery_classify_evidence` (`analysis`)
+    - Input refs: `known evidence and current alternatives`, `target segment`
+    - Output refs: `discovery_evidence_ledger/v1`
+    - Check IDs: `discovery_evidence_class_check`
+    - Instruction: Enter each supplied item with its source class, safe reference, date, segment, observation, direction, and confidence limits; flag contradictions as unresolved inconsistency rather than resolving them by preference.
+  - `discovery_plan_customer_reentry` (`production`)
+    - Input refs: `target segment`, `known evidence and current alternatives`, `learning budget and deadline`
+    - Output refs: `customer_discovery_plan/v1`
+    - Check IDs: `discovery_customer_reentry_check`
+    - Instruction: Prepare participant criteria, a past-behavior interview guide, consent and privacy constraints, bias controls, the human task that recruits and interviews, and the contract for how bounded summaries re-enter the ledger; OMH contacts nobody.
+  - `discovery_gate_problem` (`validation`)
+    - Input refs: `problem hypothesis`, `known evidence and current alternatives`, `success, failure, and stop criteria`
+    - Output refs: `discovery_decision_frame/v1`
+    - Check IDs: `discovery_evidence_class_check`, `discovery_problem_gate_check`
+    - Instruction: Compare ledger entries against the precommitted criteria and record the problem gate as validated, refuted, or inconclusive; when it is not validated, stop solution and MVP work and name the customer evidence still missing.
+  - `discovery_rank_assumptions` (`production`)
+    - Input refs: `problem hypothesis`, `target segment`, `known evidence and current alternatives`, `decision owner`, `learning budget and deadline`, `success, failure, and stop criteria`
+    - Output refs: `assumption_test_portfolio/v1`
+    - Check IDs: `discovery_assumption_precommit_check`
+    - Instruction: List the assumptions by category, score decision impact and evidence gap, and select for each top-ranked assumption the cheapest disconfirming test that could change the decision, with its precommitted conditions and bounded budget; a prototype is one optional instrument routed to `decision-prototype`, never validation by itself.
+  - `discovery_draft_gtm_hypothesis` (`production`)
+    - Input refs: `problem hypothesis`, `target segment`, `known evidence and current alternatives`
+    - Output refs: `initial_gtm_hypothesis/v1`
+    - Check IDs: `discovery_gtm_hypothesis_check`
+    - Instruction: Draft the beachhead segment, buyer versus user, current alternative, value proposition, pricing or willingness-to-pay hypothesis, one initial channel, first cohort, and learning metrics, each tied to its evidence basis or marked unknown.
+  - `discovery_validate_decision_receipt` (`validation`)
+    - Input refs: `problem hypothesis`, `target segment`, `known evidence and current alternatives`, `decision owner`, `learning budget and deadline`, `success, failure, and stop criteria`
+    - Output refs: `discovery_decision_receipt/v1`
+    - Check IDs: `discovery_decision_frame_check`, `discovery_evidence_class_check`, `discovery_customer_reentry_check`, `discovery_problem_gate_check`, `discovery_assumption_precommit_check`, `discovery_decision_receipt_check`, `discovery_gtm_hypothesis_check`
+    - Instruction: Record the decision against the precommitted criteria and observed evidence, with confidence limits, rejected paths, residual risks, and the next route; a `persevere` receipt hands `product-brief` the validated problem, segment, MVP learning boundary, residual risks, and GTM hypotheses without transcript replay.
+
+### sales-pipeline-review
+
+[omh] Turn a supplied CRM export or pipeline snapshot into an evidence-bound pipeline health, forecast, and follow-up review.
+
+- Category: `operations`
+- Phase: `sales-pipeline-review`
+- Hermes role: `operator`
+- Quality tier: `decision-gated`
+- Reasoning demand: `standard`
+- Exposure: `direct_skill`
+- Install visibility: `true`
+- Docs visibility: `primary_workflow_skill`
+- Compatibility alias: `false`
+- Lifecycle stage: `canonical`
+- Preferred usage: Use as an installed Hermes workflow skill when this explicit workflow is the clearest user-facing handle.
+- Handoff policy: Keep domain framing, clarification, source/evidence synthesis, draft outputs, and next-work routing in Hermes. A prepared brief, review, reply, or plan is not an external action, approval, filing, send, publish, data mutation, implementation, review, CI, or merge claim. Prepare a connector, file, coding, or human-review handoff only when the user explicitly accepts that next step; report it only from observed evidence. Hermes reviews supplied records; it does not replace a CRM, store or sync CRM data, mutate opportunities, create dashboards or alerts, send outreach, book revenue, or claim seller or buyer commitments that were not observed.
+- Why this exists: `sales-pipeline-review` prepares evidence-bounded portfolio pipeline, forecast, and follow-up reviews from supplied CRM snapshots without replacing a CRM, mutating records, or claiming revenue.
+- Use when: Use when a sales leader or business owner supplies a bounded CRM export or pipeline snapshot and needs recurring portfolio review: evidence scope and freshness, stage and forecast definitions, movement and aging, stale or slipped deals, exit-criteria gaps, next-step quality, concentration, forecast scenarios and prior-forecast calibration, optional won/lost or renewal-risk learning, and an owned follow-up handoff.
+- Do not use when:
+  - The request is single-account discovery, qualification, buyer hypotheses, outreach drafting, or one opportunity's next step; use `sales-development`.
+  - The user wants a weekly status, release-risk, or operating review with no sales stages, forecast categories, or deal records; use `ops-review`.
+  - The user needs authoritative revenue, bookings, budget-variance, or close reporting rather than a pipeline scenario; use `finance-analysis`.
+  - The user wants generic exploration or calculation on a supplied table with no stage, forecast, or deal-health semantics; use `data-analysis`.
+  - The supplied material is qualitative customer feedback, call notes, or survey text rather than opportunity records; use `feedback-triage`.
+  - The user asks to update Salesforce or HubSpot, store or sync CRM data, send alerts or outreach, or change an opportunity; use `connector-operator` with explicit object, field, and authority.
+- Strong routing signals: `sales-pipeline-review`, `sales pipeline review`, `pipeline review`, `pipeline health`, `pipeline coverage`, `deal review`, `deal health`, `sales forecast review`, `forecast call`, `forecast calibration`, `seller forecast`, `stale deals`, `slipped deals`, `renewal risk review`, `win loss review`, `파이프라인 리뷰`, `영업 예측 보정`, `딜 리뷰`
+- Good example:
+  - Prompt: Here is this week's pipeline export as of Monday 09:00; review deal health, slipped close dates, and whether the commit forecast holds up against last quarter's calls.
+  - Expected behavior: Validate as-of time, currency, amount and stage semantics first, then prepare health, forecast-state, and calibration findings with owned follow-ups and proposed CRM corrections.
+  - Why: The request is portfolio-level pipeline and forecast review over a supplied snapshot with a stated as-of time.
+- Bad example:
+  - Prompt: Write discovery questions for the Northwind opportunity and draft the follow-up email.
+  - Expected behavior: Route to `sales-development`, not `sales-pipeline-review`.
+  - Why: A single account's discovery, qualification, and outreach draft has no portfolio, aging, or forecast-calibration objective.
+- Quality bar:
+  - Separate stage, seller forecast, model-derived scenario, and observed buyer commitment in every forecast statement.
+  - Cite the supplied record reference behind every exception, slip, stall, concentration, and proposed correction.
+  - Emit calibration only from matched prior snapshots and observed outcomes; otherwise state that it is unavailable.
+- Completion checklist:
+  - The scope disposition is recorded before any figure: `HOLD` names the blocking gap, otherwise freshness, currency basis, amount and stage semantics, duplicates, and owners are confirmed from supplied data.
+  - Health, forecast, and annex outputs cite supplied record references, keep stage, seller forecast, scenario, and observed commitment separate, and mark calibration or an annex `unavailable` or `unsupported` instead of filling it.
+  - The handoff lists owner, due date, exit criterion, and evidence per follow-up, keeps every CRM correction proposed with an approval state, and reports mutation, storage, sync, alerts, and outreach as `not_observed` unless a connector result was observed.
+- Recovery notes:
+  - If the snapshot fails scope validation, return `HOLD` naming the exact missing definition, conversion basis, owner, or duplicate set and ask for it; do not rank or total partial data.
+  - If prior forecasts or outcomes are absent, keep calibration `unavailable`; if an annex has no supporting evidence, emit it as `unsupported` with the gap named rather than omitting it.
+  - If a connector is unavailable, keep every CRM correction proposed and every alert or message unsent, and name the connector boundary as the next observable step.
+- Required inputs:
+  - pipeline snapshot
+  - as-of time and review horizon
+  - currency, amount, stage, and forecast definitions
+  - prior forecast and actuals
+  - decision owner
+- Expert clarification questions:
+  - `pipeline snapshot`
+    - English: Which CRM export or pipeline snapshot is supplied, with its opaque source reference, included motions, owners, cohort, record count, and known data-quality gaps such as duplicates or missing owners?
+    - Korean: 어떤 CRM 내보내기 파일 또는 파이프라인 스냅샷이 제공되며, 출처 참조, 포함된 영업 방식, 담당자, 코호트, 레코드 수, 중복이나 담당자 누락 같은 알려진 데이터 품질 결함은 무엇인가요?
+  - `as-of time and review horizon`
+    - English: What as-of timestamp does the snapshot carry, what review horizon and cadence apply, and how stale may the data be before the review must HOLD?
+    - Korean: 스냅샷의 기준 시각은 언제이고, 검토 기간과 주기는 무엇이며, 데이터가 얼마나 오래되면 검토를 보류해야 하나요?
+  - `currency, amount, stage, and forecast definitions`
+    - English: Which currency and conversion basis, amount meaning, close-date meaning, stage definitions with exit criteria, and forecast-category or probability definitions does your organization use for these records?
+    - Korean: 이 레코드에 적용되는 통화와 환산 기준, 금액의 의미, 마감일의 의미, 종료 기준을 포함한 단계 정의, 예측 카테고리 또는 확률 정의는 무엇인가요?
+  - `prior forecast and actuals`
+    - English: Which prior forecast snapshots and observed won, lost, slipped, or renewal outcomes are supplied for calibration or learning, or is calibration not requested this cycle?
+    - Korean: 보정이나 학습을 위해 어떤 이전 예측 스냅샷과 관찰된 수주, 실주, 지연, 갱신 결과가 제공되나요, 아니면 이번 주기에는 보정을 요청하지 않나요?
+  - `decision owner`
+    - English: Who owns the review decision, who may approve proposed CRM corrections, and which follow-up owners and due-date conventions apply?
+    - Korean: 검토 결정의 책임자는 누구이고, 제안된 CRM 수정을 승인할 수 있는 사람은 누구이며, 후속 조치 담당자와 기한 규칙은 무엇인가요?
+- Expected outputs:
+  - sales_pipeline_scope/v1
+  - sales_pipeline_health/v1
+  - sales_forecast_assessment/v1
+  - sales_outcome_learning_annex/v1
+  - sales_renewal_risk_annex/v1
+  - sales_pipeline_handoff/v1
+- Artifact expectations:
+  - prepared sales pipeline review brief when a wrapper captures it
+  - durable artifacts hold bounded aggregates, opaque source references, and only the account identifiers an approved handoff needs; raw export rows and message content are not persisted by default
+- Safety rules:
+  - Treat a missing or stale as-of time, undefined stage or forecast semantics, mixed currencies without an observed conversion basis, unknown amount meaning, duplicate opportunities, or missing owners as `HOLD`, never as an input to a calculation.
+  - Do not claim CRM storage, sync, mutation, dashboards, alerts, outreach, booked revenue, or seller or buyer commitments; a proposed correction is not a change and a scenario is not a promise.
+  - Consume the organization's supplied stage, category, probability, amount, and close-date definitions; never impose a vendor schema or a default probability table.
+  - Persist bounded aggregates and opaque source references only; raw CRM exports and message content stay out of durable artifacts unless the user explicitly approves a scoped exception.
+- Procedure checks:
+  - `sales_pipeline_scope_check`
+    - Required result fields: `source_reference`, `as_of_time`, `review_horizon_cohort`, `included_motions_owners`, `currency_conversion_basis`, `amount_semantics`, `stage_definitions`, `forecast_category_definitions`, `freshness_status`, `duplicate_status`, `missing_owner_status`, `data_quality_gaps`, `disposition`
+    - Criterion: HOLD before any calculation or ranking when the as-of time is missing or stale for the horizon, stage or forecast-category semantics are undefined, currencies are mixed without an observed conversion basis, amount meaning is unknown, or duplicate records and missing owners are unresolved; every field is supplied or observed, never assumed.
+  - `sales_pipeline_health_check`
+    - Required result fields: `stage_movement`, `aging_stalls`, `slipped_close_dates`, `exit_criteria_evidence`, `next_step_quality`, `concentration`, `duplicates`, `missing_ownership`, `deal_exceptions`, `record_evidence_refs`
+    - Criterion: Derive movement, aging, stalls, slips, exit-criteria gaps, next-step quality, and concentration from supplied records only, citing the record reference behind every exception; never infer buyer activity or stage progress from silence, and never rank deals a HOLD scope excluded.
+  - `sales_forecast_state_check`
+    - Required result fields: `supplied_seller_category`, `supplied_probability`, `scenario_range`, `observed_buyer_commitment`, `evidence_limits`, `prior_forecast_actual_comparison`, `calibration_status`, `confidence`
+    - Criterion: Keep stage, supplied seller category or probability, model-derived scenario range, and observed buyer commitment as separate states: stage alone never creates a probability or commitment, a probability-weighted total is a scenario and not a promise, and calibration_status is `unavailable` unless matching prior snapshots and observed outcomes were supplied.
+  - `sales_outcome_learning_check`
+    - Required result fields: `cohort_bounds`, `observed_won_reasons`, `observed_lost_reasons`, `unqualified_reasons`, `contradictions`, `missing_evidence`, `research_followups`, `annex_status`
+    - Criterion: Emit the learning annex only when supplied won, lost, or unqualified evidence covers a bounded cohort; keep reasons observed rather than causal, record contradictions and missing evidence, and set annex_status to `unsupported` when the cohort is empty.
+  - `sales_renewal_risk_check`
+    - Required result fields: `renewal_horizon`, `health_signal`, `utilization_signal`, `support_signal`, `budget_signal`, `staffing_signal`, `open_risks`, `expansion_hypotheses`, `owner`, `annex_status`
+    - Criterion: Emit the renewal annex only when supplied renewal evidence exists; each signal is observed, missing, or unknown, expansion items stay hypotheses, and an unowned risk is recorded as a gap rather than assigned.
+  - `sales_pipeline_handoff_check`
+    - Required result fields: `selected_account_followups`, `owner`, `due_date`, `exit_criterion`, `evidence_ref`, `crm_object_field_value_proposals`, `approval_state`, `sibling_routes`, `mutation_status`, `disposition`
+    - Criterion: Every follow-up carries owner, due date, exit criterion, and evidence reference; every CRM correction carries object, field, value, evidence, owner, and approval state and stays proposed; mutation_status stays `not_observed` unless an observed connector result exists, and account discovery, qualitative customer material, generic calculation, and authoritative finance reporting are routed to their owning workflows.
+- Procedure steps:
+  - `sales_pipeline_validate_scope` (`validation`)
+    - Input refs: `pipeline snapshot`, `as-of time and review horizon`, `currency, amount, stage, and forecast definitions`, `decision owner`
+    - Output refs: `sales_pipeline_scope/v1`
+    - Check IDs: `sales_pipeline_scope_check`
+    - Instruction: Record the opaque source reference, as-of time, horizon and cohort, included motions and owners, currency and conversion basis, amount semantics, stage and forecast-category definitions, freshness, duplicates, missing owners, and data-quality gaps; return `HOLD` with the exact blocking gap before calculating or ranking anything.
+  - `sales_pipeline_assess_health` (`analysis`)
+    - Input refs: `pipeline snapshot`, `as-of time and review horizon`, `currency, amount, stage, and forecast definitions`
+    - Output refs: `sales_pipeline_health/v1`
+    - Check IDs: `sales_pipeline_health_check`
+    - Instruction: From the validated records identify stage movement, aging and stalls against the supplied definitions, slipped close dates, exit-criteria evidence per stage, next-step quality, concentration by account, owner, or segment, duplicates, missing ownership, and deal exceptions, each tied to its record reference.
+  - `sales_pipeline_assess_forecast` (`analysis`)
+    - Input refs: `pipeline snapshot`, `currency, amount, stage, and forecast definitions`, `prior forecast and actuals`
+    - Output refs: `sales_forecast_assessment/v1`
+    - Check IDs: `sales_forecast_state_check`
+    - Instruction: Report supplied seller categories and probabilities as supplied, build scenario ranges with their evidence limits, list observed buyer commitments separately, compare prior forecasts with observed outcomes only when matching snapshots and actuals exist, and state confidence; otherwise mark calibration `unavailable`.
+  - `sales_pipeline_prepare_annexes` (`production`)
+    - Input refs: `pipeline snapshot`, `as-of time and review horizon`, `prior forecast and actuals`
+    - Output refs: `sales_outcome_learning_annex/v1`, `sales_renewal_risk_annex/v1`
+    - Check IDs: `sales_outcome_learning_check`, `sales_renewal_risk_check`
+    - Instruction: When supplied evidence supports it, prepare the won/lost/unqualified learning annex by bounded cohort with contradictions and research follow-ups, and the renewal-risk annex with horizon, health, utilization, support, budget, and staffing signals, open risks, expansion hypotheses, and owner; otherwise emit each annex as `unsupported` with the missing evidence named.
+  - `sales_pipeline_validate_handoff` (`validation`)
+    - Input refs: `pipeline snapshot`, `as-of time and review horizon`, `currency, amount, stage, and forecast definitions`, `prior forecast and actuals`, `decision owner`
+    - Output refs: `sales_pipeline_handoff/v1`
+    - Check IDs: `sales_pipeline_scope_check`, `sales_pipeline_health_check`, `sales_forecast_state_check`, `sales_pipeline_handoff_check`
+    - Instruction: Select account follow-ups with owner, due date, exit criterion, and evidence reference, list proposed CRM object/field/value corrections with evidence, owner, and approval state, name the sibling route for discovery, feedback, calculation, or finance work, and return the review disposition with mutation, storage, sync, alert, and communication left to the connector boundary.
 
 ### github-event-ops
 
