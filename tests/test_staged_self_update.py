@@ -98,7 +98,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, "", "")
             if command[1:4] == ["-m", "pip", "install"]:
                 return subprocess.CompletedProcess(command, failure == "pip", "", "pip failed")
-            if command[1:3] == ["-c", "import omh.cli"]:
+            if command[1:4] == ["-P", "-c", "import omh.cli"]:
                 return subprocess.CompletedProcess(command, failure == "import", "", "import failed")
             if "--version" in command:
                 return subprocess.CompletedProcess(command, 0, version or "1.0.7\n", "")
@@ -816,6 +816,54 @@ class StagedSelfUpdateTests(unittest.TestCase):
             candidate = Path(result["candidate"]["path"])
             self.assertEqual(json.loads(manifest_path.read_text())["skills_dir"], str(candidate / "skills"))
             self._assert_pair(root, candidate)
+
+    def test_every_generation_interpreter_call_ignores_the_working_directory(self):
+        # The owner's 2.0.2 -> "2.0.1" update: `omh update` was run from inside
+        # a source checkout, whose top-level `omh/` shim sat at `sys.path[0]`
+        # for every `python -m omh.cli` the transaction spawned. The stale
+        # checkout judged the fresh candidate, refused it, rolled back, and
+        # stamped the manifest with its own version. `-P` keeps the smoke and
+        # both re-entries on the generation's own package.
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy, args, plan = self._fixture(root, pointer=True)
+            plan["release"].version = "1.0.7"
+            commands: list[list[str]] = []
+            fake = self._runner(version="1.0.7\n")
+
+            def run(command, **kwargs):
+                commands.append(list(command))
+                return fake(command, **kwargs)
+
+            result = self._run(root, args, plan, run)
+            self.assertTrue(result["ok"], result)
+            omh_calls = [command for command in commands if "omh.cli" in " ".join(command)]
+            self.assertEqual(len(omh_calls), 4, omh_calls)  # import, version, pack smoke, re-entry
+            for command in omh_calls:
+                self.assertEqual(command[1], "-P", command)
+            self.assertEqual(omh_calls[0][1:4], ["-P", "-c", "import omh.cli"])
+            self.assertEqual(omh_calls[-1][1:4], ["-P", "-m", "omh.cli"])
+            self.assertIn("--command-package-updated", omh_calls[-1])
+
+    def test_dash_p_is_what_keeps_a_checkout_shim_out_of_the_interpreter(self):
+        # The mechanism itself, on the real interpreter: a directory holding an
+        # `omh/cli.py` wins `python -m omh.cli` when it is the cwd, and loses
+        # once `-P` drops the cwd from sys.path.
+        with TemporaryDirectory() as temporary:
+            shadow = Path(temporary) / "omh"
+            shadow.mkdir()
+            (shadow / "__init__.py").write_text("")
+            (shadow / "cli.py").write_text("print('SHADOWED')\n")
+            env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+            env["PYTHONSAFEPATH"] = ""
+            plain = subprocess.run(
+                [sys.executable, "-m", "omh.cli"], cwd=temporary, env=env, text=True, capture_output=True, check=False
+            )
+            isolated = subprocess.run(
+                [sys.executable, "-P", "-m", "omh.cli"], cwd=temporary, env=env, text=True, capture_output=True, check=False
+            )
+            self.assertEqual(plain.stdout.strip(), "SHADOWED")
+            self.assertNotIn("SHADOWED", isolated.stdout)
 
     def test_staged_transaction_regression_guard_names_the_refusal_it_prevents(self):
         # Proves the guard above is load-bearing: judging the candidate by the
