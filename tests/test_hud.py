@@ -124,6 +124,7 @@ class HudCliTests(unittest.TestCase):
             payload["subagents"]["rows"],
             [
                 {
+                    "scope": "global",
                     "state": "running",
                     "task_id": "explore",
                     "role": "explore",
@@ -141,6 +142,7 @@ class HudCliTests(unittest.TestCase):
                     "tokens_per_second": 45,
                 },
                 {
+                    "scope": "global",
                     "state": "running",
                     "task_id": "libraria",
                     "role": "librarian",
@@ -158,6 +160,7 @@ class HudCliTests(unittest.TestCase):
                     "tokens_per_second": None,
                 },
                 {
+                    "scope": "global",
                     "state": "blocked",
                     "task_id": "architec",
                     "role": "architect",
@@ -176,7 +179,7 @@ class HudCliTests(unittest.TestCase):
                 },
             ],
         )
-        self.assertEqual(payload["maestro"], {"status": "idle", "rows": []})
+        self.assertEqual(payload["maestro"], {"status": "idle", "rows": [], "scope": "global"})
         widget_text = "\n".join(payload["display"]["widget_lines"])
         self.assertIn("[OMH]", widget_text)
         self.assertIn("ULW model routing review", widget_text)
@@ -1921,16 +1924,20 @@ class TodoSessionIsolationTests(_TodoSessionFixture, unittest.TestCase):
         # identity never falls through to the TUI's plan.
         self.assertEqual(self._todo_for("slack:C0123ABC:1725100000.000200")["status"], "absent")
 
-    def test_an_unmapped_widget_transport_id_never_borrows_the_latest_plan(self) -> None:
-        # An old host may write a transport ID instead of a durable key.
-        # There is no proof that the freshest DB session belongs to this TUI.
+    def test_a_fresh_tui_whose_widget_carries_the_transport_id_still_renders(self) -> None:
+        # On session.create the host's active-session file holds the gateway
+        # transport id (uuid4 hex[:8]), not the durable session key the tool
+        # stamps with; only resume/switch write the key. A widget reference
+        # that is neither a live TUI row nor the owner of a record is that
+        # case, and reads as an identity-less poll would -- the MRU live row
+        # -- so the plan the fresh TUI just declared is not hidden.
         from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
 
         self._build_state_db([(self.TUI_A, self._epoch(-60), self._epoch(-5))])
         self._declare(self.TUI_A, "Fresh")
 
         as_widget = read_omh_hud(self.omh_home, self.hermes_home, tui_session_ref="3f9a1c2b")["todo"]
-        self.assertEqual((as_widget["status"], as_widget["title"]), ("absent", ""))
+        self.assertEqual((as_widget["status"], as_widget["title"]), ("established", "Fresh"))
         # The durable key placed by the file after a resume reads directly.
         as_resumed = read_omh_hud(self.omh_home, self.hermes_home, tui_session_ref=self.TUI_A)["todo"]
         self.assertEqual(as_resumed["title"], "Fresh")
@@ -2034,8 +2041,9 @@ class TodoSessionIsolationTests(_TodoSessionFixture, unittest.TestCase):
         self._write_todo(self._record(source="cli", updated_at=self._stamp(-60)))
         self.assertEqual(self._todo_for(self.TUI_A)["status"], "established")
 
-        # A gateway with no owned record cannot borrow an unstamped global plan.
-        self.assertEqual(self._todo_for(self.SLACK)["status"], "absent")
+        # A reader state.db does not list (a gateway session) cannot date an
+        # unstamped record, so it keeps the age-only answer.
+        self.assertEqual(self._todo_for(self.SLACK)["status"], "established")
 
     def test_session_keys_are_filesystem_safe_and_distinct(self) -> None:
         from omh.plugin_bundle.omh.todo_store import todo_path, todo_session_key

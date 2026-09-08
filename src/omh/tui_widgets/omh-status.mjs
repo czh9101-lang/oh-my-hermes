@@ -27,10 +27,9 @@ export default function register(sdk) {
   // HERMES_TUI_ACTIVE_SESSION_FILE whenever it creates, resumes, or switches
   // a session, and this widget runs inside that same TUI process, so the
   // file is the one identity the poll can carry that no other TUI shares.
-  // The reader scopes todos, agent rows and their derived metrics to it.
-  // A fresh host session may expose only an unmapped transport id: leave
-  // session-local activity empty until a durable id arrives, never use MRU.
-  // Even an identity-less widget poll explicitly requests session scope.
+  // A mapped durable id scopes native rows and their derived metrics.
+  // Otherwise native activity remains visibly global, as does the OMH lane.
+  // The reader preserves the separate existing todo fallback policy.
   // A missing, unreadable, or malformed value is passed as nothing rather
   // than as a mutated string that would select the wrong record.
   const ACTIVE_SESSION_FILE = process.env.HERMES_TUI_ACTIVE_SESSION_FILE || ''
@@ -462,7 +461,7 @@ export default function register(sdk) {
       Text,
       { wrap: 'truncate-end' },
       h(Text, { color: blocked ? t.color.error : done ? t.color.ok : t.color.warn }, `${marker} `),
-      h(Text, { color: t.color.muted }, `${layout.taskId} `),
+      h(Text, { color: t.color.muted }, `${row.scope === 'global' ? '[global] ' : row.scope === 'session' ? '[this chat] ' : ''}${layout.taskId} `),
       h(Text, { color: t.color.text }, layout.action),
       // Identity, then the measured block, then the rest. The route column
       // and the state/elapsed/tokens tail are fixed widths, so those figures
@@ -605,7 +604,7 @@ export default function register(sdk) {
       h(
         Text,
         { color: t.color.label, key: 'graph-header', wrap: 'truncate-end' },
-        graphLine(`  DAG · ${frontier.length} ready · ${edgeCount} edges${hidden ? ` · +${hidden} more` : ''}`),
+        graphLine(`  ${graph.scope === 'global' ? '[global] ' : ''}DAG · ${frontier.length} ready · ${edgeCount} edges${hidden ? ` · +${hidden} more` : ''}`),
       ),
       ...nodes.map((node, index) => {
         const blockedBy = Array.isArray(node.blocked_by) ? node.blocked_by : []
@@ -691,7 +690,7 @@ export default function register(sdk) {
         h(Text, { bold: true, color: t.color.primary }, '⚚ [OMH]'),
         version ? h(Text, { color: t.color.muted }, ` v${version}`) : null,
         h(Text, { color: t.color.border }, SEPARATOR),
-        h(Text, { color: active ? t.color.warn : t.color.ok }, hudStateLabel(active, agents)),
+        h(Text, { color: active ? t.color.warn : t.color.ok }, `${agents.scope === 'global' ? '[global] ' : agents.scope === 'mixed' || maestro.rows?.some(row => row.scope === 'global') ? '[this chat + global] ' : agents.scope === 'session' ? '[this chat] ' : ''}${hudStateLabel(active, agents)}`),
         h(Text, { color: t.color.muted }, `${metrics.cost ? ` • ${metrics.cost}` : ''}${metrics.ctx ? ` • ${metrics.ctx}` : ''}`),
         // Exact in-flight liveness, paired from pre_tool_call/post_tool_call
         // by tool_call_id: the only honest answer to "is something actually

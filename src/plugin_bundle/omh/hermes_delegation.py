@@ -1289,7 +1289,7 @@ def _conversation_session_ids(connection: sqlite3.Connection, session_ref: str) 
 
 def _query_state_db(state_db: Path, *, now: float, session_ref: str | None = None) -> dict[str, Any]:
     """Read child sessions, usage tallies, and delegation states, read-only."""
-    result: dict[str, Any] = {"children": [], "delegation_states": {}, "parent_models": {}}
+    result: dict[str, Any] = {"children": [], "delegation_states": {}, "parent_models": {}, "scope": "global"}
     try:
         connection = sqlite3.connect(
             f"file:{state_db}?mode=ro", uri=True, timeout=0.25
@@ -1301,14 +1301,14 @@ def _query_state_db(state_db: Path, *, now: float, session_ref: str | None = Non
         parameters: list[Any] = [now - _SESSION_WINDOW_SECONDS]
         if session_ref is not None:
             owners = _conversation_session_ids(connection, session_ref)
-            if not owners:
-                return result
-            placeholders = ",".join("?" for _ in owners)
-            owner_filter = (
-                " AND CASE WHEN json_valid(model_config) THEN "
-                f"json_extract(model_config, '$._delegate_from') IN ({placeholders}) ELSE 0 END"
-            )
-            parameters.extend(sorted(owners))
+            if owners:
+                result["scope"] = "session"
+                placeholders = ",".join("?" for _ in owners)
+                owner_filter = (
+                    " AND CASE WHEN json_valid(model_config) THEN "
+                    f"json_extract(model_config, '$._delegate_from') IN ({placeholders}) ELSE 0 END"
+                )
+                parameters.extend(sorted(owners))
         cursor = connection.execute(
             "SELECT id, model, model_config, started_at FROM sessions "
             "WHERE model_config LIKE '%_delegate_from%' AND started_at >= ?"
@@ -1427,7 +1427,7 @@ def read_hermes_native_subagents(
     omh_home: str | Path | None = None,
     session_ref: str | None = None,
 ) -> dict[str, Any]:
-    """Project native children; None is global, an empty/unknown id is empty."""
+    """Project owned native children, or explicitly global fallback activity."""
     current = float(now) if now is not None else time.time()
     home = Path(hermes_home).expanduser() if hermes_home else Path.home() / ".hermes"
     # Category labels honor the user's ~/.omh/routing/model-chains.json
@@ -1445,6 +1445,7 @@ def read_hermes_native_subagents(
         "completed": 0,
     }
     state = _query_state_db(home / "state.db", now=current, session_ref=session_ref)
+    payload["scope"] = state["scope"]
     children = state.get("children", [])
     if not children:
         return payload
@@ -1453,9 +1454,9 @@ def read_hermes_native_subagents(
     # overlap. Keep legacy global context, but never borrow it for a session.
     manifests = (
         _read_manifests(home / "cache" / "delegation" / "live", now=current)
-        if session_ref is None else []
+        if payload["scope"] == "global" else []
     )
-    if session_ref is not None:
+    if payload["scope"] == "session":
         # Prepared route records likewise carry no conversation ownership.
         route_provenance = []
 
@@ -1607,6 +1608,7 @@ def read_hermes_native_subagents(
         # lets the widget skip repaints so the dock stays drag-copyable.
         elapsed_until = last_activity if row_state != "running" else current
         row: dict[str, Any] = {
+            "scope": payload["scope"],
             "state": row_state,
             "task_id": session_tail,
             "role": "hermes-native",
