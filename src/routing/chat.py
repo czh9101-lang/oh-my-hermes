@@ -5,10 +5,11 @@ from functools import lru_cache
 import hashlib
 import re
 import unicodedata
-from typing import Any
+from typing import Any, Mapping
 
 from ..goal_loop import explicit_loop_invocation_signal
 from ..ingress import CHAT_SOURCES, extract_message_text
+from ..system.tracker_content import normalize_tracker_content
 from ..loopability import assess_loopability
 from .catalog_questions import (
     is_catalog_without_shell_question,
@@ -6206,7 +6207,25 @@ def route_chat_event(
     limit: int = 3,
     min_confidence: str = "high",
     skill_policy: dict[str, object] | None = None,
+    tracker_host_context: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    if source not in CHAT_SOURCES:
+        raise ValueError(f"unsupported chat source: {source}")
+    tracker_content = (
+        normalize_tracker_content(event, host_context=tracker_host_context)
+        if isinstance(event, dict)
+        else None
+    )
+    if tracker_content is not None:
+        routed = route_chat_message(
+            "$github-event-ops",
+            source="github",
+            limit=limit,
+            min_confidence=min_confidence,
+            skill_policy=skill_policy,
+        )
+        routed["tracker_content"] = tracker_content
+        return routed
     return route_chat_message(
         extract_message_text(event),
         source=source,

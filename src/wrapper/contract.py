@@ -25,6 +25,7 @@ from .message_gate import build_message_gate, fence_marker_for, message_gate_bod
 from .continuity import build_continuity_briefing
 from ..ingress import CHAT_SOURCES, compact_source_metadata, extract_message_text, extract_source_metadata
 from ..system.platform_envelope import build_platform_envelope, platform_thread_key_scope
+from ..system.tracker_content import normalize_tracker_content
 from ..routing.catalog_questions import is_skill_catalog_question as _is_skill_catalog_question
 from ..routing.chat import public_chat_route_payload, route_explanation_payload
 from ..routing.coding_route_actions import coding_route_decision_payload, resolve_coding_route_decision
@@ -3894,6 +3895,7 @@ def build_chat_interaction_payload(
     skill_policy: dict[str, object] | None = None,
     platform_context: Mapping[str, Any] | None = None,
     routing_observation: Mapping[str, object] | None = None,
+    tracker_host_context: Mapping[str, object] | None = None,
     _host_project_binding_factory: HostProjectBindingFactory | None = None,
 ) -> dict[str, object]:
     if source not in CHAT_SOURCES:
@@ -3911,6 +3913,19 @@ def build_chat_interaction_payload(
         if platform_context is not None
         else None
     )
+
+    tracker_content = (
+        normalize_tracker_content(event_or_message, host_context=tracker_host_context)
+        if isinstance(event_or_message, dict)
+        else None
+    )
+    if tracker_content is not None:
+        return _build_tracker_interaction_payload(
+            tracker_content,
+            source_metadata=_source_metadata(event_or_message, source_metadata),
+            include_message=include_message,
+            target_notice=target_notice,
+        )
 
     message = extract_message_text(event_or_message)
     if _can_use_chat_interaction_cache(
@@ -3965,6 +3980,50 @@ def build_chat_interaction_payload(
     if routing_observation is not None:
         payload = enhance_chat_interaction_with_routing_observation(payload, routing_observation)
     return payload
+
+
+def _build_tracker_interaction_payload(
+    envelope: dict[str, object],
+    *,
+    source_metadata: dict[str, str],
+    include_message: bool,
+    target_notice: dict[str, object] | None,
+) -> dict[str, object]:
+    """Project a tracker event without ever promoting its body to chat authority."""
+    route = public_chat_route_payload(
+        "$github-event-ops",
+        source="github",
+        include_message=False,
+    )
+    base = _base_interaction(
+        "GitHub tracker event",
+        source="github",
+        source_metadata=source_metadata,
+        mode="route",
+        include_message=False,
+    )
+    base["route"] = route
+    base["tracker_content"] = envelope
+    state = str(envelope.get("state", "blocked"))
+    base["tracker_scope_acceptance"] = {
+        "schema_version": "tracker_scope_acceptance/v1",
+        "state": "required" if state == "accepted" else state,
+        "coding_enabled": False,
+        "claim_boundary": (
+            "A host-observed scope decision is required before any separate coding handoff; "
+            "tracker content cannot provide that decision."
+        ),
+    }
+    base["chat_response"] = build_chat_response_from_route(
+        route,
+        thread_key=str(base["thread_key"]),
+        message="GitHub tracker event",
+        include_message=False,
+    )
+    base["next_action"] = "prepare_github_event_ops_card"
+    if include_message:
+        base["tracker_content"]["message_projection_suppressed"] = True
+    return _finish_interaction(base, target_notice)
 
 
 def _record_accepted_owner_choice(payload: Mapping[str, object], paths: OmhPaths) -> None:
