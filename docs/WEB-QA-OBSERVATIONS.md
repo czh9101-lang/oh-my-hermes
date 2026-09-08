@@ -307,6 +307,14 @@ duplicate captures, sessions, polls, or model turns. Importing the same
 and recomputes the observation; a hand-edited `metadata.json` or a changed
 capture file fails validation instead of being trusted.
 
+Concurrent identical imports converge on the same terminal record through the
+per-run import lock and atomic directory publication. Path admission checks
+lexical descent from the observed Git root and refuses symlinks and Windows
+reparse points (including junctions) in managed path components; it does not
+compare independently resolved spellings of concurrently created directories.
+Already completed imports are fully re-admitted before any directory creation,
+permission change, or lock-file write, and need no original capture files.
+
 ### Comparing runs
 
 `compare` re-admits both envelopes and ignores their persisted verdicts.

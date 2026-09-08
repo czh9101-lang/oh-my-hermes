@@ -24,6 +24,18 @@ from omh.system.local_store import atomic_write_json, file_lock
 
 
 class StagedSelfUpdateTests(unittest.TestCase):
+    @staticmethod
+    def _platform() -> SelfUpdatePlatform:
+        # Keep host pointer-swap semantics, but model the junction subprocess
+        # with real links, as the dedicated Windows adapter tests do.
+        def junction_runner(command, **kwargs):
+            link = Path(kwargs["env"]["OMH_JUNCTION_LINK"])
+            target = Path(kwargs["cwd"]) / kwargs["env"]["OMH_JUNCTION_TARGET"]
+            link.symlink_to(target, target_is_directory=True)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        return SelfUpdatePlatform(is_windows=SelfUpdatePlatform.host().is_windows, runner=junction_runner)
+
     def _fixture(self, root: Path, *, pointer: bool = False, launcher: bool = True):
         legacy = root / "venv"
         (legacy / "bin").mkdir(parents=True)
@@ -54,7 +66,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
         bootstrap.mkdir(parents=True)
         (bootstrap / "venv").symlink_to(legacy, target_is_directory=True)
         (bootstrap / "skills").symlink_to(root / "omh" / "skills", target_is_directory=True)
-        switch_current(root, bootstrap)
+        switch_current(root, bootstrap, platform=self._platform())
         if launcher:
             launcher_path = root / "bin" / "omh"
             launcher_path.unlink()
@@ -121,7 +133,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
             {"OMH_VENV_DIR": str(root / "venv"), "OMH_BIN_DIR": str(root / "bin")},
             clear=False,
         ):
-            return run_installer_self_update(args, plan, runner=runner)
+            return run_installer_self_update(args, plan, runner=runner, platform=self._platform())
 
     def _assert_pair(self, root: Path, expected: Path | None = None) -> None:
         current = (root / "current").resolve()
@@ -137,6 +149,28 @@ class StagedSelfUpdateTests(unittest.TestCase):
         self.assertIsNotNone(actual)
         assert actual is not None
         self.assertTrue(os.path.samefile(actual, expected), f"{actual!s} does not identify {expected!s}")
+
+    def test_fixture_uses_windows_pointer_strategy_without_starting_processes(self):
+        with (
+            TemporaryDirectory() as temporary,
+            patch.object(SelfUpdatePlatform, "host", return_value=SelfUpdatePlatform(is_windows=True)),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("unexpected fixture subprocess")) as spawn,
+        ):
+            root = Path(temporary)
+            legacy, args, plan = self._fixture(root, pointer=True)
+            previous = root / "generations" / "bootstrap-legacy"
+            self._assert_pair(root, previous)
+            self._assert_same_path(root / "current" / "venv", legacy)
+            self._assert_same_path(root / "current" / "skills", root / "omh" / "skills")
+
+            result = self._run(root, args, plan, self._runner(failure="post"))
+
+            self.assertEqual(result["activation"]["status"], "ok")
+            self.assertEqual(result["phase"], "post_activation")
+            self.assertTrue(result["rollback"]["performed"])
+            self._assert_pair(root, previous)
+            self.assertFalse(any(root.glob(".current.*")))
+            spawn.assert_not_called()
 
     def test_venv_and_pip_failures_delete_candidates_without_moving_the_pair(self):
         for failure in ("venv", "pip"):
@@ -239,7 +273,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 (candidate / "venv" / "bin").mkdir(parents=True)
                 (candidate / "skills").mkdir()
                 if at_candidate:
-                    switch_current(root, candidate)
+                    switch_current(root, candidate, platform=self._platform())
                 state = json.loads((root / "self-update.json").read_text())
                 state["activation_in_progress"] = {
                     "candidate": str(candidate), "previous": str(previous), "phase": "pre_switch"
@@ -261,7 +295,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
             candidate = root / "generations" / "interrupted"
             (candidate / "venv" / "bin").mkdir(parents=True)
             (candidate / "skills").mkdir()
-            switch_current(root, candidate)
+            switch_current(root, candidate, platform=self._platform())
             state = json.loads((root / "self-update.json").read_text())
             state["activation_in_progress"] = {
                 "candidate": str(candidate),

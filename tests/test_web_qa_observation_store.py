@@ -3,10 +3,14 @@ from __future__ import annotations
 import base64
 from copy import deepcopy
 import hashlib
+import os
 from pathlib import Path
+import shutil
+import stat
 import subprocess
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -119,8 +123,14 @@ class WebQaObservationStoreTests(unittest.TestCase):
         receipt, digest = capture_receipt(plan)
         imported = import_web_qa_observation(self.root, plan, receipt, {digest: self.image})
 
-        with patch("os.chmod", side_effect=AssertionError("completed import attempted a metadata write")):
-            reused = import_web_qa_observation(self.root, plan, receipt, {digest: self.image})
+        self.image.unlink()
+        with (
+            patch("os.chmod", side_effect=AssertionError("completed import attempted a metadata write")),
+            patch.object(observation_store, "file_lock", side_effect=AssertionError("completed import attempted a lock write")),
+            patch.object(observation_store, "_ensure_real_directory", side_effect=AssertionError("completed import attempted directory creation")),
+            patch.object(observation_store, "_commit", side_effect=AssertionError("completed import attempted publication")),
+        ):
+            reused = import_web_qa_observation(self.root, plan, receipt, {})
 
         self.assertEqual(reused, imported)
 
@@ -235,6 +245,175 @@ class WebQaObservationStoreTests(unittest.TestCase):
         metadata.write_text('{"schema_version":"x","schema_version":"y"}', encoding="utf-8")
         with self.assertRaisesRegex(WebQaObservationStoreError, "malformed"):
             read_web_qa_observation(self.root, plan["run_id"])
+
+    def test_concurrent_parent_creation_does_not_mix_resolution_snapshots(self) -> None:
+        self._import_across_publication(existing_parent=False)
+
+    def test_concurrent_run_publication_does_not_mix_resolution_snapshots(self) -> None:
+        self._import_across_publication(existing_parent=True)
+
+    def _import_across_publication(self, *, existing_parent: bool) -> None:
+        plan = qa_plan()
+        receipt, digest = capture_receipt(plan)
+        observations = self.root.resolve() / ".omh" / "web-visual-qa" / "observations"
+        run = observations / str(plan["run_id"])
+        if existing_parent:
+            observations.mkdir(parents=True)
+        admission_started = threading.Event()
+        published = threading.Event()
+        reader = threading.current_thread()
+        results: list[dict[str, object]] = []
+        errors: list[Exception] = []
+        resolve = Path.resolve
+        lstat = Path.lstat
+
+        def finish_publication() -> None:
+            admission_started.set()
+            self.assertTrue(published.wait(5), "publisher did not finish")
+            self.assertTrue(run.is_dir())
+
+        def resolve_across_publication(path: Path, strict: bool = False) -> Path:
+            if threading.current_thread() is reader and path == run and not published.is_set():
+                self.assertFalse(run.exists())
+                # Model inconsistent non-strict resolution snapshots, not a claim
+                # about the spelling returned by the uninstrumented Windows CI.
+                before = observations.with_name("missing-prefix-snapshot") / run.name
+                finish_publication()
+                return before
+            return resolve(path, strict=strict)
+
+        def lstat_across_publication(path: Path):
+            if threading.current_thread() is reader and path == run and not published.is_set():
+                try:
+                    return lstat(path)
+                finally:
+                    finish_publication()
+            return lstat(path)
+
+        def publish() -> None:
+            try:
+                if not admission_started.wait(5):
+                    raise AssertionError("reader did not start path admission")
+                results.append(import_web_qa_observation(self.root, plan, receipt, {digest: self.image}))
+            except Exception as exc:  # surfaced after joining the publisher
+                errors.append(exc)
+            finally:
+                published.set()
+
+        worker = threading.Thread(target=publish)
+        with patch.object(Path, "resolve", resolve_across_publication), patch.object(Path, "lstat", lstat_across_publication):
+            worker.start()
+            try:
+                reused = import_web_qa_observation(self.root, plan, receipt, {digest: self.image})
+            finally:
+                worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(results, [reused])
+        self.assertEqual(read_web_qa_observation(self.root, plan["run_id"]), reused)
+        self.assertEqual(len(list((run / "captures").iterdir())), 1)
+        self.assertFalse(any(path.name.startswith(".staging-") for path in observations.iterdir()))
+
+    def test_safe_child_refuses_lexical_traversal_and_propagates_io_errors(self) -> None:
+        for child in (self.root.parent / "outside", self.root / ".." / "outside", self.root / "inside" / ".." / "capture.png"):
+            with self.subTest(child=child), self.assertRaises(WebQaObservationStoreError):
+                observation_store._safe_child(self.root, child)
+        with patch.object(Path, "lstat", side_effect=PermissionError("denied")):
+            with self.assertRaises(PermissionError):
+                observation_store._safe_child(self.root, self.image)
+
+    def test_managed_directory_links_are_refused_before_import_or_reuse(self) -> None:
+        plan = qa_plan()
+        receipt, digest = capture_receipt(plan)
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        kinds = ("symlink", "junction") if os.name == "nt" else ("symlink",)
+        for kind in kinds:
+            for relative in (".omh", ".omh/web-visual-qa", ".omh/web-visual-qa/observations"):
+                with self.subTest(kind=kind, relative=relative):
+                    link = self.root / relative
+                    link.parent.mkdir(parents=True, exist_ok=True)
+                    self._directory_link(outside, link, kind)
+                    try:
+                        with self.assertRaises(WebQaObservationStoreError):
+                            import_web_qa_observation(self.root, plan, receipt, {digest: self.image})
+                        with self.assertRaises(WebQaObservationStoreError):
+                            prepare_web_qa_observation(_plan_request(plan), self.root)
+                        self.assertEqual(list(outside.iterdir()), [])
+                    finally:
+                        link.rmdir() if kind == "junction" else link.unlink()
+            imported = import_web_qa_observation(self.root, plan, receipt, {digest: self.image})
+            run = self.root / ".omh/web-visual-qa/observations" / str(plan["run_id"])
+            for path in (run / "captures", run):
+                with self.subTest(kind=kind, path=path.name):
+                    moved = outside / path.name
+                    path.rename(moved)
+                    self._directory_link(moved, path, kind)
+                    try:
+                        with self.assertRaises(WebQaObservationStoreError):
+                            read_web_qa_observation(self.root, plan["run_id"])
+                        with self.assertRaises(WebQaObservationStoreError):
+                            import_web_qa_observation(self.root, plan, receipt, {})
+                    finally:
+                        path.rmdir() if kind == "junction" else path.unlink()
+                        moved.rename(path)
+            self.assertEqual(read_web_qa_observation(self.root, plan["run_id"]), imported)
+            shutil.rmtree(self.root / ".omh")
+
+    def test_reparse_attributes_are_refused_even_without_symlink_mode(self) -> None:
+        lstat = Path.lstat
+        for target in (self.root, self.image):
+            with self.subTest(target=target):
+                def reparse_stat(path: Path):
+                    info = lstat(path)
+                    if path == target:
+                        return SimpleNamespace(st_mode=info.st_mode, st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+                    return info
+
+                with patch.object(Path, "lstat", reparse_stat):
+                    with self.assertRaises(WebQaObservationStoreError):
+                        observation_store._safe_child(self.root, self.image)
+
+    def test_managed_file_symlinks_are_refused_on_readmission(self) -> None:
+        plan = qa_plan()
+        receipt, digest = capture_receipt(plan)
+        imported = import_web_qa_observation(self.root, plan, receipt, {digest: self.image})
+        run = self.root / ".omh/web-visual-qa/observations" / str(plan["run_id"])
+        for path in (run / "metadata.json", run / imported["captures"][0]["path"]):
+            with self.subTest(path=path.name):
+                moved = Path(self.temp.name) / path.name
+                path.rename(moved)
+                path.symlink_to(moved)
+                try:
+                    with self.assertRaises(WebQaObservationStoreError):
+                        read_web_qa_observation(self.root, plan["run_id"])
+                    with self.assertRaises(WebQaObservationStoreError):
+                        import_web_qa_observation(self.root, plan, receipt, {})
+                finally:
+                    path.unlink()
+                    moved.rename(path)
+
+    def _directory_link(self, target: Path, link: Path, kind: str) -> None:
+        if kind == "junction":
+            import _winapi
+
+            _winapi.CreateJunction(str(target), str(link))
+            self.assertTrue(link.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+            self.assertFalse(link.is_symlink())
+        else:
+            link.symlink_to(target, target_is_directory=True)
+            self.assertTrue(link.is_symlink())
+
+    def test_copied_completed_run_cannot_change_project_identity(self) -> None:
+        plan = qa_plan()
+        receipt, digest = capture_receipt(plan)
+        import_web_qa_observation(self.root, plan, receipt, {digest: self.image})
+        other = Path(self.temp.name) / "other-project"
+        other.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=other, check=True)
+        shutil.copytree(self.root / ".omh", other / ".omh")
+        with self.assertRaisesRegex(WebQaObservationStoreError, "another observed Git root"):
+            read_web_qa_observation(other, plan["run_id"])
 
 
 def _plan_request(plan: dict[str, object]) -> dict[str, object]:

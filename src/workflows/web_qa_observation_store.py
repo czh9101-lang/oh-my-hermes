@@ -448,9 +448,7 @@ def _git_root(cwd: str | Path | None) -> Path:
 
 def _observations_dir(root: Path) -> Path:
     directory = root / ".omh" / "web-visual-qa" / "observations"
-    for parent in (root / ".omh", root / ".omh" / "web-visual-qa", directory):
-        if parent.is_symlink():
-            raise WebQaObservationStoreError("managed observation storage symlink escape refused")
+    _safe_child(root, directory)
     return directory
 
 
@@ -469,13 +467,22 @@ def _ensure_real_directory(path: Path) -> None:
 def _safe_child(parent: Path, child: Path) -> None:
     try:
         relative = child.relative_to(parent)
-        child.resolve(strict=False).relative_to(parent.resolve(strict=False))
     except ValueError as exc:
         raise WebQaObservationStoreError("managed observation path traversal or symlink escape refused") from exc
+    if ".." in relative.parts:
+        raise WebQaObservationStoreError("managed observation path traversal or symlink escape refused")
+    # The parent is rooted in the observed Git root (or an admitted child).
+    # Prove lexical descent without links instead of comparing two non-strict
+    # resolve snapshots across concurrent directory creation/publication.
     current = parent
-    for part in relative.parts:
+    for part in ("", *relative.parts):
         current = current / part
-        if current.is_symlink():
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            continue
+        # Windows junctions are name-surrogate reparse points, not symlinks.
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
             raise WebQaObservationStoreError("managed observation path traversal or symlink escape refused")
 
 
