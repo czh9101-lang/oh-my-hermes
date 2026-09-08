@@ -68,6 +68,17 @@ class ClassifiedSite(NamedTuple):
 
 CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
     ClassifiedSite(
+        "src/plugin_bundle/omh/memory_provider.py",
+        "_say",
+        INTENTIONAL,
+        "The host's status callback prints one line for the user; it is Hermes' code, not "
+        "OMH's, and it runs inside a live memory hook (session end, memory write). A "
+        "callback that raises -- a closed terminal, a torn-down gateway adapter -- must "
+        "not fail the hook that was recording consolidation state; the line is dropped and "
+        "nothing else changes. The failure is classified by where it happens (host channel) "
+        "and surfaced nowhere because there is no channel left to surface it on.",
+    ),
+    ClassifiedSite(
         "src/coding/fanout_dispatch.py",
         "signal_safe_unit_runner",
         INTENTIONAL,
@@ -274,8 +285,8 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # function. `_write_candidate_batch`, `_is_catalog_question`, `pre_llm_call`,
 # `_resume_unlocked`, and `_execute_cell` each hold two handlers, so the handler
 # count is five above the anchor count.
-EXPECTED_HANDLER_COUNT = 28
-EXPECTED_ANCHOR_COUNT = 23
+EXPECTED_HANDLER_COUNT = 29
+EXPECTED_ANCHOR_COUNT = 24
 
 
 class DerivedSite(NamedTuple):

@@ -934,6 +934,35 @@ The ranking inputs do not expand eligibility or establish truth:
 Dreaming prepares a reminder and metadata-only evidence. It never invokes a
 model or performs consolidation, retirement, restore, or prune.
 
+### How a brief reaches the model and the user
+
+A brief on disk consolidates nothing by itself. While the newest brief is
+`due`, the provider serves it inside its prefetch pack as a bounded
+`<memory_consolidation>` section (trigger, reasons, Hermes memory headroom
+and duplicate-cluster counts, and what is requested), so the next
+non-trivial turn on any platform carries the request to the model. The
+section asks the model to consolidate through Hermes' own memory tool and
+then tell the user in one short line what changed. A brief is a request, not
+recalled memory: it never moves the recall count or the recall line.
+
+The section disappears once consolidation is observed: a `replace` or
+`remove` from Hermes' memory tool retires the brief when no standing reason
+remains. Where the host hands the provider a status callback (Hermes does
+this on the CLI surface), the provider also prints one line when a brief
+fires and one when it is honoured:
+
+```text
+💤 OMH — memory consolidation due (session_end: session_ending_with_unconsolidated_turns:1)
+🧹 OMH — memory consolidated (replace on memory)
+```
+
+Gateway platforms (TUI, Slack, Telegram, Discord) receive no provider status
+callback from Hermes; there the model's one-line report is the visible
+signal, and the tool calls it makes are shown by the platform as usual.
+`memory-sync` (reviewing existing Hermes memory against OMH records) stays
+an explicit workflow: nothing runs it automatically, and the brief only
+points at duplicate clusters for the model to resolve.
+
 ## Hermes Memory Tiering: Demotion (L1 → L2)
 
 Hermes-native memory files (`MEMORY.md`, `USER.md`) are L1: small,
