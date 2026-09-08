@@ -1,0 +1,60 @@
+name: Temporary Windows journal diagnostics
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/windows-journal-diagnostics.yml
+      - tools/benchmarks/windows_journal_diagnostic.py
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    # One original test per fresh runner; no suite, cache restore, or warmup.
+    runs-on: windows-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [main, head]
+        storage: [default, runner-temp]
+        case: [cold, contention]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: diagnostic
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ matrix.revision == 'main' && 'f51ae7cf5655af1ad0d1ead1485ef12089149eee' || github.event.pull_request.head.sha }}
+          path: target
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Install target package
+        working-directory: target
+        run: python -m pip install -e .
+      - name: Trace one cold original test (60 second child bound)
+        working-directory: target
+        timeout-minutes: 2
+        env:
+          EXPECTED_REVISION: ${{ matrix.revision == 'main' && 'f51ae7cf5655af1ad0d1ead1485ef12089149eee' || github.event.pull_request.head.sha }}
+        run: >-
+          python ../diagnostic/tools/benchmarks/windows_journal_diagnostic.py
+          --revision "$env:EXPECTED_REVISION"
+          --storage ${{ matrix.storage }} --case ${{ matrix.case }}
+          --out ../diagnostic-results/trace.json
+      - name: Upload metadata only, including failed assertions
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-journal-${{ matrix.revision }}-${{ matrix.storage }}-${{ matrix.case }}
+          path: diagnostic-results/trace.json
+          if-no-files-found: error
+          retention-days: 7
+
+# Remove this workflow and its script together after attribution. This does not
+# replace the existing red CI gate or authorize a storage/threshold change.

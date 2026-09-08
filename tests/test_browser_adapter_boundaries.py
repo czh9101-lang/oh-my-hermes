@@ -2,6 +2,7 @@
 from copy import deepcopy
 from contextlib import ExitStack, contextmanager
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from concurrent.futures import ThreadPoolExecutor
@@ -279,15 +280,28 @@ class BrowserBoundaryTests(unittest.TestCase):
 
     def test_private_store_and_symlink_refusal(self):
         self.acquire()
-        self.assertEqual(self.store.path.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(self.store.path.parent.stat().st_mode & 0o777, 0o700)
+        # local_store's chmod contract is POSIX-only, not Windows private ACLs
+        # (docs/INSTALLATION.md, POSIX-only surfaces).
+        if os.name == "posix":
+            self.assertEqual(self.store.path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(self.store.path.parent.stat().st_mode & 0o777, 0o700)
         target = Path(self.tmp.name) / "other"
         target.write_text("untouched")
-        self.store.path.unlink()
-        self.store.path.symlink_to(target)
-        with self.assertRaisesRegex(BrowserContractError, "unsafe_store"):
-            self.acquire()
-        self.assertEqual(target.read_text(), "untouched")
+        calls = self.adapter.calls.copy()
+        for kind in ("hardlink", "symlink"):
+            with self.subTest(kind=kind):
+                self.store.path.unlink()
+                if kind == "hardlink":
+                    # NTFS hardlinks need no symlink privilege; keep this real
+                    # refusal control even when symlink creation is unavailable.
+                    self.store.path.hardlink_to(target)
+                    self.assertEqual(self.store.path.stat().st_nlink, 2)
+                else:
+                    self.store.path.symlink_to(target)
+                with self.assertRaisesRegex(BrowserContractError, "unsafe_store"):
+                    self.acquire()
+                self.assertEqual(target.read_text(), "untouched")
+                self.assertEqual(self.adapter.calls, calls)
 
 
 if __name__ == "__main__":
