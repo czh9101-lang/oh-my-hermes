@@ -1294,6 +1294,7 @@ _FEATURE_SURFACE_SKILLS = (
         ),
         artifact_expectations=(
             "hermes_achievements_observation/v1 metadata-only payload from `omh achievements` when recorded",
+            "supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero",
         ),
     ),
     _feature_surface_skill(

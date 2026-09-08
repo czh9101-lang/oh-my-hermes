@@ -1303,6 +1303,7 @@ def _add_runtime_commands(sub) -> None:
     from .run_efficiency import add_runtime_efficiency_command
     from .run_health import add_runtime_health_summary_command
     from .runtime_artifact_shape import add_runtime_artifacts_show_shape_command
+    from .session_activity import add_runtime_session_receipt_commands
     from .workflow_artifacts import add_runtime_workflow_artifact_commands
 
     runtime = sub.add_parser("runtime", help="Read and record local prepared-vs-observed runtime evidence.")
@@ -1313,6 +1314,7 @@ def _add_runtime_commands(sub) -> None:
 
     add_runtime_efficiency_command(runtime_sub)
     add_runtime_health_summary_command(runtime_sub)
+    add_runtime_session_receipt_commands(runtime_sub)
 
     runtime_runs = runtime_sub.add_parser("runs")
     runtime_runs.add_argument("--limit", type=int, default=50, help="Maximum recent runs to return. Use --all for an unbounded listing.")

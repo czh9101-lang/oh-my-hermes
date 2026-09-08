@@ -111,6 +111,7 @@ Use [Capabilities](CAPABILITIES.md) for the manifest contract and
 | Chat cards and grounded wrapper examples | [Chat Wrapper Examples](CHAT_WRAPPER_EXAMPLES.md) |
 | Harness and quality-gate contracts | [Harness Quality Contract](HARNESS_QUALITY.md) |
 | Memory/context review and handoff packs | [Memory Context Review](MEMORY_CONTEXT.md) |
+| Host-supplied session activity receipts for cross-workflow learning | [Session Activity Receipts](SESSION-ACTIVITY-RECEIPTS.md) |
 | Common oh-my capability axes and gaps | [Parity Matrix](PARITY.md) |
 | Implemented application surfaces | [Application Cases](APPLICATION_CASES.md) |
 | Public roadmap | [Roadmap](ROADMAP.md) |

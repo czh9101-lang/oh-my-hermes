@@ -68,6 +68,13 @@ class OmhPaths:
         return self.runtime_dir / "plugin_host_observations.jsonl"
 
     @property
+    def runtime_session_activity_receipts_path(self) -> Path:
+        # Beside the plugin host observations, not under `journal/`: a session
+        # receipt names a host session, never a run, so the run-scoped store
+        # validators have nothing to scope it by.
+        return self.runtime_dir / "session_activity_receipts.jsonl"
+
+    @property
     def runtime_worktrees_path(self) -> Path:
         return self.runtime_dir / "worktrees.jsonl"
 
