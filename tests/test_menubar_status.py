@@ -4,6 +4,7 @@ import io
 import json
 import sqlite3
 import subprocess
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -16,7 +17,7 @@ load_local_package()
 from omh.cli import build_parser
 from omh.menubar_status import build_menubar_status_payload, model_icon_descriptor, source_icon_descriptor
 from omh.paths import resolve_paths
-from omh.surfaces.menubar_status import _display, _models_card
+from omh.surfaces.menubar_status import _display, _models_card, _sessions_card
 from omh.targets import record_target_observation
 
 
@@ -117,6 +118,51 @@ class MenubarStatusTests(unittest.TestCase):
             payload = json.loads(stdout)
             current_row = next(row for row in payload["display"]["menu_cards"][1]["rows"] if row["left"] == "current")
             self.assertEqual(current_row["right"], long_model)
+
+    def test_sessions_card_shows_idle_open_rows_apart_from_live(self) -> None:
+        # The owner's menu bar read "live 53" for two days: 53 rows Hermes
+        # never closed, none touched since. Idle rows get their own line and
+        # never inflate `live`; the footer says what live means.
+        card = _sessions_card({"observed": True, "live": 1, "open": 54, "stale": 53, "total": 642, "live_window_seconds": 900})
+        self.assertEqual(
+            [(row["left"], row["right"], row["tone"]) for row in card["rows"]],
+            [("live", "1", "ok"), ("open, idle", "53", "neutral"), ("total", "642", "ok")],
+        )
+        self.assertEqual(card["footer"], "live = activity within 15 min · Hermes state.db (read-only)")
+        quiet = _sessions_card({"observed": True, "live": 0, "open": 0, "stale": 0, "total": 2, "live_window_seconds": 900})
+        self.assertEqual([row["left"] for row in quiet["rows"]], ["live", "total"])
+
+    def test_summary_line_pluralizes_agents_and_processes(self) -> None:
+        one = _display(
+            {"omh_connection": {"value": "ready"}},
+            {"observed": True, "agent_count": 1, "process_count": 1},
+            {"observed": True, "live": 0, "total": 4},
+            {},
+            {},
+        )
+        self.assertEqual(one["summary_line"], "1 agent · 1 process · sessions live 0 / total 4")
+        many = _display(
+            {"omh_connection": {"value": "ready"}},
+            {"observed": True, "agent_count": 2, "process_count": 3},
+            {"observed": True, "live": 1, "total": 4},
+            {},
+            {},
+        )
+        self.assertEqual(many["summary_line"], "2 agents · 3 processes · sessions live 1 / total 4")
+
+    def test_models_card_lists_the_delegation_model_after_main(self) -> None:
+        card = _models_card(
+            {"current_model": {"observed": False}},
+            {
+                "aliases": [{"alias": "main", "configured": True, "label": "gpt-5.6-sol:medium"}],
+                "delegation": {"alias": "delegation", "configured": True, "label": "gpt-6-astra:high"},
+            },
+        )
+        self.assertEqual(
+            [(row["left"], row["right"]) for row in card["rows"]],
+            [("main", "gpt-5.6-sol:medium"), ("delegation", "gpt-6-astra:high")],
+        )
+        self.assertEqual(card["footer"], "current = live session · main/delegation/aux = config.yaml")
 
     def test_models_card_reserves_final_row_for_inherited_auxiliary_summary(self) -> None:
         card = _models_card(
@@ -823,11 +869,14 @@ class MenubarStatusTests(unittest.TestCase):
             )"""
         )
         current_config = json.dumps({"provider": "openai-codex", "reasoning_config": {"effort": "medium"}})
+        # Hermes stores REAL epoch seconds; the open row was touched just now
+        # so it counts as live under the real clock the CLI path runs on.
+        now = time.time()
         connection.executemany(
             "insert into sessions values (?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                ("tui", "gpt-5.6-sol", current_config, None, 0, 0, "2026-08-15", "2026-08-16"),
-                ("api", "older", "{}", "2026-08-15", 0, 0, "2026-08-14", "2026-08-15"),
+                ("tui", "gpt-5.6-sol", current_config, None, 0, 0, now - 600, now - 30),
+                ("api", "older", "{}", now - 86_400, 0, 0, now - 90_000, now - 86_400),
             ],
         )
         connection.commit()

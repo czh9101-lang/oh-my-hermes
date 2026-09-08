@@ -112,16 +112,20 @@ def _format_menubar_status(payload: Mapping[str, object]) -> str:
     if summary:
         lines.append(f"  Activity: {summary}")
     if _truthy(hermes_sessions.get("observed")):
+        stale = _text(hermes_sessions.get("stale"))
+        idle = f" / idle {stale}" if stale and stale != "0" else ""
         lines.append(
-            f"  Sessions: live {_text(hermes_sessions.get('live'))} / "
+            f"  Sessions: live {_text(hermes_sessions.get('live'))}{idle} / "
             f"total {_text(hermes_sessions.get('total'))}"
         )
     else:
         lines.append("  Sessions: not observed")
     if _truthy(hermes_processes.get("observed")):
+        agent_count = _text(hermes_processes.get("agent_count"))
+        process_count = _text(hermes_processes.get("process_count"))
         lines.append(
-            f"  Processes: {_text(hermes_processes.get('agent_count'))} agent / "
-            f"{_text(hermes_processes.get('process_count'))} processes"
+            f"  Processes: {agent_count} {'agent' if agent_count == '1' else 'agents'} / "
+            f"{process_count} {'process' if process_count == '1' else 'processes'}"
         )
     else:
         lines.append("  Processes: not observed")
