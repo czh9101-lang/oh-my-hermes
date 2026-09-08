@@ -161,6 +161,86 @@ class DocumentationClaimsTests(unittest.TestCase):
         self.assertFalse(root.exists())
         self.assertFalse(multiprocessing.active_children())
 
+    def test_crlf_checkout_supports_all_deterministic_claims(self):
+        from omh.catalogs.documentation_claims import documentation_claims
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for claim in documentation_claims():
+                for relative in (*claim.pages, *(anchor.path for anchor in claim.anchors)):
+                    target = root / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    content = (ROOT / relative).read_text(encoding="utf-8")
+                    target.write_bytes(content.replace("\n", "\r\n").encode("utf-8"))
+            report = self.evaluator().documentation_claims_report(root=root)
+        for row in report["claims"]:
+            if not row["advisory"]:
+                self.assertEqual(row["state"], "supported", row)
+        self.assertTrue(report["ok"])
+        self.assertFalse(multiprocessing.active_children())
+
+    def test_roles_equality_accepts_checkout_newlines_but_rejects_content_drift(self):
+        from omh.catalogs.documentation_claims import documentation_claims
+        from omh.catalogs.roles import roles_reference_markdown
+
+        claim = next(claim for claim in documentation_claims() if claim.claim_id == "generated.roles-equality")
+        canonical = roles_reference_markdown()
+        cases = (
+            ("exact", canonical, "supported"),
+            ("changed-content", canonical + "stale", "stale"),
+            ("trailing-space", canonical.replace("\n", " \n", 1), "stale"),
+            ("missing-final-newline", canonical.removesuffix("\n"), "stale"),
+            ("extra-final-newline", canonical + "\n", "stale"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative in (*claim.pages, *(anchor.path for anchor in claim.anchors)):
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / relative).read_bytes())
+            page = root / "docs/ROLES.md"
+            for newline in ("\n", "\r\n"):
+                for name, content, state in cases:
+                    with self.subTest(newline=repr(newline), case=name):
+                        data = content.replace("\n", newline).encode("utf-8")
+                        page.write_bytes(data)
+                        public = subprocess.run(
+                            [sys.executable, "-m", "omh.cli", "docs", "roles", "--check", "--output", str(page)],
+                            cwd=ROOT, capture_output=True, text=True, timeout=60,
+                        )
+                        self.assertEqual(public.returncode, 0 if state == "supported" else 2,
+                                         public.stdout + public.stderr)
+                        report = self.evaluator().documentation_claims_report(root=root, claim_ids=(claim.claim_id,))
+                        row = next(row for row in report["claims"] if row["id"] == claim.claim_id)
+                        self.assertEqual(row["state"], state, row)
+                        self.assertEqual(row["observed_fact"], state == "supported")
+                        self.assertEqual(report["ok"], state == "supported")
+                        self.assertEqual(report["generated_artifact_drift"]["state"], state)
+                        self.assertEqual(row["evidence_class"], "generated_artifact_drift")
+                        self.assertEqual(page.read_bytes(), data)
+        self.assertFalse(multiprocessing.active_children())
+
+    def test_crlf_input_limit_is_measured_before_newline_translation(self):
+        from omh.catalogs.documentation_claims import documentation_claims
+        from omh.maintenance.documentation_claims_worker import SOURCE_BYTE_CAP, bounded_read
+
+        claim = next(claim for claim in documentation_claims() if claim.claim_id == "generated.roles-equality")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            page = root / "docs/ROLES.md"
+            page.parent.mkdir(parents=True)
+            data = b"\r\n" * (SOURCE_BYTE_CAP // 2)
+            page.write_bytes(data)
+            self.assertEqual(bounded_read(page).encode("utf-8"), data)
+            page.write_bytes(data + b"\r\n")
+            with self.assertRaisesRegex(ValueError, "^input_limit$"):
+                bounded_read(page)
+            report = self.evaluator().documentation_claims_report(root=root, claim_ids=(claim.claim_id,))
+        row = next(row for row in report["claims"] if row["id"] == claim.claim_id)
+        self.assertEqual(row["state"], "unresolved")
+        self.assertEqual(row["reason"], "probe_unavailable")
+        self.assertFalse(report["ok"])
+
     def test_missing_anchor_is_unresolved(self):
         audit = self.evaluator()
         with tempfile.TemporaryDirectory() as directory:

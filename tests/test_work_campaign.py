@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
-import selectors
 import subprocess
 import sys
 import tempfile
@@ -347,18 +346,29 @@ def dispatch(manifest):
     print('ENTERED_HOST_DISPATCH', flush=True)
     sys.stdin.readline()
 host.dispatch = dispatch
+sys.stdin.readline()
 api.act(record['campaign_id'], 'start')
 """
+        env = os.environ | {"PYTHONPATH": os.pathsep.join(filter(None, (
+            str(Path(__file__).resolve().parent), os.environ.get("PYTHONPATH"))))}
         with subprocess.Popen([sys.executable, "-c", code, json.dumps(self.request, default=str),
-                               str(self.root / "campaigns")], stdin=subprocess.PIPE,
+                               str(self.root / "campaigns")], env=env, stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as child:
-            with ThreadPoolExecutor(max_workers=1) as reader:
-                signal = reader.submit(child.stdout.readline)
+            with ThreadPoolExecutor(max_workers=2) as reader:
                 try:
-                    self.assertEqual(signal.result(timeout=5).strip(), "ENTERED_HOST_DISPATCH")
+                    assert child.stdout is not None and child.stdin is not None and child.stderr is not None
+                    signal: Future[str] = reader.submit(child.stdout.readline)
+                    errors = reader.submit(child.stderr.read)
+                    _ = child.stdin.write("start\n")
+                    child.stdin.flush()
+                    line = signal.result(timeout=5)
+                    if not line:
+                        self.fail(f"dispatch event absent; child stderr: {errors.result(timeout=5)}")
+                    self.assertEqual(line.strip(), "ENTERED_HOST_DISPATCH")
                 finally:
                     child.kill()
-                    child.communicate(timeout=5)
+                    _ = child.wait(timeout=5)
+        self.assertNotEqual(child.returncode, 0)
         record = self.prepare()
         self.assertTrue(record["pending_routes"])
         with self.assertRaises(CampaignError):
@@ -724,22 +734,27 @@ try:
 finally:
     fixture.doCleanups()
 """
-        env = os.environ | {"TMPDIR": str(self.root), "PYTHONDONTWRITEBYTECODE": "1"}
+        env = os.environ | {"TMPDIR": str(self.root), "PYTHONDONTWRITEBYTECODE": "1",
+                            "PYTHONPATH": os.pathsep.join(filter(None, (
+                                str(Path(__file__).resolve().parent), os.environ.get("PYTHONPATH"))))}
         with subprocess.Popen([sys.executable, "-c", code], env=env, stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as child:
-            try:
-                assert child.stdout is not None and child.stdin is not None
-                with selectors.DefaultSelector() as signal:
-                    signal.register(child.stdout, selectors.EVENT_READ)
-                    child.stdin.write("complete\n")
+            with ThreadPoolExecutor(max_workers=2) as reader:
+                try:
+                    assert child.stdout is not None and child.stdin is not None and child.stderr is not None
+                    signal: Future[str] = reader.submit(child.stdout.readline)
+                    errors = reader.submit(child.stderr.read)
+                    _ = child.stdin.write("complete\n")
                     child.stdin.flush()
-                    self.assertTrue(signal.select(timeout=10), "expiry event absent")
-                    observation = json.loads(child.stdout.readline())
-                self.assertEqual(observation["signal"], "INSIDE_EXPIRE_BEFORE_REVOKE")
-                self.assertEqual(observation["bound"], 3)
-            finally:
-                child.kill()
-                child.communicate(timeout=5)
+                    line = signal.result(timeout=10)
+                    if not line:
+                        self.fail(f"expiry event absent; child stderr: {errors.result(timeout=5)}")
+                    observation = json.loads(line)
+                    self.assertEqual(observation["signal"], "INSIDE_EXPIRE_BEFORE_REVOKE")
+                    self.assertEqual(observation["bound"], 3)
+                finally:
+                    child.kill()
+                    _ = child.wait(timeout=5)
         self.assertNotEqual(child.returncode, 0)
         path = Path(observation["path"])
         disk = json.loads(path.read_bytes())

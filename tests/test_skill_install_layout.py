@@ -181,7 +181,7 @@ class InstalledLayoutTests(unittest.TestCase):
             reference = skill.parent / "references/procedure.md"
             reference.parent.mkdir(parents=True)
             skill.write_text(raw, encoding="utf-8")
-            reference.write_text("source-reference-sentinel\n", encoding="utf-8")
+            reference.write_bytes(b"source-reference-sentinel\n")
             stale = source / ".omc/artifacts/producer-output/skills/omh-browser/SKILL.md"
             stale_reference = stale.parent / "references/procedure.md"
             stale_reference.parent.mkdir(parents=True)

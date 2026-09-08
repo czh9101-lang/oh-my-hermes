@@ -68,7 +68,7 @@ def documentation_claims() -> tuple[DocumentationClaim, ...]:
         DocumentationClaim(
             "generated.roles-equality",
             "Does the shipped role reference equal the canonical renderer?",
-            "docs/ROLES.md bytes equal roles_reference_markdown output.",
+            "docs/ROLES.md content, after CRLF-to-LF translation, equals roles_reference_markdown output.",
             True, ("docs/ROLES.md", "CLAUDE.md"),
             (ImplementationAnchor("src/catalogs/roles.py", "roles_reference_markdown"),),
             "render_equality", "roles-equality", "medium", "docs-specialist",

@@ -111,7 +111,10 @@ def _probe(root: Path, claim: DocumentationClaim) -> bool | str:
         return rate["percent"] is None and rate["basis"] == "no_observations"
     if claim.probe == "roles-equality":
         module = _load_module(root, "src/catalogs/roles.py", "omh.catalogs.roles")
-        return bounded_read(checked_path(root, "docs/ROLES.md")) == module.roles_reference_markdown()
+        # Match the public generated check for CRLF checkouts, without changing
+        # the byte cap, other whitespace, or source/model evidence reads.
+        current = bounded_read(checked_path(root, "docs/ROLES.md")).replace("\r\n", "\n")
+        return current == module.roles_reference_markdown()
     raise ValueError("unsupported_probe")
 
 

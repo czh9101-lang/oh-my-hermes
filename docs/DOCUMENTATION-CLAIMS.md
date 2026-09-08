@@ -27,7 +27,7 @@ complete, readable, or usable. Rewording a page does not require sentence pins.
 | `release.checklist-symbol` | `release_readiness_checklist` is importable and callable | Symbol check |
 | `reporting.rate-schema` | A reported rate uses `omh_reported_rate/v1` | Schema assertion |
 | `reporting.empty-rate` | Empty rates have `percent=null`, `basis=no_observations` | Fixture behavior |
-| `generated.roles-equality` | Shipped role-reference bytes equal the canonical renderer | Generated equality, not semantic support |
+| `generated.roles-equality` | Shipped role-reference content equals the canonical renderer after CRLF-to-LF translation | Generated equality, not semantic support |
 | `docs.evidence-language` | This guide separates prepared work from observed checks | Optional advisory model evaluation |
 
 The evaluator uses the actual public CLI parser/handler for the checklist,
@@ -58,6 +58,12 @@ Reports contain counts, not unsupported headline percentages.
 Generated-render equality carries `evidence_class=generated_artifact_drift`.
 It must not be counted as semantic support. The report's separate generated
 summary covers only the selected render probe, not the full drift registry.
+For role-reference equality, CRLF checkout line endings are translated to LF
+after enforcing the raw input byte cap, matching the public generated check
+on Windows checkouts. All remaining content must equal the renderer exactly,
+including spaces and the final newline. Source and model-evidence reads are
+unchanged; this does not normalize arbitrary content or grant semantic support.
+
 Run `omh release drift --json` alongside it for the unchanged generated-file,
 count, and budget checks. The audit never pretends that command ran.
 
