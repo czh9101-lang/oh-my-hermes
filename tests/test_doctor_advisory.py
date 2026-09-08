@@ -5,9 +5,11 @@ import io
 import json
 import os
 import tempfile
+import dataclasses
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 
 from omh.maintenance import advisory
@@ -529,3 +531,25 @@ class PlacementTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RegistrationThroughCurrentPointerTests(unittest.TestCase):
+    def test_doctor_accepts_a_pack_registered_under_the_current_pointer(self) -> None:
+        # The staged-update layout: config.yaml names `current/skills`, the
+        # command running doctor resolves its own generation.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generation = root / "generations" / "g1"
+            (generation / "skills").mkdir(parents=True)
+            os.symlink(generation, root / "current", target_is_directory=True)
+            hermes_home = root / ".hermes"
+            hermes_home.mkdir()
+            (hermes_home / "config.yaml").write_text(
+                f"skills:\n  external_dirs:\n    - {(root / 'current' / 'skills').as_posix()}\n", encoding="utf-8"
+            )
+            paths = dataclasses.replace(
+                resolve_paths(root / ".omh", hermes_home), managed_skills_dir=generation / "skills"
+            )
+            by_name = {check.name: check for check in run_doctor(paths)}
+            self.assertTrue(by_name["external_dir"].ok, by_name["external_dir"].message)
+            self.assertTrue(by_name["runtime_context"].ok, by_name["runtime_context"].message)

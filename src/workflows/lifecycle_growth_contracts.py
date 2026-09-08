@@ -20,6 +20,13 @@ from .lifecycle_growth_readout import (
     derive_readout_disposition,
     validate_readout,
 )
+from .lifecycle_growth_safety import (
+    build_step_outcome,
+    build_throttle_grouping,
+    derive_throttle_group_identity,
+    route_lifecycle_workflow_mutation,
+    workflow_mutation_hold_reasons,
+)
 from .lifecycle_growth_values import artifact_shape_errors, metadata_ref, metadata_refs
 
 
@@ -182,6 +189,7 @@ def _hold_for_safety(safety: Mapping[str, Any], errors: list[str]) -> None:
     for field in ("consent_state", "suppression_state", "frequency_state", "channel_eligibility_state", "quiet_hours_state", "locale_state", "legal_tenant_state"):
         if safety.get(field) != "eligible":
             errors.append(f"{field} is not eligible")
+    errors.extend(workflow_mutation_hold_reasons(safety))
 
 
 def _hold_for_audience(audience: Mapping[str, Any], errors: list[str]) -> None:
@@ -231,9 +239,13 @@ __all__ = [
     "build_growth_measurement_readout",
     "build_lifecycle_growth_brief",
     "build_lifecycle_safety_policy",
+    "build_step_outcome",
+    "build_throttle_grouping",
+    "derive_throttle_group_identity",
     "evaluate_lifecycle_growth",
     "evaluate_lifecycle_growth_entry",
     "prepare_lifecycle_growth",
     "readout_lifecycle_growth",
+    "route_lifecycle_workflow_mutation",
     "validate_lifecycle_growth_artifact",
 ]

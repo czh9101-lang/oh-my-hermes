@@ -331,10 +331,27 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
         "native helper); reads local process status, spawns no agent."
     ),
     "src/quality/evidence_records.py": (
-        "`current_git_tree_hash()`, reached from `omh goal checkpoint`, runs one bounded local "
-        "read-only `git rev-parse --short HEAD^{tree}` so a recorded observation carries the tree "
-        "it was observed against. It reads a hash and nothing else: no ref moves, no work starts, "
-        "and a machine with no git or no repository answers None instead of a stamp."
+        "compatibility `current_git_tree_hash()` retains one bounded local `git rev-parse --short "
+        "HEAD^{tree}` read for legacy callers; live goal and quality-evidence freshness now enter "
+        "the isolated complete-content collector below."
+    ),
+    "src/quality/working_tree_fingerprint.py": (
+        "the complete working-tree freshness collector reached only by `omh goal checkpoint` and "
+        "`omh quality-evidence assess`; it copies the index into a temporary directory, directs "
+        "Git object reads through a temporary object directory plus read-only alternates, disables "
+        "fsmonitor and optional locks, streams only changed/untracked bytes, and never starts work."
+    ),
+    "src/workflows/browser_workflow_learning_store.py": (
+        "the shared observed-Git-root boundary reached by explicit web-qa trace, observation, "
+        "and promotion commands; runs only bounded local rev-parse --show-toplevel with "
+        "fsmonitor disabled, optional locks suppressed and ambient GIT_* variables removed. "
+        "It starts no browser, agent, model, or remote operation."
+    ),
+    "src/workflows/browser_skill_promotion_approval.py": (
+        "explicit web-qa promotion review/approval/activation invokes one shipped, fixed "
+        "read-only preflight script under the installed Hermes interpreter. It verifies native "
+        "project trust, structure, lint, security and stable write policy against private staged "
+        "bytes; it accepts no caller command, executes no skill body, and starts no coding agent."
     ),
 }
 
@@ -771,10 +788,22 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
         "config from changing what dirty means. Read-only, names no remote, writes nothing"
     ),
     ("src/quality/evidence_records.py", ("rev-parse", "HEAD^{tree}")): (
-        "`rev-parse --short HEAD^{tree}` reads the tree hash a quality-evidence observation is "
-        "recorded against, so assessment can later tell evidence about the current tracked content "
-        "from evidence about older content; read-only local object lookup, names no remote, and it "
-        "resolves no ref the caller supplied"
+        "legacy `rev-parse --short HEAD^{tree}` compatibility helper; fresh local evidence uses "
+        "the complete-content collector rather than this committed-tree-only read"
+    ),
+    ("src/quality/working_tree_fingerprint.py", ("core.fsmonitor=false", "core.filemode=true")): (
+        "the collector's one private argv factory prefixes every fixed local Git plumbing command "
+        "with `-c core.fsmonitor=false -c core.filemode=true --no-optional-locks`; the filemode "
+        "override prevents repository configuration from hiding executable-bit changes. "
+        "The remaining command words are passed "
+        "as closed internal lists for rev-parse, config, ls-files, status, check-attr, and ls-tree, "
+        "never from caller input and never through a shell. It uses no diff/textconv command, so no "
+        "repository-configured external diff or textconv helper can execute."
+    ),
+    ("src/workflows/browser_workflow_learning_store.py", ("core.fsmonitor=false", "rev-parse")): (
+        "git -c core.fsmonitor=false --no-optional-locks rev-parse --show-toplevel resolves "
+        "the explicitly named local project for browser evidence and promotion. This bounded "
+        "identity read writes no index or remote and cannot invoke a configured fsmonitor hook."
     ),
     ("src/coding/fanout_artifact_sharing.py", ("check-ignore",)): (
         "`git check-ignore -q --` against the parent checkout, then again inside the fresh unit "
@@ -1382,14 +1411,16 @@ class ReleaseSourceIdentityGitBoundary(unittest.TestCase):
         )
 
     def test_every_probe_argv_disables_fsmonitor_and_overrides_no_other_config(self) -> None:
-        """`-c core.fsmonitor=false` on every call, and nothing else via `-c`.
+        """Only the explicitly classified local Git configuration overrides.
 
         The fsmonitor override must ride every probe argv -- the rev-parse
         calls read objects only, but git still consults repo config on the way
         in, and the review found the status call executing repo-configured
         code. And the override must stay the ONLY config the probe sets: a
-        second `-c` key would be a broader config channel than the finding
-        justified. Checked repo-wide, not just in this module, so a git argv
+        second `-c` key on release identity would be a broader config channel
+        than that finding justified. The complete-content collector separately
+        forces filemode observation so config cannot hide executable-bit changes.
+        Checked repo-wide, not just in this module, so a git argv
         anywhere in `src/` cannot grow a config override this gate never
         blessed.
         """
@@ -1401,15 +1432,18 @@ class ReleaseSourceIdentityGitBoundary(unittest.TestCase):
                 for index in range(len(elements) - 1)
                 if elements[index] == "-c"
             ]
-            offending = sorted(set(overrides) - {"core.fsmonitor=false"})
+            allowed = {"core.fsmonitor=false"}
+            if relative_path == "src/quality/working_tree_fingerprint.py":
+                allowed.add("core.filemode=true")
+            offending = sorted(set(overrides) - allowed)
             self.assertEqual(
                 offending,
                 [],
                 f"INVARIANT 1 (no hidden process spawn): {relative_path} line {lineno} builds a "
-                f"`git` argv whose `-c` config overrides include {offending}. The only sanctioned git "
-                f"config override in `src/` is `core.fsmonitor=false` on the release-identity "
-                f"probe (st_01a06650): one flag, one purpose, disabling repo-configured "
-                f"hook-shaped config on an identity-only read. A broader override needs a new "
+                f"`git` argv whose `-c` config overrides include {offending}. The sanctioned "
+                f"overrides are fsmonitor=false and, only for the complete-content collector, "
+                f"filemode=true. Neither starts a helper or writes repository configuration. "
+                f"A broader override needs a new "
                 f"security reason and a wider gate in {THIS_TEST}.",
             )
         for argv in self._git_argv():

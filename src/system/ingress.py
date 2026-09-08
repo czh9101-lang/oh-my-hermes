@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-CHAT_SOURCES = ("generic", "discord", "slack", "telegram", "hermes")
+CHAT_SOURCES = ("generic", "discord", "slack", "telegram", "hermes", "github")
 SOURCE_METADATA_KEYS = (
     "source_event_id",
     "project_ref",

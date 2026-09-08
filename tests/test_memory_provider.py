@@ -61,9 +61,28 @@ from omh.plugin_bundle.omh.memory_dreaming import (
     write_dreaming_state,
 )
 from omh.plugin_bundle.omh.memory_eviction import build_eviction_plan, eviction_plan_summary
-from omh.plugin_bundle.omh.memory_provider import PROVIDER_NAME, OmhMemoryProvider
+from omh.plugin_bundle.omh.memory_provider import (
+    CONSOLIDATION_RENDER_BUDGET_CHARS,
+    PROVIDER_LABEL,
+    PROVIDER_NAME,
+    OmhMemoryProvider,
+    RecallStatus,
+    consolidation_status_line,
+    render_consolidation_brief,
+)
+from omh.plugin_bundle.omh.memory_records import (
+    rank_project_memory_records,
+    read_project_memory_records,
+    render_memory_records,
+)
 from omh.plugin_bundle.omh.metadata import MEMORY_PROVIDER_NAME, PROVIDED_TOOLS
 from omh.plugin_bundle.omh.tools.memory_tool import MEMORY_ACTIONS, OMH_MEMORY_SCHEMA, omh_memory_handler
+from omh.paths import resolve_paths
+from omh.workflows.memory import (
+    approve_project_memory_candidate,
+    capture_project_memory_candidate,
+    reject_project_memory_candidate,
+)
 
 HERMES_DELIMITER = "§"
 
@@ -450,7 +469,8 @@ class ProviderRegistrationTests(unittest.TestCase):
 class ProviderLifecycleTests(unittest.TestCase):
     def _provider(self, root: Path, *, agent_context: str = "primary") -> OmhMemoryProvider:
         provider = OmhMemoryProvider(root / ".omh")
-        provider.initialize("session-1", hermes_home=str(root / ".hermes"), agent_context=agent_context)
+        # `cwd=root`: the fixture is its own project, never the checkout the tests run from.
+        provider.initialize("session-1", hermes_home=str(root / ".hermes"), agent_context=agent_context, cwd=str(root))
         return provider
 
     def test_availability_is_a_local_check_with_no_network(self) -> None:
@@ -579,7 +599,7 @@ class LossPreventionTests(unittest.TestCase):
 
     def _provider(self, root: Path, session: str = "s1") -> OmhMemoryProvider:
         provider = OmhMemoryProvider(root / ".omh")
-        provider.initialize(session, hermes_home=str(root / ".hermes"), agent_context="primary")
+        provider.initialize(session, hermes_home=str(root / ".hermes"), agent_context="primary", cwd=str(root))
         return provider
 
     def _briefs(self, root: Path) -> list[dict]:
@@ -708,6 +728,62 @@ class MemoryToolActionTests(unittest.TestCase):
     def _call(self, root: Path, **args) -> dict:
         with patch.dict(os.environ, {"OMH_HOME": str(root / ".omh"), "HERMES_HOME": str(root / ".hermes")}):
             return json.loads(omh_memory_handler(args))
+
+    def test_consolidation_status_preserves_pending_state_and_the_next_brief(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            home = root / ".omh"
+            _write_hermes_memory(root / ".hermes", "x" * 2100)
+            write_dreaming_state(home, record_compaction(record_turn(empty_dreaming_state())))
+            state_path = home / "memory" / "dreaming.json"
+            before = state_path.read_bytes()
+            for _ in range(2):
+                payload = self._call(root, action="consolidation")
+                self.assertEqual(state_path.read_bytes(), before)
+                self.assertFalse(payload["evaluated"])
+                self.assertNotIn("due", payload)
+                self.assertEqual(payload["state"], read_dreaming_state(home))
+                self.assertFalse((home / "memory" / "consolidation.json").exists())
+                self.assertFalse((home / "memory" / "consolidation.jsonl").exists())
+            brief = OmhMemoryProvider(home, hermes_home=root / ".hermes").consolidation_due()
+            self.assertTrue(brief["due"])
+            self.assertEqual(brief["trigger"], "manual")
+            self.assertIn("context_compaction_observed", brief["reasons"])
+            self.assertTrue(any(reason.startswith("headroom_below_floor") for reason in brief["reasons"]))
+
+    def test_consolidation_status_returns_the_due_brief_without_rewriting_it(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            home = root / ".omh"
+            _write_hermes_memory(root / ".hermes", "x" * 2100)
+            provider = OmhMemoryProvider(home, hermes_home=root / ".hermes")
+            brief = provider.consolidation_due()
+            self.assertTrue(brief["due"])
+            files = tuple((home / "memory").iterdir())
+            before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in files if path.is_file()}
+            for _ in range(2):
+                payload = self._call(root, action="consolidation")
+                self.assertTrue(payload["due"])
+                self.assertFalse(payload["evaluated"])
+                for key, value in brief.items():
+                    self.assertEqual(payload[key], value, key)
+                self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}, before)
+                self.assertEqual(tuple((home / "memory").iterdir()), files)
+            self.assertIn("<memory_consolidation", provider.render_pack())
+
+    def test_consolidation_status_never_enters_the_provider_lifecycle(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            _write_hermes_memory(root / ".hermes", "x" * 2100)
+            with patch.object(OmhMemoryProvider, "initialize") as initialize, patch.object(
+                OmhMemoryProvider, "consolidation_due", return_value={}
+            ) as evaluate:
+                payload = self._call(root, action="consolidation")
+            initialize.assert_not_called()
+            evaluate.assert_not_called()
+            self.assertFalse(payload["evaluated"])
+            self.assertNotIn("due", payload)
+            self.assertFalse((root / ".omh").exists())
 
     def test_the_default_action_is_still_the_bridge(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -2170,3 +2246,305 @@ class BundleReplayAdmissionTests(unittest.TestCase):
     def _call_tool(root: Path, **args: object) -> dict:
         with patch.dict(os.environ, {"OMH_HOME": str(root / ".omh"), "HERMES_HOME": str(root / ".hermes")}):
             return json.loads(omh_memory_handler(args))
+
+
+def _approve_record(root: Path, summary: str, *, home: str = ".omh", **capture: object) -> dict:
+    """One reviewed, replay-eligible v2 record through the real capture/approve path."""
+    paths = resolve_paths(root / home, root / ".hermes")
+    captured = capture_project_memory_candidate(paths, summary, **capture)
+    return approve_project_memory_candidate(paths, str(captured["candidate"]["candidate_id"]), approved_by="user")["record"]
+
+
+class RecordsReachPrefetchTests(unittest.TestCase):
+    """README 08 promises the next session a ranked, budgeted pack of what a
+    reviewer admitted. Measured before this: the provider served blocks only,
+    so an approved record never reached a Hermes turn."""
+
+    def _provider(self, root: Path, *, cwd: Path | None = None) -> OmhMemoryProvider:
+        provider = OmhMemoryProvider(root / ".omh")
+        provider.initialize("s1", hermes_home=str(root / ".hermes"), agent_context="primary", cwd=str(cwd or root))
+        return provider
+
+    def test_an_approved_record_is_served_and_a_pending_or_rejected_one_is_not(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _approve_record(root, "Release cuts run the Cut Release workflow first.", record_type="procedure")
+            paths = resolve_paths(root / ".omh", root / ".hermes")
+            capture_project_memory_candidate(paths, "Pending: nobody reviewed this yet.")
+            rejected = capture_project_memory_candidate(paths, "Rejected: the reviewer said no.")
+            reject_project_memory_candidate(paths, str(rejected["candidate"]["candidate_id"]), reason="wrong")
+
+            pack = self._provider(root).prefetch("release")
+            self.assertIn("<memory_records>", pack)
+            self.assertIn("Release cuts run the Cut Release workflow first.", pack)
+            self.assertIn('type="procedure"', pack)
+            self.assertNotIn("nobody reviewed", pack)
+            self.assertNotIn("reviewer said no", pack)
+
+    def test_many_admitted_records_stay_bounded_in_prefetch_and_status(self) -> None:
+        from xml.etree import ElementTree
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for index in range(40):
+                _approve_record(root, f"Approved local fact {index}.")
+            provider = self._provider(root)
+            text = provider.prefetch("")
+            self.assertLessEqual(len(text), 2400)
+            section = ElementTree.fromstring(text)
+            self.assertEqual(len(section.findall("record")), 6)
+            self.assertEqual(section.find("omitted").attrib,
+                             {"count": "34", "reason": "record_limit_reached"})
+            self.assertEqual(provider.recall_status().count, 6)
+
+    def test_records_sit_after_blocks_in_one_pack(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_memory_block(root / ".omh", approve_memory_block(build_memory_block("facts", "OMH wraps Hermes.")))
+            _approve_record(root, "Tests need PYTHONPATH=tests.")
+            pack = self._provider(root).prefetch("")
+            self.assertLess(pack.index("<memory_blocks>"), pack.index("<memory_records>"))
+
+    def test_the_queued_query_ranks_the_records(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _approve_record(root, "The menubar helper polls every thirty seconds.", tags=["menubar"])
+            _approve_record(root, "Release notes are edited with gh release edit.", tags=["release"])
+            provider = self._provider(root)
+            provider.queue_prefetch("why does the menubar lag")
+            pack = provider.prefetch("why does the menubar lag")
+            self.assertLess(pack.index("menubar helper"), pack.index("Release notes"))
+            provider.queue_prefetch("cut a release")
+            pack = provider.prefetch("cut a release")
+            self.assertLess(pack.index("Release notes"), pack.index("menubar helper"))
+
+    def test_the_project_store_is_read_when_the_session_runs_inside_a_repository(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            (repo / ".git").mkdir(parents=True)
+            (repo / "src" / "deep").mkdir(parents=True)
+            _approve_record(root, "Project-scoped: the API lives under src/api.", home="repo/.omh")
+            _approve_record(root, "User-scoped: the owner prefers Korean replies.")
+            pack = self._provider(root, cwd=repo / "src" / "deep").prefetch("")
+            self.assertIn("Project-scoped", pack)
+            self.assertIn("User-scoped", pack)
+            # Outside any repository only the user store is read.
+            self.assertNotIn("Project-scoped", self._provider(root, cwd=root).prefetch(""))
+
+    def test_summaries_are_escaped_and_the_budget_names_what_it_cut(self) -> None:
+        records = [
+            {"record_id": "mem_a", "record_type": "fact", "summary": "a < b & c", "approved_at": "2026-09-01T00:00:00Z"},
+            {"record_id": "mem_b", "record_type": "fact", "summary": "x" * 400, "approved_at": "2026-09-02T00:00:00Z"},
+        ]
+        text, count = render_memory_records(records, budget_chars=300)
+        self.assertEqual(count, 1)
+        self.assertLessEqual(len(text), 300)
+        self.assertIn("a &lt; b &amp; c", text)
+        self.assertIn('<omitted count="1" reason="render_budget_exhausted" />', text)
+        text, count = render_memory_records(records, limit=1)
+        self.assertEqual(count, 1)
+        self.assertIn('reason="record_limit_reached"', text)
+        self.assertEqual(render_memory_records([]), ("", 0))
+
+    def test_ranking_is_query_overlap_then_recency_then_id(self) -> None:
+        older = {"record_id": "mem_z", "summary": "deploy runbook", "approved_at": "2026-09-01T00:00:00Z"}
+        newer = {"record_id": "mem_a", "summary": "coffee machine", "approved_at": "2026-09-05T00:00:00Z"}
+        same_day = {"record_id": "mem_b", "summary": "tea kettle", "approved_at": "2026-09-05T00:00:00Z"}
+        ranked = rank_project_memory_records([older, newer, same_day], "")
+        self.assertEqual([r["record_id"] for r in ranked], ["mem_a", "mem_b", "mem_z"])
+        ranked = rank_project_memory_records([older, newer, same_day], "deploy the runbook")
+        self.assertEqual(ranked[0]["record_id"], "mem_z")
+        # Korean queries match on character bigrams, so a particle does not hide the noun.
+        korean = {"record_id": "mem_k", "summary": "메뉴바 헬퍼는 30초마다 갱신한다", "approved_at": "2026-09-01T00:00:00Z"}
+        ranked = rank_project_memory_records([newer, korean], "메뉴바가 왜 느리지")
+        self.assertEqual(ranked[0]["record_id"], "mem_k")
+
+    def test_a_record_id_shared_by_two_homes_is_read_once_project_first(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            record = _approve_record(root, "From the project store.")
+            user_home = root / "user"
+            (user_home / "memory").mkdir(parents=True)
+            # Copy the whole store so the review link stays valid, then reword.
+            import shutil
+
+            shutil.copytree(root / ".omh" / "memory", user_home / "memory", dirs_exist_ok=True)
+            path = user_home / "memory" / "records" / f"{record['record_id']}.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["summary"] = "From the user store."
+            path.write_text(json.dumps(data), encoding="utf-8")
+            records = read_project_memory_records((root / ".omh", user_home))
+            self.assertEqual([r["summary"] for r in records], ["From the project store."])
+
+
+class RecallIndicatorTests(unittest.TestCase):
+    """Hermes prints `🧠 <label> — recalled N memories` on every surface it speaks
+    through, right after the prefetch that carried it, by asking each provider
+    `recall_status()`. OMH answered None forever, so three weeks of daily use
+    never showed the user that OMH memory was in play."""
+
+    def _provider(self, root: Path) -> OmhMemoryProvider:
+        provider = OmhMemoryProvider(root / ".omh")
+        provider.initialize("s1", hermes_home=str(root / ".hermes"), agent_context="primary", cwd=str(root))
+        return provider
+
+    def test_the_status_matches_the_hermes_contract_field_for_field(self) -> None:
+        status = RecallStatus(provider_label="OMH", count=2)
+        self.assertEqual((status.provider_label, status.count, status.glyph), ("OMH", 2, "🧠"))
+        self.assertEqual(PROVIDER_LABEL, "OMH")
+
+    def test_nothing_served_means_no_indicator(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".omh").mkdir()
+            provider = self._provider(root)
+            self.assertIsNone(provider.recall_status())
+            self.assertEqual(provider.prefetch("anything"), "")
+            self.assertIsNone(provider.recall_status())
+
+    def test_the_count_is_what_the_last_prefetch_carried_in_full(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_memory_block(root / ".omh", approve_memory_block(build_memory_block("facts", "OMH wraps Hermes.")))
+            _approve_record(root, "Tests need PYTHONPATH=tests.")
+            provider = self._provider(root)
+            self.assertIsNone(provider.recall_status(), "the pack is rendered but not yet served")
+            provider.prefetch("hello")
+            self.assertEqual(provider.recall_status(), RecallStatus(provider_label="OMH", count=2))
+
+            # A reference block reaches the pack as a label only, which is
+            # content without a discrete count -- Hermes renders that generically.
+            delete_memory_block(root / ".omh", "facts", "system")
+            for path in (root / ".omh" / "memory" / "records").glob("*.json"):
+                path.unlink()
+            write_memory_block(
+                root / ".omh",
+                approve_memory_block(build_memory_block("runbook", "value", description="How to deploy.", tier="reference")),
+            )
+            provider.queue_prefetch("")
+            provider.prefetch("hello")
+            self.assertEqual(provider.recall_status(), RecallStatus(provider_label="OMH", count=0))
+
+    def test_a_stale_count_is_never_reported(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_memory_block(root / ".omh", approve_memory_block(build_memory_block("facts", "OMH wraps Hermes.")))
+            provider = self._provider(root)
+            provider.prefetch("hello")
+            self.assertEqual(provider.recall_status().count, 1)
+            delete_memory_block(root / ".omh", "facts", "system")
+            provider.queue_prefetch("")
+            self.assertEqual(provider.recall_status().count, 1, "queueing is not serving")
+            self.assertEqual(provider.prefetch("hello"), "")
+            self.assertIsNone(provider.recall_status())
+            provider.shutdown()
+            self.assertIsNone(provider.recall_status())
+
+
+class DreamingReachesTheTurnTests(unittest.TestCase):
+    """Measured on one machine over seven days: 32 briefs written, 26 of them
+    `session_start_recovery`, and `memory_writes_observed` 0 at every one. The
+    scheduler ran; nothing carried its brief into a Hermes turn, so nothing
+    ever consolidated. The brief now rides in the prefetch pack -- the one
+    channel that reaches every platform -- and the host prints a line where
+    it offers a status callback."""
+
+    def _provider(self, root: Path, **kwargs: object) -> OmhMemoryProvider:
+        provider = OmhMemoryProvider(root / ".omh")
+        provider.initialize("s1", hermes_home=str(root / ".hermes"), agent_context="primary", cwd=str(root), **kwargs)
+        return provider
+
+    def test_a_due_brief_is_served_in_the_pack_and_never_counts_as_a_memory(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_hermes_memory(root / ".hermes", "one fact")
+            provider = self._provider(root)
+            provider.on_turn_start(1, "hi")
+            provider.on_session_end()  # a single unconsolidated turn is enough at a session end
+            self.assertTrue((root / ".omh" / "memory" / "consolidation.json").exists())
+            provider.queue_prefetch("")
+            pack = provider.prefetch("next turn")
+            self.assertIn("<memory_consolidation", pack)
+            self.assertIn("session_ending_with_unconsolidated_turns", pack)
+            self.assertIn("Hermes' own memory tool", pack)
+            self.assertIn("tell the user in one short line", pack)
+            # A brief is a request, not recalled memory: no indicator at all.
+            self.assertIsNone(provider.recall_status())
+            # With one real memory beside it, the count is that memory alone.
+            write_memory_block(root / ".omh", approve_memory_block(build_memory_block("facts", "OMH wraps Hermes.")))
+            provider.queue_prefetch("")
+            pack = provider.prefetch("next turn")
+            self.assertIn("<memory_consolidation", pack)
+            self.assertEqual(provider.recall_status(), RecallStatus(provider_label="OMH", count=1))
+
+    def test_the_brief_leaves_the_pack_once_consolidation_is_observed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_hermes_memory(root / ".hermes", "one fact")
+            provider = self._provider(root)
+            provider.on_turn_start(1, "hi")
+            provider.on_session_end()
+            provider.queue_prefetch("")
+            self.assertIn("<memory_consolidation", provider.prefetch("x"))
+            provider.on_memory_write("replace", "memory", "one fact, merged", {"write_origin": "assistant_tool"})
+            provider.queue_prefetch("")
+            self.assertNotIn("<memory_consolidation", provider.prefetch("x"))
+
+    def test_the_host_hears_a_line_when_a_brief_fires_and_when_it_is_honoured(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_hermes_memory(root / ".hermes", "one fact")
+            heard: list[str] = []
+            provider = self._provider(root, status_callback=heard.append)
+            provider.on_turn_start(1, "hi")
+            provider.on_session_end()
+            self.assertEqual(len(heard), 1)
+            self.assertTrue(heard[0].startswith("💤 OMH — memory consolidation due (session_end: "), heard[0])
+            provider.on_memory_write("remove", "memory", "", {"write_origin": "assistant_tool"})
+            self.assertEqual(heard[-1], "🧹 OMH — memory consolidated (remove on memory)")
+            # An 'add' is not consolidation and says nothing.
+            provider.on_memory_write("add", "memory", "new", {"write_origin": "assistant_tool"})
+            self.assertEqual(len(heard), 2)
+
+    def test_no_callback_and_a_failing_callback_both_leave_the_hook_alone(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_hermes_memory(root / ".hermes", "one fact")
+            quiet = self._provider(root)
+            quiet.on_turn_start(1, "hi")
+            quiet.on_session_end()  # no callback: nothing raised
+
+            def broken(_line: str) -> None:
+                raise RuntimeError("terminal went away")
+
+            provider = self._provider(root, status_callback=broken)
+            provider.on_turn_start(1, "hi")
+            provider.on_session_end()  # a failing host channel never fails the hook
+            self.assertTrue((root / ".omh" / "memory" / "consolidation.json").exists())
+
+    def test_the_status_line_names_the_trigger_and_the_first_reason(self) -> None:
+        self.assertEqual(
+            consolidation_status_line("turn", ["turn_interval_reached:5/5", "headroom_below_floor:120"]),
+            "💤 OMH — memory consolidation due (turn: turn_interval_reached:5/5 +1)",
+        )
+        self.assertEqual(consolidation_status_line("shutdown", []), "💤 OMH — memory consolidation due (shutdown: )")
+
+    def test_the_rendered_brief_is_bounded_escaped_and_silent_when_not_due(self) -> None:
+        self.assertEqual(render_consolidation_brief(None), "")
+        self.assertEqual(render_consolidation_brief({"due": False, "reasons": ["x"]}), "")
+        brief = {
+            "due": True,
+            "trigger": "turn",
+            "raised_at": "2026-09-08T00:00:00Z",
+            "reasons": [f"reason_{i} <{i}>" for i in range(20)],
+            "requested_of_executor": ["a & b"] * 20,
+            "eviction_plan": {"entry_count": 7, "headroom_chars": 1205, "duplicate_clusters": [{}, {}]},
+        }
+        text = render_consolidation_brief(brief)
+        self.assertLessEqual(len(text), CONSOLIDATION_RENDER_BUDGET_CHARS)
+        self.assertTrue(text.endswith("</memory_consolidation>"))
+        self.assertIn("reason_0 &lt;0&gt;", text)
+        self.assertIn('<omitted reasons="14" />', text)
+        self.assertIn('duplicate_clusters="2"', text)
+        self.assertNotIn("<0>", text)

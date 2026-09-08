@@ -40,14 +40,18 @@ Bad example:
 
 ## Completion Checklist
 
-- Gate credentials, login, payments, destructive actions and exports; report only observed traces.
-- Host request admission, not enablement/adapter presence, gates browser schemas/context/callbacks/writes. Refuse foreign/stale/expired/released/ambiguous targets; no index fallback.
-- omh_browser blocks native browser_*; inert by default. Opted-in effects require exact approval: docs/BROWSER-EFFECTS.md.
+- Specify URL, allowed/prohibited actions, auth boundary, stop condition.
+- Gate credentials/login/payment/purchase/destruction/scraping/export; observed traces only.
+- Host request admission (not enablement/adapter presence) gates schemas/context/callbacks/writes. Refuse foreign/stale/expired/released/ambiguous targets; no index fallback.
+- omh_browser blocks native browser_*; inert by default. Opted-in effects need exact approval: docs/BROWSER-EFFECTS.md.
 
 ## Recovery Notes
 
-- Ask for missing targets or confirmation; use visual-qa for visual correctness.
-- Refresh stale state once; never replay unknown work. Reuse acquisitions; only the owning adapter/version reaps. Release requires observed cleanup, not mutation approval.
+- Missing target/confirmation: ask; visual correctness: visual-qa.
+- Refresh stale state once; never replay unknown work. Reuse acquisitions; only owner adapter/version reaps. Release needs observed cleanup, not mutation approval.
+- Host receipt BLOCK: production click/submit, retry after auth/4xx/assertion/mutation failure, or over two transient read-only retries.
+- POSIX native agent-browser collector: cold-desktop anonymous read-only Chromium only; other engine/profile/fixture/locale/timezone: named blocker (unsupported_browser_engine_webkit), never substitution.
+- Trace drift: `promotion status` unlinks only managed SKILL.md, keeps generations/receipts; no autoheal/watch/global fallback.
 
 ## Workflow Lane
 
@@ -104,8 +108,9 @@ Artifact expectations:
 - browser_task_card/v1 metadata only
 - browser_interaction_scope/v1: URL, allowed/prohibited actions, stop condition
 - browser_auth_boundary/v1: supplied/missing/prohibited credentials
-- browser_observation_manifest/v1: observed traces only
-- Host lease schemas: docs/BROWSER-ADAPTER.md defines owner/adapter/version/task scope, capability caching, digest-only state and exact revision handles.
+- browser_observation_manifest/v1: observed screenshots/DOM notes/console/network/click traces only
+- Leases: docs/BROWSER-ADAPTER.md; owner/adapter/version/task scope, cached capabilities, digest-only state, exact revision handles.
+- browser_skill_promotion/v1: `omh web-qa promotion diff`, `approve` its exact digest, then `promote` one receipt; SKILL.md alone commits visibility
 
 Safety rules:
 

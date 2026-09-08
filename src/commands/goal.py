@@ -19,7 +19,7 @@ from ..goal_ledger import (
     record_goal_checkpoint,
 )
 from ..installer import OmhError
-from ..quality.evidence_records import current_git_tree_hash
+from ..quality.working_tree_fingerprint import working_tree_content_fingerprint
 from ..system.local_store import utc_now
 from ..workflows.coordination_board import (
     DEFAULT_LIMIT as COORDINATION_BOARD_DEFAULT_LIMIT,
@@ -67,12 +67,12 @@ def _mutation_payload(paths, goal_id: str, goal: dict, outcome: dict) -> dict:
 def cmd_goal_checkpoint(args: argparse.Namespace) -> int:
     paths = _paths(args)
     outcome: dict = {}
-    # Read rather than accept: the observed tree is the one thing in a
-    # checkpoint that must describe the working tree at record time, so a flag
-    # letting the caller name any tree would forge exactly the freshness the
-    # stamp exists to prove. Outside a repository the read answers None and the
-    # checkpoint is recorded with no tree, as before.
-    observed_tree = current_git_tree_hash() or ""
+    # Read rather than accept: a caller cannot forge the workspace identity a
+    # checkpoint claims to cover. A non-authoritative collection is refused so
+    # a retry cannot silently reuse a committed-tree-only freshness stamp.
+    fingerprint = working_tree_content_fingerprint()
+    if not fingerprint.authoritative or fingerprint.fingerprint is None:
+        raise OmhError(f"working tree fingerprint is unavailable: {fingerprint.state}")
     try:
         goal = record_goal_checkpoint(
             paths,
@@ -83,7 +83,7 @@ def cmd_goal_checkpoint(args: argparse.Namespace) -> int:
             evidence_refs=args.evidence_ref or [],
             notes_summary=args.notes_summary or "",
             linked_runtime_run_id=args.linked_runtime_run or "",
-            observed_tree=observed_tree,
+            observed_tree=fingerprint.fingerprint,
             expected_revision=args.expected_revision,
             mutation_id=args.mutation_id or None,
             outcome=outcome,

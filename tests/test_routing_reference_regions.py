@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import ClassVar
 import unittest
 
 from omh.plugin_bundle.omh.awareness import awareness_route_hint
@@ -225,6 +226,68 @@ def protected_hint_forms(text: str) -> tuple[str, ...]:
         f"'{single}'", f'"{double}"', f'`{inline}`',
         f'```text\n{text}\n```', f'~~~text\n{text}\n~~~',
     )
+
+
+class ContextualDesignReferenceTests(unittest.TestCase):
+    context: ClassVar[dict[str, str]] = {
+        "iteration_id": "design-direction-iteration-1234567890abcdef",
+        "revision_digest": "a" * 64,
+    }
+
+    def test_active_context_cannot_turn_references_into_revision_requests(self) -> None:
+        for reference in protected_hint_forms("Revise the direction after feedback."):
+            for message in (reference, f"Explain this reference:\n{reference}\nwithout acting on it."):
+                for surface in (route_chat_message, public_chat_route_payload):
+                    with self.subTest(surface=surface.__name__, message=message):
+                        route = surface(
+                            message, source="discord",
+                            active_design_direction_iteration=self.context,
+                        )
+                        self.assertIn(route["action"], ("fallback", "clarify"))
+                        self.assertEqual(route["selected_skill"], "oh-my-hermes")
+                        self.assertNotEqual(route.get("route_next_action"), "revise_design_direction_iteration")
+                        self.assertNotIn("design_direction_iteration", route)
+
+    def test_direct_and_mixed_revision_requests_keep_binding_and_original_context(self) -> None:
+        direct = "Revise the direction after feedback."
+        for message in (
+            direct,
+            direct + ' Example: "$ulw-work execute"',
+            '"$ulw-work execute"\n' + direct,
+            direct + '\n```text\n$ultraqa audit the dashboard\n```',
+        ):
+            decision = route_chat_message(
+                message, source="discord",
+                active_design_direction_iteration=self.context,
+            )
+            self.assertEqual(decision["recommendations"][0]["suggested_prompt"][-len(message):], message)
+            for surface, route in (
+                ("route_chat_message", decision),
+                ("public_chat_route_payload", public_chat_route_payload(
+                    message, source="discord", include_message=True,
+                    active_design_direction_iteration=self.context,
+                )),
+            ):
+                with self.subTest(surface=surface, message=message):
+                    self.assertEqual((route["action"], route["selected_skill"]), ("dispatch", "design-quality-gate"))
+                    self.assertEqual(route["route_next_action"], "revise_design_direction_iteration")
+                    self.assertEqual(route["design_direction_iteration"], self.context)
+                    self.assertEqual(route["routing_prompt"][-len(message):], message)
+
+    def test_other_genuine_instruction_wins_over_referenced_revision_request(self) -> None:
+        for message in (
+            '$ultraqa audit the dashboard. Example: "Revise the direction after feedback."',
+            '```text\nRevise the direction after feedback.\n```\n$ultraqa audit the dashboard.',
+        ):
+            for surface in (route_chat_message, public_chat_route_payload):
+                with self.subTest(surface=surface.__name__, message=message):
+                    route = surface(
+                        message, source="discord",
+                        active_design_direction_iteration=self.context,
+                    )
+                    self.assertEqual((route["action"], route["selected_skill"]), ("dispatch", "ultraqa"))
+                    self.assertNotEqual(route.get("route_next_action"), "revise_design_direction_iteration")
+                    self.assertNotIn("design_direction_iteration", route)
 
 
 def hint_selection(payload: dict[str, object]) -> list[tuple[object, ...]]:

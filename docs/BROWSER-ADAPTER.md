@@ -169,22 +169,36 @@ form values, headers, bodies, and screenshots stay host-owned, not lease metadat
 
 ## Verification and evidence
 
-Focused suites: `PYTHONPATH=tests uv run python -m unittest
-tests/test_browser_adapter.py tests/test_browser_adapter_boundaries.py
-tests/test_browser_admission.py -v`.
-The issue artifact `qa_browser_adapter.py` exercises actual Hermes
-`PluginContext`, registered tool handlers and `PluginManager.invoke_hook`, with
-the already-installed local Playwright/Chromium. It isolates both homes and
-closes contexts, browser, Node, HTTP server, and temporary roots. The screenshot
-is an explicitly captured synthetic fixture artifact, never ordinary retained
-page content. This is local host-surface evidence, not a model/provider run or
-evidence that arbitrary live sites are safe.
+Shipped, runnable checks:
 
-QA compares actual `registry.get_definitions` with public
-`model_tools.get_tool_definitions` through inactive, admitted, foreign/unrelated,
-completed and expired requests. It preserves the acquire/read/reuse/stale/reap
-Chromium exercise. Output defaults to an invocation-owned temporary directory;
-operators can retain evidence with `--output-dir <isolated-artifact-directory>`.
+```sh
+PYTHONPATH=tests uv run python -m unittest tests/test_browser_adapter.py \
+  tests/test_browser_adapter_boundaries.py tests/test_browser_admission.py \
+  tests/test_browser_adapter_benchmark.py -v
+uv run python tools/benchmarks/browser_adapter.py --repetitions 20
+```
+
+These use the in-memory host in `tests/_browser_adapter_support.py`, not a
+browser. `test_browser_adapter.py` proves acquisition reuse without callbacks
+or writes, owner/tab/revision/handle refusal before any callback, zero or
+ambiguous match refusal, unknown readback, idempotent release and orphan
+cleanup, concurrent reservation, crash-as-unknown without restart, caps and
+retention, secret-free metadata, and the disabled path's absence of browser
+import, IO, or context. `test_browser_adapter_boundaries.py` covers expiry
+reaping, deadline handling, cleanup recovery and foreign-adapter skipping,
+cross-manager reservation, corrupt store refusal, tombstone retention, and
+zero IO/process/network calls in pure parsing. `test_browser_admission.py`
+proves admission is host-only, uncached, revocable, owner-bound, and fails
+closed on unsupported hosts. `test_browser_adapter_benchmark.py` proves the
+benchmark default runs without private artifacts.
+
+During development, maintainers also ran a local driver against the installed
+Hermes `PluginContext`, registered tool handlers, `PluginManager.invoke_hook`,
+and an already-installed Playwright/Chromium, comparing `registry.get_definitions`
+with `model_tools.get_tool_definitions` across inactive, admitted, foreign,
+completed and expired requests. That driver is not distributed with the
+repository. Its results are maintainer-local host-surface evidence only, not
+a model/provider run and not evidence that arbitrary live sites are safe.
 
 `uv run python tools/benchmarks/browser_adapter.py --repetitions 20` runs bounded
 repeated/stale/concurrency/crash/cleanup controls without private checkout

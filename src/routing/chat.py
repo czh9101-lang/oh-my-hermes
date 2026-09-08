@@ -5,10 +5,11 @@ from functools import lru_cache
 import hashlib
 import re
 import unicodedata
-from typing import Any
+from typing import Any, Mapping
 
 from ..goal_loop import explicit_loop_invocation_signal
 from ..ingress import CHAT_SOURCES, extract_message_text
+from ..system.tracker_content import normalize_tracker_content
 from ..loopability import assess_loopability
 from .catalog_questions import (
     is_catalog_without_shell_question,
@@ -45,6 +46,7 @@ from .policy import (
     MEMORY_NEW_CAPTURE_PHRASES,
     MEMORY_NEW_SCOPE_PHRASES,
     OMH_INVOCATION_MARKERS,
+    POINT_IN_TIME_WEB_GUARD,
     SKILL_INVOCATION_MARKERS,
     SKILL_SCOUT_CANDIDATE_ALIAS_PHRASES,
     SKILL_SCOUT_CANDIDATE_BLOCKER_PHRASES,
@@ -53,6 +55,7 @@ from .policy import (
     explicit_skill_invocation as explicit_skill_name,
     is_ambiguous_scores,
     meets_confidence_threshold,
+    point_in_time_web_guard_applies,
 )
 from .policy import _doctor_health_guard_applies
 from .policy import _explicit_skill_candidate_is_negated
@@ -1425,6 +1428,7 @@ def route_chat_message(
     limit: int = 3,
     min_confidence: str = "high",
     skill_policy: dict[str, object] | None = None,
+    active_design_direction_iteration: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     message = message.strip()
     if not message:
@@ -1436,7 +1440,14 @@ def route_chat_message(
     if min_confidence not in CONFIDENCE_LEVELS:
         raise ValueError(f"unsupported chat route confidence threshold: {min_confidence}")
 
-    return _enriched_route(message, source, limit, min_confidence, skill_policy=skill_policy)
+    return _enriched_route(
+        message,
+        source,
+        limit,
+        min_confidence,
+        skill_policy=skill_policy,
+        active_design_direction_iteration=active_design_direction_iteration,
+    )
 
 
 def _route_has_strong_blocked_owner(
@@ -1473,6 +1484,7 @@ def _enriched_route(
     min_confidence: str,
     *,
     skill_policy: dict[str, object] | None,
+    active_design_direction_iteration: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """The cached decision plus everything every consumer must see.
 
@@ -1484,7 +1496,12 @@ def _enriched_route(
     invisible on the one surface it was built for, found when a mocked Slack QA
     pass compared the tool payload against a direct router call.
     """
-    route = _clone_jsonish(_route_chat_message_cached(message, source, limit, min_confidence))
+    route = _contextual_design_direction_iteration_route(
+        message,
+        source=source,
+        min_confidence=min_confidence,
+        context=active_design_direction_iteration,
+    ) or _clone_jsonish(_route_chat_message_cached(message, source, limit, min_confidence))
     # Attach the input script here rather than at each ChatRouteDecision site so
     # every route -- fast path, catalog path, and full scoring -- reports it.
     route["input_language"] = routing_input_language(message)
@@ -1543,6 +1560,66 @@ def _enriched_route(
     return _apply_skill_governance(route, skill_policy)
 
 
+def _contextual_design_direction_iteration_route(
+    message: str,
+    *,
+    source: str,
+    min_confidence: str,
+    context: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if not isinstance(context, Mapping):
+        return None
+    iteration_id = str(context.get("iteration_id") or "")
+    revision_digest = str(context.get("revision_digest") or "")
+    normalized = normalized_phrase(executable_routing_text(message))
+    tokens = routing_tokens(normalized)
+    if (
+        not re.fullmatch(r"design-direction-iteration-[a-z0-9-]{1,128}", iteration_id)
+        or not re.fullmatch(r"[0-9a-f]{64}", revision_digest)
+        or not ("revise" in tokens or contains_cue_phrase(normalized, ("another feedback round",)))
+        or not contains_cue_phrase(normalized, ("direction", "directions", "design direction"))
+        or not contains_cue_phrase(normalized, ("feedback", "notes", "comment"))
+    ):
+        return None
+    definition = _skill_definition_by_name("design-quality-gate")
+    reason = "Trusted active design iteration context binds this feedback to the rendered current revision."
+    recommendation = recommendation_for_definition(
+        definition,
+        message,
+        matched=("context:design_direction_iteration", "cue:revision_feedback"),
+        score=12,
+        why=reason,
+    )
+    return {
+        **ChatRouteDecision(
+            schema_version=1,
+            source=source,
+            action="dispatch",
+            selected_skill=definition.name,
+            selected_harness=primary_harness_for_skill(definition.name),
+            candidate_skill=definition.name,
+            candidate_harness=primary_harness_for_skill(definition.name),
+            confidence="high",
+            score=12,
+            threshold=min_confidence,
+            explicit=False,
+            ambiguous=False,
+            reason=reason,
+            clarification="",
+            routing_prompt=_routing_prompt("dispatch", definition.name, definition.name, reason, message),
+            task_card=None,
+            workflow_route_plan=None,
+            learning_candidate_card=None,
+            recommendations=(recommendation,),
+            route_next_action="revise_design_direction_iteration",
+        ).to_dict(),
+        "design_direction_iteration": {
+            "iteration_id": iteration_id,
+            "revision_digest": revision_digest,
+        },
+    }
+
+
 def public_chat_route_payload(
     message: str,
     *,
@@ -1551,6 +1628,7 @@ def public_chat_route_payload(
     min_confidence: str = "high",
     include_message: bool = False,
     skill_policy: dict[str, object] | None = None,
+    active_design_direction_iteration: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     message = message.strip()
     if not message:
@@ -1561,7 +1639,7 @@ def public_chat_route_payload(
         raise ValueError("chat route --limit must be at least 1")
     if min_confidence not in CONFIDENCE_LEVELS:
         raise ValueError(f"unsupported chat route confidence threshold: {min_confidence}")
-    if skill_policy is not None:
+    if skill_policy is not None or active_design_direction_iteration is not None:
         return public_route_payload(
             route_chat_message(
                 message,
@@ -1569,6 +1647,7 @@ def public_chat_route_payload(
                 limit=limit,
                 min_confidence=min_confidence,
                 skill_policy=skill_policy,
+                active_design_direction_iteration=active_design_direction_iteration,
             ),
             include_message=include_message,
         )
@@ -4278,6 +4357,14 @@ def _operator_surface_fast_path_decision(
         routing_message
     ) and not _is_skill_scout_candidate_alias_intent(routing_message):
         return None
+    # A page, snapshot, or archive noun reaches the browser and workspace
+    # operator fast paths on its own; an as-of question about that page is a
+    # research question whose historical claims need capture receipts, so it
+    # falls through to scoring where the point-in-time guard ranks the
+    # research lanes.
+    point_in_time_web = _point_in_time_web_intent(routing_message)
+    if point_in_time_web and selected_skill not in ("research", "web-research"):
+        return None
     preempting_skills = (
         _web_research_preempting_skills(routing_message)
         if selected_skill in ("research", "web-research")
@@ -4298,6 +4385,8 @@ def _operator_surface_fast_path_decision(
     selected_harness = primary_harness_for_skill(selected_skill)
     definition = _skill_definition_by_name(selected_skill)
     extra_markers = _operator_surface_extra_markers(selected_skill, phrase)
+    if point_in_time_web:
+        extra_markers = (*extra_markers, POINT_IN_TIME_WEB_GUARD.matched_label)
     matched = (marker, *extra_markers, _operator_surface_phrase_marker(marker, phrase))
     score = _operator_surface_score(selected_skill, extra_markers)
     why = _operator_surface_reason(reason, extra_markers)
@@ -4367,6 +4456,11 @@ def _ai_usability_research_fast_path_match(message: str) -> tuple[str, str, str,
 def _ai_usability_research_cue_matches(cue: str, text: str, compact: str, tokens: set[str]) -> bool:
     normalized = _fast_path_text(cue)
     return normalized in tokens if normalized == "ux" else normalized in text or _fast_path_compact(normalized) in compact
+
+
+def _point_in_time_web_intent(message: str) -> bool:
+    normalized = normalized_phrase(prepare_routing_text(message).scoring_text)
+    return point_in_time_web_guard_applies(normalized, routing_tokens(normalized))
 
 
 def _web_research_preempting_skills(message: str) -> tuple[str, ...]:
@@ -4898,6 +4992,8 @@ def _operator_surface_score(skill: str, extra_markers: tuple[str, ...]) -> int:
 
 
 def _operator_surface_reason(default_reason: str, extra_markers: tuple[str, ...]) -> str:
+    if POINT_IN_TIME_WEB_GUARD.matched_label in extra_markers:
+        return POINT_IN_TIME_WEB_GUARD.why
     if "guard:safe_feature_change" in extra_markers:
         return "Matched safe feature-change language; prepare a reviewed plan before executor handoff."
     if "guard:risky_refactor_before_cleanup" in extra_markers:
@@ -6226,7 +6322,25 @@ def route_chat_event(
     limit: int = 3,
     min_confidence: str = "high",
     skill_policy: dict[str, object] | None = None,
+    tracker_host_context: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    if source not in CHAT_SOURCES:
+        raise ValueError(f"unsupported chat source: {source}")
+    tracker_content = (
+        normalize_tracker_content(event, host_context=tracker_host_context)
+        if isinstance(event, dict)
+        else None
+    )
+    if tracker_content is not None:
+        routed = route_chat_message(
+            "$github-event-ops",
+            source="github",
+            limit=limit,
+            min_confidence=min_confidence,
+            skill_policy=skill_policy,
+        )
+        routed["tracker_content"] = tracker_content
+        return routed
     return route_chat_message(
         extract_message_text(event),
         source=source,

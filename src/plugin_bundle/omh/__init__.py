@@ -75,6 +75,13 @@ def register(ctx):
     from .memory_provider import OmhMemoryProvider
 
     _register_optional_surface(ctx, "register_memory_provider", OmhMemoryProvider())
+    # ``get_config`` is a real Hermes PluginContext API.  Disabled installs
+    # neither import the guard nor import SQLite nor register its hooks.
+    get_config = getattr(ctx, "get_config", None)
+    egress_config = get_config("egress_attempts", None) if callable(get_config) else None
+    if isinstance(egress_config, dict) and egress_config.get("enabled") is True:
+        from .egress_attempts import register as register_egress_attempts
+        register_egress_attempts(ctx, egress_config)
 
     from .hooks.llm_hooks import pre_llm_call
     from .hooks.result_transforms import transform_tool_result

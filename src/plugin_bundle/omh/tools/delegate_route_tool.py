@@ -138,7 +138,7 @@ OMH_DELEGATE_ROUTE_SCHEMA = {
             },
             "hermes_home": {
                 "type": "string",
-                "description": "Optional HERMES_HOME override. Defaults to ~/.hermes.",
+                "description": "Optional Hermes home override. Defaults to the active Hermes home, or $HERMES_HOME / ~/.hermes without Hermes.",
             },
             "omh_home": {
                 "type": "string",

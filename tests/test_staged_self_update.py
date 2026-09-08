@@ -24,6 +24,18 @@ from omh.system.local_store import atomic_write_json, file_lock
 
 
 class StagedSelfUpdateTests(unittest.TestCase):
+    @staticmethod
+    def _platform() -> SelfUpdatePlatform:
+        # Keep host pointer-swap semantics, but model the junction subprocess
+        # with real links, as the dedicated Windows adapter tests do.
+        def junction_runner(command, **kwargs):
+            link = Path(kwargs["env"]["OMH_JUNCTION_LINK"])
+            target = Path(kwargs["cwd"]) / kwargs["env"]["OMH_JUNCTION_TARGET"]
+            link.symlink_to(target, target_is_directory=True)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        return SelfUpdatePlatform(is_windows=SelfUpdatePlatform.host().is_windows, runner=junction_runner)
+
     def _fixture(self, root: Path, *, pointer: bool = False, launcher: bool = True):
         legacy = root / "venv"
         (legacy / "bin").mkdir(parents=True)
@@ -54,7 +66,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
         bootstrap.mkdir(parents=True)
         (bootstrap / "venv").symlink_to(legacy, target_is_directory=True)
         (bootstrap / "skills").symlink_to(root / "omh" / "skills", target_is_directory=True)
-        switch_current(root, bootstrap)
+        switch_current(root, bootstrap, platform=self._platform())
         if launcher:
             launcher_path = root / "bin" / "omh"
             launcher_path.unlink()
@@ -121,7 +133,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
             {"OMH_VENV_DIR": str(root / "venv"), "OMH_BIN_DIR": str(root / "bin")},
             clear=False,
         ):
-            return run_installer_self_update(args, plan, runner=runner)
+            return run_installer_self_update(args, plan, runner=runner, platform=self._platform())
 
     def _assert_pair(self, root: Path, expected: Path | None = None) -> None:
         current = (root / "current").resolve()
@@ -137,6 +149,28 @@ class StagedSelfUpdateTests(unittest.TestCase):
         self.assertIsNotNone(actual)
         assert actual is not None
         self.assertTrue(os.path.samefile(actual, expected), f"{actual!s} does not identify {expected!s}")
+
+    def test_fixture_uses_windows_pointer_strategy_without_starting_processes(self):
+        with (
+            TemporaryDirectory() as temporary,
+            patch.object(SelfUpdatePlatform, "host", return_value=SelfUpdatePlatform(is_windows=True)),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("unexpected fixture subprocess")) as spawn,
+        ):
+            root = Path(temporary)
+            legacy, args, plan = self._fixture(root, pointer=True)
+            previous = root / "generations" / "bootstrap-legacy"
+            self._assert_pair(root, previous)
+            self._assert_same_path(root / "current" / "venv", legacy)
+            self._assert_same_path(root / "current" / "skills", root / "omh" / "skills")
+
+            result = self._run(root, args, plan, self._runner(failure="post"))
+
+            self.assertEqual(result["activation"]["status"], "ok")
+            self.assertEqual(result["phase"], "post_activation")
+            self.assertTrue(result["rollback"]["performed"])
+            self._assert_pair(root, previous)
+            self.assertFalse(any(root.glob(".current.*")))
+            spawn.assert_not_called()
 
     def test_venv_and_pip_failures_delete_candidates_without_moving_the_pair(self):
         for failure in ("venv", "pip"):
@@ -219,6 +253,58 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 self.assertEqual(result["post_activation"]["reason"], expected_reason)
                 self.assertEqual(sum("--command-package-updated" in call and "update" not in call for call in calls), 2)
                 self._assert_pair(root, previous)
+                # The refused candidate is deleted like a failed staging
+                # candidate; the owner machine kept one on disk until the next
+                # successful update's garbage collection.
+                self.assertFalse(Path(result["candidate"]["path"]).exists())
+
+    def test_rollback_reentry_is_marked_so_its_summary_says_rollback(self):
+        # The rollback re-entry re-renders the known-good pack and, unmarked,
+        # printed the ordinary "Installed release ... OMH update complete."
+        # card -- the owner read that as a downgrade. Only the restoring
+        # re-entry carries the marker; the candidate's re-entry does not.
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy, args, plan = self._fixture(root, pointer=True)
+            reentries = []
+            runner = self._runner(failure="post")
+
+            def recording_runner(command, **kwargs):
+                if "--command-package-updated" in command and "update" not in command:
+                    reentries.append(dict(kwargs["env"]))
+                return runner(command, **kwargs)
+
+            result = self._run(root, args, plan, recording_runner)
+            self.assertTrue(result["rollback"]["performed"])
+            self.assertEqual(len(reentries), 2)
+            self.assertNotIn(self_update.ROLLBACK_RESTORE_ENV, reentries[0])
+            self.assertEqual(reentries[1].get(self_update.ROLLBACK_RESTORE_ENV), "1")
+
+        payload = {
+            "skills": [],
+            "source": "builtin",
+            "command_package": {"updated": True},
+            "release_update": {"previous": {"version": "2.0.2"}, "current": {"version": "2.0.2"}},
+        }
+        for restoring in (False, True):
+            with self.subTest(restoring=restoring):
+                env = {self_update.ROLLBACK_RESTORE_ENV: "1"} if restoring else {}
+                output = io.StringIO()
+                with patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(output):
+                    if not restoring:
+                        os.environ.pop(self_update.ROLLBACK_RESTORE_ENV, None)
+                    setup_commands._print_install_summary(payload, command="update", language="en")
+                printed = output.getvalue()
+                if restoring:
+                    self.assertIn("OMH rollback complete", printed)
+                    self.assertIn("Oh-My-Hermes Rollback", printed)
+                    self.assertIn("Restored release: 2.0.2", printed)
+                    self.assertNotIn("update complete", printed.lower())
+                    self.assertNotIn("Installed release", printed)
+                else:
+                    self.assertIn("OMH update complete.", printed)
+                    self.assertIn("Installed release: 2.0.2", printed)
+                    self.assertNotIn("Rollback", printed)
 
     def test_lock_is_nonblocking_and_does_not_mutate_the_pair(self):
         with TemporaryDirectory() as temporary:
@@ -239,7 +325,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 (candidate / "venv" / "bin").mkdir(parents=True)
                 (candidate / "skills").mkdir()
                 if at_candidate:
-                    switch_current(root, candidate)
+                    switch_current(root, candidate, platform=self._platform())
                 state = json.loads((root / "self-update.json").read_text())
                 state["activation_in_progress"] = {
                     "candidate": str(candidate), "previous": str(previous), "phase": "pre_switch"
@@ -261,7 +347,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
             candidate = root / "generations" / "interrupted"
             (candidate / "venv" / "bin").mkdir(parents=True)
             (candidate / "skills").mkdir()
-            switch_current(root, candidate)
+            switch_current(root, candidate, platform=self._platform())
             state = json.loads((root / "self-update.json").read_text())
             state["activation_in_progress"] = {
                 "candidate": str(candidate),

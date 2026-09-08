@@ -39,8 +39,20 @@ from typing import Any
 
 try:  # Present only inside the Hermes process.
     from agent.memory_provider import MemoryProvider as _MemoryProviderBase
+    from agent.memory_provider import RecallStatus
 except ImportError:  # pragma: no cover - exercised by the repo's own test run
+    from dataclasses import dataclass
+
     _MemoryProviderBase = object
+
+    @dataclass(frozen=True)
+    class RecallStatus:  # type: ignore[no-redef]
+        """Field-for-field the Hermes contract, so the repo's tests see what Hermes sees."""
+
+        provider_label: str
+        count: int
+        glyph: str = "🧠"
+
 
 from .hermes_memory import count_record_expiry, read_hermes_memory
 from .memory_block_replay import MemoryBlockSelection
@@ -52,6 +64,7 @@ from .memory_blocks import (
     read_memory_blocks,
     render_block_index,
     render_memory_blocks,
+    render_memory_blocks_counted,
     select_memory_blocks,
 )
 from .memory_dreaming import (
@@ -67,8 +80,21 @@ from .memory_dreaming import (
     write_dreaming_state,
 )
 from .memory_eviction import build_eviction_plan
+from .memory_records import (
+    rank_project_memory_records,
+    read_project_memory_records,
+    render_memory_records,
+)
 
 PROVIDER_NAME = "omh"
+# What Hermes prints in front of "recalled N memories" on every surface it
+# speaks through -- CLI, TUI, and each gateway platform -- when a prefetch
+# actually put OMH memory into the turn.
+PROVIDER_LABEL = "OMH"
+# The brief rides in the prefetch pack, bounded so a long reason list or eviction
+# plan cannot crowd out the memory it is asking the model to keep.
+CONSOLIDATION_RENDER_BUDGET_CHARS = 1600
+CONSOLIDATION_MAX_ITEMS = 6
 WRITE_JOURNAL_SCHEMA_VERSION = "omh_memory_write_journal_entry/v1"
 JOURNAL_LIMIT = 32
 
@@ -98,10 +124,29 @@ class OmhMemoryProvider(_MemoryProviderBase):
         self._hermes_home = Path(str(hermes_home)).expanduser() if hermes_home else None
         self._session_id = ""
         self._writes_enabled = True
+        # Reviewed records live in the project's own `.omh` when a session runs
+        # inside a repository; `initialize` resolves it from the working
+        # directory. The user home is always read as well.
+        self._project_home: Path | None = None
         # prefetch() is called before every API call and the base class asks for
         # it to be fast, so the pack is rendered off the hot path and served
-        # from here.
+        # from here. `_query` is what the pack was ranked for; `_pack_count`
+        # is how many memories it carries in full.
         self._pack = ""
+        self._query = ""
+        self._pack_count = 0
+        # True when blocks, a reference index, or records are in the pack. A
+        # consolidation brief alone is a request, not recalled memory.
+        self._pack_has_memory = False
+        # What the LAST prefetch handed Hermes, for the recall indicator: the
+        # base class asks that a stale prior count never be reported.
+        self._served_pack = ""
+        self._served_count = 0
+        self._served_has_memory = False
+        # Hermes hands a status callback to providers on the CLI surface only;
+        # gateway platforms travel a different path and get the brief through
+        # the pack instead. None means "say nothing here", never "fail".
+        self._status_callback = None
 
     @property
     def name(self) -> str:
@@ -121,6 +166,9 @@ class OmhMemoryProvider(_MemoryProviderBase):
         hermes_home = kwargs.get("hermes_home")
         self._hermes_home = Path(str(hermes_home)).expanduser() if hermes_home else None
         self._writes_enabled = str(kwargs.get("agent_context", "") or "") in _WRITING_CONTEXTS
+        self._project_home = _project_omh_home(kwargs.get("cwd"))
+        callback = kwargs.get("status_callback")
+        self._status_callback = callback if callable(callback) else None
         self._pack = self.render_pack()
         # A session that died rather than ended -- a killed process, a closed
         # laptop, a lost gateway -- never reaches on_session_end, so nothing
@@ -133,6 +181,8 @@ class OmhMemoryProvider(_MemoryProviderBase):
         return []
 
     def prefetch(self, query: str = "", *, session_id: str = "") -> str:
+        self._served_pack, self._served_count = self._pack, self._pack_count
+        self._served_has_memory = self._pack_has_memory
         return self._pack
 
     def queue_prefetch(
@@ -142,13 +192,34 @@ class OmhMemoryProvider(_MemoryProviderBase):
         session_id: str = "",
         now: datetime | None = None,
     ) -> None:
-        """Re-render for the next turn, which is where the base class puts this work."""
+        """Re-render for the next turn, which is where the base class puts this work.
+
+        Hermes queues with the turn that just finished, so the records are
+        ranked for the conversation as it stands, not for the next message.
+        """
+        self._query = str(query or "")
         self._pack = self.render_pack(now=now)
+
+    def recall_status(self) -> RecallStatus | None:
+        """What the last prefetch put into the turn, for Hermes' recall line.
+
+        Hermes prints ``🧠 OMH — recalled N memories`` through its status
+        channel -- CLI, TUI, and every gateway platform alike -- right after the
+        prefetch that carried it, so the user sees memory was used even when
+        the model says nothing about it. Nothing served, nothing said. A pack
+        that is only a reference-block index counts as content without a
+        discrete count, which Hermes renders generically; a pack that is only
+        a consolidation brief is a request, not memory, and says nothing.
+        """
+        if not self._served_pack or not self._served_has_memory:
+            return None
+        return RecallStatus(provider_label=PROVIDER_LABEL, count=self._served_count)
 
     def shutdown(self) -> None:
         """Hermes is closing. Last chance to leave a brief behind."""
         self._evaluate_if_due("shutdown")
-        self._pack = ""
+        self._pack, self._pack_count, self._pack_has_memory = "", 0, False
+        self._served_pack, self._served_count, self._served_has_memory = "", 0, False
 
     # -- Optional hooks -----------------------------------------------------
 
@@ -225,6 +296,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
             self._mutate_state(record_consolidation_observed)
             if not self._standing_reasons():
                 self._retire_stale_brief("memory_write")
+                self._say(f"🧹 {PROVIDER_LABEL} — memory consolidated ({action} on {target})")
 
     def on_session_end(self, messages: list[dict[str, Any]] | None = None) -> None:
         self._evaluate_if_due("session_end")
@@ -245,18 +317,33 @@ class OmhMemoryProvider(_MemoryProviderBase):
         return self.consolidation_due(trigger=trigger, messages_at_risk=messages_at_risk)
 
     def render_pack(self, *, now: datetime | None = None) -> str:
-        """System blocks in full, reference blocks by label only."""
+        """System blocks in full, reference blocks by label only, then the
+        reviewed records ranked for the queued query."""
         blocks = read_memory_blocks(self._omh_home)
         selection = self._block_selection(blocks=blocks, now=now)
         system_blocks = tuple(block for block in blocks if block.tier == SYSTEM_TIER)
         reference_blocks = tuple(block for block in blocks if block.tier == REFERENCE_TIER)
-        system = render_memory_blocks(
+        system, block_count = render_memory_blocks_counted(
             system_blocks,
             budget_chars=DEFAULT_SYSTEM_RENDER_BUDGET_CHARS,
             evaluations=selection.evaluations,
         )
         index = render_block_index(reference_blocks, evaluations=selection.evaluations)
-        return "\n".join(part for part in (system, index) if part)
+        records, record_count = render_memory_records(
+            rank_project_memory_records(read_project_memory_records(self._record_homes()), self._query)
+        )
+        self._pack_count = block_count + record_count
+        self._pack_has_memory = bool(system or index or records)
+        # The brief is a request, not a memory: it is served so the model can
+        # consolidate in this turn, and it never moves the recall count.
+        consolidation = render_consolidation_brief(read_latest_consolidation(self._omh_home))
+        return "\n".join(part for part in (system, index, records, consolidation) if part)
+
+    def _record_homes(self) -> tuple[Path, ...]:
+        """The project store first when there is one, then the user store."""
+        if self._project_home is not None and self._project_home != self._omh_home:
+            return (self._project_home, self._omh_home)
+        return (self._omh_home,)
 
     def consolidation_due(
         self,
@@ -294,6 +381,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
                 self._omh_home,
                 clear_after_consolidation(state, at=_utc_now(), reasons=reasons),
             )
+            self._say(consolidation_status_line(trigger, reasons))
         else:
             # Suppression keeps an unchanged `expiring_records:N` from re-firing,
             # which is right -- but the breakdown behind that N can still move
@@ -489,6 +577,20 @@ class OmhMemoryProvider(_MemoryProviderBase):
         path = self._omh_home / "memory" / "write_journal.jsonl"
         self._safely(lambda: _append_bounded_json_line(path, entry))
 
+    def _say(self, line: str) -> None:
+        """One status line through the host, where the host offered a channel.
+
+        Hermes passes `status_callback` to `initialize` on the CLI surface; it
+        prints there and forwards to the gateway status path. A failing
+        callback must not take down the hook that called it.
+        """
+        if self._status_callback is None or not line:
+            return
+        try:
+            self._status_callback(line)
+        except Exception:  # noqa: BLE001 - host callback; the memory hook must survive it
+            return
+
     @staticmethod
     def _safely(write) -> None:
         """A memory-provider write must never take down the turn that triggered it.
@@ -653,8 +755,76 @@ def _non_negative_int(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
+def render_consolidation_brief(brief: dict[str, Any] | None) -> str:
+    """The due brief as one bounded prompt section; "" when nothing is due.
+
+    Measured before this existed: 32 briefs in seven days on one machine,
+    every one written to disk, none ever read by a model -- the chat card
+    notice lives on the wrapper surface, and a Hermes turn saw nothing. So
+    `memory_writes_observed` stayed 0 at every consolidation. The section asks
+    for the consolidation and for one line to the user, which is the only
+    channel that reaches every platform Hermes speaks through.
+    """
+    if not brief or not brief.get("due"):
+        return ""
+    lines = [f'<memory_consolidation trigger="{_attr(brief.get("trigger", ""))}" raised_at="{_attr(brief.get("raised_at", ""))}">']
+    reasons = [str(item) for item in brief.get("reasons", []) if isinstance(item, str)]
+    for reason in reasons[:CONSOLIDATION_MAX_ITEMS]:
+        lines.append(f"  <reason>{_text(reason)}</reason>")
+    if len(reasons) > CONSOLIDATION_MAX_ITEMS:
+        lines.append(f'  <omitted reasons="{len(reasons) - CONSOLIDATION_MAX_ITEMS}" />')
+    plan = brief.get("eviction_plan") if isinstance(brief.get("eviction_plan"), dict) else {}
+    clusters = plan.get("duplicate_clusters") if isinstance(plan.get("duplicate_clusters"), list) else []
+    if clusters or plan.get("headroom_chars") is not None:
+        lines.append(
+            f'  <hermes_memory entries="{_attr(plan.get("entry_count", ""))}" headroom_chars="{_attr(plan.get("headroom_chars", ""))}"'
+            f' duplicate_clusters="{len(clusters)}" />'
+        )
+    requested = [str(item) for item in brief.get("requested_of_executor", []) if isinstance(item, str)]
+    for item in requested[:CONSOLIDATION_MAX_ITEMS]:
+        lines.append(f"  <do>{_text(item)}</do>")
+    lines.append("  <do>Then tell the user in one short line that OMH asked for memory consolidation and what you changed, or that nothing needed changing.</do>")
+    lines.append("</memory_consolidation>")
+    text = "\n".join(lines)
+    if len(text) > CONSOLIDATION_RENDER_BUDGET_CHARS:
+        text = text[: CONSOLIDATION_RENDER_BUDGET_CHARS - len("\n</memory_consolidation>")].rsplit("\n", 1)[0] + "\n</memory_consolidation>"
+    return text
+
+
+def consolidation_status_line(trigger: str, reasons: list[str]) -> str:
+    """The line a host prints when a brief fires: trigger and the first reason."""
+    first = reasons[0] if reasons else ""
+    more = f" +{len(reasons) - 1}" if len(reasons) > 1 else ""
+    return f"💤 {PROVIDER_LABEL} — memory consolidation due ({trigger}: {first}{more})"
+
+
+def _text(value: str) -> str:
+    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _attr(value: object) -> str:
+    return _text(str(value if value is not None else "")).replace('"', "&quot;")
+
+
 def _default_omh_home() -> Path:
     return Path(os.path.expandvars(os.environ.get("OMH_HOME", "") or "~/.omh")).expanduser()
+
+
+def _project_omh_home(cwd: object = None) -> Path | None:
+    """`<repository>/.omh` for the nearest `.git` above the working directory.
+
+    The same rule `omh --scope project` uses: a `.git` directory in a checkout
+    or a `.git` file in a linked worktree marks the root. Hermes passes no
+    working directory to `initialize`, so the process cwd stands in.
+    """
+    try:
+        start = Path(str(cwd)).expanduser() if cwd else Path.cwd()
+        for candidate in (start, *start.parents):
+            if (candidate / ".git").exists():
+                return candidate / ".omh"
+    except OSError:
+        return None
+    return None
 
 
 def _utc_now() -> str:

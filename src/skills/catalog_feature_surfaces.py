@@ -9,7 +9,7 @@ the surface template.
 
 from __future__ import annotations
 
-from .catalog_types import EXECUTION_WAIT_DISCIPLINE_RULE, _feature_surface_skill
+from .catalog_types import EXECUTION_WAIT_DISCIPLINE_RULE, _GENERAL_RECOVERY_NOTES, _feature_surface_skill
 
 _FEATURE_SURFACE_SKILLS = (
     _feature_surface_skill(
@@ -357,17 +357,22 @@ _FEATURE_SURFACE_SKILLS = (
             "browser_task_card/v1 metadata only",
             "browser_interaction_scope/v1: URL, allowed/prohibited actions, stop condition",
             "browser_auth_boundary/v1: supplied/missing/prohibited credentials",
-            "browser_observation_manifest/v1: observed traces only",
-            "Host lease schemas: docs/BROWSER-ADAPTER.md defines owner/adapter/version/task scope, capability caching, digest-only state and exact revision handles.",
+            "browser_observation_manifest/v1: observed screenshots/DOM notes/console/network/click traces only",
+            "Leases: docs/BROWSER-ADAPTER.md; owner/adapter/version/task scope, cached capabilities, digest-only state, exact revision handles.",
+            "browser_skill_promotion/v1: `omh web-qa promotion diff`, `approve` its exact digest, then `promote` one receipt; SKILL.md alone commits visibility",
         ),
         final_checklist=(
-            "Gate credentials, login, payments, destructive actions and exports; report only observed traces.",
-            "Host request admission, not enablement/adapter presence, gates browser schemas/context/callbacks/writes. Refuse foreign/stale/expired/released/ambiguous targets; no index fallback.",
-            "omh_browser blocks native browser_*; inert by default. Opted-in effects require exact approval: docs/BROWSER-EFFECTS.md.",
+            "Specify URL, allowed/prohibited actions, auth boundary, stop condition.",
+            "Gate credentials/login/payment/purchase/destruction/scraping/export; observed traces only.",
+            "Host request admission (not enablement/adapter presence) gates schemas/context/callbacks/writes. Refuse foreign/stale/expired/released/ambiguous targets; no index fallback.",
+            "omh_browser blocks native browser_*; inert by default. Opted-in effects need exact approval: docs/BROWSER-EFFECTS.md.",
         ),
         recovery_notes=(
-            "Ask for missing targets or confirmation; use visual-qa for visual correctness.",
-            "Refresh stale state once; never replay unknown work. Reuse acquisitions; only the owning adapter/version reaps. Release requires observed cleanup, not mutation approval.",
+            "Missing target/confirmation: ask; visual correctness: visual-qa.",
+            "Refresh stale state once; never replay unknown work. Reuse acquisitions; only owner adapter/version reaps. Release needs observed cleanup, not mutation approval.",
+            "Host receipt BLOCK: production click/submit, retry after auth/4xx/assertion/mutation failure, or over two transient read-only retries.",
+            "POSIX native agent-browser collector: cold-desktop anonymous read-only Chromium only; other engine/profile/fixture/locale/timezone: named blocker (unsupported_browser_engine_webkit), never substitution.",
+            "Trace drift: `promotion status` unlinks only managed SKILL.md, keeps generations/receipts; no autoheal/watch/global fallback.",
         ),
     ),
     _feature_surface_skill(
@@ -1297,6 +1302,7 @@ _FEATURE_SURFACE_SKILLS = (
         ),
         artifact_expectations=(
             "hermes_achievements_observation/v1 metadata-only payload from `omh achievements` when recorded",
+            "supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero",
         ),
     ),
     _feature_surface_skill(
@@ -1667,5 +1673,13 @@ _FEATURE_SURFACE_SKILLS = (
         boundary="A workflow learning trace, self-improvement store route, patch proposal, or export is process evidence for review. It is not automatic model training, memory mutation, skill mutation, wiki write, automation creation, execution, verification, CI, or merge evidence.",
         good_prompt="workflow-learning route this self-improvement note before deciding whether it is memory, skill, wiki, failure-retrospective, or automation material.",
         bad_prompt="workflow-learning silently patch the skill and claim future behavior is fixed.",
+        artifact_expectations=(
+            "workflow-learning/v1 metadata-only runtime or wrapper card when recorded",
+            "browser_skill_promotion_approval_receipt/v1 only through `omh web-qa promotion diff` then `approve --reviewed-diff-digest --reviewer` on an approved, replay-passing `omh web-qa trace`; every operation needs its own reviewed exact diff",
+        ),
+        recovery_notes=(
+            *_GENERAL_RECOVERY_NOTES,
+            "Native write policy `required` stops promotion as unsupported and `not_required` is not an approval; drift unlinks only the managed SKILL.md and keeps generations and receipts, and an incomplete promotion resumes only via explicit `retry --receipt-id`.",
+        ),
     ),
 )

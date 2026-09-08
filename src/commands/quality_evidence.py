@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 from ..installer import OmhError
 from ..quality.evidence_records import assess_quality_evidence, build_quality_evidence_package
+from ..quality.working_tree_fingerprint import working_tree_content_fingerprint
 from ..quality.language_diagnostic_evidence import (
     LANGUAGE_DIAGNOSTIC_CHECK_STATES,
     LANGUAGE_DIAGNOSTIC_OWNERS,
@@ -44,7 +45,12 @@ def cmd_quality_evidence_assess(args: argparse.Namespace) -> int:
     try:
         package = _json_object(args.package)
         observations = _json_list(args.observations_json, args.observations_file, "observations")
-        assessment = assess_quality_evidence(package, observations, omh_home=_paths(args).omh_home)
+        assessment = assess_quality_evidence(
+            package,
+            observations,
+            omh_home=_paths(args).omh_home,
+            current_fingerprint=working_tree_content_fingerprint(),
+        )
     except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         raise OmhError(str(exc)) from exc
     _print_json(assessment)

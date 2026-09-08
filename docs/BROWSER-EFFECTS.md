@@ -147,27 +147,38 @@ byte equality. Forwarding has zero retries and zero redirect following; every
 other request is aborted. Upload is a preselected synthetic fixture file with
 deterministic multipart bytes. This is not universal website classification.
 
-The QA script supplies trusted synthetic-fixture approvals, not a real human
-connector observation. It proves browser interception, durable ordering,
-readback, and cleanup without using accounts, models, or providers:
+Shipped, runnable checks:
 
 ```sh
-uv run python .omc/artifacts/issues-1391-1397/qa_browser_effects.py \
-  --artifacts .omc/artifacts/issues-1391-1397/effects-1392/my-unique-run
-uv run python .omc/artifacts/issues-1391-1397/qa_browser_effects_plugin.py \
-  --artifacts .omc/artifacts/issues-1391-1397/effects-1392/my-plugin-run
-PYTHONPATH=tests uv run python -m unittest tests/test_browser_effects_plugin.py -v
 PYTHONPATH=tests uv run python -m unittest tests/test_browser_effect_attempts.py -v
+PYTHONPATH=tests uv run python -m unittest tests/test_browser_effects_plugin.py -v
 PYTHONPATH=tests uv run python tools/benchmarks/browser_effects.py
 ```
 
-The QA artifact directory must not exist. JSON goes to stdout, progress to
-stderr, so concurrent callers select their own receipt destinations. Contexts,
-process descendants, loopback server, and temporary HOME/TMPDIR are owned by
-`finally`/context managers. A forced cleanup is not reported as clean evidence.
-The plugin driver uses installed Hermes `PluginContext`, registered `ToolEntry`
-handlers and real `PluginManager` hooks, including inner/outer definition-cache
-transitions. Its parent owns temporary roots through worker process exit.
-See `effects-1392/plugin-integration-report.md` in the issue artifacts for the
-original acceptance checklist mapped to final evidence. This local fixture proof
-does not claim arbitrary websites or a real human approval connector were tested.
+None of these start a browser. `test_browser_effect_attempts.py` drives
+`BrowserEffectEngine` with an in-process held-byte adapter and real SQLite/JSONL
+stores: preview holds without effect, one durable attempt and one readback
+receipt across replay, missing/denied/expired/model-supplied approvals fail
+before any attempt, opaque and unsupported paths are refused locally, expiry
+and revocation are rechecked before and after the durable write, stale or
+ambiguous handles fail before preview, payload/state/trace drift invalidates
+approval, unknown outcomes never resend, read-only and disabled paths touch
+no effect store or host, stores stay indexed/bounded/redacted, crash after a
+durable reservation reopens as unknown without resume, and binding capacity
+refuses without eviction. `test_browser_effects_plugin.py` registers the real
+plugin consumer with a synthetic host context: opt-in closed schema, every
+operation held before approval, exact replay with one receipt, budget sharing
+with inert reads, forged or missing host events failing closed, identity and
+task rechecks at approval, abort/release removing held bytes, native mutators
+staying blocked, and concurrent replays sharing one attempt. The benchmark
+measures only inert-read classification p95 against a 0.1 ms threshold and
+reports zero attempt-store operations, browser roundtrips, and provider calls.
+
+During development, maintainers also ran local drivers against the reference
+adapter with an already-installed Chromium, and against installed Hermes
+`PluginContext`, registered `ToolEntry` handlers and real `PluginManager`
+hooks, using trusted synthetic-fixture approvals. Those drivers are not
+distributed with the repository. Their results are maintainer-local fixture
+evidence for interception, durable ordering, readback, and cleanup on the
+loopback fixture only. They are not a real human approval connector
+observation and not evidence for arbitrary websites.

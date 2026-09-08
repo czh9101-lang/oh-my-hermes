@@ -1,0 +1,2062 @@
+{
+  "cases": {
+    "ambiguous_locator": {
+      "expected_outcome": "ambiguous_locator",
+      "ordinary_fallback": {
+        "browser_commands": 3,
+        "command_successes": 3,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/ambiguous_locator.html"
+            ],
+            "duration_ms": 531.637,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "46F72E3ED8784228EA37194A8CFB58D0",
+                "title": "",
+                "url": "http://127.0.0.1:65371/ambiguous_locator.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 12.017,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/ambiguous_locator.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"one\"},{\"index\":1,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"two\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 123.035,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Declared semantic contract plus native DOM snapshot; not model tokens.",
+        "contract": {
+          "action": "click",
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": false,
+        "latency_ms": 666.775,
+        "output": null,
+        "reason": "ambiguous_locator",
+        "supplied_context_utf8_bytes": 226
+      },
+      "promoted_resource_path": {
+        "browser_commands": 3,
+        "command_successes": 3,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/ambiguous_locator.html"
+            ],
+            "duration_ms": 541.348,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "BEB90CC8AAA671131DA92FA251FA77A1",
+                "title": "",
+                "url": "http://127.0.0.1:65371/ambiguous_locator.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 13.924,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/ambiguous_locator.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"one\"},{\"index\":1,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"two\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 125.987,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Installed resource bytes, derived semantic contract and native DOM snapshot; not model tokens.",
+        "contract": {
+          "action": "click",
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": false,
+        "end_to_end_latency_ms": 701.98,
+        "installed": {
+          "generation": "4dd76a7f29a85e9d8678a6b957de3250853084981a19d7654b152c8338b8e1a1",
+          "loaded_utf8_bytes": {
+            "SKILL.md": 2316,
+            "resources/4dd76a7f29a85e9d8678a6b957de3250853084981a19d7654b152c8338b8e1a1/manifest.json": 611,
+            "resources/4dd76a7f29a85e9d8678a6b957de3250853084981a19d7654b152c8338b8e1a1/procedure.md": 544,
+            "resources/4dd76a7f29a85e9d8678a6b957de3250853084981a19d7654b152c8338b8e1a1/trace.json": 2642
+          },
+          "status": "active",
+          "total_utf8_bytes": 6113,
+          "trace_id": "bwt-3a4f39fc213df26042bee10f"
+        },
+        "latency_ms": 681.345,
+        "output": null,
+        "reason": "ambiguous_locator",
+        "resource_load_ms": 20.635,
+        "supplied_context_utf8_bytes": 6339
+      },
+      "receipt_id": "8dfc3c65e6638e51ba46a7db6bb07d6d8f9bae0bb9016beceb67719e4f778c69",
+      "trace": {
+        "replay": "replayed",
+        "trace_digest": "3a4f39fc213df26042bee10f8afffdf5986abe77cbb4af7a97d3a6eea767f912",
+        "trace_id": "bwt-3a4f39fc213df26042bee10f"
+      }
+    },
+    "missing_locator": {
+      "expected_outcome": "zero_locator",
+      "ordinary_fallback": {
+        "browser_commands": 3,
+        "command_successes": 3,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/missing_locator.html"
+            ],
+            "duration_ms": 569.001,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "803E9CFE18BE67107D4B5B704AD514CA",
+                "title": "",
+                "url": "http://127.0.0.1:65371/missing_locator.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 7.152,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/missing_locator.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Different target\",\"id\":\"different\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 126.017,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Declared semantic contract plus native DOM snapshot; not model tokens.",
+        "contract": {
+          "action": "click",
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": false,
+        "latency_ms": 702.239,
+        "output": null,
+        "reason": "zero_locator",
+        "supplied_context_utf8_bytes": 183
+      },
+      "promoted_resource_path": {
+        "browser_commands": 3,
+        "command_successes": 3,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/missing_locator.html"
+            ],
+            "duration_ms": 552.879,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "EA04FE50784F4E40F1778124D7613FC9",
+                "title": "",
+                "url": "http://127.0.0.1:65371/missing_locator.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 9.572,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/missing_locator.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Different target\",\"id\":\"different\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 116.965,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Installed resource bytes, derived semantic contract and native DOM snapshot; not model tokens.",
+        "contract": {
+          "action": "click",
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": false,
+        "end_to_end_latency_ms": 700.379,
+        "installed": {
+          "generation": "4b59741b587d71dc67d39b941d7205de28343ee007e22857a77b0a6299da052b",
+          "loaded_utf8_bytes": {
+            "SKILL.md": 2314,
+            "resources/4b59741b587d71dc67d39b941d7205de28343ee007e22857a77b0a6299da052b/manifest.json": 611,
+            "resources/4b59741b587d71dc67d39b941d7205de28343ee007e22857a77b0a6299da052b/procedure.md": 544,
+            "resources/4b59741b587d71dc67d39b941d7205de28343ee007e22857a77b0a6299da052b/trace.json": 2642
+          },
+          "status": "active",
+          "total_utf8_bytes": 6111,
+          "trace_id": "bwt-c3a7ee0c644cbf6b2f6dd190"
+        },
+        "latency_ms": 679.482,
+        "output": null,
+        "reason": "zero_locator",
+        "resource_load_ms": 20.897,
+        "supplied_context_utf8_bytes": 6294
+      },
+      "receipt_id": "d84971e40333edd10954ea52cd8a54fdbac919c7bd0399e747c7cab3803dbe55",
+      "trace": {
+        "replay": "replayed",
+        "trace_digest": "c3a7ee0c644cbf6b2f6dd190358af2d9fb6a05d720ca22f7625c021cffb882ab",
+        "trace_id": "bwt-c3a7ee0c644cbf6b2f6dd190"
+      }
+    },
+    "schema_change": {
+      "expected_outcome": "schema_mismatch",
+      "ordinary_fallback": {
+        "browser_commands": 4,
+        "command_successes": 4,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/schema_change.html"
+            ],
+            "duration_ms": 506.414,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "57070F611AB19686717B5987AAE22337",
+                "title": "",
+                "url": "http://127.0.0.1:65371/schema_change.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 7.111,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/schema_change.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"continue\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "const el=document.getElementById(\"continue\");if(!el)throw new Error('snapshot_target_missing');el.click();JSON.stringify(window.__omhOutput||null)"
+            ],
+            "duration_ms": 8.424,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/schema_change.html",
+                "result": "{\"changed\":\"confirmed\"}"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 126.952,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Declared semantic contract plus native DOM snapshot; not model tokens.",
+        "contract": {
+          "action": "click",
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": false,
+        "latency_ms": 648.991,
+        "output": {
+          "changed": "confirmed"
+        },
+        "reason": "schema_mismatch",
+        "supplied_context_utf8_bytes": 174
+      },
+      "promoted_resource_path": {
+        "browser_commands": 4,
+        "command_successes": 4,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/schema_change.html"
+            ],
+            "duration_ms": 503.77,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "21F9E3608CEFAF0C6CE96EF041B0F83C",
+                "title": "",
+                "url": "http://127.0.0.1:65371/schema_change.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 10.207,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/schema_change.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"continue\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "const el=document.getElementById(\"continue\");if(!el)throw new Error('snapshot_target_missing');el.click();JSON.stringify(window.__omhOutput||null)"
+            ],
+            "duration_ms": 13.218,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/schema_change.html",
+                "result": "{\"changed\":\"confirmed\"}"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 126.364,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Installed resource bytes, derived semantic contract and native DOM snapshot; not model tokens.",
+        "contract": {
+          "action": "click",
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": false,
+        "end_to_end_latency_ms": 672.774,
+        "installed": {
+          "generation": "56f6603d5d03319cd126d4f1f6d35acbf0459f2180b6e656f4930f818eb2e553",
+          "loaded_utf8_bytes": {
+            "SKILL.md": 2312,
+            "resources/56f6603d5d03319cd126d4f1f6d35acbf0459f2180b6e656f4930f818eb2e553/manifest.json": 611,
+            "resources/56f6603d5d03319cd126d4f1f6d35acbf0459f2180b6e656f4930f818eb2e553/procedure.md": 544,
+            "resources/56f6603d5d03319cd126d4f1f6d35acbf0459f2180b6e656f4930f818eb2e553/trace.json": 2642
+          },
+          "status": "active",
+          "total_utf8_bytes": 6109,
+          "trace_id": "bwt-9d6a8bde6629bc62c0e5ec5f"
+        },
+        "latency_ms": 653.649,
+        "output": {
+          "changed": "confirmed"
+        },
+        "reason": "schema_mismatch",
+        "resource_load_ms": 19.125,
+        "supplied_context_utf8_bytes": 6283
+      },
+      "receipt_id": "ce13aef7ce513774d466a0a35e7ae27d5651e01190f223fb957aa2b6efd12752",
+      "trace": {
+        "replay": "replayed",
+        "trace_digest": "9d6a8bde6629bc62c0e5ec5fab6161b9fa068d1e529520e0d86cb6001743482f",
+        "trace_id": "bwt-9d6a8bde6629bc62c0e5ec5f"
+      }
+    },
+    "stable": {
+      "expected_outcome": "matched",
+      "ordinary_fallback": {
+        "browser_commands": 4,
+        "command_successes": 4,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/stable.html"
+            ],
+            "duration_ms": 612.745,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "B07B572E39AD692B22C3A38CFDDF3DE1",
+                "title": "",
+                "url": "http://127.0.0.1:65371/stable.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 7.167,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"continue\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "const el=document.getElementById(\"continue\");if(!el)throw new Error('snapshot_target_missing');el.click();JSON.stringify(window.__omhOutput||null)"
+            ],
+            "duration_ms": 12.805,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "{\"confirmation\":\"confirmed\"}"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 122.853,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Declared semantic contract plus native DOM snapshot; not model tokens.",
+        "contract": {
+          "action": "click",
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": true,
+        "latency_ms": 755.734,
+        "output": {
+          "confirmation": "confirmed"
+        },
+        "reason": "matched",
+        "supplied_context_utf8_bytes": 174
+      },
+      "promoted_resource_path": {
+        "browser_commands": 4,
+        "command_successes": 4,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/stable.html"
+            ],
+            "duration_ms": 573.064,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "95EDA280C21034E8AF6A0C90C6B7D4B7",
+                "title": "",
+                "url": "http://127.0.0.1:65371/stable.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 6.608,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"continue\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "const el=document.getElementById(\"continue\");if(!el)throw new Error('snapshot_target_missing');el.click();JSON.stringify(window.__omhOutput||null)"
+            ],
+            "duration_ms": 6.73,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "{\"confirmation\":\"confirmed\"}"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 125.445,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Installed resource bytes, derived semantic contract and native DOM snapshot; not model tokens.",
+        "contract": {
+          "action": "click",
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": true,
+        "end_to_end_latency_ms": 733.443,
+        "installed": {
+          "generation": "5058159b368bf1db6d77adbb697102976c1dc89728d2da6c31945e1c895fba3f",
+          "loaded_utf8_bytes": {
+            "SKILL.md": 2305,
+            "resources/5058159b368bf1db6d77adbb697102976c1dc89728d2da6c31945e1c895fba3f/manifest.json": 611,
+            "resources/5058159b368bf1db6d77adbb697102976c1dc89728d2da6c31945e1c895fba3f/procedure.md": 544,
+            "resources/5058159b368bf1db6d77adbb697102976c1dc89728d2da6c31945e1c895fba3f/trace.json": 2642
+          },
+          "status": "active",
+          "total_utf8_bytes": 6102,
+          "trace_id": "bwt-e25f0670a300297ba9151af5"
+        },
+        "latency_ms": 711.928,
+        "output": {
+          "confirmation": "confirmed"
+        },
+        "reason": "matched",
+        "resource_load_ms": 21.515,
+        "supplied_context_utf8_bytes": 6276
+      },
+      "receipt_id": "407f8f8620f265b486d12bf6f6dd531f28645e5de73e44d03f31a99b8af30071",
+      "trace": {
+        "replay": "replayed",
+        "trace_digest": "e25f0670a300297ba9151af5eec4c088539fe3db129e9bde9c172551e24edfdc",
+        "trace_id": "bwt-e25f0670a300297ba9151af5"
+      }
+    }
+  },
+  "corpus": [
+    "stable",
+    "missing_locator",
+    "ambiguous_locator",
+    "schema_change"
+  ],
+  "host_sources": {
+    "ambiguous_locator": {
+      "adapter_revision": "agent-browser/v0.35.1",
+      "capture": {
+        "browser_commands": 4,
+        "command_successes": 4,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/stable.html"
+            ],
+            "duration_ms": 539.787,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "E0134AE49C2531C3CC00C4B3F4D646D0",
+                "title": "",
+                "url": "http://127.0.0.1:65371/stable.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 8.262,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"continue\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "const el=document.getElementById(\"continue\");if(!el)throw new Error('snapshot_target_missing');el.click();JSON.stringify(window.__omhOutput||null)"
+            ],
+            "duration_ms": 8.546,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "{\"confirmation\":\"confirmed\"}"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 125.188,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Declared semantic contract plus native DOM snapshot; not model tokens.",
+        "contract": {
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": true,
+        "latency_ms": 681.865,
+        "output": {
+          "confirmation": "confirmed"
+        },
+        "reason": "matched",
+        "supplied_context_utf8_bytes": 157
+      },
+      "environment": {
+        "browser": "agent-browser/v0.35.1",
+        "platform": "darwin",
+        "python": "3.13.15",
+        "url": "http://127.0.0.1:65371/stable.html"
+      },
+      "git_revision": "256d6c8ed7384450e22ff8e32dee046124188b6d"
+    },
+    "drift": {
+      "adapter_revision": "agent-browser/v0.35.1",
+      "capture": {
+        "browser_commands": 4,
+        "command_successes": 4,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/stable.html"
+            ],
+            "duration_ms": 514.121,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "EDFD2313C048B58BF604BDABDC54706A",
+                "title": "",
+                "url": "http://127.0.0.1:65371/stable.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 12.746,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"continue\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "const el=document.getElementById(\"continue\");if(!el)throw new Error('snapshot_target_missing');el.click();JSON.stringify(window.__omhOutput||null)"
+            ],
+            "duration_ms": 10.297,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "{\"confirmation\":\"confirmed\"}"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 125.168,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Declared semantic contract plus native DOM snapshot; not model tokens.",
+        "contract": {
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": true,
+        "latency_ms": 662.419,
+        "output": {
+          "confirmation": "confirmed"
+        },
+        "reason": "matched",
+        "supplied_context_utf8_bytes": 157
+      },
+      "environment": {
+        "browser": "agent-browser/v0.35.1",
+        "platform": "darwin",
+        "python": "3.13.15",
+        "url": "http://127.0.0.1:65371/stable.html"
+      },
+      "git_revision": "256d6c8ed7384450e22ff8e32dee046124188b6d"
+    },
+    "missing_locator": {
+      "adapter_revision": "agent-browser/v0.35.1",
+      "capture": {
+        "browser_commands": 4,
+        "command_successes": 4,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/stable.html"
+            ],
+            "duration_ms": 524.423,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "D709905DF531F843ADB3D503D21949D1",
+                "title": "",
+                "url": "http://127.0.0.1:65371/stable.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 8.8,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"continue\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "const el=document.getElementById(\"continue\");if(!el)throw new Error('snapshot_target_missing');el.click();JSON.stringify(window.__omhOutput||null)"
+            ],
+            "duration_ms": 9.559,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "{\"confirmation\":\"confirmed\"}"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 126.452,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Declared semantic contract plus native DOM snapshot; not model tokens.",
+        "contract": {
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": true,
+        "latency_ms": 669.325,
+        "output": {
+          "confirmation": "confirmed"
+        },
+        "reason": "matched",
+        "supplied_context_utf8_bytes": 157
+      },
+      "environment": {
+        "browser": "agent-browser/v0.35.1",
+        "platform": "darwin",
+        "python": "3.13.15",
+        "url": "http://127.0.0.1:65371/stable.html"
+      },
+      "git_revision": "256d6c8ed7384450e22ff8e32dee046124188b6d"
+    },
+    "schema_change": {
+      "adapter_revision": "agent-browser/v0.35.1",
+      "capture": {
+        "browser_commands": 4,
+        "command_successes": 4,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/stable.html"
+            ],
+            "duration_ms": 515.283,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "917C0885137903B179AAE63040F3FFAA",
+                "title": "",
+                "url": "http://127.0.0.1:65371/stable.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 9.357,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"continue\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "const el=document.getElementById(\"continue\");if(!el)throw new Error('snapshot_target_missing');el.click();JSON.stringify(window.__omhOutput||null)"
+            ],
+            "duration_ms": 7.148,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "{\"confirmation\":\"confirmed\"}"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 116.933,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Declared semantic contract plus native DOM snapshot; not model tokens.",
+        "contract": {
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": true,
+        "latency_ms": 648.82,
+        "output": {
+          "confirmation": "confirmed"
+        },
+        "reason": "matched",
+        "supplied_context_utf8_bytes": 157
+      },
+      "environment": {
+        "browser": "agent-browser/v0.35.1",
+        "platform": "darwin",
+        "python": "3.13.15",
+        "url": "http://127.0.0.1:65371/stable.html"
+      },
+      "git_revision": "256d6c8ed7384450e22ff8e32dee046124188b6d"
+    },
+    "stable": {
+      "adapter_revision": "agent-browser/v0.35.1",
+      "capture": {
+        "browser_commands": 4,
+        "command_successes": 4,
+        "commands": [
+          {
+            "argv": [
+              "open",
+              "http://127.0.0.1:65371/stable.html"
+            ],
+            "duration_ms": 708.804,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": true,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_attempted"
+                },
+                "targetId": "43378794632ECEC7F529B97FA54E0DAC",
+                "title": "",
+                "url": "http://127.0.0.1:65371/stable.html"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "JSON.stringify(Array.from(document.querySelectorAll('button,[role=button]')).map((el,index)=>({index,role:el.getAttribute('role')||el.tagName.toLowerCase(),name:(el.getAttribute('aria-label')||el.textContent||'').trim(),id:el.id})))"
+            ],
+            "duration_ms": 7.759,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "[{\"index\":0,\"role\":\"button\",\"name\":\"Continue\",\"id\":\"continue\"}]"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "eval",
+              "const el=document.getElementById(\"continue\");if(!el)throw new Error('snapshot_target_missing');el.click();JSON.stringify(window.__omhOutput||null)"
+            ],
+            "duration_ms": 6.049,
+            "payload": {
+              "data": {
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": true,
+                    "engine": "chrome",
+                    "launchHash": 7707568497978554591
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": true,
+                  "saveStatus": "not_attempted"
+                },
+                "origin": "http://127.0.0.1:65371/stable.html",
+                "result": "{\"confirmation\":\"confirmed\"}"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          },
+          {
+            "argv": [
+              "close"
+            ],
+            "duration_ms": 121.161,
+            "payload": {
+              "data": {
+                "closed": true,
+                "lifecycle": {
+                  "effectiveLaunch": {
+                    "browserLaunched": false,
+                    "engine": "chrome",
+                    "launchHash": null
+                  },
+                  "launched": false,
+                  "relaunchedBrowser": false,
+                  "restartedBackground": false,
+                  "restoreStatus": "not_configured",
+                  "reused": false,
+                  "saveStatus": "not_configured"
+                },
+                "restoreStatus": "not_configured",
+                "saveStatus": "not_configured"
+              },
+              "error": null,
+              "success": true
+            },
+            "returncode": 0,
+            "stderr": "",
+            "success": true
+          }
+        ],
+        "context_basis": "Declared semantic contract plus native DOM snapshot; not model tokens.",
+        "contract": {
+          "locator": {
+            "kind": "role",
+            "name": "Continue",
+            "role": "button"
+          },
+          "output_fields": [
+            "confirmation"
+          ]
+        },
+        "correct": true,
+        "latency_ms": 843.885,
+        "output": {
+          "confirmation": "confirmed"
+        },
+        "reason": "matched",
+        "supplied_context_utf8_bytes": 157
+      },
+      "environment": {
+        "browser": "agent-browser/v0.35.1",
+        "platform": "darwin",
+        "python": "3.13.15",
+        "url": "http://127.0.0.1:65371/stable.html"
+      },
+      "git_revision": "256d6c8ed7384450e22ff8e32dee046124188b6d"
+    }
+  },
+  "lifecycle": {
+    "drift_native_preflight": {
+      "lint_errors": [],
+      "package_digest": "1cd0ba38ad887b63a714c26391cf5d1e1d0ec1a5f0b66a464794c46863a808cd",
+      "policy": {
+        "approval": "not_applicable",
+        "requirement": "not_required",
+        "revision": "910c2fa266c1e5797dcd607cc67ffe2d95a2d2df5f03ece45651c7bfef633c4e",
+        "support": "available"
+      },
+      "project_root": "/private/var/folders/45/9gtdct614mz4rplqs209nykm0000gn/T/omh-browser-promotion-v9kdqlm1/project",
+      "schema_version": "browser_skill_promotion_native_preflight/v1",
+      "security_verdict": "safe",
+      "structure_error": null,
+      "trusted": true
+    },
+    "drift_replay": "stale",
+    "drift_status": "stale",
+    "removal": "removed",
+    "repeat_reused": true,
+    "rollback": "rolled_back"
+  },
+  "metrics": {
+    "correct_promoted_cases": 4,
+    "false_successes": 0,
+    "live_effect_matches": 1,
+    "model_context_null_reason": "no model prompt or context surface was invoked",
+    "model_context_utf8_bytes": null,
+    "total_cases": 4
+  },
+  "native_preflights": {
+    "ambiguous_locator": {
+      "lint_errors": [],
+      "package_digest": "8dd4056ae15295aae6078f8c7e1772c9b41e0bcf4078873da54a8642d0f0bd00",
+      "policy": {
+        "approval": "not_applicable",
+        "requirement": "not_required",
+        "revision": "910c2fa266c1e5797dcd607cc67ffe2d95a2d2df5f03ece45651c7bfef633c4e",
+        "support": "available"
+      },
+      "project_root": "/private/var/folders/45/9gtdct614mz4rplqs209nykm0000gn/T/omh-browser-promotion-v9kdqlm1/project",
+      "schema_version": "browser_skill_promotion_native_preflight/v1",
+      "security_verdict": "safe",
+      "structure_error": null,
+      "trusted": true
+    },
+    "missing_locator": {
+      "lint_errors": [],
+      "package_digest": "e237ef0d09c0379be23e707a6c059e18197e723664bcdc6c07b65a309b9ea727",
+      "policy": {
+        "approval": "not_applicable",
+        "requirement": "not_required",
+        "revision": "910c2fa266c1e5797dcd607cc67ffe2d95a2d2df5f03ece45651c7bfef633c4e",
+        "support": "available"
+      },
+      "project_root": "/private/var/folders/45/9gtdct614mz4rplqs209nykm0000gn/T/omh-browser-promotion-v9kdqlm1/project",
+      "schema_version": "browser_skill_promotion_native_preflight/v1",
+      "security_verdict": "safe",
+      "structure_error": null,
+      "trusted": true
+    },
+    "schema_change": {
+      "lint_errors": [],
+      "package_digest": "a669e0e913eb955e916eaa0792131ce5ed07654d8357772d3903395e87526515",
+      "policy": {
+        "approval": "not_applicable",
+        "requirement": "not_required",
+        "revision": "910c2fa266c1e5797dcd607cc67ffe2d95a2d2df5f03ece45651c7bfef633c4e",
+        "support": "available"
+      },
+      "project_root": "/private/var/folders/45/9gtdct614mz4rplqs209nykm0000gn/T/omh-browser-promotion-v9kdqlm1/project",
+      "schema_version": "browser_skill_promotion_native_preflight/v1",
+      "security_verdict": "safe",
+      "structure_error": null,
+      "trusted": true
+    },
+    "stable": {
+      "lint_errors": [],
+      "package_digest": "7d225537748d2d1fa6c005b454aea1d2227144fecc01867d8a4e8ee64fa6a33f",
+      "policy": {
+        "approval": "not_applicable",
+        "requirement": "not_required",
+        "revision": "910c2fa266c1e5797dcd607cc67ffe2d95a2d2df5f03ece45651c7bfef633c4e",
+        "support": "available"
+      },
+      "project_root": "/private/var/folders/45/9gtdct614mz4rplqs209nykm0000gn/T/omh-browser-promotion-v9kdqlm1/project",
+      "schema_version": "browser_skill_promotion_native_preflight/v1",
+      "security_verdict": "safe",
+      "structure_error": null,
+      "trusted": true
+    }
+  },
+  "schema_version": "browser_skill_promotion_benchmark/v2",
+  "scope": "isolated localhost benchmark; no model invocation or production-site claim",
+  "status": "PASS"
+}

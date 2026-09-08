@@ -19,6 +19,8 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
+from .temporal_source_receipts import validate_temporal_source_receipt
+
 RESEARCH_BRIEFING_SCHEMA_VERSION = "research_briefing/v1"
 
 #: The interview answer that decides which document the run produces.
@@ -260,7 +262,40 @@ def _source_errors(sources: list[Any]) -> list[str]:
             issues.append(f"{where}: source_class must be one of {', '.join(BRIEFING_SOURCE_CLASSES)}")
         if not _text(source.get("retrieved_on")):
             issues.append(f"{where}: retrieved_on is required for a cited source")
+        issues.extend(f"{where}: {problem}" for problem in _source_receipt_errors(source))
     return issues
+
+
+def _source_receipt_errors(source: dict[str, Any]) -> list[str]:
+    """A source may carry its `temporal_source_receipt/v1`, unchanged.
+
+    The briefing is a consumer, not an author: it validates the receipt with
+    the receipt's own validator and refuses a source whose class or URL
+    disagrees with it, because a receipt whose meaning the citation contradicts
+    has not been preserved.
+    """
+    receipt = source.get("temporal_source_receipt")
+    if receipt is None:
+        return []
+    issues = validate_temporal_source_receipt(receipt)
+    if issues:
+        return issues
+    if _text(source.get("source_class")) != receipt["source_class"]:
+        issues.append("source_class must match the temporal_source_receipt it carries")
+    if _text(source.get("url")) and _text(source.get("url")) != receipt["source_url"]:
+        issues.append("url must match the temporal_source_receipt source_url it carries")
+    return issues
+
+
+def _source_capture_note(source: dict[str, Any]) -> str:
+    """The capture clock, kept apart from the retrieval clock the line already carries."""
+    receipt = source.get("temporal_source_receipt")
+    if not isinstance(receipt, dict):
+        return ""
+    if receipt.get("evidence_kind") == "live_page":
+        return ", live page"
+    captured = _text(receipt.get("captured_at")) or "capture time unknown"
+    return f", historical capture {captured} via {receipt.get('capture_provider', '')}"
 
 
 def build_research_briefing(
@@ -375,7 +410,8 @@ def render_research_briefing_markdown(value: Any) -> str:
         for source in sources:
             location = f" - {source['url']}" if _text(source.get("url")) else ""
             lines.append(
-                f"- {source['title']}{location} ({source['source_class']}, retrieved {source['retrieved_on']})"
+                f"- {source['title']}{location} ({source['source_class']}, retrieved {source['retrieved_on']}"
+                f"{_source_capture_note(source)})"
             )
         lines.append("")
     lines.extend([f"> {value['claim_boundary']}", ""])
@@ -447,10 +483,11 @@ def render_research_briefing_page(value: Any) -> str:
     source_block = (
         f"<section><h2>{escape(_caption(value, 'sources'))}</h2><ol>"
         + "".join(
-            "<li>{title}<span class=\"muted\"> &middot; {cls} &middot; retrieved {stamp}</span></li>".format(
+            "<li>{title}<span class=\"muted\"> &middot; {cls} &middot; retrieved {stamp}{capture}</span></li>".format(
                 title=escape(str(source.get("title", ""))),
                 cls=escape(str(source.get("source_class", ""))),
                 stamp=escape(str(source.get("retrieved_on", ""))),
+                capture=escape(_source_capture_note(source)),
             )
             for source in sources
         )

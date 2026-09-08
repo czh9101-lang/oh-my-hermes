@@ -58,7 +58,11 @@ def _utc_now() -> str:
 
 
 def _fsync_parent_directory(path: Path) -> None:
-    """Persist directory entries after first database creation."""
+    """Add a POSIX directory flush after first database creation."""
+    if os.name == "nt":
+        # Windows CRT cannot open directories. SQLite's FULL commit already
+        # uses its native sync; this adds no separate directory guarantee there.
+        return
     descriptor = os.open(path, os.O_RDONLY)
     try:
         os.fsync(descriptor)
@@ -338,6 +342,9 @@ class AttemptStore:
             connection.execute("PRAGMA journal_mode = DELETE")
             connection.execute("PRAGMA synchronous = FULL")
             connection.execute("PRAGMA foreign_keys = ON")
+            # Publish the schema atomically with one FULL commit, not one per DDL.
+            # Deferred BEGIN keeps existing-schema reads free of writer locks.
+            connection.execute("BEGIN")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS egress_attempts (
@@ -373,9 +380,11 @@ class AttemptStore:
                 )
                 """
             )
+            connection.commit()
             return connection, created
         except (sqlite3.DatabaseError, sqlite3.OperationalError, OSError) as exc:
             if connection is not None:
+                # Closing rolls back any uncommitted schema transaction.
                 connection.close()
             raise AttemptStoreError(f"egress attempt storage failed: {exc}") from exc
 

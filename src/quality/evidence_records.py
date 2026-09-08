@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from ..local_store import read_json_object_result
+from .working_tree_fingerprint import WorkingTreeFingerprint
 
 QUALITY_EVIDENCE_PACKAGE_SCHEMA = "quality_evidence_package/v1"
 # `observed_tree` was added to the observation as an optional field and the
@@ -230,6 +231,7 @@ def validate_quality_evidence_observation(
 def assess_quality_evidence(
     package: Mapping[str, object], observations: Sequence[Mapping[str, object]] = (), *, now: datetime | None = None,
     omh_home: str | Path | None = None, current_tree: str | None = None,
+    current_fingerprint: WorkingTreeFingerprint | None = None,
 ) -> dict[str, object]:
     """Derive independent dimensions and fail closed on drift or self-review.
 
@@ -250,12 +252,19 @@ def assess_quality_evidence(
     source = _source_from_package(package)
     valid: list[Mapping[str, object]] = []
     reasons: list[str] = []
+    if current_fingerprint is not None and not current_fingerprint.authoritative:
+        reasons.append("current_tree_unavailable")
+    authoritative_tree = (
+        current_fingerprint.fingerprint
+        if current_fingerprint is not None and current_fingerprint.authoritative
+        else current_tree
+    )
     for item in observations:
         errors = validate_quality_evidence_observation(item, package)
         if errors:
             reasons.extend(errors)
             continue
-        if _observed_tree_is_stale(item, current_tree):
+        if _observed_tree_is_stale(item, authoritative_tree):
             reasons.append("stale_tree")
             continue
         if item.get("independence") == "self_review_only":
@@ -282,7 +291,7 @@ def assess_quality_evidence(
         reasons.append("contradictory_observations")
         scenario_state = "unsatisfied"
     freshness = "satisfied" if valid and all(dict(item.get("source", {})) == source for item in valid) else "unsatisfied" if "source_mismatch" in reasons else "unknown"
-    if "stale_tree" in reasons:
+    if "stale_tree" in reasons or "current_tree_unavailable" in reasons:
         # A dropped stale observation must not leave freshness reading
         # "satisfied" off the observations that survived beside it.
         freshness = "unsatisfied"

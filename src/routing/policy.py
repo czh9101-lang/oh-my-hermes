@@ -4804,6 +4804,27 @@ WEB_RESEARCH_BEFORE_PROCESS_GUARD = RoutingGuardRule(
     why="Matched guard/trigger metadata; web, source, or freshness requests should start with one cited retrieval round.",
     activation_status="active",
 )
+POINT_IN_TIME_WEB_GUARD = RoutingGuardRule(
+    id="point_in_time_web_before_live_lookup",
+    rule=(
+        "Explicit point-in-time web requests (as of a date, archived captures, then versus now) should route "
+        "to the web lookup lane with historical claims bound to temporal_source_receipt/v1."
+    ),
+    matched_label="guard:point_in_time_web",
+    # The lookup lane only. Boosting `research` too ties the two lanes at the
+    # injected score and the router asks which one instead of answering; the
+    # lookup lane's own guidance hands an expanding as-of question to `research`.
+    preferred_skills=("web-research",),
+    # Above the operator fast-path score (13) and the browser/workspace
+    # operator lanes a page or snapshot noun otherwise reaches, so an as-of
+    # question lands on evidence discipline rather than a live page card.
+    score_boost=40,
+    why=(
+        "Matched point-in-time web language; historical claims need an eligible capture receipt at or before "
+        "the cutoff, and live pages stay separate current evidence."
+    ),
+    activation_status="active",
+)
 SOURCE_FINDER_GUARD = RoutingGuardRule(
     id="source_finder_before_generic_web_research",
     rule="Typed source candidate acquisition should route to source-finder before generic web research.",
@@ -5184,6 +5205,7 @@ ROUTING_GUARD_RULES = (
     SCHEDULED_OPS_BLUEPRINT_GUARD,
     SOURCE_FINDER_GUARD,
     WEB_RESEARCH_BEFORE_PROCESS_GUARD,
+    POINT_IN_TIME_WEB_GUARD,
     MISSED_WORKFLOW_WEB_RESEARCH_GUARD,
     MISSED_WORKFLOW_OPERATING_RHYTHM_GUARD,
     GITHUB_ISSUE_INTAKE_GUARD,
@@ -5512,7 +5534,11 @@ def _active_routing_guard_rules_cached(
         rules.append(DEEP_INTERVIEW_GUARD)
     if _persistent_completion_guard_applies(normalized_query, query_tokens):
         rules.append(PERSISTENT_COMPLETION_GUARD)
-    if _research_brief_guard_applies(normalized_query, query_tokens):
+    # An as-of question about a page is an evidence question before it is a
+    # market brief or a browser session: the two lanes a page or pricing noun
+    # otherwise reaches stand down while the point-in-time guard is active.
+    point_in_time_web_applies = _point_in_time_web_guard_applies(normalized_query, query_tokens)
+    if _research_brief_guard_applies(normalized_query, query_tokens) and not point_in_time_web_applies:
         rules.append(RESEARCH_BRIEF_GUARD)
     if _strategy_brief_guard_applies(normalized_query, query_tokens):
         rules.append(STRATEGY_BRIEF_GUARD)
@@ -5603,6 +5629,8 @@ def _active_routing_guard_rules_cached(
         rules.append(MISSED_WORKFLOW_OPERATING_RHYTHM_GUARD)
     if _web_research_guard_applies(normalized_query, query_tokens) and not paper_learning_applies and not source_finder_applies:
         rules.append(WEB_RESEARCH_BEFORE_PROCESS_GUARD)
+    if point_in_time_web_applies and not paper_learning_applies and not source_finder_applies:
+        rules.append(POINT_IN_TIME_WEB_GUARD)
     if _missed_workflow_research_guard_applies(normalized_query, query_tokens):
         rules.append(MISSED_WORKFLOW_WEB_RESEARCH_GUARD)
     if _github_issue_intake_guard_applies(normalized_query, query_tokens):
@@ -5694,6 +5722,7 @@ def _active_routing_guard_rules_cached(
     if (
         not direct_coding_task_applies
         and not feedback_before_coding_applies
+        and not point_in_time_web_applies
         and _browser_operator_guard_applies(normalized_query, query_tokens)
     ):
         rules.append(BROWSER_OPERATOR_GUARD)
@@ -7027,6 +7056,132 @@ def _web_research_guard_applies(normalized_query: str, query_tokens: set[str]) -
             "자료 찾아",
         ),
     )
+
+
+# A point-in-time web request names a cutoff or a historical capture. "as of"
+# alone is not one: a status report ("as of today I'm done") and a definition
+# question both carry it, so every phrase here must meet a web context below
+# before the guard fires.
+_POINT_IN_TIME_WEB_PHRASES = (
+    "as of ",
+    "archived capture",
+    "archived captures",
+    "archived snapshot",
+    "archived version",
+    "archived copy",
+    "archive capture",
+    "archive snapshot",
+    "web archive",
+    "wayback",
+    "then versus now",
+    "then vs now",
+    "then vs. now",
+    "then and now",
+    "as it was on",
+    "as it was in",
+    "as it looked on",
+    "what did the page say",
+    "what was known",
+    "point in time",
+    "point-in-time",
+    "earlier snapshot",
+    "historical capture",
+    "historical snapshot",
+    "historical version",
+    "아카이브 캡처",
+    "아카이브된",
+    "아카이브 스냅샷",
+    "당시 기준",
+    "그 시점 기준",
+    "시점 기준으로",
+    "일 기준으로",
+    "과거 버전",
+    "당시 페이지",
+    "그때 페이지",
+    "웨이백",
+    "그때랑 지금",
+    "당시와 지금",
+    "アーカイブ",
+    "当時の",
+    "時点で",
+    "存档快照",
+    "当时的页面",
+    "截至",
+)
+_POINT_IN_TIME_WEB_CONTEXT_TOKENS = _normalized_token_set(
+    {
+        "web",
+        "page",
+        "pages",
+        "site",
+        "website",
+        "url",
+        "docs",
+        "documentation",
+        "source",
+        "sources",
+        "article",
+        "post",
+        "pricing",
+        "homepage",
+        "changelog",
+        "announcement",
+        "capture",
+        "captures",
+        "archive",
+        "archived",
+        "snapshot",
+        "wayback",
+    }
+)
+_POINT_IN_TIME_WEB_CONTEXT_PHRASES = (
+    "페이지",
+    "웹",
+    "사이트",
+    "아카이브",
+    "캡처",
+    "스냅샷",
+    "출처",
+    "ページ",
+    "ウェブ",
+    "网页",
+    "页面",
+    "存档",
+)
+# Only an explicit PR or merge ask blocks the guard. The wider delivery-cycle
+# token set is not used here because it counts the bare `docs` token, and a
+# docs page is exactly the kind of page an as-of question is about.
+_POINT_IN_TIME_WEB_BLOCKER_PHRASES = (
+    "open a pr",
+    "prepare a pr",
+    "make a pr",
+    "pr ready",
+    "pr-ready",
+    "pull request",
+    "pr까지",
+    "merge",
+    "머지",
+)
+
+
+def _point_in_time_web_guard_applies(normalized_query: str, query_tokens: set[str]) -> bool:
+    if _hermes_setup_guide_requested(normalized_query):
+        return False
+    if _scheduled_ops_blueprint_guard_applies(normalized_query, query_tokens):
+        return False
+    if _contains_phrase(normalized_query, _POINT_IN_TIME_WEB_BLOCKER_PHRASES):
+        return False
+    if _github_event_ops_guard_applies(normalized_query, query_tokens):
+        return False
+    if not _contains_phrase(normalized_query, _POINT_IN_TIME_WEB_PHRASES):
+        return False
+    return bool(_POINT_IN_TIME_WEB_CONTEXT_TOKENS & query_tokens) or _contains_phrase(
+        normalized_query, _POINT_IN_TIME_WEB_CONTEXT_PHRASES
+    )
+
+
+def point_in_time_web_guard_applies(normalized_query: str, query_tokens: set[str]) -> bool:
+    return _point_in_time_web_guard_applies(normalized_query, query_tokens)
 
 
 def _missed_workflow_research_guard_applies(normalized_query: str, query_tokens: set[str]) -> bool:

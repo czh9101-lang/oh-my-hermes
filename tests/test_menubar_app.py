@@ -345,9 +345,9 @@ class MenubarAppTests(unittest.TestCase):
         self.assertIn('image.isTemplate = true', source)
         self.assertIn('button.imagePosition = .imageLeading', source)
         self.assertIn('button.setAccessibilityLabel(', source)
-        self.assertIn('"OMH — \(headline) — \(summary)"', source)
+        self.assertIn(r'"OMH — \(headline) — \(summary)"', source)
         self.assertNotIn('statusItem.button?.title = "omh !"', source)
-        self.assertNotIn('? "\(title) \(mark)" : menuBarTitle', source)
+        self.assertNotIn(r'? "\(title) \(mark)" : menuBarTitle', source)
 
     def test_native_helper_keeps_sessions_table_header_visible(self) -> None:
         source = menubar_app_module._SWIFT_SOURCE

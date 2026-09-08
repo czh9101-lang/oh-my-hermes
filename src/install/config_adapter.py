@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass
 from pathlib import Path
 import re
@@ -690,6 +692,30 @@ def _scalar_value(value: str) -> str:
     if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {"'", '"'}:
         return stripped[1:-1]
     return stripped
+
+
+def external_dir_registered(dirs: list[str], skill_dir: str | Path) -> bool:
+    """Whether one registered entry names `skill_dir`, by text or by real path.
+
+    The installer registers the managed pack under the `current` pointer so the
+    entry survives generation switches, while a running command resolves its
+    own generation directory. Comparing the two as strings reported every
+    staged-update install as unregistered; the directories are the same one.
+    """
+    wanted_text = _normalize(skill_dir)
+    if wanted_text in dirs:
+        return True
+    try:
+        wanted_real = os.path.realpath(os.path.expanduser(str(skill_dir)))
+    except OSError:
+        return False
+    for entry in dirs:
+        try:
+            if os.path.realpath(os.path.expanduser(entry)) == wanted_real:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def ensure_external_dir(config_text: str, skill_dir: str | Path) -> ConfigChange:

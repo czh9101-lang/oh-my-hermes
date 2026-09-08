@@ -4373,8 +4373,14 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertEqual(plan["python"], str(venv_python))
 
     def test_goal_cli_records_checkpoints_and_completion_gate(self) -> None:
+        from omh.quality.working_tree_fingerprint import working_tree_content_fingerprint
+        from test_working_tree_fingerprint import _init_repo
+
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            _init_repo(workspace)
             base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
 
             status, stdout, stderr = run_cli(
@@ -4402,24 +4408,28 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertFalse(rejected["completion_gate"]["ready"])
             self.assertEqual(rejected["completion_gate"]["next_action"], "record_checkpoint")
 
-            self.assertEqual(
-                run_cli(
-                    base
-                    + [
-                        "goal",
-                        "checkpoint",
-                        "--goal",
-                        "goal-cli",
-                        "--summary",
-                        "Criterion satisfied",
-                        "--criterion",
-                        "AC001",
-                        "--evidence-ref",
-                        "unit",
-                    ]
-                )[0],
-                0,
-            )
+            with patch(
+                "omh.commands.goal.working_tree_content_fingerprint",
+                side_effect=lambda: working_tree_content_fingerprint(workspace),
+            ):
+                self.assertEqual(
+                    run_cli(
+                        base
+                        + [
+                            "goal",
+                            "checkpoint",
+                            "--goal",
+                            "goal-cli",
+                            "--summary",
+                            "Criterion satisfied",
+                            "--criterion",
+                            "AC001",
+                            "--evidence-ref",
+                            "unit",
+                        ]
+                    )[0],
+                    0,
+                )
             status, stdout, stderr = run_cli(base + ["goal", "complete", "--goal", "goal-cli", "--evidence-ref", "unit"])
             self.assertEqual(status, 0, stderr)
             completed = json.loads(stdout)
@@ -4739,8 +4749,8 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(gates["context_brief_coverage"]["status"], "passed")
             self.assertIn("11/11 context brief cases passing", gates["context_brief_coverage"]["summary"])
             self.assertEqual(gates["routing_precision"]["status"], "passed")
-            self.assertIn("188/188 negative-control cases", gates["routing_precision"]["summary"])
-            self.assertIn("325/325 interventions", gates["routing_precision"]["summary"])
+            self.assertIn("196/196 negative-control cases", gates["routing_precision"]["summary"])
+            self.assertIn("333/333 interventions", gates["routing_precision"]["summary"])
             self.assertIn("overroutes 0", gates["routing_precision"]["summary"])
             self.assertIn("missed interventions 0", gates["routing_precision"]["summary"])
             self.assertEqual(gates["localized_chat_copy"]["status"], "passed")
@@ -4797,7 +4807,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertIn("Chat card coverage: 88/88 (generic ack 0)", stdout)
             self.assertIn("Context brief coverage: 11/11 (route hints 10, catalog hints 1)", stdout)
             self.assertIn(
-                "Routing precision: 188/188 negative controls, 325/325 interventions "
+                "Routing precision: 196/196 negative controls, 333/333 interventions "
                 "(overroutes 0, catalog pickers 0, generic ack 0, missed interventions 0)",
                 stdout,
             )
@@ -4846,11 +4856,11 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(payload["summary"]["context_brief_coverage_passing"], 11)
             self.assertEqual(payload["summary"]["context_brief_coverage_total"], 11)
             # Includes the measured omh-docs and github-issue-intake cases.
-            self.assertEqual(payload["summary"]["routing_precision_passing"], 188)
-            self.assertEqual(payload["summary"]["routing_precision_total"], 188)
+            self.assertEqual(payload["summary"]["routing_precision_passing"], 196)
+            self.assertEqual(payload["summary"]["routing_precision_total"], 196)
             self.assertEqual(payload["summary"]["routing_precision_overroute_count"], 0)
-            self.assertEqual(payload["summary"]["routing_precision_intervention_passing"], 325)
-            self.assertEqual(payload["summary"]["routing_precision_intervention_total"], 325)
+            self.assertEqual(payload["summary"]["routing_precision_intervention_passing"], 333)
+            self.assertEqual(payload["summary"]["routing_precision_intervention_total"], 333)
             self.assertEqual(payload["summary"]["routing_precision_missed_intervention_count"], 0)
             self.assertEqual(payload["summary"]["localized_chat_copy_passing"], 8)
             self.assertEqual(payload["summary"]["localized_chat_copy_total"], 8)

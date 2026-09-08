@@ -862,6 +862,47 @@ Each stage is separate from replay eligibility. The compatibility
 `omh memory apply --batch` path reports `review_required` rather than directly
 writing unreviewed updates.
 
+## Provider Prefetch and the Recall Line
+
+The Hermes memory provider (`memory.provider: omh`) is the lane through which
+reviewed memory reaches a Hermes turn without being asked for. Before every
+model call Hermes takes the provider's prefetch text; OMH serves one pack,
+rendered off the hot path and re-ranked after each turn:
+
+1. system-tier memory blocks in full, under the block render budget;
+2. reference-tier blocks as a label index (values stay behind `omh_memory
+   read`);
+3. `<memory_records>`: replay-eligible `project_memory_record/v2` records with
+   a matching immutable review, ranked by token overlap with the conversation's
+   latest message (tag hits weigh extra), then newest approval, cut to six
+   records and 2,400 characters including tags, separators, escaped text, and
+   omission reports. Cuts are aggregated by reason (`render_budget_exhausted`,
+   `record_limit_reached`) with exact counts instead of one line per record.
+   Space for both reports is reserved before selecting multiple records; record
+   ids and types are never shortened to fit, and the existing approval-date and
+   summary projections stay unchanged. A custom budget
+   too small for the omission report returns no section and a zero count.
+
+Records are read from the project store (`<repository>/.omh/memory/records/`
+for the nearest `.git` above the working directory) and then the user store
+(`~/.omh`); a record id present in both is read from the project. Pending,
+rejected, expired, stale, and legacy v1 records never render. The provider's
+prefetch is not a handoff delivery and does not move the recall usage counters.
+
+When the served pack is non-empty Hermes prints its deterministic recall line
+through its status channel, so it appears on every surface Hermes speaks
+through (CLI, TUI, and each gateway platform) whether or not the model mentions
+memory:
+
+```text
+🧠 OMH — recalled 2 memories
+```
+
+The count is the number of blocks and records the pack carries in full. A pack
+that is only a reference-block index reports content without a count, which
+Hermes renders as `recalled relevant memory`. The line is Hermes' observation
+that OMH memory was in the request; it is not evidence that the model used it.
+
 ## Dreaming
 
 Dreaming has only `off` and `reminder` modes. The reminder scheduler runs
@@ -897,6 +938,45 @@ The ranking inputs do not expand eligibility or establish truth:
 
 Dreaming prepares a reminder and metadata-only evidence. It never invokes a
 model or performs consolidation, retirement, restore, or prune.
+
+For agents and operators, `omh_memory(action="consolidation")` reads the latest
+recorded brief and scheduler counters without starting a provider session or
+evaluating triggers. It returns `evaluated: false`; `due` and the brief's other
+fields are present only when a readable brief exists. No brief is not evidence
+that nothing is due. Repeated status queries leave counters, suppression state,
+and the pending brief unchanged. `omh memory dream` is likewise read-only;
+explicit `omh memory dream --evaluate` evaluates once under the `manual` trigger
+and may write a reminder. Provider lifecycle hooks retain their scheduled
+evaluation behavior.
+
+### How a brief reaches the model and the user
+
+A brief on disk consolidates nothing by itself. While the newest brief is
+`due`, the provider serves it inside its prefetch pack as a bounded
+`<memory_consolidation>` section (trigger, reasons, Hermes memory headroom
+and duplicate-cluster counts, and what is requested), so the next
+non-trivial turn on any platform carries the request to the model. The
+section asks the model to consolidate through Hermes' own memory tool and
+then tell the user in one short line what changed. A brief is a request, not
+recalled memory: it never moves the recall count or the recall line.
+
+The section disappears once consolidation is observed: a `replace` or
+`remove` from Hermes' memory tool retires the brief when no standing reason
+remains. Where the host hands the provider a status callback (Hermes does
+this on the CLI surface), the provider also prints one line when a brief
+fires and one when it is honoured:
+
+```text
+💤 OMH — memory consolidation due (session_end: session_ending_with_unconsolidated_turns:1)
+🧹 OMH — memory consolidated (replace on memory)
+```
+
+Gateway platforms (TUI, Slack, Telegram, Discord) receive no provider status
+callback from Hermes; there the model's one-line report is the visible
+signal, and the tool calls it makes are shown by the platform as usual.
+`memory-sync` (reviewing existing Hermes memory against OMH records) stays
+an explicit workflow: nothing runs it automatically, and the brief only
+points at duplicate clusters for the model to resolve.
 
 ## Hermes Memory Tiering: Demotion (L1 → L2)
 

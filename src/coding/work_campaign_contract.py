@@ -170,5 +170,3 @@ def kanban_task_manifests(campaign, *, worker_profile="", owner_profile="") -> l
                    result_recipient=campaign["owner_session_ref"], contract=leaf_contract_text(campaign, u))
               for u in campaign["units"]]
     return [root, *leaves]
-
-

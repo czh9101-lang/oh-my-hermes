@@ -68,6 +68,17 @@ class ClassifiedSite(NamedTuple):
 
 CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
     ClassifiedSite(
+        "src/plugin_bundle/omh/memory_provider.py",
+        "_say",
+        INTENTIONAL,
+        "The host's status callback prints one line for the user; it is Hermes' code, not "
+        "OMH's, and it runs inside a live memory hook (session end, memory write). A "
+        "callback that raises -- a closed terminal, a torn-down gateway adapter -- must "
+        "not fail the hook that was recording consolidation state; the line is dropped and "
+        "nothing else changes. The failure is classified by where it happens (host channel) "
+        "and surfaced nowhere because there is no channel left to surface it on.",
+    ),
+    ClassifiedSite(
         "src/coding/fanout_dispatch.py",
         "signal_safe_unit_runner",
         INTENTIONAL,
@@ -268,14 +279,47 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "failure as status=internal_error with the exception type on stderr and returns 2. The "
         "failure is never relabeled as a pass or a violation, and stdout stays empty.",
     ),
+    ClassifiedSite(
+        "src/workflows/browser_skill_promotion_native_probe.py",
+        "main",
+        INTENTIONAL,
+        "The fixed native-host subprocess boundary emits a closed unavailable result with "
+        "the exception type. The parent refuses admission on that result; an unexpected "
+        "Hermes SDK failure cannot become trust, a clean scan, or write approval.",
+    ),
+    ClassifiedSite(
+        "src/workflows/browser_skill_promotion_native_probe.py",
+        "_config_snapshot",
+        INTENTIONAL,
+        "A failing native YAML loader or filesystem snapshot returns an invalid snapshot "
+        "sentinel. Its caller marks the complete native policy unavailable. Missing files "
+        "are handled separately before this function, so parse/read failure never becomes "
+        "a missing optional config or a not-required write policy.",
+    ),
+    ClassifiedSite(
+        "src/workflows/web_qa_comparison.py",
+        "_canary_requirements",
+        INTENTIONAL,
+        "The explicitly injected deployment resolver may fail with host-specific exceptions. "
+        "The handler adds canary_deployment_resolver_failed and returns no observation; "
+        "comparison stays BLOCK and cannot grant deployment or rollback authority.",
+    ),
+    ClassifiedSite(
+        "src/workflows/web_qa_observation_store.py",
+        "_commit",
+        INTENTIONAL,
+        "Any failure during private staging, publication, or capture readback triggers "
+        "cleanup of this invocation's new directories, then re-raises the original failure. "
+        "It never returns a completed import or hides a failed image verification as success.",
+    ),
 )
 
 # Ruff reports one hit per handler; the inventory is keyed per enclosing
 # function. `_write_candidate_batch`, `_is_catalog_question`, `pre_llm_call`,
 # `_resume_unlocked`, and `_execute_cell` each hold two handlers, so the handler
 # count is five above the anchor count.
-EXPECTED_HANDLER_COUNT = 28
-EXPECTED_ANCHOR_COUNT = 23
+EXPECTED_HANDLER_COUNT = 33
+EXPECTED_ANCHOR_COUNT = 28
 
 
 class DerivedSite(NamedTuple):

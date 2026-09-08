@@ -32,6 +32,7 @@ class RoutingInterventionCase:
     expected_next_action: str
     expected_response_kind: str
     expected_candidate: str = ""
+    active_design_direction_iteration: dict[str, str] | None = None
 
 
 # Negative-control corpus. These are ordinary chat turns where OMH should stay
@@ -109,6 +110,13 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         'answer_directly',
         'direct_answer',
         'workflow-learning',
+    ),
+    RoutingPrecisionCase(
+        "unbound-design-feedback-stays-clarification",
+        "Direction feedback without a trusted active iteration remains clarification",
+        "Can we take another pass on those layouts after my notes?",
+        "answer_clarification",
+        "",
     ),
     RoutingPrecisionCase(
         "apple-fruit-stays-out-of-apple-design",
@@ -861,6 +869,41 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_directly",
         "direct_answer",
     ),
+    # Parallax guards for the scroll-motion triggers. "parallax" is also
+    # plain optics and astronomy vocabulary, which is why the shipped
+    # triggers are the phrases ("parallax scroll", "parallax hero",
+    # "parallax effect") rather than the bare word. These follow the
+    # tui-concept-question shape (no forbidden_candidate: the clarify
+    # fallback may still name low-score candidates, and "interface design"
+    # alone already names frontend) — the case fails on any dispatch,
+    # workflow card, or handoff action.
+    RoutingPrecisionCase(
+        "astronomy-parallax-stays-out-of-frontend",
+        "Stellar parallax discussion never dispatches the frontend workflow",
+        "Stellar parallax measures the distance to nearby stars and is unrelated to interface design.",
+        "answer_clarification",
+        "",
+    ),
+    RoutingPrecisionCase(
+        "camera-parallax-stays-out-of-frontend",
+        "Viewfinder parallax error discussion never dispatches the frontend workflow",
+        "Parallax error in a rangefinder camera viewfinder is unrelated to interface design.",
+        "answer_clarification",
+        "",
+    ),
+    # The loose-token half of the same guard. "scroll" is everyday
+    # vocabulary, so it is held back to whole-phrase matches in
+    # `_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS`; without that hold-back this
+    # sentence dispatched to frontend on `scroll` plus the pre-existing
+    # `broken`/`terminal` triggers. Reporting a tool's scroll bug is not a
+    # UI design brief.
+    RoutingPrecisionCase(
+        "terminal-scroll-bug-stays-out-of-frontend",
+        "A terminal emulator scroll bug never dispatches the frontend workflow",
+        "The mouse wheel scroll is broken in my terminal emulator.",
+        "answer_clarification",
+        "",
+    ),
     # Infra-cache maintenance guards for the "prompt caching"/"prompt cache"/
     # "cache hygiene" triggers: build- and HTTP-cache work shares the word
     # "cache" but has nothing to do with prompt-prefix placement.
@@ -1425,6 +1468,41 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "",
         "sales-pipeline-review",
     ),
+    # Point-in-time web evidence (#1403). The guard needs a cutoff or capture
+    # phrase *and* a web context: "as of" alone is how people report status
+    # and ask what a term means, and "snapshot" or "archived" alone name
+    # tests and buckets, so none of these may reach the lookup lane.
+    RoutingPrecisionCase(
+        "as-of-status-report-stays-out-of-web-research",
+        "A status report that happens to say as-of does not open point-in-time research",
+        "as of today I'm done with the migration",
+        "answer_clarification",
+        "",
+        "web-research",
+    ),
+    RoutingPrecisionCase(
+        "as-of-concept-question-stays-direct",
+        "A definition question about the phrase as-of stays direct",
+        "what does 'as of' mean in a contract?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "jest-snapshot-failure-stays-out-of-web-research",
+        "A snapshot-test failure does not open point-in-time research",
+        "snapshot testing in jest keeps failing",
+        "answer_clarification",
+        "",
+        "web-research",
+    ),
+    RoutingPrecisionCase(
+        "archived-logs-stay-out-of-web-research",
+        "Archived logs in a bucket are not an archived web capture",
+        "the archived logs are in the old bucket",
+        "answer_clarification",
+        "",
+        "web-research",
+    ),
 )
 
 
@@ -1457,6 +1535,19 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         'ultrawork',
         'present_plan',
         'plan',
+    ),
+    RoutingInterventionCase(
+        "bound-design-feedback-opens-revision-action",
+        "Trusted active iteration context binds a direction-feedback follow-up",
+        "Could we take the current direction set through another feedback round?",
+        "dispatch",
+        "design-quality-gate",
+        "revise_design_direction_iteration",
+        "design_direction_iteration",
+        active_design_direction_iteration={
+            "iteration_id": "design-direction-iteration-1234567890abcdef",
+            "revision_digest": "a" * 64,
+        },
     ),
     RoutingInterventionCase(
         "apple-glass-database-stays-with-backend",
@@ -1497,6 +1588,36 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "prepare_visual_qa",
         "visual_qa",
         "visual-qa",
+    ),
+    RoutingInterventionCase(
+        "smooth-scroll-reaches-frontend",
+        "A smooth-scroll request reaches the frontend workflow instead of falling back",
+        "Add smooth scrolling to our marketing site.",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+        "frontend",
+    ),
+    RoutingInterventionCase(
+        "parallax-hero-reaches-frontend",
+        "A parallax hero request reaches the frontend workflow",
+        "Add a parallax hero section to the landing page.",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+        "frontend",
+    ),
+    RoutingInterventionCase(
+        "korean-scroll-animation-reaches-frontend",
+        "A Korean scroll-animation request reaches the frontend workflow",
+        "랜딩페이지에 스크롤 애니메이션 넣어줘.",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+        "frontend",
     ),
     RoutingInterventionCase(
         "blender-product-render-stays-with-frontend",
@@ -4498,6 +4619,50 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "sales_pipeline_review",
         "sales-pipeline-review",
     ),
+    # Point-in-time web evidence (#1403). Before the guard, a pricing noun
+    # sent the as-of question to research-brief, a page noun to the browser
+    # operator, and the Korean archive-capture request to the workspace file
+    # operator; each would have answered from a live page.
+    RoutingInterventionCase(
+        "as-of-pricing-page-reaches-web-research",
+        "An as-of question about a vendor page reaches the web lookup lane, not a market brief",
+        "what did the vendor pricing page say as of 2026-06-01? use archived captures and cite them",
+        "dispatch",
+        "web-research",
+        "run_hermes_research",
+        "web_research",
+        "web-research",
+    ),
+    RoutingInterventionCase(
+        "then-versus-now-snapshot-reaches-web-research",
+        "A then-versus-now snapshot comparison reaches the web lookup lane, not the browser operator",
+        "then versus now: what changed on their pricing page since the archived capture",
+        "dispatch",
+        "web-research",
+        "run_hermes_research",
+        "web_research",
+        "web-research",
+    ),
+    RoutingInterventionCase(
+        "page-as-it-was-reaches-web-research",
+        "A page-as-it-was request reaches the web lookup lane instead of clarification",
+        "show me the page as it was on 2026-06-01",
+        "dispatch",
+        "web-research",
+        "run_hermes_research",
+        "web_research",
+        "web-research",
+    ),
+    RoutingInterventionCase(
+        "korean-archive-capture-reaches-web-research",
+        "A Korean as-of archive-capture request reaches the web lookup lane, not the file operator",
+        "2026년 6월 1일 기준으로 그 페이지에 뭐라고 써 있었는지 아카이브 캡처로 확인해줘",
+        "dispatch",
+        "web-research",
+        "run_hermes_research",
+        "web_research",
+        "web-research",
+    ),
 )
 
 
@@ -4776,7 +4941,11 @@ def _evaluate_precision_case(case: RoutingPrecisionCase, *, source: str) -> dict
 
 
 def _evaluate_intervention_case(case: RoutingInterventionCase, *, source: str) -> dict[str, object]:
-    interaction = build_chat_interaction_payload(case.message, source=source)
+    interaction = build_chat_interaction_payload(
+        case.message,
+        source=source,
+        design_direction_iteration_context=case.active_design_direction_iteration,
+    )
     response = _nested(interaction, "chat_response")
     route = _nested(interaction, "route")
     response_state = _nested(response, "state")
