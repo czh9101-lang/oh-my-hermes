@@ -148,6 +148,7 @@ def create_or_resume_wrapper_session(
     target_notice: dict[str, object] | None = None,
     record_provenance: dict[str, object] | None = None,
     platform_context: Mapping[str, Any] | None = None,
+    design_direction_iteration_context: Mapping[str, object] | None = None,
     _host_project_binding_factory: HostProjectBindingFactory | None = None,
 ) -> dict[str, object]:
     if source not in CHAT_SOURCES:
@@ -172,6 +173,7 @@ def create_or_resume_wrapper_session(
         target_notice=target_notice,
         paths=paths,
         platform_context=platform_context,
+        design_direction_iteration_context=design_direction_iteration_context,
         _host_project_binding_factory=build_session_project_binding_factory(
             _host_project_binding_factory,
         ),
@@ -220,6 +222,65 @@ def create_or_resume_wrapper_session(
         "interaction": interaction,
         "status": build_wrapper_session_status(paths, session_id),
     }
+
+
+def execute_design_direction_iteration_session_action(
+    paths: OmhPaths,
+    session_id: str,
+    action: str,
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    """Apply an explicit direction action and advance its session binding together."""
+    from .design_direction_iteration_actions import execute_design_direction_iteration_action
+
+    action_result: dict[str, object] | None = None
+    action_payload = dict(payload)
+
+    def mutate(current: dict[str, Any]) -> dict[str, Any]:
+        nonlocal action_result
+        route = dict(current["route"])
+        context = route.get("design_direction_iteration")
+        if action != "prepare_design_direction_iteration":
+            if not isinstance(context, dict) or action_payload.get("iteration_id") != context.get("iteration_id"):
+                raise WrapperSessionError("design direction action is not bound to this wrapper session")
+            if action != "show_design_direction_iteration" and action_payload.get("revision_digest") != context.get("revision_digest"):
+                raise WrapperSessionError("stale design direction session binding")
+        if action_payload.get("thread_key", current["thread_key"]) != current["thread_key"]:
+            raise WrapperSessionError("design direction action names another thread")
+        action_payload["thread_key"] = current["thread_key"]
+        action_result = execute_design_direction_iteration_action(paths, action, action_payload)
+        iteration = action_result.get("iteration")
+        if isinstance(iteration, dict):
+            snapshots = iteration.get("snapshots")
+            if not isinstance(snapshots, list) or not snapshots or not isinstance(snapshots[-1], dict):
+                raise WrapperSessionError("design direction result has no current revision")
+            route["design_direction_iteration"] = {
+                "iteration_id": iteration["iteration_id"],
+                "revision_digest": snapshots[-1]["revision_digest"],
+            }
+        return {**current, "route": route}
+
+    digest = _mutation_digest(action, payload)
+    session, replayed = _guarded_session_update(
+        paths,
+        session_id,
+        mutate,
+        operation="design_direction_iteration_action",
+        mutation_id=digest,
+        mutation_digest=digest,
+    )
+    if replayed:
+        if action == "request_design_direction_memory_review":
+            return execute_design_direction_iteration_action(
+                paths, action, {**action_payload, "thread_key": session["thread_key"]}
+            )
+        context = session["route"]["design_direction_iteration"]
+        return execute_design_direction_iteration_action(
+            paths, "show_design_direction_iteration", {"iteration_id": context["iteration_id"]}
+        )
+    if action_result is None:
+        raise WrapperSessionError("design direction action produced no result")
+    return action_result
 
 
 def open_wrapper_session_decision_gate(

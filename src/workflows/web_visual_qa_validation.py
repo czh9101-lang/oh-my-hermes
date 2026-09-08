@@ -62,6 +62,7 @@ def validate_web_visual_qa_package(record: JsonObject) -> list[str]:
     if not criteria_ids:
         errors.append("criteria must include at least one criterion")
     _validate_captures(object_list(record.get("captures")), errors)
+    _validate_interaction_traces(object_list(record.get("interaction_traces")), errors)
     _validate_results(object_list(record.get("criteria_results")), criteria_ids, evidence_ids, errors)
     _validate_reviews(object_list(record.get("multimodal_reviews")), evidence_ids, errors)
     _validate_projection(record, errors)
@@ -105,6 +106,20 @@ def _validate_captures(captures: list[JsonObject], errors: list[str]) -> None:
                 errors.append(f"captures[{index}].byte_size is required for imported_local_file captures")
             if not valid_sha256(sha256):
                 errors.append(f"captures[{index}].sha256 is required for imported_local_file captures")
+
+
+def _validate_interaction_traces(traces: list[JsonObject], errors: list[str]) -> None:
+    for index, trace in enumerate(traces):
+        if trace.get("schema_version") != "browser_workflow_trace_reference/v1":
+            errors.append(f"interaction_traces[{index}] must be a browser_workflow_trace_reference/v1")
+            continue
+        if not valid_id(text(trace.get("trace_id"))) or not valid_sha256(text(trace.get("digest"))):
+            errors.append(f"interaction_traces[{index}] must carry a typed trace id and digest")
+        if not valid_sha256(text(trace.get("project_identity"))):
+            errors.append(f"interaction_traces[{index}].project_identity must be a SHA-256 digest")
+        origins = strings(trace.get("origins"))
+        if not origins or trace.get("lifecycle_status") != "approved":
+            errors.append(f"interaction_traces[{index}] must resolve an approved browser trace")
 
 
 def _validate_results(

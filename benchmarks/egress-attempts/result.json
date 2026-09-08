@@ -1,0 +1,33 @@
+{
+  "schema_version": "egress_attempt_benchmark/v1",
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "architecture": "arm64",
+    "logical_cpus": 14
+  },
+  "sampling": {
+    "method": "nearest_rank_p95",
+    "warmup_excluded": 0,
+    "cold_append_included": true
+  },
+  "non_egress": {
+    "samples": 2000,
+    "p95_ms": 0.000125,
+    "receipt_io_operations": 0,
+    "limit_ms": 0.1
+  },
+  "append": {
+    "samples": 200,
+    "p95_ms": 0.502042,
+    "cold_ms": 2.486625,
+    "limit_ms": 25.0
+  },
+  "storage": {
+    "attempt_rows": 200,
+    "max_row_bytes": 797,
+    "row_limit_bytes": 1024,
+    "indexed_call_lookup": true
+  },
+  "ratchets_pass": true,
+  "claim_boundary": "Local metadata-store and guard timing only; no external handler or remote delivery was measured."
+}

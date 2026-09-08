@@ -6,6 +6,7 @@ from pathlib import Path
 from omh.system.local_store import atomic_write_json, ensure_dir, read_json_object_result
 from omh.system.paths import OmhPaths
 
+from .browser_workflow_learning import BrowserTraceError, BrowserWorkflowTraceReference
 from .web_visual_qa_contracts import (
     SUPPORTED_COST_TIERS,
     SUPPORTED_RISK_LEVELS,
@@ -64,7 +65,7 @@ def build_web_visual_qa_package(
     capture_records = [capture_record(item, index, created) for index, item in enumerate(captures, start=1)]
     criteria_records = [criterion_record(item) for item in criteria]
     result_records = [criteria_result_record(item) for item in criteria_results]
-    trace_records = [dict(item) for item in interaction_traces]
+    trace_records = [_trace_reference_record(item) for item in interaction_traces]
     review_records = [multimodal_review_record(item) for item in multimodal_reviews]
     attachments = attachment_projection(capture_records)
     requested_verdict = choice(verdict, SUPPORTED_VERDICTS, "not_observed")
@@ -111,6 +112,12 @@ def build_web_visual_qa_package(
     return package
 
 
+def _trace_reference_record(item: Mapping[str, JsonValue]) -> JsonObject:
+    if not isinstance(item, BrowserWorkflowTraceReference):
+        raise ValueError("interaction traces must be resolved browser workflow trace references")
+    return dict(item)
+
+
 def write_web_visual_qa_package(paths: OmhPaths, record: JsonObject) -> JsonObject:
     package_id = text(record.get("package_id"))
     path = _package_path(paths, package_id)
@@ -121,6 +128,7 @@ def write_web_visual_qa_package(paths: OmhPaths, record: JsonObject) -> JsonObje
 
 def save_web_visual_qa_package(paths: OmhPaths, record: JsonObject) -> JsonObject:
     errors = validate_web_visual_qa_package(record)
+    errors.extend(_browser_trace_reference_errors(paths, record))
     if errors:
         raise ValueError("; ".join(errors))
     package_id = text(record.get("package_id"))
@@ -130,6 +138,28 @@ def save_web_visual_qa_package(paths: OmhPaths, record: JsonObject) -> JsonObjec
     return record
 
 
+def _browser_trace_reference_errors(paths: OmhPaths, record: JsonObject) -> list[str]:
+    traces = object_list(record.get("interaction_traces"))
+    if not traces:
+        return []
+    # The project-bound trace resolver is deliberately reached only when an
+    # interaction reference is explicitly present. Generic v2 packages retain
+    # their prepared/manual semantics without filesystem work on their normal
+    # path.
+    from .browser_workflow_learning_store import resolved_browser_workflow_trace_reference
+
+    errors: list[str] = []
+    for index, trace in enumerate(traces):
+        try:
+            resolved = resolved_browser_workflow_trace_reference(paths.omh_home.parent, text(trace.get("trace_id")))
+        except BrowserTraceError:
+            errors.append(f"interaction_traces[{index}] does not resolve to the project-bound trace")
+            continue
+        if trace != resolved:
+            errors.append(f"interaction_traces[{index}] does not resolve to the project-bound trace")
+    return errors
+
+
 def read_web_visual_qa_package(paths: OmhPaths, package_id: str) -> JsonObject:
     path = _package_path(paths, package_id)
     record, error = read_json_object_result(path)
@@ -137,6 +167,9 @@ def read_web_visual_qa_package(paths: OmhPaths, package_id: str) -> JsonObject:
         raise ValueError(error)
     if record is None:
         raise ValueError(f"web visual QA package not found: {package_id}")
+    trace_errors = _browser_trace_reference_errors(paths, record)
+    if trace_errors:
+        raise ValueError("; ".join(trace_errors))
     return record
 
 

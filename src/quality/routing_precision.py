@@ -32,12 +32,20 @@ class RoutingInterventionCase:
     expected_next_action: str
     expected_response_kind: str
     expected_candidate: str = ""
+    active_design_direction_iteration: dict[str, str] | None = None
 
 
 # Negative-control corpus. These are ordinary chat turns where OMH should stay
 # helpful but should not hijack the answer into workflow selection, catalog
 # pickers, coding handoffs, or generic workflow acknowledgements.
 ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
+    RoutingPrecisionCase(
+        "unbound-design-feedback-stays-clarification",
+        "Direction feedback without a trusted active iteration remains clarification",
+        "Can we take another pass on those layouts after my notes?",
+        "answer_clarification",
+        "",
+    ),
     RoutingPrecisionCase(
         "apple-fruit-stays-out-of-apple-design",
         "Apple fruit discussion does not select the Apple UI specialist",
@@ -1394,6 +1402,19 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
 # Positive-intervention corpus. These are real OMH-shaped turns where the router
 # should still step in after the direct-answer fallback was added.
 ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
+    RoutingInterventionCase(
+        "bound-design-feedback-opens-revision-action",
+        "Trusted active iteration context binds a direction-feedback follow-up",
+        "Could we take the current direction set through another feedback round?",
+        "dispatch",
+        "design-quality-gate",
+        "revise_design_direction_iteration",
+        "design_direction_iteration",
+        active_design_direction_iteration={
+            "iteration_id": "design-direction-iteration-1234567890abcdef",
+            "revision_digest": "a" * 64,
+        },
+    ),
     RoutingInterventionCase(
         "apple-glass-database-stays-with-backend",
         "Apple Glass database request does not select the Apple UI specialist",
@@ -4756,7 +4777,11 @@ def _evaluate_precision_case(case: RoutingPrecisionCase, *, source: str) -> dict
 
 
 def _evaluate_intervention_case(case: RoutingInterventionCase, *, source: str) -> dict[str, object]:
-    interaction = build_chat_interaction_payload(case.message, source=source)
+    interaction = build_chat_interaction_payload(
+        case.message,
+        source=source,
+        design_direction_iteration_context=case.active_design_direction_iteration,
+    )
     response = _nested(interaction, "chat_response")
     route = _nested(interaction, "route")
     response_state = _nested(response, "state")

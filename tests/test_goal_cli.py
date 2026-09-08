@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from tempfile import TemporaryDirectory
 
 from _cli_harness import run_cli
@@ -12,7 +16,9 @@ load_local_package()
 from omh.commands.main import build_parser
 from omh.goal_ledger import goal_ledger_path, read_goal_ledger
 from omh.paths import resolve_paths
+from omh.quality.working_tree_fingerprint import WorkingTreeFingerprint, WorkingTreeFingerprintState, working_tree_content_fingerprint
 from omh.record_revision import APPLIED_MUTATIONS_LIMIT, MAX_MUTATION_ID_CHARS, applied_mutation_key
+from test_working_tree_fingerprint import _git, _init_repo
 
 # The digest helper is deliberately private; the deep module is imported here
 # so the planted replay entry below matches what the real cancel computes
@@ -43,6 +49,20 @@ def _create(base: list[str], goal_id: str = "goal-cli-guard") -> None:
 
 
 class GoalCliRevisionGuardTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Ledger tests need a supported, stable workspace, not whichever Git
+        # normalization attributes happen to be in the test runner's checkout.
+        repository = TemporaryDirectory()
+        self.addCleanup(repository.cleanup)
+        root = Path(repository.name)
+        _init_repo(root)
+        collector = patch(
+            "omh.commands.goal.working_tree_content_fingerprint",
+            side_effect=lambda: working_tree_content_fingerprint(root),
+        )
+        collector.start()
+        self.addCleanup(collector.stop)
+
     def test_revision_guard_flag_names_are_pinned_on_every_mutation_subcommand(self) -> None:
         parser = build_parser()
 
@@ -172,6 +192,54 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             self.assertIn("record_revision", stderr)
             self.assertNotIn("Traceback", stderr)
             self.assertEqual(len(read_goal_ledger(paths, "goal-cli-guard")["checkpoints"]), 1)
+
+    def test_checkpoint_collects_one_complete_workspace_identity(self) -> None:
+        # Given: a checkpoint request and one collector result for its transaction.
+        # When: the public CLI records the checkpoint.
+        # Then: the exact collected fingerprint is persisted after one collection.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = _base(root)
+            _create(base)
+            fingerprint = WorkingTreeFingerprint(
+                WorkingTreeFingerprintState.CLEAN, "f" * 64, "a" * 40, 8
+            )
+            with patch("omh.commands.goal.working_tree_content_fingerprint", return_value=fingerprint) as collect:
+                status, stdout, stderr = run_cli(
+                    base + ["goal", "checkpoint", "--goal", "goal-cli-guard", "--summary", "Recorded", "--status", "in_progress"]
+                )
+
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(collect.call_count, 1)
+            self.assertEqual(json.loads(stdout)["goal"]["checkpoints"][0]["observed_tree"], "f" * 64)
+
+    def test_normalized_workspace_refuses_checkpoint_without_ledger_writes(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            _init_repo(workspace)
+            (workspace / ".gitattributes").write_text("tracked.txt text\n", encoding="utf-8")
+            base = _base(root)
+            _create(base)
+            before = {path: path.read_bytes() for path in (root / ".omh").rglob("*") if path.is_file()}
+
+            with patch(
+                "omh.commands.goal.working_tree_content_fingerprint",
+                side_effect=lambda: working_tree_content_fingerprint(workspace),
+            ) as collect:
+                status, stdout, stderr = run_cli(
+                    base + ["goal", "checkpoint", "--goal", "goal-cli-guard", "--summary", "Unsupported workspace"]
+                )
+
+            self.assertEqual(status, 2)
+            self.assertEqual(stdout, "")
+            self.assertIn("unsupported", stderr)
+            self.assertEqual(collect.call_count, 1)
+            self.assertEqual(
+                {path: path.read_bytes() for path in (root / ".omh").rglob("*") if path.is_file()},
+                before,
+            )
 
     def test_repeated_mutation_id_leaves_one_item_and_reports_replayed(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -477,6 +545,63 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             self.assertEqual(stdout, "")
             self.assertTrue(stderr.startswith("omh: "), stderr)
             self.assertNotIn("Traceback", stderr)
+
+
+class GoalCliRawWorkspaceTests(unittest.TestCase):
+    def test_real_cli_replays_staging_and_revert_but_conflicts_on_raw_byte_change(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace with spaces-\u00ff"
+            workspace.mkdir()
+            _init_repo(workspace)
+            # Real Git precedence, rather than an injected collector result.
+            _git(workspace, "config", "--unset-all", "core.autocrlf")
+            _git(workspace, "config", "--add", "core.autocrlf", "true")
+            _git(workspace, "config", "--add", "core.autocrlf", "false")
+            environment = dict(os.environ, OMH_OUTPUT="json", PYTHONDONTWRITEBYTECODE="1")
+            environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+            command = [sys.executable, "-m", "omh.cli", *_base(root)]
+
+            def invoke(arguments: list[str]) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    command + arguments, cwd=workspace, env=environment,
+                    capture_output=True, text=True, check=False, timeout=30,
+                )
+
+            created = invoke(["goal", "create", "--goal-id", "raw", "--objective", "Observe bytes", "--criterion", "No false replay"])
+            self.assertEqual(created.returncode, 0, created.stderr)
+            tracked = workspace / "tracked.txt"
+            payload = b"raw\r\nbytes\x1aafter\x00\xff"
+            tracked.write_bytes(payload)
+            # CPython's executable-extension mode must not make a stable
+            # Windows checkpoint unreadable or disagree with Git's tree mode.
+            (workspace / "program.exe").write_bytes(payload)
+            checkpoint = ["goal", "checkpoint", "--goal", "raw", "--summary", "Observed", "--status", "in_progress", "--mutation-id", "raw-retry"]
+            first = invoke(checkpoint)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            recorded = json.loads(first.stdout)
+            self.assertFalse(recorded["replayed"])
+            self.assertEqual(len(recorded["goal"]["checkpoints"]), 1)
+            self.assertEqual(len(recorded["goal"]["checkpoints"][0]["observed_tree"]), 64)
+            ledger = goal_ledger_path(resolve_paths(root / ".omh", root / ".hermes"), "raw")
+            before = ledger.read_bytes()
+            for stage in (True, False):
+                _git(workspace, *(["add", "tracked.txt"] if stage else ["restore", "--staged", "tracked.txt"]))
+                replay = invoke(checkpoint)
+                self.assertEqual(replay.returncode, 0, replay.stderr)
+                self.assertTrue(json.loads(replay.stdout)["replayed"])
+                self.assertEqual(ledger.read_bytes(), before)
+            # Same length, changed AFTER Ctrl-Z: a text descriptor would hide it.
+            tracked.write_bytes(payload[:-1] + b"\xfe")
+            conflict = invoke(checkpoint)
+            self.assertEqual(conflict.returncode, 2, conflict.stderr)
+            self.assertEqual(conflict.stdout, "")
+            self.assertEqual(ledger.read_bytes(), before)
+            tracked.write_bytes(payload)
+            reverted = invoke(checkpoint)
+            self.assertEqual(reverted.returncode, 0, reverted.stderr)
+            self.assertTrue(json.loads(reverted.stdout)["replayed"])
+            self.assertEqual(ledger.read_bytes(), before)
 
 
 if __name__ == "__main__":

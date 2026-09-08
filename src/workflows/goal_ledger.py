@@ -430,10 +430,9 @@ def record_goal_checkpoint(
 ) -> dict[str, Any]:
     """Append one checkpoint to a goal ledger.
 
-    `observed_tree` is the git tree hash the checkpoint's work was observed
-    against, read by the caller (see `current_git_tree_hash`). It is stamped as
-    recorded and never re-derived later: a checkpoint that carries no tree
-    stores the empty string, exactly as before, and stays readable as such.
+    `observed_tree` is the complete working-tree fingerprint the checkpoint's
+    work was observed against. It is stamped as recorded and never re-derived
+    later: legacy callers carrying no identity store the empty string.
     """
     if status not in CHECKPOINT_STATUSES:
         raise ValueError(f"unsupported checkpoint status: {status}")
@@ -442,7 +441,7 @@ def record_goal_checkpoint(
     checkpoint_id = _mutation_item_id(mutation_id, "checkpoint")
     refs = [str(ref).strip() for ref in criteria_refs or [] if str(ref).strip()]
     evidence = _evidence_refs(evidence_refs)
-    observed_tree_ref = _safe_summary(observed_tree, limit=64)
+    observed_tree_ref = _safe_summary(observed_tree, limit=128)
     linked_runtime_ref = (
         _storage_id(linked_runtime_run_id, "linked_runtime_run_id") if linked_runtime_run_id.strip() else ""
     )

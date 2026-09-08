@@ -1,0 +1,17 @@
+{
+  "schema_version": "working_tree_fingerprint_ratchets/v1",
+  "max_git_calls": {
+    "clean": 9,
+    "dirty": 10
+  },
+  "max_wall_ms": {
+    "1000": {"clean": 120.0, "dirty": 175.0},
+    "10000": {"clean": 140.0, "dirty": 170.0},
+    "100000": {"clean": 450.0, "dirty": 550.0}
+  },
+  "measurement": {
+    "machine": "Apple M4 Pro",
+    "date": "2026-09-07",
+    "margin": "ceil(observed milliseconds * 2), with a minimum 10ms rounding allowance"
+  }
+}

@@ -18,7 +18,7 @@ from ..installer import OmhError
 from ..mission_control import build_mission_control
 from ..memory import read_handoff_context_pack_file
 from ..routing.action_copy import next_action_label
-from ..routing.chat import CONFIDENCE_LEVELS, public_route_payload, route_chat_message, routing_record_payload
+from ..routing.chat import CONFIDENCE_LEVELS, public_route_payload, route_chat_event, routing_record_payload
 from ..runtime.artifacts import create_run, summarize_delegated_coding_status, write_routing_decision
 from ..targets import TARGET_METADATA_KEYS, build_target_change_notice, inspect_target_observation, record_target_observation
 from ..wrapper.contract import INTERACTION_MODES, RENDER_PROFILES, build_chat_interaction_payload, build_chat_status_interaction
@@ -61,16 +61,17 @@ from .runtime import _validate_runtime_names
 def cmd_chat_route(args: argparse.Namespace) -> int:
     if bool(getattr(args, "summary", False)) and bool(getattr(args, "json", False)):
         raise OmhError("--summary and --json cannot be used together")
-    message = _chat_message(args)
+    event_or_message, _ = _chat_input_and_metadata(args)
     try:
         policy = _chat_route_skill_policy(args)
-        decision = route_chat_message(
-            message,
+        decision = route_chat_event(
+            event_or_message,
             source=args.source,
             limit=args.limit,
             min_confidence=args.min_confidence,
             skill_policy=policy,
         )
+        message = "GitHub tracker event" if "tracker_content" in decision else extract_message_text(event_or_message)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         raise OmhError(str(exc)) from exc
     payload = {"route": public_route_payload(decision, include_message=args.include_message)}

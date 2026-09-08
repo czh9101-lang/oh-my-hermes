@@ -614,7 +614,14 @@ WRAPPER_SESSION_STATUSES = (
 )
 WRAPPER_SESSION_DECISIONS = ("none", "plan_accepted", "plan_revision_requested", "plan_cancelled")
 WRAPPER_SESSION_SOURCE_METADATA_KEYS = CODING_SOURCE_METADATA_KEYS
-WRAPPER_SESSION_ROUTE_KEYS = ("action", "selected_skill", "selected_harness", "confidence", "score")
+WRAPPER_SESSION_ROUTE_KEYS = (
+    "action",
+    "selected_skill",
+    "selected_harness",
+    "confidence",
+    "score",
+    "design_direction_iteration",
+)
 WRAPPER_SESSION_PLAN_KEYS = ("status", "recommended_workflow", "recommended_harness", "coding_delegate_available")
 WRAPPER_SESSION_PROVENANCE_SCHEMA_VERSION = "wrapper_session_provenance/v1"
 WRAPPER_SESSION_PRODUCERS = ("wrapper_backend", "plugin_tool")
@@ -1160,7 +1167,21 @@ def _compact_wrapper_session_route(route: Any) -> dict[str, Any]:
     for key in WRAPPER_SESSION_ROUTE_KEYS:
         if key not in route:
             continue
-        compact[key] = int(route[key]) if key == "score" else str(route[key])
+        if key == "score":
+            compact[key] = int(route[key])
+        elif key == "design_direction_iteration":
+            value = route[key]
+            if not isinstance(value, dict):
+                continue
+            iteration_id = str(value.get("iteration_id") or "")
+            revision_digest = str(value.get("revision_digest") or "")
+            if iteration_id and revision_digest:
+                compact[key] = {
+                    "iteration_id": iteration_id,
+                    "revision_digest": revision_digest,
+                }
+        else:
+            compact[key] = str(route[key])
     return compact
 
 
@@ -2680,6 +2701,20 @@ def validate_wrapper_session_record(session: dict[str, Any]) -> list[str]:
         _require(not extra_route_keys, errors, f"wrapper_session route has unsupported keys: {extra_route_keys}")
         if "score" in route:
             _require(isinstance(route["score"], int), errors, "wrapper_session route.score must be an integer")
+        iteration = route.get("design_direction_iteration")
+        if iteration is not None:
+            _require(
+                isinstance(iteration, dict)
+                and set(iteration) == {"iteration_id", "revision_digest"}
+                and isinstance(iteration.get("iteration_id"), str)
+                and str(iteration.get("iteration_id", "")).startswith("design-direction-iteration-")
+                and 27 < len(str(iteration.get("iteration_id", ""))) <= 160
+                and all(character in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in str(iteration.get("iteration_id", "")))
+                and isinstance(iteration.get("revision_digest"), str)
+                and _is_sha256(str(iteration.get("revision_digest", ""))),
+                errors,
+                "wrapper_session route.design_direction_iteration is invalid",
+            )
     plan = session.get("plan")
     _require(isinstance(plan, dict), errors, "wrapper_session plan must be an object")
     if isinstance(plan, dict):

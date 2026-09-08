@@ -79,6 +79,7 @@ from ..quality.verification_tiering import sensitive_path_escalation
 from ..system.paths import CONTINUITY_FORBIDDEN_TARGETS
 from ..system.security_posture import STRICT_POSTURE, resolve_security_posture
 from ..ingress import CHAT_SOURCES, extract_message_text, extract_source_metadata
+from ..system.tracker_content import normalize_tracker_content
 from ..isolation import build_isolation_plan
 from ..memory import validate_handoff_context_blocked, validate_handoff_context_pack, validate_project_memory_recall_pack
 from ..workflows.role_context_packs import build_role_context_pack, pin_role_context_pack
@@ -1615,7 +1616,30 @@ def build_coding_delegation_event_payload(
     source: str = "generic",
     limit: int = 3,
     include_message: bool = False,
+    tracker_host_context: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    tracker_content = (
+        normalize_tracker_content(event, host_context=tracker_host_context)
+        if isinstance(event, dict)
+        else None
+    )
+    if tracker_content is not None:
+        payload = build_coding_delegation_payload(
+            "GitHub tracker event",
+            source="github",
+            limit=limit,
+            include_message=False,
+            source_metadata=extract_source_metadata(event),
+        )
+        payload["tracker_content"] = tracker_content
+        payload["dispatchable"] = False
+        payload["tracker_scope_acceptance"] = {
+            "schema_version": "tracker_scope_acceptance/v1",
+            "state": "required",
+            "coding_enabled": False,
+            "claim_boundary": "Tracker content cannot authorize a coding handoff or mutation.",
+        }
+        return payload
     message = extract_message_text(event)
     return build_coding_delegation_payload(
         message,

@@ -112,6 +112,9 @@ Use [Capabilities](CAPABILITIES.md) for the manifest contract and
 | Chat cards and grounded wrapper examples | [Chat Wrapper Examples](CHAT_WRAPPER_EXAMPLES.md) |
 | Harness and quality-gate contracts | [Harness Quality Contract](HARNESS_QUALITY.md) |
 | Memory/context review and handoff packs | [Memory Context Review](MEMORY_CONTEXT.md) |
+| Import, inspect, and compare host-collected web QA runs, including the native agent-browser collector boundary | [Web QA Observations](WEB-QA-OBSERVATIONS.md) |
+| Record, approve, and replay offline browser workflow traces | [Browser Workflow Traces](BROWSER-WORKFLOW-TRACES.md) |
+| Promote an approved browser trace into a project-local skill with exact-diff approval | [Browser Skill Promotion](BROWSER-SKILL-PROMOTION.md) |
 | Host-supplied session activity receipts for cross-workflow learning | [Session Activity Receipts](SESSION-ACTIVITY-RECEIPTS.md) |
 | Common oh-my capability axes and gaps | [Parity Matrix](PARITY.md) |
 | Implemented application surfaces | [Application Cases](APPLICATION_CASES.md) |

@@ -188,7 +188,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             live=_routing_precision_case_count,
             # The public-board contract adds three negative controls: a concept
             # question, a disclosure question, and a team's own board.
-            expected=183,
+            expected=184,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -202,7 +202,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             live=_routing_precision_intervention_case_count,
             # The public-board contract adds two LLM-build interventions and the
             # agent-board cross-lane guard.
-            expected=326,
+            expected=327,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",

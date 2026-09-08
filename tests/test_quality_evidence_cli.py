@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from _cli_harness import run_cli
+from omh.quality.working_tree_fingerprint import WorkingTreeFingerprint, WorkingTreeFingerprintState
 from omh.skills.catalog import builtin_definitions
 
 
@@ -71,6 +73,29 @@ class QualityEvidenceCliTests(unittest.TestCase):
         self.assertFalse(assessment["ready_for_completion"])
         self.assertEqual(assessment["dimensions"]["scenario_coverage"]["status"], "unknown")
         self.assertIn("does not prove external execution", assessment["claim_boundary"])
+
+    def test_assess_collects_live_workspace_freshness_once_and_fails_closed(self) -> None:
+        # Given: a package assessed from a repository state that cannot be collected.
+        # When: the public assessment CLI runs.
+        # Then: it collects once and reports source freshness unsatisfied.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "package.json"
+            package.write_text(json.dumps({
+                "schema_version": "quality_evidence_package/v1", "status": "prepared_not_observed",
+                "subject": {"title": "gate", "executor_target": "codex", "source": {"repository_id": "r", "commit_sha": "c", "tree_sha": "t"}},
+                "qa_scenarios": [], "review_requirements": [], "claim_requirements": [], "self_critique_questions": [],
+                "claim_boundary": "Prepared requirements are not observed execution evidence.",
+            }), encoding="utf-8")
+            unavailable = WorkingTreeFingerprint(WorkingTreeFingerprintState.NOT_A_REPOSITORY, None, None, 1)
+            with patch("omh.commands.quality_evidence.working_tree_content_fingerprint", return_value=unavailable) as collect:
+                status, stdout, stderr = run_cli(["quality-evidence", "assess", "--package", str(package)])
+
+        self.assertEqual(status, 0, stderr)
+        self.assertEqual(collect.call_count, 1)
+        assessment = json.loads(stdout)
+        self.assertEqual(assessment["dimensions"]["source_freshness"]["status"], "unsatisfied")
+        self.assertIn("current_tree_unavailable", assessment["reasons"])
 
     def test_catalog_quality_evidence_loop_preserves_boundary(self) -> None:
         definition = next(item for item in builtin_definitions() if item.name == "quality-evidence-loop")

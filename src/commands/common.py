@@ -9,6 +9,7 @@ from pathlib import Path
 from ..ingress import extract_message_text, extract_source_metadata
 from ..installer import OmhError
 from ..paths import resolve_paths
+from ..system.tracker_content import loads_tracker_event_json
 from ..routing.action_copy import next_action_label, next_action_label_with_id
 from ..setup_profiles import read_setup_profile
 from ..targets import TARGET_METADATA_KEYS
@@ -119,9 +120,7 @@ def _chat_input_and_metadata(args: argparse.Namespace) -> tuple[dict[str, object
                 if args.event_json == "-"
                 else Path(args.event_json).expanduser().read_text(encoding="utf-8")
             )
-            event = json.loads(raw)
-            if not isinstance(event, dict):
-                raise ValueError("chat event must be an object")
+            event = loads_tracker_event_json(raw)
             metadata = extract_source_metadata(event)
             metadata.update(_explicit_source_metadata(args))
             return event, metadata
@@ -140,7 +139,7 @@ def _chat_message(args: argparse.Namespace) -> str:
                 if args.event_json == "-"
                 else Path(args.event_json).expanduser().read_text(encoding="utf-8")
             )
-            return extract_message_text(json.loads(raw))
+            return extract_message_text(loads_tracker_event_json(raw))
         if args.stdin:
             return sys.stdin.read().strip()
         return " ".join(args.message).strip()

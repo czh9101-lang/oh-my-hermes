@@ -95,6 +95,17 @@ def _primer_already_in_api_history(conversation_history: object, primer: str) ->
     return False
 
 
+def _tracker_event_is_present(kwargs: dict) -> bool:
+    """Recognize a host-labelled tracker event without inspecting its text."""
+    for key in ("tracker_event", "github_event"):
+        event = kwargs.get(key)
+        if isinstance(event, dict) and (
+            "tracker_content" in event or "github_event" in event or event.get("provider") == "github"
+        ):
+            return True
+    return False
+
+
 def pre_llm_call(**kwargs) -> dict[str, object] | None:
     """Inject bounded OMH role/status context without storing prompts."""
     record_active_main_agent_model(kwargs.get("model"))
@@ -105,7 +116,7 @@ def pre_llm_call(**kwargs) -> dict[str, object] | None:
     record_approval_bypass(omh_home=str(kwargs.get("omh_home", "") or ""))
     context_parts: list[str] = []
     payload: dict[str, object] = {}
-    user_message = str(kwargs.get("user_message", "") or "")
+    user_message = "" if _tracker_event_is_present(kwargs) else str(kwargs.get("user_message", "") or "")
     is_first_turn = bool(kwargs.get("is_first_turn", False))
     include_awareness = kwargs.get("include_omh_awareness", True) is not False
     route_hint_context = ""

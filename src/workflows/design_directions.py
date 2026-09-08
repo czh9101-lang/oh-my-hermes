@@ -334,7 +334,7 @@ def _option_card_html(option: dict[str, object], chosen: str) -> str:
   </section>"""
 
 
-def render_design_direction_set_html(value: Any) -> str:
+def render_design_direction_set_html(value: Any, *, selection_notice: str | None = None) -> str:
     """One self-contained HTML document. No external request of any kind."""
     issues = validate_design_direction_set(value)
     if issues:
@@ -352,6 +352,8 @@ def render_design_direction_set_html(value: Any) -> str:
         else "No option is chosen yet. Record one with "
         "<code>omh ops design-directions … --choose &lt;id&gt;</code>."
     )
+    if selection_notice is not None:
+        choice_line = escape(selection_notice)
     reference_count = len(value["context_references"])
     return f"""<!DOCTYPE html>
 <html lang="en">
