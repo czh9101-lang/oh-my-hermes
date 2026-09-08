@@ -51,6 +51,8 @@ _LIFECYCLE_FIELDS: Final = {
             "consent_state", "suppression_state", "frequency_state", "suppression_precedence",
             "preference_policy_ref", "global_frequency_budget_ref", "campaign_frequency_budget_ref",
             "channel_eligibility_state", "quiet_hours_state", "locale_state", "legal_tenant_state",
+            "throttle_grouping", "workflow_content_state", "mutation_route", "promotion_decision_state",
+            "promotion_result_state",
         }
     ),
     "experiment": frozenset(

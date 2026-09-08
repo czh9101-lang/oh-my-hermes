@@ -20,16 +20,19 @@ wrong artifact slots or unequal IDs.
   idempotency key, re-entry policy, and collision policy.
 - `build_lifecycle_safety_policy` creates `lifecycle_safety_policy/v1` with
   independent consent, suppression, and eligibility states, explicit
-  suppression precedence, preference policy, and global/campaign frequency
-  budget references.
+  suppression precedence, preference policy, global/campaign frequency
+  budget references, a nested throttle grouping record, and the workflow
+  content mutation boundary (content state, mutation route, promotion
+  decision, promotion result).
 - `build_growth_experiment_plan` creates `growth_experiment_plan/v1` with
   treatment and control, sticky assignment, distinct assignment and actual
   exposure *events*, metric/guardrail/holdout policy, minimum runtime, pause
   and rollback conditions, data health, and approval state. Assignment and
   exposure units may be the same population unit.
 - `build_growth_measurement_readout` creates `growth_measurement_readout/v1`
-  with distinct funnel counts plus provider delivery, actual exposure, data,
-  runtime, and causal evidence references.
+  with distinct funnel counts, provider delivery, actual exposure, data,
+  runtime, and causal evidence references, a bounded list of per-step
+  outcome records, and a step trace state.
 - `build_growth_handoff_disposition` creates `growth_handoff_disposition/v1`
   with typed connector/content/analytics/product/implementation actions,
   owner, approver, connector evidence state, timing, and stop conditions.
@@ -38,6 +41,38 @@ wrong artifact slots or unequal IDs.
 malformed artifacts. It rejects raw-payload-shaped keys and returns structural,
 count, evidence, and closed-state errors.
 
+## Safety records
+
+`omh.workflows.lifecycle_growth_safety` holds the provider-neutral records
+adopted from the issue #1400 source review. None of them names a provider
+storage key, feature flag, dashboard state, or enum.
+
+- `build_throttle_grouping` keeps the configured key or expression
+  (`key_kind` is `static_path` or `dynamic_expression`) apart from the value
+  it resolved to, names a `recipient` or `tenant` scope, and derives
+  `group_identity` from both. Two resolved dynamic values are two groups; a
+  resolved value is never re-read as a second key, so a value that looks like
+  a path still groups under its own expression. A static path with a
+  `missing` value stays `ungrouped`; a dynamic expression with an `empty`
+  value falls back to `default_window`. `window_reset_consequence` records
+  whether adopting the grouping resets in-flight windows once. Validation
+  recomputes the identity and rejects a forged one.
+- `build_step_outcome` records one conditional step as `matched`
+  (`step_proceeded`) or `skipped` (`step_skipped`) with a reason code and a
+  fixed `evaluated_values_state` of `redacted`: the record has no slot for an
+  evaluated value, and a secret-shaped or whole-context reason is folded into
+  a digest handle. A readout carries at most eight of them plus
+  `step_trace_state` (`recorded`, `write_failed`, `not_attempted`). The trace
+  never feeds `delivery_count` or the disposition: a failed trace write does
+  not fail a send, and a recorded trace is not delivery evidence.
+- `route_lifecycle_workflow_mutation` reads the safety policy's
+  `workflow_content_state`, `mutation_route`, `promotion_decision_state`, and
+  `promotion_result_state`. Production content is `view_only`; the mutation
+  target is always `development_draft`; the route is `READY` only for a draft
+  with an `approved` promotion decision, and `promotion_result_state` stays
+  `not_observed` until a provider result is observed. Readiness reuses the
+  same reasons, so a production edit or an unpromoted draft holds a launch.
+
 ## Launch, entry, and readout
 
 `prepare_lifecycle_growth` consumes the five launch artifacts (`brief`,
@@ -45,7 +80,8 @@ count, evidence, and closed-state errors.
 can be locally `READY` without a fabricated readout. It returns `HOLD` for
 unknown/ineligible consent, suppression, frequency, event semantics, identity,
 or owner; absent holdout/approval/data health; unavailable connector evidence;
-wrong slot; or mismatched lifecycle ID.
+production read-only content or an unapproved promotion decision; wrong slot;
+or mismatched lifecycle ID.
 
 A supplied `readout` is optional at launch but represents an existing observed
 run. Its stale data, unknown denominator, broken instrumentation, sample-ratio

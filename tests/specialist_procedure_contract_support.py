@@ -115,9 +115,9 @@ DOMAIN_REVIEW_CONTRACTS = {
         "checks": {
             "lifecycle_target_behavior_check": {"evidence_refs", "lifecycle_stage", "hypotheses", "owner", "baseline_value", "baseline_window", "target_behavior", "disposition", "non_goals"},
             "lifecycle_audience_eligibility_check": {"entry_conditions", "exit_conditions", "event_semantics_status", "idempotency_key", "reentry_policy", "collision_policy", "denominator_status", "canonical_events", "disposition", "exclusions", "identity_key"},
-            "lifecycle_safety_eligibility_check": {"consent_basis", "locale", "global_frequency_budget", "suppression_precedence", "user_preferences", "disposition", "quiet_hours", "channel_eligibility", "campaign_frequency_budget", "legal_tenant_constraints"},
+            "lifecycle_safety_eligibility_check": {"consent_basis", "locale", "global_frequency_budget", "suppression_precedence", "user_preferences", "disposition", "quiet_hours", "channel_eligibility", "campaign_frequency_budget", "legal_tenant_constraints", "throttle_grouping", "workflow_content_state", "promotion_decision"},
             "lifecycle_experiment_validity_check": {"primary_metric", "exposure_definition", "assignment_unit", "treatment_control", "exposure_unit", "guardrail_metrics", "pause_rollback_conditions", "assignment_stickiness", "data_health_checks", "approval_state", "holdout_rationale", "minimum_runtime"},
-            "lifecycle_readout_evidence_check": {"evidence_refs", "cross_exposure_status", "displayed_count", "overlap_status", "freshness_status", "causal_claim_status", "delivered_count", "instrumentation_status", "denominator_status", "sample_ratio_status", "acted_count", "eligible_count", "disposition", "attempted_count", "outcome_count"},
+            "lifecycle_readout_evidence_check": {"evidence_refs", "cross_exposure_status", "displayed_count", "overlap_status", "freshness_status", "causal_claim_status", "delivered_count", "instrumentation_status", "denominator_status", "sample_ratio_status", "acted_count", "eligible_count", "disposition", "attempted_count", "outcome_count", "step_outcomes", "step_trace_status"},
             "lifecycle_handoff_boundary_check": {"approver", "evidence_refs", "action_class", "target_owner", "readiness", "disposition", "timing", "stop_conditions", "approval_state"},
         },
     },
