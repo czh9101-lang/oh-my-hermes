@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from _local_package import load_local_package
 
 load_local_package()
 from omh.config_adapter import (
+    external_dir_registered,
     activate_omh_skin,
     activate_tui_interface,
     display_interface_selection,
@@ -271,3 +275,26 @@ class ConfigAdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExternalDirRegistrationTests(unittest.TestCase):
+    """The installer registers `current/skills`; a running command knows only
+    its generation directory. Measured live 2026-09-08: doctor and probe
+    compared the two as strings and called every staged-update install
+    unregistered."""
+
+    def test_the_generation_directory_is_registered_through_the_current_pointer(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generation = root / "generations" / "g1"
+            (generation / "skills").mkdir(parents=True)
+            os.symlink(generation, root / "current", target_is_directory=True)
+            dirs = [(root / "current" / "skills").as_posix()]
+            self.assertTrue(external_dir_registered(dirs, generation / "skills"))
+            self.assertTrue(external_dir_registered(dirs, root / "current" / "skills"))
+            self.assertFalse(external_dir_registered(dirs, root / "generations" / "g2" / "skills"))
+            self.assertFalse(external_dir_registered([], generation / "skills"))
+
+    def test_a_textual_match_needs_no_directory_on_disk(self) -> None:
+        self.assertTrue(external_dir_registered(["/nowhere/skills"], "/nowhere/skills"))
+        self.assertFalse(external_dir_registered(["/nowhere/skills"], "/elsewhere/skills"))

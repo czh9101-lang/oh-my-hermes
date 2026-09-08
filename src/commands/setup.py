@@ -47,6 +47,7 @@ from ..config_adapter import (
     ensure_omh_skin,
     ensure_plugin_enabled,
     ensure_tui_interface,
+    external_dir_registered,
     external_dirs,
     maybe_set_memory_provider,
     memory_provider_selection,
@@ -590,8 +591,11 @@ def _registered_workflow_dir(paths: OmhPaths) -> Path:
 
 
 def _external_dir_registered(config: str, path: Path) -> bool:
+    entries = external_dirs(config)
     wanted = _external_dir_key(path)
-    return any(_external_dir_key(entry) == wanted for entry in external_dirs(config))
+    if any(_external_dir_key(entry) == wanted for entry in entries):
+        return True
+    return external_dir_registered(entries, path)
 
 
 def _external_dir_key(path: str | Path) -> str:
@@ -2743,7 +2747,7 @@ def _run_setup_wizard(args: argparse.Namespace, paths, language: str) -> None:
     print(f"{tr(language, 'hermes_home')}: {_color(str(paths.hermes_home), '36', use_color)}")
     if paths.hermes_config_path.exists():
         config_text = read_config(paths.hermes_config_path)
-        registered = paths.skills_dir.as_posix() in external_dirs(config_text)
+        registered = external_dir_registered(external_dirs(config_text), paths.skills_dir)
         status = tr(language, "status_already_registered") if registered else tr(language, "status_will_register")
         print(f"{tr(language, 'hermes_config')}: {_color(str(paths.hermes_config_path), '36', use_color)} ({status})")
     else:

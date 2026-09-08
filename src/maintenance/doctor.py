@@ -10,6 +10,7 @@ from .advisory import AdvisoryReport, run_config_advisories
 from .structural_search import inspect_structural_search
 from ..command_path import inspect_omh_command_path
 from ..config_adapter import (
+    external_dir_registered,
     external_dirs,
     memory_provider_selection,
     plugin_enablement,
@@ -140,8 +141,9 @@ def run_doctor(paths: OmhPaths) -> list[Check]:
     dirs = external_dirs(config_text)
     hermes_config_present = paths.hermes_config_path.exists()
     checks.append(Check("hermes_config", hermes_config_present, f"{paths.hermes_config_path}"))
-    # config.yaml stores external_dirs in POSIX form (config_adapter._normalize).
-    external_registered = paths.skills_dir.as_posix() in dirs
+    # By text or by real path: the installer registers the `current` pointer,
+    # the running command knows its generation, and both name this directory.
+    external_registered = external_dir_registered(dirs, paths.skills_dir)
     checks.append(Check("external_dir", external_registered, f"{paths.skills_dir} in skills.external_dirs"))
     # `None`, not `dirs`, when the config is absent: `read_config` returns "" for
     # a missing file, so an empty list there would read as "Hermes registers no
