@@ -135,10 +135,14 @@ class OmhMemoryProvider(_MemoryProviderBase):
         self._pack = ""
         self._query = ""
         self._pack_count = 0
+        # True when blocks, a reference index, or records are in the pack. A
+        # consolidation brief alone is a request, not recalled memory.
+        self._pack_has_memory = False
         # What the LAST prefetch handed Hermes, for the recall indicator: the
         # base class asks that a stale prior count never be reported.
         self._served_pack = ""
         self._served_count = 0
+        self._served_has_memory = False
         # Hermes hands a status callback to providers on the CLI surface only;
         # gateway platforms travel a different path and get the brief through
         # the pack instead. None means "say nothing here", never "fail".
@@ -178,6 +182,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
 
     def prefetch(self, query: str = "", *, session_id: str = "") -> str:
         self._served_pack, self._served_count = self._pack, self._pack_count
+        self._served_has_memory = self._pack_has_memory
         return self._pack
 
     def queue_prefetch(
@@ -203,17 +208,18 @@ class OmhMemoryProvider(_MemoryProviderBase):
         prefetch that carried it, so the user sees memory was used even when
         the model says nothing about it. Nothing served, nothing said. A pack
         that is only a reference-block index counts as content without a
-        discrete count, which Hermes renders generically.
+        discrete count, which Hermes renders generically; a pack that is only
+        a consolidation brief is a request, not memory, and says nothing.
         """
-        if not self._served_pack:
+        if not self._served_pack or not self._served_has_memory:
             return None
         return RecallStatus(provider_label=PROVIDER_LABEL, count=self._served_count)
 
     def shutdown(self) -> None:
         """Hermes is closing. Last chance to leave a brief behind."""
         self._evaluate_if_due("shutdown")
-        self._pack, self._pack_count = "", 0
-        self._served_pack, self._served_count = "", 0
+        self._pack, self._pack_count, self._pack_has_memory = "", 0, False
+        self._served_pack, self._served_count, self._served_has_memory = "", 0, False
 
     # -- Optional hooks -----------------------------------------------------
 
@@ -327,6 +333,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
             rank_project_memory_records(read_project_memory_records(self._record_homes()), self._query)
         )
         self._pack_count = block_count + record_count
+        self._pack_has_memory = bool(system or index or records)
         # The brief is a request, not a memory: it is served so the model can
         # consolidate in this turn, and it never moves the recall count.
         consolidation = render_consolidation_brief(read_latest_consolidation(self._omh_home))

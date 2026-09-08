@@ -2396,9 +2396,14 @@ class DreamingReachesTheTurnTests(unittest.TestCase):
             self.assertIn("session_ending_with_unconsolidated_turns", pack)
             self.assertIn("Hermes' own memory tool", pack)
             self.assertIn("tell the user in one short line", pack)
-            # A brief is a request, not recalled memory: nothing to count, no
-            # indicator -- the pack is non-empty but Hermes renders count 0 generically.
-            self.assertEqual(provider.recall_status(), RecallStatus(provider_label="OMH", count=0))
+            # A brief is a request, not recalled memory: no indicator at all.
+            self.assertIsNone(provider.recall_status())
+            # With one real memory beside it, the count is that memory alone.
+            write_memory_block(root / ".omh", approve_memory_block(build_memory_block("facts", "OMH wraps Hermes.")))
+            provider.queue_prefetch("")
+            pack = provider.prefetch("next turn")
+            self.assertIn("<memory_consolidation", pack)
+            self.assertEqual(provider.recall_status(), RecallStatus(provider_label="OMH", count=1))
 
     def test_the_brief_leaves_the_pack_once_consolidation_is_observed(self) -> None:
         with TemporaryDirectory() as tmp:
