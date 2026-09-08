@@ -21,16 +21,16 @@ export default function register(sdk) {
     'import json,os,sys',
     "sys.path.insert(0, os.path.join(os.environ['HERMES_HOME'], 'plugins'))",
     'from omh.runtime_reader import read_omh_hud',
-    "print(json.dumps(read_omh_hud(os.environ.get('OMH_HOME'), os.environ.get('HERMES_HOME'), graph_preference=os.environ.get('OMH_SUBAGENT_GRAPH', 'auto'), tui_session_ref=os.environ.get('OMH_HUD_TUI_SESSION_REF', ''))))",
+    "print(json.dumps(read_omh_hud(os.environ.get('OMH_HOME'), os.environ.get('HERMES_HOME'), graph_preference=os.environ.get('OMH_SUBAGENT_GRAPH', 'auto'), tui_session_ref=os.environ.get('OMH_HUD_TUI_SESSION_REF', ''), session_scoped=True)))",
   ].join(';')
   // This TUI's own session id. The host writes it to the file named by
   // HERMES_TUI_ACTIVE_SESSION_FILE whenever it creates, resumes, or switches
   // a session, and this widget runs inside that same TUI process, so the
   // file is the one identity the poll can carry that no other TUI shares.
-  // The reader scopes the plan todo to it. After a resume or switch the
-  // file holds the durable session key; on a freshly created session it
-  // holds the gateway's transport id instead, which the reader detects
-  // (no live row, no record) and answers as an identity-less poll would.
+  // The reader scopes todos, agent rows and their derived metrics to it.
+  // A fresh host session may expose only an unmapped transport id: leave
+  // session-local activity empty until a durable id arrives, never use MRU.
+  // Even an identity-less widget poll explicitly requests session scope.
   // A missing, unreadable, or malformed value is passed as nothing rather
   // than as a mutated string that would select the wrong record.
   const ACTIVE_SESSION_FILE = process.env.HERMES_TUI_ACTIVE_SESSION_FILE || ''

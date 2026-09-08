@@ -763,22 +763,26 @@ def read_omh_hud(
     graph_preference: str = "auto",
     session_ref: str = "",
     tui_session_ref: str = "",
+    session_scoped: bool = False,
 ) -> dict[str, Any]:
     """The HUD payload for one reading session.
 
-    ``session_ref`` is the reader's own durable session id, as the host
-    dispatched it (plugin tool, hook, operator flag), and is trusted as-is.
-    ``tui_session_ref`` is what the host's active-session file reports for
-    the TUI a widget renders in; on a freshly created session that file
-    holds the gateway's transport id rather than the durable key, so a value
-    that neither names a live TUI row nor owns a record falls back to the
-    most recently active live TUI row instead of rendering nothing.
+    A supplied reference scopes activity to that durable conversation. Widgets
+    also set ``session_scoped`` so absent/malformed identities remain empty,
+    never global. Unmapped host transport ids cannot select a recent session.
+    Calls with no reference and no scoped flag retain the operator/global view.
     """
     safe_preset = preset if preset in HUD_PRESETS else "focused"
     home = _expand_path(omh_home) if omh_home else _default_omh_home()
     hermes = _expand_path(hermes_home) if hermes_home else _default_hermes_home()
     safe_limit = _safe_limit(limit, default=3)
-    status_payload = status if status is not None else _read_omh_hud_status(home, limit=safe_limit)
+    scoped = session_scoped or bool(session_ref or tui_session_ref)
+    reference = session_ref or tui_session_ref
+    # OMH run/binding projections identify executors and wrapper targets, not
+    # the originating Hermes conversation. Do not invent that relationship.
+    status_payload = {} if scoped else (
+        status if status is not None else _read_omh_hud_status(home, limit=safe_limit)
+    )
     state = _read_hud_json(home / "runtime" / "state.json", root=home)
     profile = _read_hud_json(home / "setup-profile.json", root=home)
     target_registry = _read_hud_json(home / "targets.json", root=home)
@@ -801,10 +805,7 @@ def read_omh_hud(
         "runtime": _hud_runtime_summary(status_payload, latest_run),
         "achievements": _achievements_summary(hermes),
         "tokens": _token_summary(token_metadata or {}),
-        # Scoped to the reading session: the widget names its own session
-        # (`session_ref`), and a caller that cannot falls back to the live
-        # TUI row, so one session's checklist never renders in another.
-        "todo": _todo_summary(home, hermes, session_ref, tui_session_ref),
+        "todo": _todo_summary(home, hermes, session_ref, tui_session_ref, session_scoped=scoped),
         # Concurrent tool-call batches observed by the pre_tool_call hook;
         # the [OMH] status line brands a fresh batch as a parallel shot.
         "parallel_shot": tool_calls["parallel_shot"],
@@ -845,7 +846,7 @@ def read_omh_hud(
     payload["subagents"]["rows"] = ordered[:ACTIVITY_ROW_LIMIT]
     # Hermes-native delegate_task children are work the HUD must show even
     # though they never touch the OMH runtime store; see hermes_delegation.
-    native = read_hermes_native_subagents(hermes, omh_home=home)
+    native = read_hermes_native_subagents(hermes, omh_home=home, session_ref=reference if scoped else None)
     if native["rows"]:
         merged = payload["subagents"]
         combined = _ordered_activity_rows(list(merged["rows"]) + list(native["rows"]))
@@ -861,10 +862,14 @@ def read_omh_hud(
         merged["completed"] = int(merged.get("completed", 0)) + int(native["completed"])
         if merged.get("status") == "idle":
             merged["status"] = "observed"
-    payload["graph"] = _hud_subagent_graph(
-        home,
-        native_rows_present=bool(native["rows"]),
-        preference=_hud_graph_preference(graph_preference),
+    payload["graph"] = (
+        project_subagent_graph(None, {"units": []}, preference=_hud_graph_preference(graph_preference),
+                               blockers=("session_ownership_unavailable",))
+        if scoped else _hud_subagent_graph(
+            home,
+            native_rows_present=bool(native["rows"]),
+            preference=_hud_graph_preference(graph_preference),
+        )
     )
     payload["active"] = bool(
         payload["runtime"]["workflow"] != "idle"
@@ -1766,6 +1771,8 @@ def _todo_summary(
     hermes: Path | None = None,
     session_ref: str = "",
     tui_session_ref: str = "",
+    *,
+    session_scoped: bool = False,
 ) -> dict[str, Any]:
     empty = {
         "status": "absent",
@@ -1778,19 +1785,21 @@ def _todo_summary(
         "display_phase": "",
         "more_count": 0,
     }
-    session_id, session = _reading_session(hermes, session_ref or tui_session_ref)
+    reference = session_ref or tui_session_ref
+    scoped = session_scoped or bool(reference)
+    if scoped and (
+        not isinstance(reference, str) or not (1 <= len(reference) <= MAX_TODO_SESSION_REF_CHARS)
+        or any(not (char.isalnum() or char in "_.:@-") for char in reference)
+    ):
+        return empty
+    session_id, session = _reading_session(hermes, reference)
     record, own_record = _own_todo_record(home, session_id)
-    if not own_record and not session_ref and tui_session_ref and session is None:
-        # The widget's reference places no TUI: it is neither a live row nor
-        # the owner of a record, which is what a fresh session's transport id
-        # looks like. Read as a widget with no identity would, rather than
-        # hiding the plan this TUI is most likely looking at.
-        session_id, session = _reading_session(hermes, "")
-        record, own_record = _own_todo_record(home, session_id)
     if not own_record:
         # No per-session record: the home-wide file answers, gated below by
         # the identity or write-time rule so another session's plan stays out.
         record = _read_hud_json(todo_path(home), root=home)
+    if scoped and session is None and not own_record and record.get("session_ref") != session_id:
+        return empty
     if record.get("schema_version") != TODO_SCHEMA_VERSION:
         return empty
     items: list[dict[str, Any]] = []

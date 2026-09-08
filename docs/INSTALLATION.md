@@ -1020,30 +1020,34 @@ bound; nothing else in that directory is touched. `omh runtime todo set|clear|sh
 <id>` addresses one session's record from the command line.
 
 Records written without a session id — `omh runtime todo set` with no
-`--session`, or anything predating the field — are the home-wide
-`$OMH_HOME/runtime/todo.json`, scoped by write time instead: a plan written
-before the reading session started belongs to an earlier one and reads as
-stale. That fallback only applies where the host can answer it. With no
-`$HERMES_HOME/state.db`, an unreadable one, no live TUI session recorded in
-it, or a reading session it does not list as a TUI (a gateway session has no
-row to date the record against), the projection keeps the age-only behavior
-above and shows the plan, since hiding a legitimately current checklist on
-missing evidence is the worse failure. The widget's identity likewise needs
-a host that sets `HERMES_TUI_ACTIVE_SESSION_FILE` for the TUI process; on a
-Hermes that does not, the widget carries no identity and the panel answers
-for the most recently active live TUI session, as it did before.
+`--session`, or anything predating the field — remain home-wide
+`$OMH_HOME/runtime/todo.json` records. The operator/global reader and known
+live TUI sessions retain their existing age/write-time gates and explicit
+clear behavior. An unknown reading session cannot borrow an unstamped plan;
+it needs its own record.
 
-The widget's own identity has one known alias. After a resume or session
-switch the host's active-session file holds the durable session key; on a
-freshly created session it holds the gateway's transport id, which no record
-and no `state.db` row carries. The reader treats a widget reference that
-names no live TUI row and owns no record as that case and answers as an
-identity-less poll would — the most recently active live TUI session — so a
-fresh TUI still renders the plan it declares. Two TUIs both freshly created
-and not yet resumed therefore still share that answer — the pre-existing
-most-recently-active rule — until each is resumed or switched and the file
-carries its durable key; the plugin tools and the reminder are unaffected
-because Hermes dispatches them with the durable key.
+The widget also scopes native Hermes agent rows and their row-derived
+counts, token totals and costs to the reading conversation. Compression
+continuations remain one conversation; ordinary branches and delegated
+children are not continuation edges. Ownership filtering precedes the native
+reader's row limit, so unrelated busy sessions cannot hide this session's work.
+Calls to `omh hud` without a session reference retain the global operator view.
+
+The widget requires `HERMES_TUI_ACTIVE_SESSION_FILE` to name a durable session
+key. Older host paths write a transport id on a newly created session instead;
+missing, malformed or unmapped identities leave session-local agents and todos
+empty rather than selecting the most recently active chat. Resuming the exact
+conversation through a host path that writes its durable key restores that
+identity. OMH does not patch the host or guess an alias. Host-side durable-key
+work is tracked separately in NousResearch/hermes-agent#18476 and #66446.
+
+Ownership-less OMH executor/maestro rows and DAG projections remain available
+in the global view, but are not attributed to a session-local widget. Native
+manifest task labels and route-provenance records currently lack conversation
+ownership too: scoped rows omit those labels rather than pairing another
+conversation's task by timestamp. This is a display boundary only, not a stop,
+cancellation or change to delegation delivery. Other global diagnostic fields
+in the HUD payload are not redefined as session-scoped by this change.
 
 #### Status model: no-run, prepared-handoff, observed-run
 

@@ -1243,7 +1243,51 @@ def _parse_local_timestamp(value: str) -> float:
         return 0.0
 
 
-def _query_state_db(state_db: Path, *, now: float) -> dict[str, Any]:
+def _conversation_session_ids(connection: sqlite3.Connection, session_ref: str) -> set[str]:
+    """Exact durable identity plus unambiguous compression continuations only.
+
+    A transport id is not a durable id. Never substitute the latest session,
+    normalize an invalid reference, or follow ordinary branch/delegate parents.
+    Older schemas can still answer exact ownership without answering lineage.
+    """
+    if not isinstance(session_ref, str) or not (1 <= len(session_ref) <= 160) or any(
+        not (char.isalnum() or char in "_.:@-") for char in session_ref
+    ):
+        return set()
+    if not connection.execute("SELECT 1 FROM sessions WHERE id = ?", (session_ref,)).fetchone():
+        return set()
+    columns = {row[1] for row in connection.execute('PRAGMA table_info("sessions")')}
+    if not {"parent_session_id", "end_reason", "source"} <= columns:
+        return {session_ref}
+    rows = connection.execute(
+        """
+        WITH RECURSIVE candidates(parent, child) AS (
+            SELECT parent.id, child.id
+            FROM sessions parent JOIN sessions child ON child.parent_session_id = parent.id
+            WHERE parent.end_reason = 'compression'
+              AND COALESCE(child.source, '') != 'tool'
+              AND CASE WHEN child.model_config IS NULL OR child.model_config = '' THEN 1
+                  WHEN json_valid(child.model_config) THEN
+                      json_type(child.model_config) = 'object'
+                      AND json_extract(child.model_config, '$._delegate_from') IS NULL
+                      AND json_extract(child.model_config, '$._branched_from') IS NULL
+                  ELSE 0 END
+        ), edges(parent, child) AS (
+            SELECT parent, child FROM candidates c
+            WHERE (SELECT COUNT(*) FROM candidates WHERE parent = c.parent) = 1
+        ), conversation(id) AS (
+            SELECT ?
+            UNION SELECT edges.child FROM edges JOIN conversation ON edges.parent = conversation.id
+            UNION SELECT edges.parent FROM edges JOIN conversation ON edges.child = conversation.id
+        )
+        SELECT id FROM conversation
+        """,
+        (session_ref,),
+    )
+    return {row[0] for row in rows}
+
+
+def _query_state_db(state_db: Path, *, now: float, session_ref: str | None = None) -> dict[str, Any]:
     """Read child sessions, usage tallies, and delegation states, read-only."""
     result: dict[str, Any] = {"children": [], "delegation_states": {}, "parent_models": {}}
     try:
@@ -1253,14 +1297,23 @@ def _query_state_db(state_db: Path, *, now: float) -> dict[str, Any]:
     except sqlite3.Error:
         return result
     try:
+        owner_filter = ""
+        parameters: list[Any] = [now - _SESSION_WINDOW_SECONDS]
+        if session_ref is not None:
+            owners = _conversation_session_ids(connection, session_ref)
+            if not owners:
+                return result
+            placeholders = ",".join("?" for _ in owners)
+            owner_filter = (
+                " AND CASE WHEN json_valid(model_config) THEN "
+                f"json_extract(model_config, '$._delegate_from') IN ({placeholders}) ELSE 0 END"
+            )
+            parameters.extend(sorted(owners))
         cursor = connection.execute(
-            """
-            SELECT id, model, model_config, started_at
-            FROM sessions
-            WHERE model_config LIKE '%_delegate_from%' AND started_at >= ?
-            ORDER BY started_at DESC LIMIT 32
-            """,
-            (now - _SESSION_WINDOW_SECONDS,),
+            "SELECT id, model, model_config, started_at FROM sessions "
+            "WHERE model_config LIKE '%_delegate_from%' AND started_at >= ?"
+            + owner_filter + " ORDER BY started_at DESC LIMIT 32",
+            parameters,
         )
         rows = cursor.fetchall()
         parents_needed: set[str] = set()
@@ -1372,8 +1425,9 @@ def read_hermes_native_subagents(
     now: float | None = None,
     limit: int = _ROW_LIMIT,
     omh_home: str | Path | None = None,
+    session_ref: str | None = None,
 ) -> dict[str, Any]:
-    """Project live Hermes-native delegation children into HUD activity rows."""
+    """Project native children; None is global, an empty/unknown id is empty."""
     current = float(now) if now is not None else time.time()
     home = Path(hermes_home).expanduser() if hermes_home else Path.home() / ".hermes"
     # Category labels honor the user's ~/.omh/routing/model-chains.json
@@ -1390,11 +1444,20 @@ def read_hermes_native_subagents(
         "blocked": 0,
         "completed": 0,
     }
-    state = _query_state_db(home / "state.db", now=current)
+    state = _query_state_db(home / "state.db", now=current, session_ref=session_ref)
     children = state.get("children", [])
     if not children:
         return payload
-    manifests = _read_manifests(home / "cache" / "delegation" / "live", now=current)
+    # The host manifests carry neither parent nor child session identity.
+    # Timestamp/task-order matching cannot establish ownership when dispatches
+    # overlap. Keep legacy global context, but never borrow it for a session.
+    manifests = (
+        _read_manifests(home / "cache" / "delegation" / "live", now=current)
+        if session_ref is None else []
+    )
+    if session_ref is not None:
+        # Prepared route records likewise carry no conversation ownership.
+        route_provenance = []
 
     # Children of one manifest, oldest-first, pair with the manifest's tasks
     # by dispatch order; the pairing is best-effort context (goal text and
