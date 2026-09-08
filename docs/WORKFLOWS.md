@@ -8251,6 +8251,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - prepared-vs-observed boundary
 - Artifact expectations:
   - hermes_achievements_observation/v1 metadata-only payload from `omh achievements` when recorded
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Safety rules:
   - An achievements card reflects only locally observed hermes-achievements plugin artifacts; it is not a session-history rescan, badge recomputation, unlock proof beyond those artifacts, or productivity evidence.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
@@ -8810,6 +8811,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - not_observed provider and host gaps
 - Artifact expectations:
   - run_efficiency_report/v1 metadata-only report
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Safety rules:
   - Run efficiency is supplied OMH-local metadata, not provider, billing, cron, or host evidence.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
@@ -10556,6 +10558,7 @@ Plan compact context, token/cost budgets, summarization checkpoints, and overflo
   - expected duration and artifacts
   - available context sources and must-keep facts
   - token, cost, latency, or message-size constraints
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Outputs:
   - context_budget_plan/v1
   - must_keep_context_pack/v1
@@ -12723,6 +12726,7 @@ Prepare a manager-facing quality and throughput review for AI-agent research, co
   - work context or run/session references when available
   - target outcome
   - known evidence gaps
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Outputs:
   - agent_operator_productivity/v1
   - agent_operator_status_card/v1
@@ -12990,6 +12994,7 @@ Prepare a metadata-only health dashboard for OMH skills, observed failure signal
   - catalog/generated/reference surfaces
   - observed failure signals or explicit missing-signal statement
   - pending amendment sources when available
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Outputs:
   - catalog, generated, reference, harness, and capability-surface status
   - observed failure signals, or an explicit statement that none were supplied
@@ -13040,6 +13045,7 @@ Route self-improvement signals to memory, skill, wiki, failure-retrospective, au
   - self-improvement signal when available
   - observed evidence refs when available
   - feedback or failure summary
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Outputs:
   - self_improvement_store_routing/v1
   - workflow_learning_trace/v1

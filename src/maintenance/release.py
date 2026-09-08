@@ -693,7 +693,14 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # and delegation fallback contracts, and real artifact CLI pointers in their
 # bodies. Their complete skill-specific contracts move to per-skill references;
 # shared rails remain referenced rather than copied.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 914399
+# 914399 -> 914611: `achievements` and `run-efficiency` name the supplied
+# `session_activity_receipt/v1` as an artifact expectation (issue #1404). One
+# bounded line each, in the always-loaded body because it is an input the
+# workflow must ask for BEFORE it reports: without it "the skill was not used"
+# reads as a finding when nobody observed whether the skill was exposed, and
+# a missing counter reads as zero. The contract itself lives in
+# `docs/SESSION-ACTIVITY-RECEIPTS.md`, outside this budget; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 914611
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

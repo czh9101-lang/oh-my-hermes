@@ -1580,6 +1580,7 @@ _HARNESSES = [
             "expected duration and artifacts",
             "available context sources and must-keep facts",
             "token, cost, latency, or message-size constraints",
+            "supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero",
         ),
         (
             "context_budget_plan/v1",
@@ -2916,7 +2917,13 @@ _FEATURE_SURFACE_HARNESSES = (
         "agent-ops-review",
         "Prepare a manager-facing quality and throughput review for AI-agent research, coding, review, and status work.",
         "Use when a third-party operator or team lead wants to understand progress, blockers, quality gates, next actions, and safe throughput levers without running shell catalog commands.",
-        ("manager request", "work context or run/session references when available", "target outcome", "known evidence gaps"),
+        (
+            "manager request",
+            "work context or run/session references when available",
+            "target outcome",
+            "known evidence gaps",
+            "supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero",
+        ),
         ("agent_operator_productivity/v1", "agent_operator_status_card/v1", "quality lanes", "blockers", "next action", "throughput levers"),
         quality_tier="manager-review-gated",
         evidence_ladder=(
@@ -3096,6 +3103,7 @@ _FEATURE_SURFACE_HARNESSES = (
             "catalog/generated/reference surfaces",
             "observed failure signals or explicit missing-signal statement",
             "pending amendment sources when available",
+            "supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero",
         ),
         (
             "catalog, generated, reference, harness, and capability-surface status",
@@ -3130,6 +3138,7 @@ _FEATURE_SURFACE_HARNESSES = (
             "self-improvement signal when available",
             "observed evidence refs when available",
             "feedback or failure summary",
+            "supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero",
         ),
         (
             "self_improvement_store_routing/v1",
