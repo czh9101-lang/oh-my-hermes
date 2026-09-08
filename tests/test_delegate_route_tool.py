@@ -11,16 +11,103 @@ projection over the shipped mixture chains.
 import json
 import os
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from omh.plugin_bundle.omh.delegation_routing import (
     read_delegation_route,
+    read_session_provider,
     write_delegation_route,
 )
 from omh.plugin_bundle.omh.hermes_delegation import load_delegation_route_provenance
 from omh.plugin_bundle.omh.tools.delegate_route_tool import omh_delegate_route_handler
+
+
+class DelegationRouteHomeTest(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.default_home = self.root / ".hermes"
+        self.profile = self.default_home / "profiles" / "test-profile"
+        self.omh_home = self.root / ".omh"
+        self.enterContext(mock.patch.dict(os.environ, {
+            "HOME": str(self.root),
+            "USERPROFILE": str(self.root),
+            "HERMES_HOME": str(self.profile),
+            "OMH_HOME": str(self.omh_home),
+        }))
+        # Force the standalone boundary regardless of the developer's host.
+        self.enterContext(mock.patch.dict("sys.modules", {"hermes_constants": None}))
+
+    def _assert_tool_cycle(self, target, **args):
+        untouched = (
+            "# keep this comment\nmodel:\n  provider: test-parent\n"
+            "delegation:\n  max_concurrent_children: 4\n"
+            "display:\n  skin: test-skin\n"
+        )
+        other_homes = {self.default_home, self.profile, self.root / "native"} - {target}
+        for home in other_homes | {target}:
+            home.mkdir(parents=True, exist_ok=True)
+            (home / "config.yaml").write_text(untouched, encoding="utf-8")
+
+        config = target / "config.yaml"
+        target_text = untouched.replace("test-parent", "target-parent")
+        config.write_text(target_text, encoding="utf-8")
+
+        def call(action, **values):
+            return json.loads(omh_delegate_route_handler({
+                "action": action, "omh_home": str(self.omh_home), **args, **values,
+            }))
+
+        self.assertEqual(call("status")["route"], {})
+        result = call("set", model="test-child", reasoning_effort="high")
+        self.assertEqual(result["status"], "routed")
+        self.assertEqual(config.read_text(encoding="utf-8"), target_text.replace(
+            "delegation:\n",
+            "delegation:\n  model: 'test-child'\n  reasoning_effort: 'high'\n",
+        ))
+        self.assertEqual(call("status")["route"]["model"], "test-child")
+        self.assertEqual(read_session_provider(args.get("hermes_home")), "target-parent")
+        self.assertEqual(call("clear")["status"], "cleared")
+        self.assertEqual(call("status")["route"], {})
+        self.assertEqual(config.read_text(encoding="utf-8"), target_text)
+        for home in other_homes:
+            self.assertEqual((home / "config.yaml").read_text(encoding="utf-8"), untouched)
+
+    def test_standalone_tool_uses_environment_profile(self):
+        self._assert_tool_cycle(self.profile)
+
+    def test_standalone_tool_expands_environment_home(self):
+        os.environ["HERMES_HOME"] = "~/.hermes/profiles/test-profile"
+        self._assert_tool_cycle(self.profile)
+
+    def test_standalone_tool_defaults_when_environment_is_unset(self):
+        os.environ.pop("HERMES_HOME")
+        self._assert_tool_cycle(self.default_home)
+
+    def test_standalone_tool_defaults_when_environment_is_empty(self):
+        os.environ["HERMES_HOME"] = ""
+        self._assert_tool_cycle(self.default_home)
+
+    def test_explicit_home_outranks_environment(self):
+        self._assert_tool_cycle(self.root / "explicit", hermes_home="~/explicit")
+
+    def test_native_home_outranks_environment(self):
+        native = self.root / "native"
+        module = types.ModuleType("hermes_constants")
+        module.get_hermes_home = lambda: native
+        with mock.patch.dict("sys.modules", {"hermes_constants": module}):
+            self._assert_tool_cycle(native)
+
+    def test_explicit_home_does_not_consult_native_resolver(self):
+        module = types.ModuleType("hermes_constants")
+        module.get_hermes_home = mock.Mock(side_effect=AssertionError("must not resolve"))
+        with mock.patch.dict("sys.modules", {"hermes_constants": module}):
+            self._assert_tool_cycle(self.root / "explicit", hermes_home="~/explicit")
+        module.get_hermes_home.assert_not_called()
 
 
 class DelegationRouteWriterTest(unittest.TestCase):
