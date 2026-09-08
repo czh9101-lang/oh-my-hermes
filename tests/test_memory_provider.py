@@ -61,7 +61,15 @@ from omh.plugin_bundle.omh.memory_dreaming import (
     write_dreaming_state,
 )
 from omh.plugin_bundle.omh.memory_eviction import build_eviction_plan, eviction_plan_summary
-from omh.plugin_bundle.omh.memory_provider import PROVIDER_LABEL, PROVIDER_NAME, OmhMemoryProvider, RecallStatus
+from omh.plugin_bundle.omh.memory_provider import (
+    CONSOLIDATION_RENDER_BUDGET_CHARS,
+    PROVIDER_LABEL,
+    PROVIDER_NAME,
+    OmhMemoryProvider,
+    RecallStatus,
+    consolidation_status_line,
+    render_consolidation_brief,
+)
 from omh.plugin_bundle.omh.memory_records import (
     rank_project_memory_records,
     read_project_memory_records,
@@ -2359,3 +2367,106 @@ class RecallIndicatorTests(unittest.TestCase):
             self.assertIsNone(provider.recall_status())
             provider.shutdown()
             self.assertIsNone(provider.recall_status())
+
+
+class DreamingReachesTheTurnTests(unittest.TestCase):
+    """Measured on one machine over seven days: 32 briefs written, 26 of them
+    `session_start_recovery`, and `memory_writes_observed` 0 at every one. The
+    scheduler ran; nothing carried its brief into a Hermes turn, so nothing
+    ever consolidated. The brief now rides in the prefetch pack -- the one
+    channel that reaches every platform -- and the host prints a line where
+    it offers a status callback."""
+
+    def _provider(self, root: Path, **kwargs: object) -> OmhMemoryProvider:
+        provider = OmhMemoryProvider(root / ".omh")
+        provider.initialize("s1", hermes_home=str(root / ".hermes"), agent_context="primary", cwd=str(root), **kwargs)
+        return provider
+
+    def test_a_due_brief_is_served_in_the_pack_and_never_counts_as_a_memory(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_hermes_memory(root / ".hermes", "one fact")
+            provider = self._provider(root)
+            provider.on_turn_start(1, "hi")
+            provider.on_session_end()  # a single unconsolidated turn is enough at a session end
+            self.assertTrue((root / ".omh" / "memory" / "consolidation.json").exists())
+            provider.queue_prefetch("")
+            pack = provider.prefetch("next turn")
+            self.assertIn("<memory_consolidation", pack)
+            self.assertIn("session_ending_with_unconsolidated_turns", pack)
+            self.assertIn("Hermes' own memory tool", pack)
+            self.assertIn("tell the user in one short line", pack)
+            # A brief is a request, not recalled memory: nothing to count, no
+            # indicator -- the pack is non-empty but Hermes renders count 0 generically.
+            self.assertEqual(provider.recall_status(), RecallStatus(provider_label="OMH", count=0))
+
+    def test_the_brief_leaves_the_pack_once_consolidation_is_observed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_hermes_memory(root / ".hermes", "one fact")
+            provider = self._provider(root)
+            provider.on_turn_start(1, "hi")
+            provider.on_session_end()
+            provider.queue_prefetch("")
+            self.assertIn("<memory_consolidation", provider.prefetch("x"))
+            provider.on_memory_write("replace", "memory", "one fact, merged", {"write_origin": "assistant_tool"})
+            provider.queue_prefetch("")
+            self.assertNotIn("<memory_consolidation", provider.prefetch("x"))
+
+    def test_the_host_hears_a_line_when_a_brief_fires_and_when_it_is_honoured(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_hermes_memory(root / ".hermes", "one fact")
+            heard: list[str] = []
+            provider = self._provider(root, status_callback=heard.append)
+            provider.on_turn_start(1, "hi")
+            provider.on_session_end()
+            self.assertEqual(len(heard), 1)
+            self.assertTrue(heard[0].startswith("💤 OMH — memory consolidation due (session_end: "), heard[0])
+            provider.on_memory_write("remove", "memory", "", {"write_origin": "assistant_tool"})
+            self.assertEqual(heard[-1], "🧹 OMH — memory consolidated (remove on memory)")
+            # An 'add' is not consolidation and says nothing.
+            provider.on_memory_write("add", "memory", "new", {"write_origin": "assistant_tool"})
+            self.assertEqual(len(heard), 2)
+
+    def test_no_callback_and_a_failing_callback_both_leave_the_hook_alone(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_hermes_memory(root / ".hermes", "one fact")
+            quiet = self._provider(root)
+            quiet.on_turn_start(1, "hi")
+            quiet.on_session_end()  # no callback: nothing raised
+
+            def broken(_line: str) -> None:
+                raise RuntimeError("terminal went away")
+
+            provider = self._provider(root, status_callback=broken)
+            provider.on_turn_start(1, "hi")
+            provider.on_session_end()  # a failing host channel never fails the hook
+            self.assertTrue((root / ".omh" / "memory" / "consolidation.json").exists())
+
+    def test_the_status_line_names_the_trigger_and_the_first_reason(self) -> None:
+        self.assertEqual(
+            consolidation_status_line("turn", ["turn_interval_reached:5/5", "headroom_below_floor:120"]),
+            "💤 OMH — memory consolidation due (turn: turn_interval_reached:5/5 +1)",
+        )
+        self.assertEqual(consolidation_status_line("shutdown", []), "💤 OMH — memory consolidation due (shutdown: )")
+
+    def test_the_rendered_brief_is_bounded_escaped_and_silent_when_not_due(self) -> None:
+        self.assertEqual(render_consolidation_brief(None), "")
+        self.assertEqual(render_consolidation_brief({"due": False, "reasons": ["x"]}), "")
+        brief = {
+            "due": True,
+            "trigger": "turn",
+            "raised_at": "2026-09-08T00:00:00Z",
+            "reasons": [f"reason_{i} <{i}>" for i in range(20)],
+            "requested_of_executor": ["a & b"] * 20,
+            "eviction_plan": {"entry_count": 7, "headroom_chars": 1205, "duplicate_clusters": [{}, {}]},
+        }
+        text = render_consolidation_brief(brief)
+        self.assertLessEqual(len(text), CONSOLIDATION_RENDER_BUDGET_CHARS)
+        self.assertTrue(text.endswith("</memory_consolidation>"))
+        self.assertIn("reason_0 &lt;0&gt;", text)
+        self.assertIn('<omitted reasons="14" />', text)
+        self.assertIn('duplicate_clusters="2"', text)
+        self.assertNotIn("<0>", text)
