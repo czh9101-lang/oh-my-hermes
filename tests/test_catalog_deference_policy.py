@@ -18,8 +18,10 @@ surface - a skill outranking the sibling it says owns the request - and no test
 notices.
 
 This module notices. It re-derives the graph from the catalog at run time and
-routes each declining statement, asserting the disclaiming skill does not
-outrank the sibling it names.
+compiles each declining statement into an executable probe, asserting the
+disclaiming skill does not outrank the sibling it names. Catalog-name backticks
+encode graph metadata here, not quoted user intent; non-skill references stay
+quoted.
 
 WHAT A PASS IS AND IS NOT WORTH. The query is the owner's own authored prose, so
 the owner carries a large home-field vocabulary advantage - and the statement
@@ -204,7 +206,12 @@ def _deference_cases() -> list[tuple[str, tuple[str, ...], str]]:
 
 
 def _routed_field(statement: str) -> list[str]:
-    return [recommendation["skill"] for recommendation in recommend_skills(statement, limit=FIELD_LIMIT)]
+    catalog_names = {definition.name for definition in builtin_definitions()}
+    query = _BACKTICKED_NAME.sub(
+        lambda match: match.group(1) if match.group(1) in catalog_names else match.group(0),
+        statement,
+    )
+    return [recommendation["skill"] for recommendation in recommend_skills(query, limit=FIELD_LIMIT)]
 
 
 def _rank(field: list[str], skill: str) -> int:
