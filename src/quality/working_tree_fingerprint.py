@@ -91,7 +91,7 @@ def working_tree_content_fingerprint(
         calls += 1
         try:
             completed = active_runner(
-                ["git", "-c", "core.fsmonitor=false", "--no-optional-locks", *args],
+                ["git", "-c", "core.fsmonitor=false", "-c", "core.filemode=true", "--no-optional-locks", *args],
                 cwd=str(root),
                 text=False,
                 capture_output=True,
@@ -117,11 +117,11 @@ def working_tree_content_fingerprint(
             root = resolved_root
         index_name = git(["rev-parse", "--git-path", "index"])
         objects_name = git(["rev-parse", "--git-path", "objects"])
-        sparse = git(["config", "--bool", "--get", "core.sparseCheckout"])
+        content_config = git(["config", "--null", "--get-regexp", r"^core\.(sparsecheckout|autocrlf)$"])
         split = git(["config", "--bool", "--get", "core.splitIndex"])
         if index_name is None or objects_name is None:
             return _result(WorkingTreeFingerprintState.UNSUPPORTED, calls=calls)
-        if _enabled(sparse) or _enabled(split):
+        if _unsupported_content_config(content_config) or _enabled(split):
             return _result(WorkingTreeFingerprintState.UNSUPPORTED, calls=calls)
         index_path = _git_path(root, index_name)
         objects_path = _git_path(root, objects_name)
@@ -145,7 +145,7 @@ def working_tree_content_fingerprint(
             index_paths = _index_paths(index_entries)
             head = _object_id(head_tree)
             attributes = git(
-                ["check-attr", "-z", "filter", "--stdin"],
+                ["check-attr", "-a", "-z", "--stdin"],
                 env=environment,
                 input=_nul_terminated(index_paths),
             )
@@ -195,19 +195,7 @@ def _isolated_environment(
     objects: Path | None = None,
     alternate_objects: Path | None = None,
 ) -> dict[str, str]:
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key
-        not in {
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_INDEX_FILE",
-            "GIT_OBJECT_DIRECTORY",
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        }
-        and not key.startswith("GIT_CONFIG_")
-    }
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     environment["GIT_OPTIONAL_LOCKS"] = "0"
     environment["GIT_TERMINAL_PROMPT"] = "0"
     if index is not None and objects is not None and alternate_objects is not None:
@@ -238,6 +226,21 @@ def _object_id(output: bytes) -> str:
 
 def _enabled(value: bytes | None) -> bool:
     return value is not None and value.strip().lower() in {b"true", b"1", b"yes", b"on"}
+
+
+def _unsupported_content_config(value: bytes | None) -> bool:
+    """Reject index modes that cannot prove final unnormalized working bytes."""
+    if value is None:
+        return False
+    for record in value.split(b"\0"):
+        if not record:
+            continue
+        key, separator, setting = record.partition(b"\n")
+        if not separator or key.lower() not in {b"core.sparsecheckout", b"core.autocrlf"}:
+            raise ValueError("invalid content configuration record")
+        if setting.strip().lower() not in {b"", b"false", b"0", b"no", b"off"}:
+            return True
+    return False
 
 
 def _index_paths(entries: bytes) -> list[bytes]:
@@ -298,7 +301,11 @@ def _has_filter(attributes: bytes) -> bool:
         fields.pop()
     if len(fields) % 3:
         raise ValueError("invalid attribute record")
-    return any(value not in {b"unspecified", b"unset"} for value in fields[2::3])
+    transforms = {b"filter", b"text", b"eol", b"working-tree-encoding"}
+    return any(
+        attribute in transforms and value not in {b"unspecified", b"unset"}
+        for attribute, value in zip(fields[1::3], fields[2::3])
+    )
 
 
 def _tree_entries(tree: bytes) -> dict[bytes, tuple[bytes, bytes]]:

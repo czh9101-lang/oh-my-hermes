@@ -91,4 +91,3 @@ class GuardTests(unittest.TestCase):
     def test_disabled_or_non_egress_never_constructs_a_store(self) -> None:
         self.assertIsNone(self.guard.pre(tool_name="read_file", session_id="s", tool_call_id="c"))
         self.assertFalse((Path(self.temp.name) / "runtime").exists())
-

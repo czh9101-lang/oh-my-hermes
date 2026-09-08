@@ -13,8 +13,9 @@ load_local_package()
 from omh.commands.main import build_parser
 from omh.goal_ledger import goal_ledger_path, read_goal_ledger
 from omh.paths import resolve_paths
-from omh.quality.working_tree_fingerprint import WorkingTreeFingerprint, WorkingTreeFingerprintState
+from omh.quality.working_tree_fingerprint import WorkingTreeFingerprint, WorkingTreeFingerprintState, working_tree_content_fingerprint
 from omh.record_revision import APPLIED_MUTATIONS_LIMIT, MAX_MUTATION_ID_CHARS, applied_mutation_key
+from test_working_tree_fingerprint import _init_repo
 
 # The digest helper is deliberately private; the deep module is imported here
 # so the planted replay entry below matches what the real cancel computes
@@ -45,6 +46,20 @@ def _create(base: list[str], goal_id: str = "goal-cli-guard") -> None:
 
 
 class GoalCliRevisionGuardTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Ledger tests need a supported, stable workspace, not whichever Git
+        # normalization attributes happen to be in the test runner's checkout.
+        repository = TemporaryDirectory()
+        self.addCleanup(repository.cleanup)
+        root = Path(repository.name)
+        _init_repo(root)
+        collector = patch(
+            "omh.commands.goal.working_tree_content_fingerprint",
+            side_effect=lambda: working_tree_content_fingerprint(root),
+        )
+        collector.start()
+        self.addCleanup(collector.stop)
+
     def test_revision_guard_flag_names_are_pinned_on_every_mutation_subcommand(self) -> None:
         parser = build_parser()
 
@@ -194,6 +209,34 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             self.assertEqual(status, 0, stderr)
             self.assertEqual(collect.call_count, 1)
             self.assertEqual(json.loads(stdout)["goal"]["checkpoints"][0]["observed_tree"], "f" * 64)
+
+    def test_normalized_workspace_refuses_checkpoint_without_ledger_writes(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            _init_repo(workspace)
+            (workspace / ".gitattributes").write_text("tracked.txt text\n", encoding="utf-8")
+            base = _base(root)
+            _create(base)
+            before = {path: path.read_bytes() for path in (root / ".omh").rglob("*") if path.is_file()}
+
+            with patch(
+                "omh.commands.goal.working_tree_content_fingerprint",
+                side_effect=lambda: working_tree_content_fingerprint(workspace),
+            ) as collect:
+                status, stdout, stderr = run_cli(
+                    base + ["goal", "checkpoint", "--goal", "goal-cli-guard", "--summary", "Unsupported workspace"]
+                )
+
+            self.assertEqual(status, 2)
+            self.assertEqual(stdout, "")
+            self.assertIn("unsupported", stderr)
+            self.assertEqual(collect.call_count, 1)
+            self.assertEqual(
+                {path: path.read_bytes() for path in (root / ".omh").rglob("*") if path.is_file()},
+                before,
+            )
 
     def test_repeated_mutation_id_leaves_one_item_and_reports_replayed(self) -> None:
         with TemporaryDirectory() as tmp:

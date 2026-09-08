@@ -27,6 +27,9 @@ def _init_repo(root: Path) -> None:
     _git(root, "init")
     _git(root, "config", "user.email", "omh-tests@example.test")
     _git(root, "config", "user.name", "OMH Tests")
+    _git(root, "config", "core.autocrlf", "false")
+    _git(root, "config", "gc.auto", "0")
+    _git(root, "config", "maintenance.auto", "false")
     (root / ".gitignore").write_text("ignored/\n", encoding="utf-8")
     (root / "tracked.txt").write_bytes(b"base\x00bytes\n")
     _git(root, "add", ".")
@@ -104,6 +107,74 @@ class WorkingTreeFingerprintTests(unittest.TestCase):
         self.assertNotEqual(byte_path.fingerprint, base)
         os.unlink(raw_name)
         self.assertEqual(working_tree_content_fingerprint(self.root).fingerprint, base)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX executable-bit semantics")
+    def test_filemode_false_cannot_hide_final_executable_bit_changes(self) -> None:
+        _git(self.root, "config", "core.fileMode", "false")
+        tracked = self.root / "tracked.txt"
+        tracked.chmod(0o644)
+        before = working_tree_content_fingerprint(self.root)
+
+        tracked.chmod(0o755)
+        ordinary_status = subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=self.root,
+        )
+        after = working_tree_content_fingerprint(self.root)
+
+        self.assertEqual(ordinary_status, b"")
+        self.assertEqual(after.state, WorkingTreeFingerprintState.DIRTY)
+        self.assertNotEqual(after.fingerprint, before.fingerprint)
+        tracked.chmod(0o644)
+        self.assertEqual(working_tree_content_fingerprint(self.root).fingerprint, before.fingerprint)
+        self.assertLessEqual(after.git_calls, MAX_GIT_CALLS)
+
+    def test_enabled_autocrlf_is_not_an_authoritative_raw_byte_snapshot(self) -> None:
+        plain = self.root / "plain.txt"
+        plain.write_bytes(b"line\n")
+        _git(self.root, "add", "plain.txt")
+        _git(self.root, "commit", "-m", "plain text fixture")
+        for setting in ("true", "input"):
+            with self.subTest(setting=setting):
+                _git(self.root, "config", "core.autocrlf", setting)
+                plain.write_bytes(b"line\r\n")
+                _git(self.root, "add", "plain.txt")
+
+                result = working_tree_content_fingerprint(self.root)
+
+                self.assertEqual(result.state, WorkingTreeFingerprintState.UNSUPPORTED)
+                self.assertFalse(result.authoritative)
+                self.assertIsNone(result.fingerprint)
+        _git(self.root, "config", "core.autocrlf", "false")
+        plain.write_bytes(b"line\n")
+        _git(self.root, "add", "plain.txt")
+        self.assertTrue(working_tree_content_fingerprint(self.root).authoritative)
+
+    def test_content_normalization_attributes_are_explicitly_unsupported(self) -> None:
+        for attribute in ("text", "eol=crlf", "working-tree-encoding=UTF-16LE"):
+            with self.subTest(attribute=attribute):
+                (self.root / ".gitattributes").write_text(
+                    f"tracked.txt {attribute}\n", encoding="utf-8",
+                )
+
+                result = working_tree_content_fingerprint(self.root)
+
+                self.assertEqual(result.state, WorkingTreeFingerprintState.UNSUPPORTED)
+                self.assertIsNone(result.fingerprint)
+
+    def test_ambient_common_directory_cannot_redirect_repository_identity(self) -> None:
+        other = Path(self._temporary.name) / "other"
+        other.mkdir()
+        _init_repo(other)
+        (other / "tracked.txt").write_bytes(b"other repository")
+        _git(other, "add", "tracked.txt")
+        _git(other, "commit", "-m", "different repository fixture")
+        expected = working_tree_content_fingerprint(self.root)
+
+        with patch.dict(os.environ, {"GIT_COMMON_DIR": str(other / ".git")}):
+            observed = working_tree_content_fingerprint(self.root)
+
+        self.assertTrue(observed.authoritative)
+        self.assertEqual(observed.fingerprint, expected.fingerprint)
 
     def test_staging_and_unstaging_do_not_change_final_content_identity(self) -> None:
         # Given: changed final bytes, including intent-to-add content.

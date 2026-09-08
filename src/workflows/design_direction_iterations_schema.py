@@ -249,4 +249,3 @@ def _nonnegative_or_none(value: int | float | None, label: str) -> int | float |
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         raise ValueError(f"{label} must be non-negative or null")
     return value
-

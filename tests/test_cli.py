@@ -4373,8 +4373,14 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertEqual(plan["python"], str(venv_python))
 
     def test_goal_cli_records_checkpoints_and_completion_gate(self) -> None:
+        from omh.quality.working_tree_fingerprint import working_tree_content_fingerprint
+        from test_working_tree_fingerprint import _init_repo
+
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            _init_repo(workspace)
             base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
 
             status, stdout, stderr = run_cli(
@@ -4402,24 +4408,28 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertFalse(rejected["completion_gate"]["ready"])
             self.assertEqual(rejected["completion_gate"]["next_action"], "record_checkpoint")
 
-            self.assertEqual(
-                run_cli(
-                    base
-                    + [
-                        "goal",
-                        "checkpoint",
-                        "--goal",
-                        "goal-cli",
-                        "--summary",
-                        "Criterion satisfied",
-                        "--criterion",
-                        "AC001",
-                        "--evidence-ref",
-                        "unit",
-                    ]
-                )[0],
-                0,
-            )
+            with patch(
+                "omh.commands.goal.working_tree_content_fingerprint",
+                side_effect=lambda: working_tree_content_fingerprint(workspace),
+            ):
+                self.assertEqual(
+                    run_cli(
+                        base
+                        + [
+                            "goal",
+                            "checkpoint",
+                            "--goal",
+                            "goal-cli",
+                            "--summary",
+                            "Criterion satisfied",
+                            "--criterion",
+                            "AC001",
+                            "--evidence-ref",
+                            "unit",
+                        ]
+                    )[0],
+                    0,
+                )
             status, stdout, stderr = run_cli(base + ["goal", "complete", "--goal", "goal-cli", "--evidence-ref", "unit"])
             self.assertEqual(status, 0, stderr)
             completed = json.loads(stdout)

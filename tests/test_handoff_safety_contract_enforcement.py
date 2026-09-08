@@ -791,9 +791,11 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
         "legacy `rev-parse --short HEAD^{tree}` compatibility helper; fresh local evidence uses "
         "the complete-content collector rather than this committed-tree-only read"
     ),
-    ("src/quality/working_tree_fingerprint.py", ("core.fsmonitor=false",)): (
+    ("src/quality/working_tree_fingerprint.py", ("core.fsmonitor=false", "core.filemode=true")): (
         "the collector's one private argv factory prefixes every fixed local Git plumbing command "
-        "with `-c core.fsmonitor=false --no-optional-locks`; the remaining command words are passed "
+        "with `-c core.fsmonitor=false -c core.filemode=true --no-optional-locks`; the filemode "
+        "override prevents repository configuration from hiding executable-bit changes. "
+        "The remaining command words are passed "
         "as closed internal lists for rev-parse, config, ls-files, status, check-attr, and ls-tree, "
         "never from caller input and never through a shell. It uses no diff/textconv command, so no "
         "repository-configured external diff or textconv helper can execute."
@@ -1409,14 +1411,16 @@ class ReleaseSourceIdentityGitBoundary(unittest.TestCase):
         )
 
     def test_every_probe_argv_disables_fsmonitor_and_overrides_no_other_config(self) -> None:
-        """`-c core.fsmonitor=false` on every call, and nothing else via `-c`.
+        """Only the explicitly classified local Git configuration overrides.
 
         The fsmonitor override must ride every probe argv -- the rev-parse
         calls read objects only, but git still consults repo config on the way
         in, and the review found the status call executing repo-configured
         code. And the override must stay the ONLY config the probe sets: a
-        second `-c` key would be a broader config channel than the finding
-        justified. Checked repo-wide, not just in this module, so a git argv
+        second `-c` key on release identity would be a broader config channel
+        than that finding justified. The complete-content collector separately
+        forces filemode observation so config cannot hide executable-bit changes.
+        Checked repo-wide, not just in this module, so a git argv
         anywhere in `src/` cannot grow a config override this gate never
         blessed.
         """
@@ -1428,15 +1432,18 @@ class ReleaseSourceIdentityGitBoundary(unittest.TestCase):
                 for index in range(len(elements) - 1)
                 if elements[index] == "-c"
             ]
-            offending = sorted(set(overrides) - {"core.fsmonitor=false"})
+            allowed = {"core.fsmonitor=false"}
+            if relative_path == "src/quality/working_tree_fingerprint.py":
+                allowed.add("core.filemode=true")
+            offending = sorted(set(overrides) - allowed)
             self.assertEqual(
                 offending,
                 [],
                 f"INVARIANT 1 (no hidden process spawn): {relative_path} line {lineno} builds a "
-                f"`git` argv whose `-c` config overrides include {offending}. The only sanctioned git "
-                f"config override in `src/` is `core.fsmonitor=false` on the release-identity "
-                f"probe (st_01a06650): one flag, one purpose, disabling repo-configured "
-                f"hook-shaped config on an identity-only read. A broader override needs a new "
+                f"`git` argv whose `-c` config overrides include {offending}. The sanctioned "
+                f"overrides are fsmonitor=false and, only for the complete-content collector, "
+                f"filemode=true. Neither starts a helper or writes repository configuration. "
+                f"A broader override needs a new "
                 f"security reason and a wider gate in {THIS_TEST}.",
             )
         for argv in self._git_argv():

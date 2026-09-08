@@ -27,6 +27,9 @@ def _fixture(root: Path, count: int) -> None:
     _git(root, "init")
     _git(root, "config", "user.email", "bench@example.test")
     _git(root, "config", "user.name", "Benchmark")
+    _git(root, "config", "core.autocrlf", "false")
+    _git(root, "config", "gc.auto", "0")
+    _git(root, "config", "maintenance.auto", "false")
     for index in range(count):
         directory = root / f"d{index // 1_000:03d}"
         directory.mkdir(exist_ok=True)
