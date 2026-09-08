@@ -304,6 +304,38 @@ class MenubarAppTests(unittest.TestCase):
         self.assertIn('display?["menu_bar_title"]', source)
         self.assertNotIn('agent_status', source)
 
+    def test_native_helper_refreshes_off_the_main_thread_and_updates_the_open_menu(self) -> None:
+        # The owner's report: the menu looked stuck on its first reading.
+        # Three causes, each pinned here. The status subprocess ran on the
+        # main thread (a ~0.5s freeze every tick); the timer lived in the
+        # default run-loop mode, silent for as long as the menu stayed open;
+        # and every refresh replaced `statusItem.menu`, which AppKit only
+        # shows on the NEXT open. One long-lived NSMenu mutated in place,
+        # a `.common`-mode timer, a background queue, and a refresh on
+        # `menuWillOpen` are the fix; the footer stamps the reading's time.
+        source = menubar_app_module._SWIFT_SOURCE
+
+        self.assertIn("NSMenuDelegate", source)
+        self.assertIn("func menuWillOpen(_ menu: NSMenu)", source)
+        self.assertIn("RunLoop.main.add(timer, forMode: .common)", source)
+        self.assertIn("refreshQueue.async { [weak self] in", source)
+        self.assertIn("DispatchQueue.main.async {", source)
+        self.assertIn("menu.removeAllItems()", source)
+        self.assertEqual(source.count("statusItem.menu = menu"), 1)
+        self.assertNotIn("let menu = NSMenu()", source.split("private let menu = NSMenu()", 1)[1])
+        self.assertIn('let stamp = "Updated \\(clock.string(from: refreshedAt))"', source)
+        # A single failed read keeps the last good cards instead of flashing
+        # the attention mark; the mark returns once the failure persists.
+        self.assertIn("if lastPayload != nil && consecutiveFailures < 3 {", source)
+        # Rows are information, not commands: enabled so they render in the
+        # normal text color rather than the disabled gray that reads as
+        # "still loading".
+        self.assertIn("menu.autoenablesItems = false", source)
+        self.assertIn("item.isEnabled = true", source)
+        self.assertNotIn("item.isEnabled = false", source)
+        # Drain stdout before waiting so a large payload cannot deadlock.
+        self.assertLess(source.index("readDataToEndOfFile()"), source.index("process.waitUntilExit()"))
+
     def test_native_helper_loads_template_icon_at_18_points_with_accessible_label(self) -> None:
         source = menubar_app_module._SWIFT_SOURCE
 

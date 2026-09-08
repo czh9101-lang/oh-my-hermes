@@ -329,9 +329,26 @@ _SWIFT_SOURCE = r'''
 import AppKit
 import Foundation
 
-final class OMHMenuBarDelegate: NSObject, NSApplicationDelegate {
+// One NSMenu for the life of the process. AppKit updates an open menu in
+// place when its items change, so a refresh that lands while the user is
+// looking at the menu is visible immediately; replacing `statusItem.menu`
+// (the previous design) only took effect on the NEXT open, which read as
+// "the menu never updates". The status subprocess runs off the main thread:
+// a ~0.5s synchronous wait every 8s froze the menu bar for that long.
+final class OMHMenuBarDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let menu = NSMenu()
+    private let refreshQueue = DispatchQueue(label: "omh.menubar.refresh", qos: .utility)
+    private let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
     private var timer: Timer?
+    private var refreshInFlight = false
+    private var lastPayload: [String: Any]?
+    private var lastRefreshedAt: Date?
+    private var consecutiveFailures = 0
     private var omhCommand = "omh"
     private var omhHome = ""
     private var hermesHome = ""
@@ -342,12 +359,28 @@ final class OMHMenuBarDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         parseArguments()
         configureStatusButton()
+        // Rows are information, not commands: keep them enabled so they render
+        // in the normal text color instead of the disabled gray that reads as
+        // "still loading". Nothing has an action, so clicking does nothing.
+        menu.autoenablesItems = false
+        menu.delegate = self
+        statusItem.menu = menu
         updateStatusDescription(headline: "OMH", summary: "Loading status")
-        configureMenu(headline: "OMH", summary: "Loading status", cards: [])
+        renderMenu(headline: "OMH", summary: "Loading status", cards: [], footer: "Loading…")
         refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+        // `.common` so the timer keeps firing while the menu is open (menu
+        // tracking runs the event-tracking mode, where a default-mode timer
+        // is silent for as long as the menu stays down).
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             self?.refresh()
         }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        // Opening the menu is the moment freshness matters most.
+        refresh()
     }
 
     private func parseArguments() {
@@ -409,10 +442,35 @@ final class OMHMenuBarDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refresh() {
-        guard let payload = readStatusPayload() else {
+        if refreshInFlight {
+            return
+        }
+        refreshInFlight = true
+        refreshQueue.async { [weak self] in
+            guard let self else {
+                return
+            }
+            let payload = self.readStatusPayload()
+            DispatchQueue.main.async {
+                self.refreshInFlight = false
+                self.apply(payload)
+            }
+        }
+    }
+
+    private func apply(_ payload: [String: Any]?) {
+        guard let payload else {
+            consecutiveFailures += 1
+            // One failed read (a busy state.db, a slow disk) must not flash
+            // the attention mark and blank the cards; keep the last good
+            // reading until the failure persists.
+            if lastPayload != nil && consecutiveFailures < 3 {
+                renderFooter()
+                return
+            }
             statusItem.button?.title = "!"
             updateStatusDescription(headline: "OMH needs attention", summary: "Status unavailable")
-            configureMenu(
+            renderMenu(
                 headline: "OMH needs attention",
                 summary: "Status unavailable",
                 cards: [
@@ -423,34 +481,56 @@ final class OMHMenuBarDelegate: NSObject, NSApplicationDelegate {
                             ["label": "Then", "value": "Run omh setup if registration needs repair"]
                         ]
                     ]
-                ]
+                ],
+                footer: footerText()
             )
             return
         }
+        consecutiveFailures = 0
+        lastPayload = payload
+        lastRefreshedAt = Date()
         let display = payload["display"] as? [String: Any]
         let headline = (display?["headline"] as? String) ?? "OMH ready"
         let summary = (display?["summary_line"] as? String) ?? "OMH ready"
         let menuBarTitle = (display?["menu_bar_title"] as? String) ?? ""
         statusItem.button?.title = menuBarTitle
         updateStatusDescription(headline: headline, summary: summary)
-        configureMenu(headline: headline, summary: summary, cards: menuCards(from: payload))
+        renderMenu(headline: headline, summary: summary, cards: menuCards(from: payload), footer: footerText())
     }
 
-    private func configureMenu(headline: String, summary: String, cards: [[String: Any]]) {
-        let menu = NSMenu()
-        let headlineItem = disabledItem(" \(headline)")
+    private func footerText() -> String {
+        guard let refreshedAt = lastRefreshedAt else {
+            return "Not updated yet"
+        }
+        let stamp = "Updated \(clock.string(from: refreshedAt))"
+        if consecutiveFailures > 0 {
+            return "\(stamp) · last read failed, retrying"
+        }
+        return stamp
+    }
+
+    private func renderFooter() {
+        guard let item = menu.items.first(where: { $0.representedObject as? String == "footer" }) else {
+            return
+        }
+        item.title = " \(footerText())"
+    }
+
+    private func renderMenu(headline: String, summary: String, cards: [[String: Any]], footer: String) {
+        menu.removeAllItems()
+        let headlineItem = infoItem(" \(headline)")
         let font = NSFont.menuBarFont(ofSize: 0)
         headlineItem.attributedTitle = NSAttributedString(
             string: " \(headline)",
             attributes: [.font: NSFont.boldSystemFont(ofSize: font.pointSize)]
         )
         menu.addItem(headlineItem)
-        menu.addItem(disabledItem(" \(summary)"))
+        menu.addItem(infoItem(" \(summary)"))
 
         for card in cards {
             menu.addItem(NSMenuItem.separator())
             if let title = card["title"] as? String, !title.isEmpty {
-                let item = disabledItem(" \(title)")
+                let item = infoItem(" \(title)")
                 item.attributedTitle = NSAttributedString(
                     string: " \(title)",
                     attributes: [.font: NSFont.boldSystemFont(ofSize: font.pointSize)]
@@ -459,18 +539,21 @@ final class OMHMenuBarDelegate: NSObject, NSApplicationDelegate {
             }
             if let columns = card["columns"] as? [String], !columns.isEmpty {
                 let line = tableHeaderTitle(columns)
-                let item = disabledItem("   \(line)")
+                let item = infoItem("   \(line)")
                 item.toolTip = line
                 item.attributedTitle = NSAttributedString(
                     string: "   \(line)",
-                    attributes: [.font: NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .medium)]
+                    attributes: [
+                        .font: NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .medium),
+                        .foregroundColor: NSColor.secondaryLabelColor
+                    ]
                 )
                 menu.addItem(item)
             }
             if let rows = card["rows"] as? [[String: Any]] {
                 for row in rows.prefix(6) {
                     let line = rowTitle(row)
-                    let item = disabledItem("   \(line)")
+                    let item = infoItem("   \(line)")
                     item.toolTip = rowToolTip(row)
                     if (row["kind"] as? String) == "table_row" {
                         item.attributedTitle = NSAttributedString(
@@ -482,20 +565,29 @@ final class OMHMenuBarDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             if let footer = card["footer"] as? String, !footer.isEmpty {
-                let item = disabledItem("   \(footer)")
+                let item = infoItem("   \(footer)")
                 item.toolTip = footer
+                item.attributedTitle = NSAttributedString(
+                    string: "   \(footer)",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                        .foregroundColor: NSColor.secondaryLabelColor
+                    ]
+                )
                 menu.addItem(item)
             }
         }
         menu.addItem(NSMenuItem.separator())
+        let footerItem = infoItem(" \(footer)")
+        footerItem.representedObject = "footer"
+        menu.addItem(footerItem)
         menu.addItem(NSMenuItem(title: "Refresh", action: #selector(refreshClicked(_:)), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Quit OMH Menu Bar", action: #selector(quitClicked(_:)), keyEquivalent: "q"))
-        statusItem.menu = menu
     }
 
-    private func disabledItem(_ title: String) -> NSMenuItem {
+    private func infoItem(_ title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.isEnabled = false
+        item.isEnabled = true
         return item
     }
 
@@ -594,14 +686,16 @@ final class OMHMenuBarDelegate: NSObject, NSApplicationDelegate {
         process.standardError = Pipe()
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             return nil
         }
+        // Read before waiting: a payload larger than the pipe buffer would
+        // otherwise block the child on write while we block on exit.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         guard process.terminationStatus == 0 else {
             return nil
         }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         guard
             let object = try? JSONSerialization.jsonObject(with: data, options: []),
             let payload = object as? [String: Any]
