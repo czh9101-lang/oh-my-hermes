@@ -47,16 +47,31 @@ idempotency references remain null.
 
 The private runtime journal is
 `runtime/journal/external_effect_attempts.sqlite3` under the selected OMH home.
-SQLite FULL synchronization and indexed call identity provide durable,
-unique attempts and terminal rows. Public digest references encode all 256
-SHA-256 bits as unpadded base64url. Raw arguments, destinations, payloads,
-results, and correlation tokens are not stored.
+Every attempt transaction commits with SQLite `synchronous=FULL` and
+`journal_mode=DELETE` before the handler may run; terminal transactions use the
+same settings. Indexed call identity prevents duplicate attempts. On Windows,
+SQLite's native sync uses `FlushFileBuffers`; OMH does not attempt the unsupported
+CRT directory open/fsync. On POSIX, first database creation additionally fsyncs
+the immediate parent directory. A SQLite write/commit/sync error or a POSIX
+directory-sync error blocks the handler, even if the attempt row already committed.
+An unresolved committed row remains non-replayable.
+
+This is SQLite's FULL/native-sync contract, not an additional Windows directory
+flush or an unconditional power-loss guarantee. FULL with a DELETE rollback
+journal does not guarantee that the last transaction survives power loss on
+every filesystem. The extra POSIX flush is only on first creation and does not
+sync newly created ancestor directories. Storage must honor SQLite's locking and
+flush operations. See [SQLite synchronization](https://www.sqlite.org/pragma.html#pragma_synchronous)
+and [filesystem assumptions](https://www.sqlite.org/atomiccommit.html#_incomplete_disk_flushes).
+
+Public digest references encode all 256 SHA-256 bits as unpadded base64url. Raw
+arguments, destinations, payloads, results, and correlation tokens are not stored.
 
 ```sh
 omh runtime egress-attempts --limit 50
-omh --json runtime egress-attempts --limit 50
 ```
 
+Set `OMH_OUTPUT=json` in the invoking environment for machine-readable output.
 The reader is explicit and bounded to 200 attempts. Ordinary runtime status
 does not probe the attempt database. A later observed external-effect receipt
 may cite `attempt:<attempt_id>` through its existing `evidence_refs`; the closed

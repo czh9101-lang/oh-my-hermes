@@ -86,7 +86,8 @@ and vice versa: the pair is what turns a review into an approval. `--reviewer`
 accepts 1 to 128 characters from `A-Za-z0-9._@:-`. `--skill-name` is a
 lowercase slug of 3 to 49 characters starting with a letter. `--generation`,
 `--receipt-id`, and every digest are 64 lowercase hex characters. Every
-refusal raises an `OmhError` with the reason and leaves no partial state.
+refusal raises an `OmhError` with the reason; an I/O failure can leave staged
+or already-replaced files, so inspect status before any explicit retry.
 
 All output is JSON. `diff` returns `plan`, `native_preflight`, and
 `native_preflight_digest`; `approve` returns the receipt; `promote`, `status`,
@@ -189,15 +190,16 @@ the skill's state directory. Under both it:
    write.
 5. Writes the activation index
    `activation-by-entry/<entry_digest>.json` (`browser_skill_activation/v1`),
-   then writes `SKILL.md` through a temp file and `os.replace`, and fsyncs the
-   directory.
+   then writes and fsyncs a temporary `SKILL.md` and publishes it with
+   `os.replace`. POSIX additionally fsyncs the containing directory.
 6. Reads `SKILL.md` back and validates it against the index and receipt before
    reporting `active` (or `rolled_back` for a rollback receipt).
 
 That `SKILL.md` replace is the only moment Hermes can see the skill. Everything
-before it is private staging or immutable history; a crash before step 5
-leaves complete resources and no visible skill, and `retry --receipt-id`
-accepts them only byte for byte.
+before it is private staging or immutable history. An interruption after
+resource staging but before entry replacement leaves the previous entry (or
+none on first install) visible; `retry --receipt-id` accepts retained resources
+only byte for byte.
 
 Reading the truth is O(1) by construction: `SKILL.md` names its generation;
 `resources/<generation>/entry.md` must equal it; the entry digest names one
@@ -209,6 +211,37 @@ skill unverified, not "probably active".
 
 `promote` on a receipt that's already the active one re-checks the source and
 returns the existing status without writing.
+
+### File sync, atomic visibility, and platform limits
+
+The lifecycle writes regular files with binary descriptors and calls
+`os.fsync` before closing and verifying their exact UTF-8 bytes. This covers
+immutable resources, activation indexes, temporary entries and observation
+records. File-sync failures propagate on every platform; they are not treated
+as successful promotion. A failed staging-file sync precedes entry visibility.
+
+The same-directory `os.replace` remains the single atomic entry-visibility
+operation for install, update and rollback. Removal unlinks only the verified
+managed entry. These operations are not a transaction over the whole package.
+On POSIX, the existing directory open/fsync after entry replacement, unlink,
+and observation replacement remains enforced, and its failures propagate.
+A failure after entry replacement can therefore leave an already-visible
+entry even though the command reports an error; status revalidates actual bytes.
+
+On Windows, Python's `os.fsync` calls the CRT `_commit` to flush regular files.
+CRT `_open` rejects directory paths with `EACCES`, so OMH does not attempt the
+additional POSIX directory flush there. It does not substitute SQLite
+semantics, a volume flush, or an unsupported native directory-handle operation.
+Regular-file flush, atomic replacement and byte/digest readback do **not**
+prove that directory entries, renames or removals survive power loss. OMH
+makes no Windows directory-entry durability or all-files transactional
+power-loss guarantee; atomic visibility is distinct from crash durability.
+
+Platform references:
+[Python `os.fsync`](https://docs.python.org/3.11/library/os.html#os.fsync),
+[Python `os.replace`](https://docs.python.org/3.11/library/os.html#os.replace),
+[Microsoft `_commit`](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/commit?view=msvc-170),
+and [Microsoft `_open`](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/open-wopen?view=msvc-170).
 
 ### Status and drift
 

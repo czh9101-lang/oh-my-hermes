@@ -568,7 +568,7 @@ def _mapping(value: Mapping[str, object], key: str) -> dict[str, object]:
     return dict(nested)
 def _read_bytes(path: Path) -> bytes:
     if path.is_symlink(): raise BrowserSkillPromotionError("promotion path is a symlink")
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_FILE_BYTES: raise BrowserSkillPromotionError("promotion input is not a bounded regular file")
@@ -599,7 +599,7 @@ def _write_exact(path: Path, text: str, *, replace: bool, private: bool = False)
     if os.path.lexists(path):
         if path.is_symlink() or _read_text(path) != text: raise BrowserSkillPromotionError("immutable promotion file already differs")
         return
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
     descriptor = os.open(path, flags, 0o600 if private else 0o644)
     try:
         raw = text.encode("utf-8")
@@ -613,6 +613,10 @@ def _unlink_entry(path: Path) -> None:
     if path.is_symlink(): raise BrowserSkillPromotionError("SKILL.md is a symlink")
     if path.exists(): path.unlink(); _fsync_directory(path.parent)
 def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        # CRT cannot open directories. Regular files are still fsynced before
+        # replace; Windows directory-entry power-loss durability is not claimed.
+        return
     try:
         descriptor = os.open(path, os.O_RDONLY)
         try:

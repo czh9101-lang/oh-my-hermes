@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
+import os
 import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from _local_package import load_local_package
 
 load_local_package()
 
+import omh.workflows.browser_skill_promotion_plan as promotion_plan
 from omh.workflows.browser_skill_promotion_plan import (
     BrowserSkillPromotionPlanError,
     build_browser_skill_promotion_plan,
+    read_browser_skill_package,
 )
 from omh.workflows.browser_workflow_learning_store import (
     approve_browser_workflow_trace,
@@ -25,6 +31,23 @@ from omh.workflows.browser_workflow_learning_store import (
 
 
 class BrowserSkillPromotionPlanTests(unittest.TestCase):
+    def test_package_reads_preserve_raw_bytes_under_crt_text_translation(self) -> None:
+        samples = (b"first\r\nsecond\r\n", b"before\x1aafter", b"x" * 65536 + b"\r\n\x1atail")
+        with TemporaryDirectory() as temporary:
+            target = Path(temporary)
+            path = target / "SKILL.md"
+            for raw in samples:
+                for simulated in (False, True):
+                    with self.subTest(raw_size=len(raw), simulated_crt=simulated):
+                        path.write_bytes(raw)
+                        if simulated:
+                            with _crt_descriptor_io(promotion_plan):
+                                package = read_browser_skill_package(target)
+                        else:
+                            package = read_browser_skill_package(target)
+                        self.assertEqual(package["SKILL.md"].encode("utf-8"), raw)
+                        self.assertEqual(path.read_bytes(), raw)
+
     def test_plan_uses_real_git_bound_public_reference_and_is_deterministic(self) -> None:
         with _project() as root:
             trace = _passing_trace(root)
@@ -116,6 +139,55 @@ class BrowserSkillPromotionPlanTests(unittest.TestCase):
                             "checkout-confirmation",
                             reference=changed,
                         )
+
+
+@contextmanager
+def _crt_descriptor_io(module):
+    """Simulate only CRT byte translation; files, fstat and bounds remain real.
+
+    The fixture's CRLF pairs are within read chunks. This is not a complete
+    Windows CRT emulator or evidence of native Windows execution.
+    """
+    native_binary = getattr(os, "O_BINARY", 0)
+    binary = native_binary or (1 << 29)
+    text_descriptors: dict[int, bool] = {}
+
+    def open_descriptor(path, flags, *args, **kwargs):
+        descriptor = os.open(path, (flags & ~binary) | native_binary, *args, **kwargs)
+        if not flags & binary:
+            text_descriptors[descriptor] = False
+        else:
+            text_descriptors.pop(descriptor, None)
+        return descriptor
+
+    def read_descriptor(descriptor, size):
+        if text_descriptors.get(descriptor, False):
+            return b""
+        raw = os.read(descriptor, size)
+        if descriptor in text_descriptors:
+            if b"\x1a" in raw:
+                raw = raw.split(b"\x1a", 1)[0]
+                text_descriptors[descriptor] = True
+            raw = raw.replace(b"\r\n", b"\n")
+        return raw
+
+    def write_descriptor(descriptor: int, raw: bytes) -> int:
+        if descriptor not in text_descriptors:
+            return os.write(descriptor, raw)
+        translated = raw.replace(b"\n", b"\r\n")
+        written = os.write(descriptor, translated)
+        if written != len(translated):
+            raise OSError("short physical write in CRT test seam")
+        # CRT reports source bytes consumed, not expanded bytes written.
+        return len(raw)
+
+    seam = SimpleNamespace(**vars(os))
+    seam.O_BINARY = binary
+    seam.open = open_descriptor
+    seam.read = read_descriptor
+    seam.write = write_descriptor
+    with patch.object(module, "os", seam):
+        yield
 
 
 def _project():

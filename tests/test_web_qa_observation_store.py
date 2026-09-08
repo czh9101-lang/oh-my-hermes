@@ -22,6 +22,7 @@ from omh.workflows.web_qa_observation_store import (
     prepare_web_qa_observation,
     read_web_qa_observation,
 )
+from test_browser_skill_promotion_plan import _crt_descriptor_io
 from test_web_qa_observation import good_receipt, qa_plan
 
 
@@ -49,6 +50,31 @@ class WebQaObservationStoreTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+
+    def test_import_preserves_png_bytes_under_crt_text_translation(self) -> None:
+        plan = qa_plan()
+        receipt, digest = capture_receipt(plan)
+        with _crt_descriptor_io(observation_store):
+            imported = import_web_qa_observation(self.root, plan, receipt, {digest: self.image})
+            run = self.root / ".omh" / "web-visual-qa" / "observations" / plan["run_id"]
+            managed = run / imported["captures"][0]["path"]
+            self.assertEqual(managed.read_bytes(), PNG)
+            self.assertEqual(imported["captures"][0]["sha256"], hashlib.sha256(PNG).hexdigest())
+            self.assertEqual(imported["captures"][0]["byte_size"], len(PNG))
+            self.assertEqual(imported["observation"]["verdict"], "PASS")
+            self.image.unlink()
+            with patch.object(observation_store, "_commit", side_effect=AssertionError("duplicate write")), patch(
+                "os.chmod", side_effect=AssertionError("metadata write")
+            ):
+                self.assertEqual(import_web_qa_observation(self.root, plan, receipt, {}), imported)
+                self.assertEqual(read_web_qa_observation(self.root, plan["run_id"]), imported)
+
+    def test_metadata_ctrl_z_cannot_hide_trailing_invalid_bytes(self) -> None:
+        metadata = self.root / "metadata.json"
+        metadata.write_bytes(b'{"value":1}\r\n\x1a{"extra":2}')
+        with _crt_descriptor_io(observation_store):
+            with self.assertRaises(WebQaObservationStoreError):
+                observation_store._read_json(metadata)
 
     def test_import_re_admits_and_is_idempotent_without_duplicate_files(self) -> None:
         plan = qa_plan()

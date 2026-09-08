@@ -8,6 +8,8 @@ import os
 import stat
 from pathlib import Path
 
+from . import working_tree_fingerprint_windows as windows
+
 
 class ContentRace(RuntimeError):
     """A path changed while its final bytes were being observed."""
@@ -24,7 +26,7 @@ def overlay(
     for path in paths:
         candidate = os.path.join(root_bytes, path)
         try:
-            before = os.lstat(candidate)
+            before = _path_stat(candidate)
         except FileNotFoundError:
             if path in head_entries:
                 entries.append((path, b"deleted", b""))
@@ -35,7 +37,7 @@ def overlay(
         if current is None:
             return None
         try:
-            after = os.lstat(candidate)
+            after = _path_stat(candidate)
         except FileNotFoundError:
             raise ContentRace
         if not _same_stat(before, after):
@@ -46,24 +48,39 @@ def overlay(
     return entries
 
 
-def _entry_digest(path: bytes, metadata: os.stat_result) -> tuple[bytes, bytes] | None:
+def _path_stat(path: bytes) -> os.stat_result | windows.Metadata:
+    metadata = os.lstat(path)
+    if os.name == "nt" and stat.S_ISREG(metadata.st_mode):
+        return windows.stat(path)
+    return metadata
+
+
+def _entry_digest(path: bytes, metadata: os.stat_result | windows.Metadata) -> tuple[bytes, bytes] | None:
     mode = metadata.st_mode
     if stat.S_ISREG(mode):
         git_mode = b"100755" if mode & stat.S_IXUSR else b"100644"
         digest = hashlib.sha1()
         digest.update(f"blob {metadata.st_size}\0".encode())
-        no_follow = getattr(os, "O_NOFOLLOW", None)
-        if no_follow is None:
-            return None
+        no_follow = getattr(os, "O_NOFOLLOW", 0)
         descriptor: int | None = None
         try:
-            descriptor = os.open(path, os.O_RDONLY | no_follow)
-            opened = os.fstat(descriptor)
-            if not stat.S_ISREG(opened.st_mode) or not _same_stat(metadata, opened):
+            descriptor = (
+                windows.open(path) if os.name == "nt"
+                else os.open(path, os.O_RDONLY | no_follow | getattr(os, "O_BINARY", 0))
+            )
+            observe_fd = windows.fstat if os.name == "nt" else os.fstat
+            opened = observe_fd(descriptor)
+            # Compare observations from the SAME API. CPython Windows path
+            # stat and fstat disagree on identity, ctime and extension modes.
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or not _same_stat(metadata, opened)
+                or not _same_stat(metadata, _path_stat(path))
+            ):
                 raise ContentRace
             while chunk := os.read(descriptor, 1024 * 1024):
                 digest.update(chunk)
-            if not _same_stat(opened, os.fstat(descriptor)):
+            if not _same_stat(opened, observe_fd(descriptor)):
                 raise ContentRace
         except OSError as error:
             if error.errno in {errno.ELOOP, errno.ENOENT}:
@@ -85,7 +102,11 @@ def _entry_digest(path: bytes, metadata: os.stat_result) -> tuple[bytes, bytes] 
     return None
 
 
-def _same_stat(before: os.stat_result, after: os.stat_result) -> bool:
+def _same_stat(
+    before: os.stat_result | windows.Metadata, after: os.stat_result | windows.Metadata,
+) -> bool:
+    if isinstance(before, windows.Metadata) or isinstance(after, windows.Metadata):
+        return before == after
     return (
         before.st_dev,
         before.st_ino,

@@ -150,7 +150,7 @@ def read_browser_skill_package(target: str | Path) -> dict[str, str]:
                         continue
                     if len(package) >= MAX_PACKAGE_FILES:
                         raise BrowserSkillPromotionPlanError("existing project skill exceeds the managed file bound")
-                    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
                     try:
                         info = os.fstat(descriptor)
                         if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_PACKAGE_BYTES - total_bytes:

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import os
+import stat
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from _local_package import load_local_package
@@ -85,26 +88,35 @@ class WorkingTreeFingerprintTests(unittest.TestCase):
 
         (self.root / "new-path").write_bytes(b"untracked\x00content")
         untracked = working_tree_content_fingerprint(self.root)
+        self.assertTrue(untracked.authoritative)
         self.assertNotEqual(untracked.fingerprint, base)
         (self.root / "new-path").unlink()
 
         tracked.chmod(0o755)
         executable = working_tree_content_fingerprint(self.root)
-        self.assertNotEqual(executable.fingerprint, base)
+        self.assertTrue(executable.authoritative)
+        if os.name == "nt":
+            # Windows chmod changes read-only, not a POSIX executable bit.
+            self.assertFalse(tracked.stat().st_mode & stat.S_IXUSR)
+            self.assertEqual(executable.fingerprint, base)
+        else:
+            self.assertNotEqual(executable.fingerprint, base)
         tracked.chmod(0o644)
 
         os.symlink("tracked.txt", self.root / "link")
         link = working_tree_content_fingerprint(self.root)
+        self.assertTrue(link.authoritative)
         self.assertNotEqual(link.fingerprint, base)
         (self.root / "link").unlink()
 
-        raw_name = os.fsencode(self.root) + b"/nonutf8-\xff"
-        try:
-            with open(raw_name, "wb") as source:
-                source.write(b"raw path")
-        except OSError as error:
-            self.skipTest(f"filesystem rejects non-UTF-8 path bytes: {error.errno}")
+        # Windows and Darwin filesystems require Unicode; Linux also accepts
+        # undecodable bytes. Exercise native path bytes without skipping a case.
+        name = os.fsencode("unicode-\u00ff") if sys.platform in {"win32", "darwin"} else b"nonutf8-\xff"
+        raw_name = os.path.join(os.fsencode(self.root), name)
+        with open(raw_name, "wb") as source:
+            source.write(b"raw path")
         byte_path = working_tree_content_fingerprint(self.root)
+        self.assertTrue(byte_path.authoritative)
         self.assertNotEqual(byte_path.fingerprint, base)
         os.unlink(raw_name)
         self.assertEqual(working_tree_content_fingerprint(self.root).fingerprint, base)
@@ -149,6 +161,202 @@ class WorkingTreeFingerprintTests(unittest.TestCase):
         plain.write_bytes(b"line\n")
         _git(self.root, "add", "plain.txt")
         self.assertTrue(working_tree_content_fingerprint(self.root).authoritative)
+
+    def test_effective_content_config_overrides_inherited_values(self) -> None:
+        # Git emits included/lower-precedence values before the effective value.
+        inherited = self.root / ".git" / "inherited-config"
+        inherited.write_text("[core]\n autocrlf = true\n sparseCheckout = true\n", encoding="utf-8")
+        overrides = self.root / ".git" / "override-config"
+        overrides.write_text("[core]\n autocrlf = false\n sparseCheckout = false\n", encoding="utf-8")
+        _git(self.root, "config", "include.path", str(inherited))
+        _git(self.root, "config", "--add", "include.path", str(overrides))
+        self.assertEqual(
+            subprocess.check_output(["git", "config", "--get", "core.autocrlf"], cwd=self.root), b"false\n",
+        )
+        clean = working_tree_content_fingerprint(self.root)
+        self.assertEqual(clean.state, WorkingTreeFingerprintState.CLEAN)
+        (self.root / "tracked.txt").write_bytes(b"raw\r\nbytes\x1aafter")
+        dirty = working_tree_content_fingerprint(self.root)
+        self.assertEqual(dirty.state, WorkingTreeFingerprintState.DIRTY)
+        self.assertLessEqual(dirty.git_calls, MAX_GIT_CALLS)
+        for key, setting in (("core.autocrlf", "true"), ("core.autocrlf", "input"), ("core.sparseCheckout", "true")):
+            with self.subTest(key=key, setting=setting):
+                _git(self.root, "config", "--file", str(overrides), key, setting)
+                refused = working_tree_content_fingerprint(self.root)
+                self.assertEqual(refused.state, WorkingTreeFingerprintState.UNSUPPORTED)
+                self.assertIsNone(refused.fingerprint)
+                _git(self.root, "config", "--file", str(overrides), key, "false")
+
+    def test_descriptor_reads_preserve_raw_bytes_without_nofollow_flag(self) -> None:
+        from omh.quality import working_tree_fingerprint_content as content
+
+        payload = b"raw\r\nbytes\x1aafter\x00\xff"
+        tracked = self.root / "tracked.txt"
+        tracked.write_bytes(payload)
+        expected = hashlib.sha1(b"blob " + str(len(payload)).encode() + b"\0" + payload).hexdigest().encode()
+        # Narrow CRT semantic simulation: real descriptors/stat checks, but text
+        # descriptors translate CRLF and treat Ctrl-Z as EOF unless binary opens.
+        binary_flag = 1 << 30
+        text_descriptors: set[int] = set()
+        opened_flags: list[int] = []
+
+        def crt_open(path: bytes, flags: int) -> int:
+            descriptor = os.open(path, (flags & ~binary_flag) | getattr(os, "O_BINARY", 0))
+            opened_flags.append(flags)
+            if not flags & binary_flag:
+                text_descriptors.add(descriptor)
+            return descriptor
+
+        def crt_read(descriptor: int, size: int) -> bytes:
+            value = os.read(descriptor, size)
+            if descriptor in text_descriptors:
+                return value.split(b"\x1a", 1)[0].replace(b"\r\n", b"\n")
+            return value
+
+        platform_os = SimpleNamespace(**{key: value for key, value in vars(os).items() if key != "O_NOFOLLOW"})
+        # Exercise the portable missing-flag branch, with comparable descriptor
+        # observations even when the test host itself is Windows.
+        def descriptor_stat(path: bytes) -> os.stat_result:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+            try:
+                return os.fstat(fd)
+            finally:
+                os.close(fd)
+
+        platform_os.name = "posix"
+        platform_os.lstat = descriptor_stat
+        platform_os.O_BINARY = binary_flag
+        platform_os.open = crt_open
+        platform_os.read = crt_read
+        with patch.object(content, "os", platform_os):
+            observed = content._entry_digest(os.fsencode(tracked), descriptor_stat(os.fsencode(tracked)))
+        self.assertEqual(observed, (b"100644", expected))
+        self.assertEqual(len(opened_flags), 1)
+        self.assertTrue(opened_flags[0] & binary_flag)
+        self.assertEqual(tracked.read_bytes(), payload)
+
+    def test_without_nofollow_a_replaced_named_path_is_rejected_before_read(self) -> None:
+        from omh.quality import working_tree_fingerprint_content as content
+
+        tracked = self.root / "tracked.txt"
+        with tracked.open("rb") as source:
+            metadata = os.fstat(source.fileno())
+        # Model a final-component symlink pointing back at the original inode:
+        # fstat alone still matches, but lstat must reject it before os.read.
+        link_metadata = SimpleNamespace(**{
+            key: getattr(metadata, key)
+            for key in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        }, st_mode=stat.S_IFLNK | 0o777)
+        platform_os = SimpleNamespace(**{key: value for key, value in vars(os).items() if key != "O_NOFOLLOW"})
+        platform_os.name = "posix"
+        platform_os.lstat = lambda path: link_metadata
+        with patch.object(content, "os", platform_os), patch.object(platform_os, "read") as read:
+            with self.assertRaises(content.ContentRace):
+                content._entry_digest(os.fsencode(tracked), metadata)
+        read.assert_not_called()
+
+    def test_index_flags_still_refuse_hidden_content(self) -> None:
+        for flag in ("assume-unchanged", "skip-worktree"):
+            with self.subTest(flag=flag):
+                _git(self.root, "update-index", "--" + flag, "tracked.txt")
+                (self.root / "tracked.txt").write_bytes(b"hidden edit")
+                result = working_tree_content_fingerprint(self.root)
+                self.assertFalse(result.authoritative)
+                self.assertIsNone(result.fingerprint)
+                _git(self.root, "update-index", "--no-" + flag, "tracked.txt")
+        self.assertEqual(working_tree_content_fingerprint(self.root).state, WorkingTreeFingerprintState.DIRTY)
+
+    def test_windows_stable_cpython_path_and_descriptor_shapes_remain_readable(self) -> None:
+        from omh.quality import working_tree_fingerprint_content as content
+
+        payload = b"raw\r\nbytes\x1aafter\x00\xff"
+        tracked = self.root / "stable.exe"
+        tracked.write_bytes(payload)
+        tracked.chmod(0o644)
+        metadata = tracked.lstat()
+        fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+        descriptor_values = {key: getattr(metadata, key) for key in fields}
+        descriptor_values["st_mode"] = stat.S_IFREG | 0o666
+        descriptor_metadata = SimpleNamespace(**descriptor_values)
+        canonical = content.windows.Metadata(
+            metadata.st_dev, metadata.st_ino, metadata.st_size,
+            metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_ctime_ns - 10000000,
+            0x80, 1,
+        )
+        expected = hashlib.sha1(b"blob " + str(len(payload)).encode() + b"\0" + payload).hexdigest().encode()
+        for shape in ("sharing_fallback_311", "birth_vs_change_312", "executable_extension"):
+            with self.subTest(shape=shape):
+                opened = False
+
+                def path_stat(path: bytes) -> SimpleNamespace:
+                    values = dict(descriptor_values)
+                    if shape == "sharing_fallback_311" and opened:
+                        values.update(st_dev=0, st_ino=0)
+                    if shape == "birth_vs_change_312":
+                        values["st_ctime_ns"] = metadata.st_ctime_ns - 10000000
+                    if shape == "executable_extension":
+                        values["st_mode"] |= 0o111
+                    return SimpleNamespace(**values)
+
+                def open_file(path: bytes, flags: int = 0) -> int:
+                    nonlocal opened
+                    opened = True
+                    return os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+
+                platform_os = SimpleNamespace(**vars(os))
+                platform_os.name = "nt"
+                platform_os.lstat = path_stat
+                platform_os.open = open_file
+                platform_os.fstat = lambda fd: descriptor_metadata
+                # Real descriptors/reads, with coherent native observations in
+                # place of CPython's incompatible path/fd representations.
+                native = SimpleNamespace(
+                    Metadata=content.windows.Metadata,
+                    stat=lambda path: canonical, open=open_file, fstat=lambda fd: canonical,
+                )
+                with patch.object(content, "os", platform_os), patch.object(content, "windows", native, create=True):
+                    observed = content.overlay(self.root, [b"stable.exe"], {})
+                self.assertEqual(observed, [(b"stable.exe", b"100644", expected)])
+
+    def test_executable_extensions_match_git_before_and_after_commit(self) -> None:
+        for suffix in ("exe", "bat", "cmd", "com"):
+            with self.subTest(suffix=suffix):
+                candidate = self.root / ("program." + suffix)
+                candidate.write_bytes(b"raw\r\nprogram\x1aafter")
+                candidate.chmod(0o644)
+                if os.name == "nt":
+                    from omh.quality import working_tree_fingerprint_windows as windows
+
+                    descriptor = windows.open(os.fsencode(candidate))
+                    try:
+                        self.assertEqual(windows.stat(os.fsencode(candidate)), windows.fstat(descriptor))
+                        self.assertEqual(os.read(descriptor, 1024), b"raw\r\nprogram\x1aafter")
+                        with self.assertRaises(PermissionError):
+                            with candidate.open("r+b"):
+                                pass
+                        with self.assertRaises(PermissionError):
+                            candidate.unlink()
+                    finally:
+                        os.close(descriptor)
+                before = working_tree_content_fingerprint(self.root)
+                self.assertTrue(before.authoritative)
+                _git(self.root, "add", candidate.name)
+                staged = working_tree_content_fingerprint(self.root)
+                _git(self.root, "restore", "--staged", candidate.name)
+                unstaged = working_tree_content_fingerprint(self.root)
+                repeated = working_tree_content_fingerprint(self.root)
+                self.assertTrue(unstaged.authoritative)
+                self.assertTrue(repeated.authoritative)
+                self.assertEqual(before.fingerprint, unstaged.fingerprint)
+                self.assertEqual(before.fingerprint, repeated.fingerprint)
+                self.assertEqual(candidate.read_bytes(), b"raw\r\nprogram\x1aafter")
+                _git(self.root, "add", candidate.name)
+                _git(self.root, "commit", "-m", "executable extension fixture")
+                committed = working_tree_content_fingerprint(self.root)
+                self.assertTrue(staged.authoritative)
+                self.assertTrue(committed.authoritative)
+                self.assertEqual(before.fingerprint, staged.fingerprint)
+                self.assertEqual(before.fingerprint, committed.fingerprint)
 
     def test_content_normalization_attributes_are_explicitly_unsupported(self) -> None:
         for attribute in ("text", "eol=crlf", "working-tree-encoding=UTF-16LE", "ident", "crlf", "crlf=input"):

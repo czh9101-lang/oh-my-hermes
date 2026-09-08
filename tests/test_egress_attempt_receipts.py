@@ -5,11 +5,13 @@ import importlib
 import importlib.util
 import json
 import sqlite3
+import sys
 import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from _local_package import load_local_package
 
@@ -154,6 +156,134 @@ class EgressAttemptStoreTests(unittest.TestCase):
         row = self.store.public_rows()[0]
         self.assertIsNone(row["approval_ref"])
         self.assertIsNone(row["idempotency_key"])
+
+    def _registered_handler(self, handler):
+        guard_module = importlib.import_module("omh.plugin_bundle.omh.egress_attempts")
+
+        entry = SimpleNamespace(
+            handler=handler, max_result_size_chars=None, dynamic_schema_overrides=None,
+            is_async=False, toolset="test", schema={}, check_fn=None,
+            requires_env=[], description="", emoji="",
+        )
+        entries = {"send_probe": entry}
+        hooks = {}
+
+        def register_tool(name, toolset, schema, wrapper, **kwargs):
+            entries[name] = SimpleNamespace(handler=wrapper)
+
+        ctx = SimpleNamespace(register_hook=hooks.__setitem__, register_tool=register_tool)
+        registry = SimpleNamespace(get_entry=lambda name, **kwargs: entries.get(name))
+        with patch.dict(sys.modules, {"tools.registry": SimpleNamespace(registry=registry)}):
+            guard_module.register(ctx, {
+                "omh_home": str(self.home),
+                "tools": {"send_probe": {
+                    "action_class": "message_send", "destination_class": "chat_channel",
+                    "destination_arg": "channel", "payload_arg": "body",
+                }},
+            })
+        identity = {"tool_name": "send_probe", "session_id": "session-1", "tool_call_id": "call-1"}
+        directive = hooks["pre_tool_call"](**identity)
+        self.assertEqual(directive["action"], "modify")
+        args = {"channel": "private-room", "body": "payload", **directive["args"]}
+        return entries["send_probe"].handler, args, hooks, identity
+
+    def test_windows_full_commit_precedes_handler_without_directory_open(self) -> None:
+        events: list[str] = []
+        test = self
+
+        class ObservedConnection(sqlite3.Connection):
+            def commit(self) -> None:
+                test.assertEqual(self.execute("PRAGMA synchronous").fetchone(), (2,))
+                test.assertEqual(self.execute("PRAGMA journal_mode").fetchone(), ("delete",))
+                super().commit()
+                events.append("committed")
+
+        def handler(args, **kwargs):
+            rows = self.module.AttemptStore(self.home).public_rows()
+            self.assertEqual([row["row_type"] for row in rows], ["attempt"])
+            self.assertEqual(args, {"channel": "private-room", "body": "payload"})
+            events.append("handler")
+            return "local-spy-returned"
+
+        wrapper, args, hooks, identity = self._registered_handler(handler)
+        connect = sqlite3.connect
+        with (
+            patch.object(self.module, "os", wraps=self.module.os) as platform_os,
+            patch.object(sqlite3, "connect", side_effect=lambda *a, **kw: connect(
+                *a, **kw, factory=ObservedConnection,
+            )),
+        ):
+            # Only OMH's platform seam is simulated; SQLite and pathlib stay real.
+            platform_os.name = "nt"
+            platform_os.open.side_effect = PermissionError("Windows CRT rejects directories")
+            self.assertEqual(wrapper(args, session_id="session-1"), "local-spy-returned")
+            self.assertEqual(events, ["committed", "handler"])
+            hooks["post_tool_call"](**identity, status="ok")
+            hooks["post_tool_call"](**identity, status="ok")
+            self.assertEqual(events, ["committed", "handler", "committed"])
+            replay = hooks["pre_tool_call"](**identity)
+            replay_args = {"channel": "private-room", "body": "payload", **replay["args"]}
+            self.assertIn("error", json.loads(wrapper(replay_args, session_id="session-1")))
+            self.assertEqual(events, ["committed", "handler", "committed"])
+            platform_os.open.assert_not_called()
+            platform_os.fsync.assert_not_called()
+        rows = self.module.AttemptStore(self.home).public_rows()
+        self.assertEqual([row["row_type"] for row in rows], ["attempt", "terminal"])
+        self.assertEqual(rows[1]["terminal_state"], "returned")
+
+    def test_windows_commit_failure_blocks_handler_and_does_not_mint_attempt(self) -> None:
+        class FailedCommit(sqlite3.Connection):
+            def commit(self) -> None:
+                raise sqlite3.OperationalError("injected SQLITE_IOERR_FSYNC")
+
+        handler = Mock()
+        wrapper, args, _, _ = self._registered_handler(handler)
+        connect = sqlite3.connect
+        with (
+            patch.object(self.module, "os", wraps=self.module.os) as platform_os,
+            patch.object(sqlite3, "connect", side_effect=lambda *a, **kw: connect(
+                *a, **kw, factory=FailedCommit,
+            )),
+        ):
+            platform_os.name = "nt"
+            started = time.monotonic()
+            result = wrapper(args, session_id="session-1")
+            elapsed = time.monotonic() - started
+        self.assertIn("error", json.loads(result))
+        handler.assert_not_called()
+        self.assertLess(elapsed, 0.1)
+        self.assertEqual(self.store.public_rows(), [])
+
+    def test_posix_directory_failures_block_handler_after_commit(self) -> None:
+        for operation in ("open", "fsync"):
+            with self.subTest(operation=operation):
+                self.home = Path(self.temporary.name) / operation
+                self.store = self.module.AttemptStore(self.home)
+                handler = Mock()
+                wrapper, args, _, _ = self._registered_handler(handler)
+                with patch.object(self.module, "os", wraps=self.module.os) as platform_os:
+                    platform_os.name = "posix"
+                    # Simulate descriptor operations so the negative control also runs on Windows.
+                    platform_os.open.return_value = 123
+                    platform_os.fsync.return_value = None
+                    platform_os.close.return_value = None
+                    getattr(platform_os, operation).side_effect = OSError("injected directory failure")
+                    started = time.monotonic()
+                    result = wrapper(args, session_id="session-1")
+                    elapsed = time.monotonic() - started
+                    getattr(platform_os, operation).assert_called_once()
+                    if operation == "fsync":
+                        platform_os.close.assert_called_once_with(123)
+                self.assertIn("error", json.loads(result))
+                handler.assert_not_called()
+                self.assertLess(elapsed, 0.1)
+                rows = self.store.public_rows()
+                self.assertEqual([row["row_type"] for row in rows], ["attempt"])
+                # A committed-but-unconfirmed attempt remains unresolved, never replayable.
+                wrapper, args, _, _ = self._registered_handler(handler)
+                self.assertIn("error", json.loads(wrapper(args, session_id="session-1")))
+                handler.assert_not_called()
+                self.assertEqual(self.store.public_rows(), rows)
 
 
 if __name__ == "__main__":

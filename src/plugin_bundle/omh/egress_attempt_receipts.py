@@ -58,7 +58,11 @@ def _utc_now() -> str:
 
 
 def _fsync_parent_directory(path: Path) -> None:
-    """Persist directory entries after first database creation."""
+    """Add a POSIX directory flush after first database creation."""
+    if os.name == "nt":
+        # Windows CRT cannot open directories. SQLite's FULL commit already
+        # uses its native sync; this adds no separate directory guarantee there.
+        return
     descriptor = os.open(path, os.O_RDONLY)
     try:
         os.fsync(descriptor)

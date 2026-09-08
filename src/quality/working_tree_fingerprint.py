@@ -232,15 +232,17 @@ def _unsupported_content_config(value: bytes | None) -> bool:
     """Reject index modes that cannot prove final unnormalized working bytes."""
     if value is None:
         return False
+    effective: dict[bytes, bytes] = {}
     for record in value.split(b"\0"):
         if not record:
             continue
         key, separator, setting = record.partition(b"\n")
         if not separator or key.lower() not in {b"core.sparsecheckout", b"core.autocrlf"}:
             raise ValueError("invalid content configuration record")
-        if setting.strip().lower() not in {b"", b"false", b"0", b"no", b"off"}:
-            return True
-    return False
+        # --get-regexp includes overridden system/global/include values too;
+        # Git's last value for each key is the policy used by status.
+        effective[key.lower()] = setting.strip().lower()
+    return any(setting not in {b"", b"false", b"0", b"no", b"off"} for setting in effective.values())
 
 
 def _index_paths(entries: bytes) -> list[bytes]:

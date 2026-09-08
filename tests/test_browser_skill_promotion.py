@@ -1,17 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import errno
+import hashlib
 import json
+import os
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import subprocess
 import unittest
 from unittest.mock import patch
 
 from _local_package import load_local_package
 load_local_package()
+
+import omh.workflows.browser_skill_promotion as lifecycle
+import omh.workflows.browser_skill_promotion_plan as promotion_plan
+from tests.test_browser_skill_promotion_plan import _crt_descriptor_io
 
 from omh.workflows.browser_skill_promotion import (
     BrowserSkillPromotionError, approve_browser_skill_lifecycle,
@@ -36,6 +45,129 @@ class Host(PromotionNativeHost):
 
 
 class BrowserSkillPromotionLifecycleTests(unittest.TestCase):
+    def test_windows_directory_boundary_preserves_full_lifecycle_and_file_sync(self) -> None:
+        opened: dict[int, Path] = {}
+        synced: set[Path] = set()
+        directory_attempts: list[Path] = []
+        entry_replacements: list[Path] = []
+
+        def windows_open(path, flags, *args, **kwargs):
+            path = Path(path)
+            if path.is_dir():
+                directory_attempts.append(path)
+                raise PermissionError(errno.EACCES, "CRT cannot open directories", str(path))
+            descriptor = os.open(path, flags, *args, **kwargs)
+            opened[descriptor] = path
+            return descriptor
+
+        def sync_file(descriptor):
+            self.assertTrue(stat.S_ISREG(os.fstat(descriptor).st_mode))
+            os.fsync(descriptor)
+            synced.add(opened[descriptor])
+
+        def replace_synced(source, destination):
+            source, destination = Path(source), Path(destination)
+            self.assertIn(source, synced)
+            synced.remove(source)
+            os.replace(source, destination)
+            if destination.name == "SKILL.md":
+                entry_replacements.append(destination)
+
+        seam = SimpleNamespace(**vars(os))
+        seam.name = "nt"
+        seam.open = windows_open
+        seam.fsync = sync_file
+        seam.replace = replace_synced
+        with patch.object(lifecycle, "os", seam):
+            # Reuse the real install/repeat/update/rollback/removal scenario;
+            # only the platform I/O seam differs from its native-host run.
+            self.test_install_repeat_update_rollback_and_remove_retain_immutable_history()
+        self.assertEqual(directory_attempts, [])
+        self.assertEqual(len(entry_replacements), 3)
+        self.assertTrue(synced)  # Immutable resources/indexes were synced too.
+
+    def test_file_sync_failure_blocks_visibility_on_windows_and_posix(self) -> None:
+        for platform in ("nt", "posix"):
+            with self.subTest(platform=platform), project() as root:
+                trace = approved_trace(root)
+                host = Host()
+                receipt = approve(root, trace, host)
+                seam = SimpleNamespace(**vars(os))
+                seam.name = platform
+                failure = OSError(errno.EIO, "file sync failed")
+                with patch.object(lifecycle, "os", seam), patch.object(seam, "fsync", side_effect=failure) as sync:
+                    with self.assertRaises(OSError) as raised:
+                        promote_approved_browser_skill(root, receipt["receipt_id"], host=host)
+                self.assertIs(raised.exception, failure)
+                sync.assert_called_once()
+                self.assertFalse((root / ".hermes" / "skills" / "checkout-confirmation" / "SKILL.md").exists())
+
+    def test_posix_directory_open_and_sync_errors_still_propagate(self) -> None:
+        seam = SimpleNamespace(**vars(os))
+        seam.name = "posix"
+        failure = OSError(errno.EIO, "directory sync failed")
+        with patch.object(lifecycle, "os", seam):
+            with patch.object(seam, "open", side_effect=failure):
+                with self.assertRaises(BrowserSkillPromotionError) as raised:
+                    lifecycle._fsync_directory(Path("unused-directory"))
+                self.assertIs(raised.exception.__cause__, failure)
+            # A descriptor sentinel keeps this POSIX negative control runnable
+            # on Windows without pretending CRT supports directory handles.
+            with patch.object(seam, "open", return_value=123), patch.object(
+                seam, "fsync", side_effect=failure
+            ), patch.object(seam, "close") as close:
+                with self.assertRaises(BrowserSkillPromotionError) as raised:
+                    lifecycle._fsync_directory(Path("unused-directory"))
+                self.assertIs(raised.exception.__cause__, failure)
+                close.assert_called_once_with(123)
+
+    def test_crt_write_readback_cannot_conceal_physical_newline_expansion(self) -> None:
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary).resolve() / "entry.md"
+            reviewed = b"reviewed\ncontent\n"
+            with _crt_descriptor_io(lifecycle):
+                lifecycle._write_exact(path, reviewed.decode("utf-8"), replace=False)
+                self.assertEqual(lifecycle._read_bytes(path), reviewed)
+                self.assertEqual(path.read_bytes(), reviewed)
+
+    def test_lifecycle_reads_preserve_crlf_and_ctrl_z_bytes(self) -> None:
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary).resolve() / "entry.md"
+            raw = b"reviewed\r\ncontent\x1aafter-eof\n"
+            path.write_bytes(raw)
+            with _crt_descriptor_io(lifecycle):
+                self.assertEqual(lifecycle._read_bytes(path), raw)
+
+    def test_crt_promotion_installs_exact_reviewed_bytes_and_reuses_without_writes(self) -> None:
+        with project() as root:
+            root = root.resolve()
+            trace = approved_trace(root)
+            host = Host()
+            review = review_browser_skill_lifecycle(root, trace, "checkout-confirmation", host=host)
+            plan = review["plan"]
+            receipt = approve_browser_skill_lifecycle(
+                root, trace, "checkout-confirmation", reviewed_diff_digest=plan["diff_digest"],
+                reviewer_identity="operator", host=host,
+            )
+            target = root / ".hermes" / "skills" / "checkout-confirmation"
+            with _crt_descriptor_io(lifecycle), _crt_descriptor_io(promotion_plan):
+                installed = promote_approved_browser_skill(root, receipt["receipt_id"], host=host)
+                self.assertEqual(installed["status"], "active")
+                for name, text in plan["package"].items():
+                    with self.subTest(path=name):
+                        self.assertEqual((target / name).read_bytes(), text.encode("utf-8"))
+                self.assertEqual(hashlib.sha256((target / "SKILL.md").read_bytes()).hexdigest(), receipt["entry_digest"])
+                manifest = json.loads((target / f"resources/{plan['generation']}/manifest.json").read_bytes())
+                for name, digest in manifest["files"].items():
+                    self.assertEqual(hashlib.sha256((target / name).read_bytes()).hexdigest(), digest)
+                self.assertEqual(lifecycle._managed_inventory(root, "checkout-confirmation"), plan["package"])
+                with patch.object(lifecycle, "_write_exact", side_effect=AssertionError("duplicate write")), patch.object(
+                    lifecycle, "_write_observation", side_effect=AssertionError("duplicate observation")
+                ):
+                    reused = promote_approved_browser_skill(root, receipt["receipt_id"], host=host)
+                self.assertTrue(reused["reused"])
+                self.assertEqual(reused["generation"], installed["generation"])
+
     def test_install_repeat_update_rollback_and_remove_retain_immutable_history(self) -> None:
         with project() as root:
             trace = approved_trace(root)
@@ -289,7 +421,7 @@ class BrowserSkillPromotionLifecycleTests(unittest.TestCase):
             target = root / ".hermes" / "skills" / "checkout-confirmation"
             for name, text in plan["package"].items():
                 if name.startswith("resources/"):
-                    path = target / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text, encoding="utf-8")
+                    path = target / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(text.encode("utf-8"))
             self.assertEqual(browser_skill_promotion_status(root, "checkout-confirmation", check_source=False)["status"], "inactive")
             self.assertEqual(promote_approved_browser_skill(root, receipt["receipt_id"], host=host)["status"], "active")
 

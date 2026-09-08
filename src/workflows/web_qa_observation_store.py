@@ -262,7 +262,7 @@ def _read_source_image(path: Path) -> bytes:
     if path.is_symlink():
         raise WebQaObservationStoreError("capture source symlink is refused")
     try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
     except OSError as exc:
         raise WebQaObservationStoreError("capture source must be an existing local regular file") from exc
     try:
@@ -419,7 +419,7 @@ def _read_json(path: Path) -> dict[str, object]:
     if path.is_symlink():
         raise WebQaObservationStoreError("managed observation metadata symlink is refused")
     try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
     except OSError as exc:
         raise WebQaObservationStoreError("managed observation metadata was not found") from exc
     try:
