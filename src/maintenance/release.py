@@ -197,7 +197,13 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # same pass -- naming the armed wait costs fewer chars than the example clause
 # it replaced -- so the net is one shared constant's worth of instruction lines,
 # not per-section padding; warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 410980
+# 410980 -> 411280: the two research lanes (`web-research`, `research`) bind
+# as-of claims to `temporal_source_receipt/v1` (#1403): one shared safety
+# rule, one quality-bar line separating capture, publication, and retrieval
+# time, one required input, one expected output, and one recovery note on
+# each lane. One evidence contract reaching the two lanes that answer
+# point-in-time questions, not per-section padding; warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 411280
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -700,7 +706,14 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # reads as a finding when nobody observed whether the skill was exposed, and
 # a missing counter reads as zero. The contract itself lives in
 # `docs/SESSION-ACTIVITY-RECEIPTS.md`, outside this budget; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 914611
+# 914611 -> 916671: `web-research` and `research` bind as-of claims to
+# `temporal_source_receipt/v1` (#1403): the receipt rule, the three-clock
+# quality-bar line, the as-of input, the receipt/surfaces output, and the
+# archive-gap recovery note on each lane. These belong in the always-loaded
+# body because the choice between a live page and a historical capture is
+# made when the source is cited, not after; the field-level contract lives in
+# `docs/TEMPORAL-SOURCE-RECEIPTS.md`, outside this budget; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 916671
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
