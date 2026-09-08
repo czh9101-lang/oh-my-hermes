@@ -331,10 +331,15 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
         "native helper); reads local process status, spawns no agent."
     ),
     "src/quality/evidence_records.py": (
-        "`current_git_tree_hash()`, reached from `omh goal checkpoint`, runs one bounded local "
-        "read-only `git rev-parse --short HEAD^{tree}` so a recorded observation carries the tree "
-        "it was observed against. It reads a hash and nothing else: no ref moves, no work starts, "
-        "and a machine with no git or no repository answers None instead of a stamp."
+        "compatibility `current_git_tree_hash()` retains one bounded local `git rev-parse --short "
+        "HEAD^{tree}` read for legacy callers; live goal and quality-evidence freshness now enter "
+        "the isolated complete-content collector below."
+    ),
+    "src/quality/working_tree_fingerprint.py": (
+        "the complete working-tree freshness collector reached only by `omh goal checkpoint` and "
+        "`omh quality-evidence assess`; it copies the index into a temporary directory, directs "
+        "Git object reads through a temporary object directory plus read-only alternates, disables "
+        "fsmonitor and optional locks, streams only changed/untracked bytes, and never starts work."
     ),
 }
 
@@ -771,10 +776,15 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
         "config from changing what dirty means. Read-only, names no remote, writes nothing"
     ),
     ("src/quality/evidence_records.py", ("rev-parse", "HEAD^{tree}")): (
-        "`rev-parse --short HEAD^{tree}` reads the tree hash a quality-evidence observation is "
-        "recorded against, so assessment can later tell evidence about the current tracked content "
-        "from evidence about older content; read-only local object lookup, names no remote, and it "
-        "resolves no ref the caller supplied"
+        "legacy `rev-parse --short HEAD^{tree}` compatibility helper; fresh local evidence uses "
+        "the complete-content collector rather than this committed-tree-only read"
+    ),
+    ("src/quality/working_tree_fingerprint.py", ("core.fsmonitor=false",)): (
+        "the collector's one private argv factory prefixes every fixed local Git plumbing command "
+        "with `-c core.fsmonitor=false --no-optional-locks`; the remaining command words are passed "
+        "as closed internal lists for rev-parse, config, ls-files, status, check-attr, and ls-tree, "
+        "never from caller input and never through a shell. It uses no diff/textconv command, so no "
+        "repository-configured external diff or textconv helper can execute."
     ),
     ("src/coding/fanout_artifact_sharing.py", ("check-ignore",)): (
         "`git check-ignore -q --` against the parent checkout, then again inside the fresh unit "

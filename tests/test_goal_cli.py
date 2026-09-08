@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from tempfile import TemporaryDirectory
 
 from _cli_harness import run_cli
@@ -12,6 +13,7 @@ load_local_package()
 from omh.commands.main import build_parser
 from omh.goal_ledger import goal_ledger_path, read_goal_ledger
 from omh.paths import resolve_paths
+from omh.quality.working_tree_fingerprint import WorkingTreeFingerprint, WorkingTreeFingerprintState
 from omh.record_revision import APPLIED_MUTATIONS_LIMIT, MAX_MUTATION_ID_CHARS, applied_mutation_key
 
 # The digest helper is deliberately private; the deep module is imported here
@@ -172,6 +174,26 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             self.assertIn("record_revision", stderr)
             self.assertNotIn("Traceback", stderr)
             self.assertEqual(len(read_goal_ledger(paths, "goal-cli-guard")["checkpoints"]), 1)
+
+    def test_checkpoint_collects_one_complete_workspace_identity(self) -> None:
+        # Given: a checkpoint request and one collector result for its transaction.
+        # When: the public CLI records the checkpoint.
+        # Then: the exact collected fingerprint is persisted after one collection.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = _base(root)
+            _create(base)
+            fingerprint = WorkingTreeFingerprint(
+                WorkingTreeFingerprintState.CLEAN, "f" * 64, "a" * 40, 8
+            )
+            with patch("omh.commands.goal.working_tree_content_fingerprint", return_value=fingerprint) as collect:
+                status, stdout, stderr = run_cli(
+                    base + ["goal", "checkpoint", "--goal", "goal-cli-guard", "--summary", "Recorded", "--status", "in_progress"]
+                )
+
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(collect.call_count, 1)
+            self.assertEqual(json.loads(stdout)["goal"]["checkpoints"][0]["observed_tree"], "f" * 64)
 
     def test_repeated_mutation_id_leaves_one_item_and_reports_replayed(self) -> None:
         with TemporaryDirectory() as tmp:
