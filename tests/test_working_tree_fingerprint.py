@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -150,7 +151,7 @@ class WorkingTreeFingerprintTests(unittest.TestCase):
         self.assertTrue(working_tree_content_fingerprint(self.root).authoritative)
 
     def test_content_normalization_attributes_are_explicitly_unsupported(self) -> None:
-        for attribute in ("text", "eol=crlf", "working-tree-encoding=UTF-16LE"):
+        for attribute in ("text", "eol=crlf", "working-tree-encoding=UTF-16LE", "ident", "crlf", "crlf=input"):
             with self.subTest(attribute=attribute):
                 (self.root / ".gitattributes").write_text(
                     f"tracked.txt {attribute}\n", encoding="utf-8",
@@ -160,6 +161,68 @@ class WorkingTreeFingerprintTests(unittest.TestCase):
 
                 self.assertEqual(result.state, WorkingTreeFingerprintState.UNSUPPORTED)
                 self.assertIsNone(result.fingerprint)
+
+    def test_ident_and_legacy_crlf_cannot_restore_authority_or_replay_after_staging(self) -> None:
+        cases = (
+            ("ident", b"$Id$\n", b"$Id: replaced $\n"),
+            ("crlf", b"line\n", b"line\r\n"),
+            ("crlf=input", b"line\n", b"line\r\n"),
+        )
+        for number, (attribute, initial, changed) in enumerate(cases):
+            with self.subTest(attribute=attribute):
+                plain = self.root / "plain"
+                (self.root / ".gitattributes").write_text(f"plain {attribute}\n", encoding="utf-8")
+                plain.write_bytes(initial)
+                _git(self.root, "add", ".")
+                _git(self.root, "commit", "-m", f"normalization fixture {number}")
+                before_collection = _files(self.root)
+                initial_result = working_tree_content_fingerprint(self.root)
+                self.assertEqual(_files(self.root), before_collection)
+                plain.write_bytes(changed)
+                before_collection = _files(self.root)
+                unstaged_result = working_tree_content_fingerprint(self.root)
+                self.assertEqual(_files(self.root), before_collection)
+                _git(self.root, "add", "plain")
+                before_collection = _files(self.root)
+                staged_result = working_tree_content_fingerprint(self.root)
+                self.assertEqual(_files(self.root), before_collection)
+                self.assertEqual(plain.read_bytes(), changed)
+                self.assertEqual(
+                    subprocess.check_output(["git", "status", "--porcelain"], cwd=self.root), b"",
+                )
+
+                state = Path(self._temporary.name) / f"goal-state-{number}"
+                environment = dict(os.environ)
+                environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+                environment["PYTHONDONTWRITEBYTECODE"] = "1"
+                command = [
+                    sys.executable, "-m", "omh.cli",
+                    "--omh-home", str(state / ".omh"), "--hermes-home", str(state / ".hermes"),
+                ]
+                created = subprocess.run(
+                    command + ["goal", "create", "--goal-id", "normalization", "--objective", "Verify raw bytes", "--criterion", "No false replay"],
+                    cwd=self.root, env=environment, capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(created.returncode, 0, created.stderr)
+                ledger_before = _files(state)
+                checkpoint = command + [
+                    "goal", "checkpoint", "--goal", "normalization", "--summary", "Observed bytes",
+                    "--status", "in_progress", "--mutation-id", "same-request",
+                ]
+                for _ in range(2):
+                    refused = subprocess.run(
+                        checkpoint, cwd=self.root, env=environment, capture_output=True,
+                        text=True, check=False,
+                    )
+                    self.assertEqual(refused.returncode, 2, refused.stderr)
+                    self.assertEqual(refused.stdout, "")
+                    self.assertIn("unsupported", refused.stderr)
+                    self.assertEqual(_files(state), ledger_before)
+                for result in (initial_result, unstaged_result, staged_result):
+                    self.assertEqual(result.state, WorkingTreeFingerprintState.UNSUPPORTED)
+                    self.assertFalse(result.authoritative)
+                    self.assertIsNone(result.fingerprint)
+                    self.assertLessEqual(result.git_calls, MAX_GIT_CALLS)
 
     def test_ambient_common_directory_cannot_redirect_repository_identity(self) -> None:
         other = Path(self._temporary.name) / "other"

@@ -482,7 +482,8 @@ def _environment(value: dict[str, object]) -> dict[str, object]:
     raw = _eval_json(value)
     if type(raw) is not dict:
         return {"width": -1, "height": -1, "dpr": -1, "engine": "", "version": "", "locale": "", "timezone": "", "ready_state": ""}
-    ua = raw.get("ua"); match = _VERSION.search(ua) if isinstance(ua, str) else None
+    ua = raw.get("ua")
+    match = _VERSION.search(ua) if isinstance(ua, str) else None
     return {"width": raw.get("width"), "height": raw.get("height"), "dpr": raw.get("dpr"), "engine": "chromium" if match else "", "version": match.group(1) if match else "", "locale": raw.get("locale"), "timezone": raw.get("timezone"), "ready_state": raw.get("readyState")}
 
 

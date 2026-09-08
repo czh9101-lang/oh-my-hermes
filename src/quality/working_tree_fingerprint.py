@@ -301,7 +301,7 @@ def _has_filter(attributes: bytes) -> bool:
         fields.pop()
     if len(fields) % 3:
         raise ValueError("invalid attribute record")
-    transforms = {b"filter", b"text", b"eol", b"working-tree-encoding"}
+    transforms = {b"filter", b"text", b"eol", b"ident", b"crlf", b"working-tree-encoding"}
     return any(
         attribute in transforms and value not in {b"unspecified", b"unset"}
         for attribute, value in zip(fields[1::3], fields[2::3])
