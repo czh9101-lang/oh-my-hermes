@@ -41,6 +41,9 @@ def _python(generation: Path, platform: SelfUpdatePlatform) -> str:
     return str(platform.scripts_dir(generation / "venv") / executable)
 
 
+ROLLBACK_RESTORE_ENV = "OMH_UPDATE_ROLLBACK_RESTORE"
+
+
 def _omh_cli(python: str, *arguments: str) -> list[str]:
     """`python -P -m omh.cli ...`: the generation's own package, never the cwd's.
 
@@ -107,7 +110,7 @@ def _reentry_argv() -> list[str]:
     return argv if "--command-package-updated" in argv else [*argv, "--command-package-updated"]
 
 
-def _reenter(root: Path, generation: Path, args: Any, runner: Runner, platform: SelfUpdatePlatform) -> tuple[bool, str]:
+def _reenter(root: Path, generation: Path, args: Any, runner: Runner, platform: SelfUpdatePlatform, *, restoring: bool = False) -> tuple[bool, str]:
     trusted = require_generation_path(root, generation, None, "re-entry generation")
     pointed = pointer_target(root, platform=platform)
     if pointed is None:
@@ -116,6 +119,12 @@ def _reenter(root: Path, generation: Path, args: Any, runner: Runner, platform: 
     if not same_existing_path(pointed, trusted):
         raise OmhError("cannot re-enter an untrusted self-update generation")
     env = dict(os.environ, OMH_UPDATE_COMMAND_PACKAGE_REENTERED="1", OMH_SELF_UPDATE_GENERATION=str(trusted))
+    if restoring:
+        # The rollback re-entry re-renders the known-good pack. Left to
+        # itself it prints the ordinary update card ("Installed release ...
+        # OMH update complete."), which is what the owner read as a
+        # downgrade; the marker lets that run label itself a rollback.
+        env[ROLLBACK_RESTORE_ENV] = "1"
     command = _omh_cli(_python(root / "current", platform), *_reentry_argv())
     # stdout stays on the terminal so the re-entered update's own progress and
     # prompts show live; stderr is captured so the failure that stops the
@@ -220,10 +229,14 @@ def _activate(root: Path, state: dict[str, Any], candidate: Path, args: Any, run
     result.update(phase="post_activation", post_activation={"status": "ok" if passed else "failed", "reason": reason})
     if not passed:
         _switch(root, previous, platform)
-        _reenter(root, previous, args, runner, platform)
+        _reenter(root, previous, args, runner, platform, restoring=True)
         state["activation_in_progress"] = None
         record_pointer(state, root, previous)
         save_state(root, state)
+        # A refused candidate is as dead as one that failed staging: delete
+        # it now rather than leave a venv on disk until the next successful
+        # update's garbage collection.
+        _cleanup_candidate(root, candidate)
         result["rollback"] = {"performed": True, "restored": previous.name}
         return result
     commit_activation(root, state, candidate)
@@ -242,10 +255,11 @@ def _recover_interrupted(root: Path, state: dict[str, Any], interrupted: tuple[P
         result.update(ok=True, phase="recovery", recovery={"status": "ok", "action": "completed_interrupted_activation"})
         return result
     _switch(root, previous, platform)
-    _reenter(root, previous, args, runner, platform)
+    _reenter(root, previous, args, runner, platform, restoring=True)
     state["activation_in_progress"] = None
     record_pointer(state, root, previous)
     save_state(root, state)
+    _cleanup_candidate(root, candidate)
     result.update(phase="recovery", recovery={"status": "failed", "action": "rolled_back_interrupted_activation"}, rollback={"performed": True, "restored": previous.name})
     return result
 

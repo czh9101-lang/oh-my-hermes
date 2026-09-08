@@ -219,6 +219,58 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 self.assertEqual(result["post_activation"]["reason"], expected_reason)
                 self.assertEqual(sum("--command-package-updated" in call and "update" not in call for call in calls), 2)
                 self._assert_pair(root, previous)
+                # The refused candidate is deleted like a failed staging
+                # candidate; the owner machine kept one on disk until the next
+                # successful update's garbage collection.
+                self.assertFalse(Path(result["candidate"]["path"]).exists())
+
+    def test_rollback_reentry_is_marked_so_its_summary_says_rollback(self):
+        # The rollback re-entry re-renders the known-good pack and, unmarked,
+        # printed the ordinary "Installed release ... OMH update complete."
+        # card -- the owner read that as a downgrade. Only the restoring
+        # re-entry carries the marker; the candidate's re-entry does not.
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy, args, plan = self._fixture(root, pointer=True)
+            reentries = []
+            runner = self._runner(failure="post")
+
+            def recording_runner(command, **kwargs):
+                if "--command-package-updated" in command and "update" not in command:
+                    reentries.append(dict(kwargs["env"]))
+                return runner(command, **kwargs)
+
+            result = self._run(root, args, plan, recording_runner)
+            self.assertTrue(result["rollback"]["performed"])
+            self.assertEqual(len(reentries), 2)
+            self.assertNotIn(self_update.ROLLBACK_RESTORE_ENV, reentries[0])
+            self.assertEqual(reentries[1].get(self_update.ROLLBACK_RESTORE_ENV), "1")
+
+        payload = {
+            "skills": [],
+            "source": "builtin",
+            "command_package": {"updated": True},
+            "release_update": {"previous": {"version": "2.0.2"}, "current": {"version": "2.0.2"}},
+        }
+        for restoring in (False, True):
+            with self.subTest(restoring=restoring):
+                env = {self_update.ROLLBACK_RESTORE_ENV: "1"} if restoring else {}
+                output = io.StringIO()
+                with patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(output):
+                    if not restoring:
+                        os.environ.pop(self_update.ROLLBACK_RESTORE_ENV, None)
+                    setup_commands._print_install_summary(payload, command="update", language="en")
+                printed = output.getvalue()
+                if restoring:
+                    self.assertIn("OMH rollback complete", printed)
+                    self.assertIn("Oh-My-Hermes Rollback", printed)
+                    self.assertIn("Restored release: 2.0.2", printed)
+                    self.assertNotIn("update complete", printed.lower())
+                    self.assertNotIn("Installed release", printed)
+                else:
+                    self.assertIn("OMH update complete.", printed)
+                    self.assertIn("Installed release: 2.0.2", printed)
+                    self.assertNotIn("Rollback", printed)
 
     def test_lock_is_nonblocking_and_does_not_mutate_the_pair(self):
         with TemporaryDirectory() as temporary:
