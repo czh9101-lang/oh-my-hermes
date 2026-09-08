@@ -892,6 +892,49 @@ def cmd_runtime_receipts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_runtime_egress_attempts(args: argparse.Namespace) -> int:
+    """Read bounded write-ahead metadata without minting an attempt or outcome."""
+    from ..plugin_bundle.omh.egress_attempt_receipts import AttemptStore, AttemptStoreError
+
+    limit = _bounded_limit(args)
+    if limit is None or limit > 200:
+        raise OmhError("--limit must be between 1 and 200")
+    try:
+        rows = AttemptStore(_paths(args).omh_home).public_rows(limit=limit)
+    except AttemptStoreError as exc:
+        raise OmhError("egress attempt store is unavailable or invalid") from exc
+    attempts: dict[str, dict[str, object]] = {}
+    for row in rows:
+        attempt_id = str(row["attempt_id"])
+        if row["row_type"] == "attempt":
+            attempts[attempt_id] = {
+                key: row[key]
+                for key in (
+                    "attempt_id", "tool_name", "action_class", "effect_id", "created_at",
+                    "request_fingerprint", "approval_ref", "idempotency_key",
+                )
+            }
+            attempts[attempt_id]["terminal_state"] = "unknown"
+            attempts[attempt_id]["evidence_ref"] = f"attempt:{attempt_id}"
+        else:
+            attempts[attempt_id]["terminal_state"] = row["terminal_state"]
+    payload = {
+        "schema_version": "runtime_egress_attempts_view/v1",
+        "attempts": list(attempts.values()),
+        "attempt_count": len(attempts),
+        "limit": limit,
+        "claim_boundary": "A durable local attempt is not remote delivery. Unknown outcomes must not be replayed automatically.",
+    }
+    if _wants_json(args):
+        _print_json(payload)
+    else:
+        print(f"Egress attempts ({len(attempts)} shown)")
+        for attempt in attempts.values():
+            print(f"  {attempt['tool_name']} - {attempt['terminal_state']} - {attempt['attempt_id']}")
+        print(payload["claim_boundary"])
+    return 0
+
+
 def _run_external_effect_projection(paths: OmhPaths, run_id: str) -> dict:
     """One run's effect projection, the same one `delegation-status` reports.
 
@@ -1310,6 +1353,10 @@ def _add_runtime_commands(sub) -> None:
 
     runtime_status = runtime_sub.add_parser("status")
     runtime_status.set_defaults(func=cmd_runtime_status)
+
+    egress_attempts = runtime_sub.add_parser("egress-attempts", help="Read bounded write-ahead egress attempt metadata.")
+    egress_attempts.add_argument("--limit", type=int, default=50, help="Maximum recent attempts to show (1-200).")
+    egress_attempts.set_defaults(func=cmd_runtime_egress_attempts)
 
     add_runtime_efficiency_command(runtime_sub)
     add_runtime_health_summary_command(runtime_sub)
