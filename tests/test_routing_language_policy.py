@@ -111,7 +111,14 @@ FROZEN_HANGUL_TRIGGERS_BY_SKILL: dict[str, int] = {
     "external-connector-readiness": 24,
     "failure-signal-audit": 10,
     "feedback-triage": 12,
-    "frontend": 16,
+    # 16 -> 20 (2026-09-08): the scroll-motion lane arrived as owner-spoken
+    # Korean ("부드러운 스크롤", "스크롤 부드럽게", "스크롤 애니메이션", "패럴랙스")
+    # WITH its English base corpus in the same commit ("smooth scroll",
+    # "smooth scrolling", "scroll animation", "parallax scroll", and the
+    # rest) and its Japanese/Chinese packs — new capability reach for a
+    # lane the catalog had no trigger for in any language, not padding
+    # over a routing miss on an intent already covered.
+    "frontend": 20,
     "gateway-intent-card": 10,
     "github-event-ops": 9,
     "github-issue-intake": 8,

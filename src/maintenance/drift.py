@@ -187,8 +187,10 @@ def count_metrics() -> tuple[CountMetric, ...]:
             describe="Routing precision cases",
             live=_routing_precision_case_count,
             # The public-board contract adds three negative controls: a concept
-            # question, a disclosure question, and a team's own board.
-            expected=184,
+            # question, a disclosure question, and a team's own board. The
+            # scroll-motion lane adds two parallax negatives (astronomy and
+            # camera optics) for the frontend scroll triggers.
+            expected=186,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -201,8 +203,9 @@ def count_metrics() -> tuple[CountMetric, ...]:
             describe="Routing precision intervention cases",
             live=_routing_precision_intervention_case_count,
             # The public-board contract adds two LLM-build interventions and the
-            # agent-board cross-lane guard.
-            expected=327,
+            # agent-board cross-lane guard. The scroll-motion lane adds three
+            # more: smooth scroll, a parallax hero, and the Korean phrasing.
+            expected=330,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
