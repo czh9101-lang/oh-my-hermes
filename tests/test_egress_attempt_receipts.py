@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import importlib.util
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -366,6 +367,7 @@ class EgressAttemptStoreTests(unittest.TestCase):
         self.assertEqual(self.store.public_rows(), [])
 
     def test_posix_directory_failures_block_handler_after_commit(self) -> None:
+        native_posix = os.name == "posix"
         for operation in ("open", "fsync"):
             with self.subTest(operation=operation):
                 self.home = Path(self.temporary.name) / operation
@@ -387,7 +389,11 @@ class EgressAttemptStoreTests(unittest.TestCase):
                         platform_os.close.assert_called_once_with(123)
                 self.assertIn("error", json.loads(result))
                 handler.assert_not_called()
-                self.assertLess(elapsed, 0.1)
+                # Semantic faults run everywhere; this POSIX-only operation's
+                # physical latency is measured only on its native platform.
+                # The native Windows cold-failure deadline remains separate.
+                if native_posix:
+                    self.assertLess(elapsed, 0.1)
                 rows = self.store.public_rows()
                 self.assertEqual([row["row_type"] for row in rows], ["attempt"])
                 # A committed-but-unconfirmed attempt remains unresolved, never replayable.
