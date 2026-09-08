@@ -955,4 +955,3 @@ def attach_session_activity_evidence(
     """
     payload["session_activity"] = session_activity_evidence(receipt, consumer) if receipt else None
     return payload
-
