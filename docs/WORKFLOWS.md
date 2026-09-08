@@ -7309,15 +7309,16 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Separate prepared guidance from observed platform, runtime, connector, file, memory, or delivery evidence.
   - Expose missing tools, credentials, targets, or observations as user-visible gaps.
 - Completion checklist:
-  - The target URL, allowed interactions, prohibited interactions, auth boundary, and stop condition are explicit.
-  - Credentials, login, payment, purchase, destructive submission, scraping, and data export are gated or marked missing.
+  - Specify URL, allowed/prohibited actions, auth boundary, stop condition.
+  - Gate credentials/login/payment/purchase/destruction/scraping/export; observed traces only.
+  - Host request admission (not enablement/adapter presence) gates schemas/context/callbacks/writes. Refuse foreign/stale/expired/released/ambiguous targets; no index fallback.
+  - omh_browser blocks native browser_*; inert by default. Opted-in effects need exact approval: docs/BROWSER-EFFECTS.md.
 - Recovery notes:
-  - If no URL or target page is supplied, ask for the smallest target first.
-  - If login, payment, destructive mutation, or credential use is requested, require an explicit confirmation gate.
-  - If the request is visual correctness rather than page operation, route to visual-qa.
-  - Keep a host receipt BLOCK for production clicks or submits, a retry after an auth, 4xx, assertion, or mutation failure, or more than two transient read-only retries.
-  - The shipped POSIX native agent-browser collector supports only anonymous read-only Chromium on a cold desktop profile; any other engine, profile, fixture, locale, or timezone yields a named blocker such as unsupported_browser_engine_webkit, not a substitution.
-  - If a promoted skill's source trace drifts, `promotion status` unlinks only the managed SKILL.md and keeps generations and receipts; no autoheal, watch, or global fallback exists.
+  - Missing target/confirmation: ask; visual correctness: visual-qa.
+  - Refresh stale state once; never replay unknown work. Reuse acquisitions; only owner adapter/version reaps. Release needs observed cleanup, not mutation approval.
+  - Host receipt BLOCK: production click/submit, retry after auth/4xx/assertion/mutation failure, or over two transient read-only retries.
+  - POSIX native agent-browser collector: cold-desktop anonymous read-only Chromium only; other engine/profile/fixture/locale/timezone: named blocker (unsupported_browser_engine_webkit), never substitution.
+  - Trace drift: `promotion status` unlinks only managed SKILL.md, keeps generations/receipts; no autoheal/watch/global fallback.
 - Required inputs:
   - user request
   - target context
@@ -7329,16 +7330,20 @@ These surfaces are generated command references, not installed Hermes workflow s
   - browser_auth_boundary/v1
   - browser_observation_manifest/v1 when observed
   - browser_confirmation_gate/v1 when destructive
+  - browser_adapter_capabilities/v1 when acquired
+  - browser_session_lease/v1 when acquired
+  - browser_page_state/v1 when observed
   - next action
   - prepared-vs-observed boundary
 - Artifact expectations:
-  - browser_task_card/v1 metadata-only wrapper card when prepared
-  - browser_interaction_scope/v1 with target URL, allowed actions, stop condition, and prohibited actions
-  - browser_auth_boundary/v1 separating supplied credentials, missing credentials, and credential-use prohibition
-  - browser_observation_manifest/v1 only when screenshots, DOM notes, console/network traces, or click traces are observed
-  - browser_skill_promotion/v1 only after `omh web-qa promotion diff`, `approve` of that exact diff digest, and `promote` of one receipt; SKILL.md is the single visibility commit
+  - browser_task_card/v1 metadata only
+  - browser_interaction_scope/v1: URL, allowed/prohibited actions, stop condition
+  - browser_auth_boundary/v1: supplied/missing/prohibited credentials
+  - browser_observation_manifest/v1: observed screenshots/DOM notes/console/network/click traces only
+  - Leases: docs/BROWSER-ADAPTER.md; owner/adapter/version/task scope, cached capabilities, digest-only state, exact revision handles.
+  - browser_skill_promotion/v1: `omh web-qa promotion diff`, `approve` its exact digest, then `promote` one receipt; SKILL.md alone commits visibility
 - Safety rules:
-  - A browser operator card is not browser launch, login, credential validation, page mutation, form submission, purchase/payment/destructive action, screenshot, scraping, or successful interaction evidence unless an observed browser trace records it.
+  - Cards prove no execution. Gate credentials and destructive actions; require observed traces.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
 
 ### workspace-file-operator
@@ -11468,6 +11473,7 @@ Keep public docs accurate, installable, and aligned with actual behavior.
 - Quality tier: `claim-gated`
 - Quality bar:
   - Check public claims against implemented behavior and known limitations.
+  - Run `omh docs claims --check --json` for enrolled claims and consume supported/stale/unresolved/not_run rows with their page, implementation anchor, and repair owner. Keep `omh release drift --json` as separate generated evidence; use docs/DOCUMENTATION-CLAIMS.md for the bounded audit contract.
   - Keep examples reproducible and avoid presenting roadmap as current capability.
   - Regenerate generated references from catalog data instead of hand-editing them.
   - When Hermes owns coding, use `hermes_coding_harness/v1` docs lane state before saying docs sync, PR prep, review, or CI evidence exists.
@@ -11480,6 +11486,7 @@ Keep public docs accurate, installable, and aligned with actual behavior.
   - README/docs updates
   - examples
   - troubleshooting notes
+  - documentation_claim_audit/v1
 - Stop conditions:
   - docs match behavior
   - claims are conservative
@@ -11504,6 +11511,7 @@ Keep public docs accurate, installable, and aligned with actual behavior.
 - Privacy default: `metadata_only`
 - Overclaim guards:
   - Documentation of a future surface is not proof that evidence was observed.
+  - Catalog enrollment and prepared doc edits are prepared_not_observed, not an observed claim audit. Only returned probe facts support deterministic claims; optional model judgments stay advisory and never become release gates.
   - Generated docs must match catalog data before release claims are made.
 - Fallback: If behavior is not implemented yet, label it as roadmap instead of current capability.
 

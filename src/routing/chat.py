@@ -31,6 +31,7 @@ from .domain_signals import (
 from .display_names import canonical_display_mentions
 from .input_language import routing_input_language
 from .intent import classify_workflow_intent, scrub_diagnostic_status_text
+from .reference_regions import executable_routing_text, reference_regions
 from .localization import normalized_phrase, prepare_routing_text, routing_tokens
 from .missed_route import is_missed_route_feedback
 from .omh_help import (
@@ -77,7 +78,7 @@ from .visual_qa_cues import (
     CUSTOMER_SYMPTOM_REPORT_PHRASES,
     contains_cue_phrase,
 )
-from ..learning_candidate import build_learning_candidate_card
+from ..learning_candidate import build_learning_candidate_card, detect_learning_signal
 from ..quality.skill_governance import build_skill_governance_policy, resolve_skill_governance
 from ..surfaces.evidence_copy import not_evidence_action_suffix, not_evidence_reply_suffix
 from ..skills.catalog import (
@@ -1504,7 +1505,8 @@ def _enriched_route(
     # Attach the input script here rather than at each ChatRouteDecision site so
     # every route -- fast path, catalog path, and full scoring -- reports it.
     route["input_language"] = routing_input_language(message)
-    relevance = classify_clarification_relevance(message)
+    matching_message = executable_routing_text(message)
+    relevance = classify_clarification_relevance(matching_message)
     if (
         route.get("action") == "dispatch"
         and route.get("selected_skill") in relevance.blocked_skills
@@ -1520,7 +1522,7 @@ def _enriched_route(
         )
     # An undecidable route carries only domain-relevant candidates forward for
     # model selection instead of naming a scorer collision.
-    candidate_handoff = build_candidate_handoff(route, message, relevance=relevance)
+    candidate_handoff = build_candidate_handoff(route, matching_message, relevance=relevance)
     if candidate_handoff:
         route["candidate_handoff"] = candidate_handoff
     if (
@@ -1569,7 +1571,7 @@ def _contextual_design_direction_iteration_route(
         return None
     iteration_id = str(context.get("iteration_id") or "")
     revision_digest = str(context.get("revision_digest") or "")
-    normalized = normalized_phrase(message)
+    normalized = normalized_phrase(executable_routing_text(message))
     tokens = routing_tokens(normalized)
     if (
         not re.fullmatch(r"design-direction-iteration-[a-z0-9-]{1,128}", iteration_id)
@@ -1698,14 +1700,21 @@ def _route_chat_message_cached(
     limit: int,
     min_confidence: str,
 ) -> dict[str, object]:
-    routing_message = _with_canonical_display_names(scrub_diagnostic_status_text(message))
+    routing_message = _with_canonical_display_names(scrub_diagnostic_status_text(executable_routing_text(message)))
+    if not routing_message.strip():
+        return _direct_answer_decision(message, source=source, min_confidence=min_confidence).to_dict()
     trivial_decision = _trivial_message_fast_path_decision(
         routing_message,
         source=source,
         min_confidence=min_confidence,
     )
     if trivial_decision is not None:
-        return trivial_decision.to_dict()
+        decision = trivial_decision.to_dict()
+        decision["routing_prompt"] = _routing_prompt(
+            trivial_decision.action, trivial_decision.selected_skill,
+            trivial_decision.candidate_skill, trivial_decision.reason, message,
+        )
+        return decision
     fast_omh_help_decision = _omh_help_fast_path_decision(
         message,
         routing_message=routing_message,
@@ -2115,12 +2124,14 @@ def _route_chat_message_cached(
             ambiguous = False
 
     selected_harness = primary_harness_for_skill(selected_skill)
-    learning_candidate_card = build_learning_candidate_card(
-        message,
-        source=source,
-        selected_workflow=selected_skill,
-        selected_harness=selected_harness,
-    )
+    learning_candidate_card = None
+    if detect_learning_signal(routing_message) is not None:
+        learning_candidate_card = build_learning_candidate_card(
+            message,
+            source=source,
+            selected_workflow=selected_skill,
+            selected_harness=selected_harness,
+        )
     if (
         learning_candidate_card
         and selected_skill == "workflow-learning"
@@ -2488,10 +2499,10 @@ def _meta_router_fast_path_decision(
     source: str,
     min_confidence: str,
 ) -> ChatRouteDecision | None:
-    remainder = _leading_omh_command_remainder(message)
+    remainder = _leading_omh_command_remainder(routing_message)
     if remainder is None:
         return None
-    if _meta_router_remainder_is_catalog_question(message):
+    if _meta_router_remainder_is_catalog_question(routing_message):
         return None
     selected_skill = "meta-router"
     definition = _skill_definition_by_name(selected_skill)
@@ -2541,7 +2552,7 @@ def _explicit_skill_fast_path_decision(
     selected_skill = explicit_skill_invocation(routing_message, definitions)
     if not selected_skill or selected_skill == _ROUTER_SKILL:
         return None
-    if selected_skill == "meta-router" and _meta_router_remainder_is_catalog_question(message):
+    if selected_skill == "meta-router" and _meta_router_remainder_is_catalog_question(routing_message):
         return None
     if not _has_explicit_invocation_prefix(routing_message) and is_missed_route_feedback(routing_message):
         return None
@@ -2593,7 +2604,8 @@ def _explicit_skill_fast_path_decision(
 
 
 def _has_explicit_invocation_prefix(message: str) -> bool:
-    first = message.strip().split(maxsplit=1)[0].strip(":,").lower()
+    words = executable_routing_text(message).strip().split(maxsplit=1)
+    first = words[0].strip(":,").lower() if words else ""
     return first.startswith(("$", "/", "./", "@"))
 
 
@@ -5547,7 +5559,7 @@ def _ulw_alias_fast_path_decision(
     reason = str(resolution["capability_reason"])
     # A sigil-led legacy invocation ("$team ...", "./ultraprocess ...") is an
     # explicit invocation of the retired name, resolved through the alias.
-    explicit = message.strip().startswith(("$", "./", "/"))
+    explicit = executable_routing_text(message).strip().startswith(("$", "./", "/"))
     score = 30
     recommendation = recommendation_for_definition(
         _skill_definition_by_name(selected_skill),
@@ -6076,6 +6088,14 @@ def _direct_answer_fast_path_decision(
     if _has_explicit_invocation_prefix(routing_message):
         return None
     direct_text = _fast_path_text(routing_message)
+    # The reference shape still identifies a text transformation; only its
+    # contents are excluded from workflow evidence.
+    if (
+        reference_regions(message).references
+        and contains_cue_phrase(routing_message, _DIRECT_ANSWER_KOREAN_TEXT_TRANSFORM_ACTIONS)
+        and not contains_cue_phrase(routing_message, _DIRECT_ANSWER_TEXT_TRANSFORM_HARD_BLOCKERS)
+    ):
+        return _direct_answer_decision(message, source=source, min_confidence=min_confidence)
     if (
         direct_text.startswith("translate ")
         and " into " in direct_text
@@ -6405,6 +6425,7 @@ def route_explanation_payload(route: dict[str, object]) -> dict[str, object]:
 
 
 def explicit_skill_invocation(message: str, definitions: list[SkillDefinition] | None = None) -> str | None:
+    message = executable_routing_text(message)
     definitions = definitions or routable_definitions()
     names = {definition.name for definition in definitions}
     return (

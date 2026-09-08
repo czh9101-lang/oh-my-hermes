@@ -251,6 +251,7 @@ PYTHONPATH=tests uv run python -m unittest discover -s tests -v
 uv run python -m compileall -q src tests
 uv run python -m omh.cli docs workflows --check
 uv run python -m omh.cli docs roles --check
+uv run python -m omh.cli docs claims --check --json
 uv run python -m omh.cli docs capability-families --check
 uv run python -m omh.cli docs ulw-inventory --check
 uv run python -m omh.cli docs ulw-site --check

@@ -5,6 +5,7 @@ import hashlib
 import re
 import unicodedata
 
+from .reference_regions import executable_routing_text
 from .degradation import (
     COMPONENT_LOCALIZED_ROUTING_TEXT,
     COMPONENT_LOOP_ROUTE_HINT_ASSESSMENT,
@@ -5305,11 +5306,13 @@ def _route_hint_with_action_labels(hint: dict[str, object]) -> dict[str, object]
 @lru_cache(maxsize=512)
 def _awareness_route_hint_cached(message: str, max_hints: int) -> dict[str, object]:
     degraded: list[tuple[str, str]] = []
-    normalized = unicodedata.normalize("NFKC", message).casefold()
-    routing_text = _localized_routing_text(message, degraded)
+    matching_message = executable_routing_text(message)
+    intent = classify_workflow_intent(matching_message)
+    normalized = unicodedata.normalize("NFKC", matching_message).casefold()
+    routing_text = _localized_routing_text(matching_message, degraded)
     localized_normalized = unicodedata.normalize("NFKC", routing_text).casefold()
     diagnostic_status = _diagnostic_status_context(normalized)
-    diagnostic_eval = _prefers_diagnostic_workflow_learning_hint(message, classify_workflow_intent(message))
+    diagnostic_eval = _prefers_diagnostic_workflow_learning_hint(matching_message, intent)
     routing_normalized = _with_canonical_display_names(
         localized_normalized
         if diagnostic_eval or not diagnostic_status
@@ -5327,14 +5330,13 @@ def _awareness_route_hint_cached(message: str, max_hints: int) -> dict[str, obje
         suppress_fixed_or_pass_verification=fixed_or_pass_verification_context,
     )
     hint_limit = max_hints
-    intent = classify_workflow_intent(message)
-    omh_quality_intent = classify_omh_quality_intent(message)
+    omh_quality_intent = classify_omh_quality_intent(matching_message)
     diagnostic_learning_first = diagnostic_eval
     hints: list[dict[str, object]] = []
     if normalized.strip() and hint_limit:
         if omh_quality_intent.applies and not diagnostic_learning_first:
             hints.append(_omh_quality_improvement_hint(omh_quality_intent))
-        direct_hint = _direct_workflow_invocation_hint(intent, routing_normalized, message, degraded)
+        direct_hint = _direct_workflow_invocation_hint(intent, routing_normalized, matching_message, degraded)
         if len(hints) < hint_limit and direct_hint and not any(
             isinstance(hint, dict) and hint.get("workflow") == direct_hint.get("workflow") for hint in hints
         ):
@@ -5381,7 +5383,7 @@ def _awareness_route_hint_cached(message: str, max_hints: int) -> dict[str, obje
         named_coding_agent_delivery = _named_coding_agent_delivery_signal(routing_normalized, tokens)
         jit_learn_match = (
             not named_coding_agent_delivery
-            and _jit_learn_route_hint_applies(message, routing_normalized)
+            and _jit_learn_route_hint_applies(matching_message, routing_normalized)
         )
         for rule in _prioritized_route_hint_rules(jit_learn_match):
             if len(hints) >= hint_limit:
@@ -5407,9 +5409,9 @@ def _awareness_route_hint_cached(message: str, max_hints: int) -> dict[str, obje
             workflow = str(rule["workflow"])
             next_action = str(rule["next_action"])
             if workflow == "loop":
-                next_action = _loop_route_hint_next_action(message, next_action, degraded)
+                next_action = _loop_route_hint_next_action(matching_message, next_action, degraded)
             if rule["id"] == "coding_delivery":
-                next_action = _coding_delivery_route_hint_next_action(message, next_action)
+                next_action = _coding_delivery_route_hint_next_action(matching_message, next_action)
             workflow, next_action = _ulw_retired_hint_target(workflow, next_action, routing_normalized)
             if any(isinstance(hint, dict) and hint.get("workflow") == workflow for hint in hints):
                 continue
@@ -5434,9 +5436,9 @@ def _awareness_route_hint_cached(message: str, max_hints: int) -> dict[str, obje
             )
             if len(hints) >= hint_limit:
                 break
-        domain_signal = _specialist_domain_route_signal(message)
+        domain_signal = _specialist_domain_route_signal(matching_message)
         domain_operator_override = (
-            _specialist_domain_operator_override(message, domain_signal)
+            _specialist_domain_operator_override(matching_message, domain_signal)
             if domain_signal is not None
             else None
         )
@@ -5505,6 +5507,8 @@ def _awareness_route_hint_cached(message: str, max_hints: int) -> dict[str, obje
         if isinstance(hint, dict)
         for item in hint.get("adjacent_workflows", [])
     )
+    # Original reference mentions are output context only, never hint selectors.
+    context_intent = classify_workflow_intent(message)
     payload: dict[str, object] = {
         "schema_version": OMH_ROUTE_HINT_SCHEMA_VERSION,
         "status": "hinted" if hints else "no_hint",
@@ -5512,13 +5516,13 @@ def _awareness_route_hint_cached(message: str, max_hints: int) -> dict[str, obje
         "message_length": len(message),
         "intent_class": intent.intent_class,
         "selected_workflow": primary_workflow,
-        "mentioned_workflows": _public_workflow_names(intent.mentioned_workflows),
-        "mentioned_runtime_terms": list(intent.mentioned_runtime_terms),
+        "mentioned_workflows": _public_workflow_names(context_intent.mentioned_workflows),
+        "mentioned_runtime_terms": list(context_intent.mentioned_runtime_terms),
         "adjacent_workflows": adjacent_workflows,
         # `not_executed` concatenates the mentioned workflows with the runtime
         # terms, so its workflow half needs the same projection; the runtime
         # terms are engine-agnostic and pass through untouched.
-        "not_executed": _public_workflow_names(intent.not_executed),
+        "not_executed": _public_workflow_names(context_intent.not_executed),
         "primary_workflow": primary_workflow,
         "primary_next_action": primary_next_action,
         "primary_next_action_label": _next_action_label(primary_next_action) if primary_next_action else "",

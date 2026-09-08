@@ -10,6 +10,7 @@ from ..plugin_bundle.omh.degradation import degradation_chat_note
 from ..routing.catalog_questions import is_skill_catalog_question
 from ..routing.action_copy import next_action_label
 from ..routing.chat import route_chat_message
+from ..routing.reference_regions import executable_routing_text
 
 # `contract` never imports this module, so the edge is one-way and cycle-free.
 # Reusing its helpers keeps the route-hint path on the same messenger-safe
@@ -95,7 +96,7 @@ def _generic_tool_checkpoint() -> dict[str, object]:
 
 def _route_hint_with_catalog_picker(route_hint: dict[str, object], message: str) -> dict[str, object]:
     hints = [hint for hint in route_hint.get("hints", []) if isinstance(hint, dict)]
-    if hints or not is_skill_catalog_question(message):
+    if hints or not is_skill_catalog_question(executable_routing_text(message)):
         return route_hint
     hint = {
         "id": "catalog_question_picker",

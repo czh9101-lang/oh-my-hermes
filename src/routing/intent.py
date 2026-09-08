@@ -4,7 +4,11 @@ from dataclasses import asdict, dataclass
 from functools import lru_cache
 import re
 
+from ..skills.catalog_types import historical_skill_display_names, omh_skill_display_name
+from .display_names import canonical_display_mentions
 from .localization import normalized_phrase, routing_tokens
+from .reference_regions import executable_routing_text, reference_regions
+from .visual_qa_cues import contains_cue_phrase
 
 
 WORKFLOW_VOCABULARY = (
@@ -297,8 +301,9 @@ class OmhQualityIntent:
 @lru_cache(maxsize=4096)
 def classify_workflow_intent(message: str) -> WorkflowIntent:
     """Classify whether workflow vocabulary is a reference or execution intent."""
-    normalized = normalized_phrase(message)
-    tokens = set(routing_tokens(message, stopwords=set()))
+    matching_message = executable_routing_text(message)
+    normalized = _normalize_workflow_mentions(matching_message)
+    tokens = set(routing_tokens(matching_message, stopwords=set()))
     tokens.update(normalized.split())
     compact = normalized.replace(" ", "")
 
@@ -315,6 +320,11 @@ def classify_workflow_intent(message: str) -> WorkflowIntent:
 
     mentioned_workflows = _mentioned_workflows(matching_normalized, matching_tokens)
     mentioned_runtime_terms = _mentioned_runtime_terms(matching_normalized)
+    # Reference mentions remain diagnostic context, never execution cues.
+    for chunk in reference_regions(message).references:
+        reference = _normalize_workflow_mentions(chunk)
+        mentioned_workflows = _compact_tuple((*mentioned_workflows, *_mentioned_workflows(reference, routing_tokens(reference))))
+        mentioned_runtime_terms = _compact_tuple((*mentioned_runtime_terms, *_mentioned_runtime_terms(reference)))
     structural_cues = _structural_cues(
         message,
         matching_normalized,
@@ -497,7 +507,7 @@ def classify_omh_quality_intent(message: str) -> OmhQualityIntent:
     words become evidence for improving routing, context, progress, or handoff
     quality when the request is about OMH itself.
     """
-    normalized = normalized_phrase(message)
+    normalized = normalized_phrase(executable_routing_text(message))
     compact = normalized.replace(" ", "")
 
     system_target_cues = _matched_omh_system_target_cues(normalized)
@@ -621,12 +631,24 @@ def _structural_cues(
     return tuple(cues)
 
 
+@lru_cache(maxsize=1)
+def _workflow_display_names() -> dict[str, str]:
+    return {
+        display: workflow
+        for workflow in WORKFLOW_VOCABULARY
+        for display in (omh_skill_display_name(workflow), *historical_skill_display_names(workflow))
+    }
+
+
+def _normalize_workflow_mentions(message: str) -> str:
+    return canonical_display_mentions(normalized_phrase(message), _workflow_display_names())
+
+
 def _quoted_known_term_reference(message: str) -> bool:
-    normalized = normalized_phrase(message)
-    quoted_chunks = re.findall(r"[`\"']([^`\"']+)[`\"']", normalized)
-    if not quoted_chunks:
-        return False
-    return any(any(term in chunk for term in _normalized_known_terms()) for chunk in quoted_chunks)
+    return any(
+        contains_cue_phrase(_normalize_workflow_mentions(chunk), _normalized_known_terms())
+        for chunk in reference_regions(message).references
+    )
 
 
 def _structural_reference_context(
@@ -636,12 +658,14 @@ def _structural_reference_context(
     routing_context: bool,
 ) -> bool:
     cues = set(structural_cues)
-    if {"quoted_known_term", "symbolic_negated_execution"} & cues:
+    if "symbolic_negated_execution" in cues:
+        return True
+    if "quoted_known_term" in cues and "workflow_marker" not in cues:
         return True
     return bool(
         "reference_context_token" in cues
         and workflow_or_specific_runtime
-        and (routing_context or "workflow_marker" in cues)
+        and routing_context
     )
 
 

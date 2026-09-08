@@ -101,7 +101,12 @@ def _replace_frontmatter_description(raw: str, *, name: str, description: str) -
 def discover_skill_files(source_dir: Path) -> list[Path]:
     if not source_dir.exists():
         raise FileNotFoundError(f"source does not exist: {source_dir}")
-    return sorted(path for path in source_dir.rglob("SKILL.md") if ".git" not in path.parts)
+    # Agent artifacts may contain stale copies of shipped skills. They are not
+    # source inputs; keep explicitly selected roots and .claude/skills usable.
+    return sorted(
+        path for path in source_dir.rglob("SKILL.md")
+        if ".git" not in path.parts and ".omc" not in path.relative_to(source_dir).parts
+    )
 
 
 def convert_from_dir(source_dir: Path) -> list[SkillTemplate]:

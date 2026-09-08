@@ -40,6 +40,78 @@ class RoutingInterventionCase:
 # pickers, coding handoffs, or generic workflow acknowledgements.
 ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
     RoutingPrecisionCase(
+        'reference-inline-workflow-translation',
+        'Inline workflow syntax is translation input',
+        'Translate `$ulw-work` to Korean.',
+        'answer_clarification',
+        '',
+        'ultrawork',
+    ),
+    RoutingPrecisionCase(
+        'reference-double-quoted-workflow',
+        'Double-quoted workflow syntax is explanation input',
+        'Explain "$ulw-work" without running it.',
+        'answer_clarification',
+        '',
+        'ultrawork',
+    ),
+    RoutingPrecisionCase(
+        'reference-single-quoted-workflow',
+        'Single-quoted workflow syntax is explanation input',
+        "Explain '$ulw-work' without running it.",
+        'answer_clarification',
+        '',
+        'ultrawork',
+    ),
+    RoutingPrecisionCase(
+        'reference-tagged-backtick-fence',
+        'A language-tagged backtick example is inert',
+        'Show this example:\n```bash\n$ulw-work fix the build\n```',
+        'answer_clarification',
+        '',
+        'ultrawork',
+    ),
+    RoutingPrecisionCase(
+        'reference-tagged-tilde-fence',
+        'A language-tagged tilde example is inert',
+        'Show this example:\n~~~shell\n$ulw-work fix the build\n~~~',
+        'answer_clarification',
+        '',
+        'ultrawork',
+    ),
+    RoutingPrecisionCase(
+        'reference-escaped-quote',
+        'An escaped quote does not end a reference',
+        'Explain "literal \\" $ulw-work execute".',
+        'answer_directly',
+        'direct_answer',
+        'ultrawork',
+    ),
+    RoutingPrecisionCase(
+        'reference-unfinished-fence',
+        'An unfinished reference fence is shielded to EOF',
+        'Show this:\n```bash\n$ulw-work execute',
+        'answer_clarification',
+        '',
+        'ultrawork',
+    ),
+    RoutingPrecisionCase(
+        'reference-cjk-surroundings',
+        'CJK clauses do not expose quoted workflow triggers',
+        '请解释"$ulw-work"的意思。',
+        'answer_clarification',
+        '',
+        'ultrawork',
+    ),
+    RoutingPrecisionCase(
+        'reference-quoted-learning-workflow',
+        'Quoted learning workflow names cannot route themselves',
+        '"workflow-learning"',
+        'answer_directly',
+        'direct_answer',
+        'workflow-learning',
+    ),
+    RoutingPrecisionCase(
         "unbound-design-feedback-stays-clarification",
         "Direction feedback without a trusted active iteration remains clarification",
         "Can we take another pass on those layouts after my notes?",
@@ -1437,6 +1509,33 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
 # Positive-intervention corpus. These are real OMH-shaped turns where the router
 # should still step in after the direct-answer fallback was added.
 ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
+    RoutingInterventionCase(
+        'reference-direct-work-control',
+        'Direct work invocation keeps its route',
+        'Use $ulw-work to fix the build.',
+        'dispatch',
+        'ultrawork',
+        'present_plan',
+        'plan',
+    ),
+    RoutingInterventionCase(
+        'reference-mixed-explicit-qa',
+        'The explicit QA request wins over the quoted work example',
+        '$ultraqa audit the dashboard. Example: "$ulw-work execute"',
+        'dispatch',
+        'ultraqa',
+        'dispatch_to_workflow',
+        'qa_review',
+    ),
+    RoutingInterventionCase(
+        'reference-unfinished-after-direct-work',
+        'An unfinished reference does not hide earlier executable work',
+        '$ulw-work fix the build; example: "$ultraqa execute',
+        'dispatch',
+        'ultrawork',
+        'present_plan',
+        'plan',
+    ),
     RoutingInterventionCase(
         "bound-design-feedback-opens-revision-action",
         "Trusted active iteration context binds a direction-feedback follow-up",
@@ -4820,7 +4919,7 @@ def _evaluate_precision_case(case: RoutingPrecisionCase, *, source: str) -> dict
     # that still asks one question (see the `allowed_route_actions` leniency
     # above) -- both surface the same "no execution" boundary text, so key this
     # off the expectation rather than the observed route action.
-    if case.expected_next_action == "answer_clarification" or case.forbidden_candidate:
+    if case.expected_next_action == "answer_clarification":
         if boundary != "No execution has started.":
             issues.append("missing no-execution claim boundary")
     elif not boundary.startswith("No OMH workflow"):
