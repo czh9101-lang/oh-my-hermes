@@ -934,6 +934,16 @@ The ranking inputs do not expand eligibility or establish truth:
 Dreaming prepares a reminder and metadata-only evidence. It never invokes a
 model or performs consolidation, retirement, restore, or prune.
 
+For agents and operators, `omh_memory(action="consolidation")` reads the latest
+recorded brief and scheduler counters without starting a provider session or
+evaluating triggers. It returns `evaluated: false`; `due` and the brief's other
+fields are present only when a readable brief exists. No brief is not evidence
+that nothing is due. Repeated status queries leave counters, suppression state,
+and the pending brief unchanged. `omh memory dream` is likewise read-only;
+explicit `omh memory dream --evaluate` evaluates once under the `manual` trigger
+and may write a reminder. Provider lifecycle hooks retain their scheduled
+evaluation behavior.
+
 ### How a brief reaches the model and the user
 
 A brief on disk consolidates nothing by itself. While the newest brief is
