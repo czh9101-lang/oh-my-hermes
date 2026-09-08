@@ -15,7 +15,9 @@ copied, no integration adopted): PostHog `5f8bc937` for actual-display exposure
 and launch/pause/stop controls, GrowthBook `82b82d08` for sticky assignment,
 guardrails, minimum runtime, and the ship/rollback/review/insufficient-data
 vocabulary, Dittofeed `52b2bee9` for entry/exit, re-entry, and idempotency,
-Novu `49e4b308` for preference precedence and digest/throttle windows.
+Novu `c7bc772f` for preference precedence, digest/throttle windows, throttle
+grouping identity, per-step matched/skipped tracing, and production read-only
+workflow content (issue #1400).
 """
 
 from __future__ import annotations
@@ -163,8 +165,8 @@ DEFINITION = SkillDefinition(
         ),
         ProcedureCheck(
             _CHECK_SAFETY,
-            ("consent_basis", "suppression_precedence", "legal_tenant_constraints", "user_preferences", "channel_eligibility", "quiet_hours", "locale", "global_frequency_budget", "campaign_frequency_budget", "disposition"),
-            "Consent and suppression must come from supplied records, never from product usage or a missing opt-out; HOLD when consent, suppression precedence, channel eligibility, or either frequency budget is unknown.",
+            ("consent_basis", "suppression_precedence", "legal_tenant_constraints", "user_preferences", "channel_eligibility", "quiet_hours", "locale", "global_frequency_budget", "campaign_frequency_budget", "throttle_grouping", "workflow_content_state", "promotion_decision", "disposition"),
+            "Consent and suppression must come from supplied records, never from product usage or a missing opt-out; HOLD when consent, suppression precedence, channel eligibility, or either frequency budget is unknown. The throttle grouping record keeps the configured key or expression apart from its resolved value and names the recipient or tenant scope, the fallback for a missing or empty value, and any window-reset consequence; production or published workflow content is read-only, and every edit routes through a development or draft copy plus an explicit promotion decision.",
         ),
         ProcedureCheck(
             _CHECK_EXPERIMENT,
@@ -173,8 +175,8 @@ DEFINITION = SkillDefinition(
         ),
         ProcedureCheck(
             _CHECK_READOUT,
-            ("eligible_count", "attempted_count", "delivered_count", "displayed_count", "acted_count", "outcome_count", "denominator_status", "freshness_status", "sample_ratio_status", "cross_exposure_status", "instrumentation_status", "overlap_status", "evidence_refs", "causal_claim_status", "disposition"),
-            "Fill each funnel stage only from observed provider or data evidence and keep them separate; pause interpretation on sample-ratio mismatch, cross-exposure, stale data, broken instrumentation, or overlapping interventions; disposition must be exactly one of `ship`, `rollback`, `review`, or `insufficient_data`, and inconclusive data must not force `ship`.",
+            ("eligible_count", "attempted_count", "delivered_count", "displayed_count", "acted_count", "outcome_count", "denominator_status", "freshness_status", "sample_ratio_status", "cross_exposure_status", "instrumentation_status", "overlap_status", "step_outcomes", "step_trace_status", "evidence_refs", "causal_claim_status", "disposition"),
+            "Fill each funnel stage only from observed provider or data evidence and keep them separate; pause interpretation on sample-ratio mismatch, cross-exposure, stale data, broken instrumentation, or overlapping interventions; disposition must be exactly one of `ship`, `rollback`, `review`, or `insufficient_data`, and inconclusive data must not force `ship`. Record every conditional step as `matched` or `skipped` with its own reason and status, never its evaluated values; a missing or failed best-effort step trace is not delivery evidence and must not turn a send into a failure.",
         ),
         ProcedureCheck(
             _CHECK_HANDOFF,
@@ -196,7 +198,7 @@ DEFINITION = SkillDefinition(
         ProcedureStep(
             "lifecycle_check_safety_eligibility", "validation", (_INPUT_SEGMENT, _INPUT_SURFACES, _INPUT_CONSENT),
             (_SAFETY,), (_CHECK_SAFETY,),
-            "Order suppression precedence above legal and tenant constraints, user preferences, channel eligibility, quiet hours, and locale, then set global and per-campaign frequency budgets; fail closed when any eligibility input is missing.",
+            "Order suppression precedence above legal and tenant constraints, user preferences, channel eligibility, quiet hours, and locale, then set global and per-campaign frequency budgets; record the throttle grouping key, resolved value, scope, and fallback so distinct recipients or tenants never share one window; treat production workflow content as read-only and route edits to a draft with an explicit promotion decision; fail closed when any eligibility input is missing.",
         ),
         ProcedureStep(
             "lifecycle_design_experiment", "production", (_INPUT_OBJECTIVE, _INPUT_EVENTS, _INPUT_SURFACES, _INPUT_BUDGET, _INPUT_OWNER),
@@ -206,7 +208,7 @@ DEFINITION = SkillDefinition(
         ProcedureStep(
             "lifecycle_prepare_measurement_readout", "validation", (_INPUT_EVENTS, _INPUT_BUDGET, _INPUT_OWNER),
             (_READOUT,), (_CHECK_READOUT,),
-            "Lay out eligible, attempted, delivered, displayed, acted, and outcome stages with denominator and freshness checks; fill them only from observed evidence, keep causal-claim status separate, and record `ship`, `rollback`, `review`, or `insufficient_data` without forcing a decision on thin data.",
+            "Lay out eligible, attempted, delivered, displayed, acted, and outcome stages with denominator and freshness checks; fill them only from observed evidence, keep causal-claim status separate, list each conditional step as matched or skipped with a redacted reason, and record `ship`, `rollback`, `review`, or `insufficient_data` without forcing a decision on thin data.",
         ),
         ProcedureStep(
             "lifecycle_validate_handoff", "validation", _ALL_INPUTS,
@@ -225,6 +227,9 @@ DEFINITION = SkillDefinition(
         "Delivery and click counts are not product or revenue impact; a causal claim needs a valid observed experiment or another named identification method.",
         "Retain bounded metadata and safe references only; never store user identity, event payloads, message bodies, consent records, or transcripts in durable artifacts.",
         "Treat small samples, novelty effects, seasonality, concurrent interventions, and inconsistent event semantics as blockers or stated uncertainty, not as results.",
+        "A throttle window is identified by its configured key or expression plus the resolved value, scoped to a recipient or tenant; a resolved value is never re-read as a second key, a missing static value stays ungrouped, and an empty dynamic value falls back to the default window.",
+        "Per-step matched and skipped outcomes carry a reason and status but never evaluated values or secrets; a step trace is best-effort diagnostics, not delivery evidence, and its absence must not block or fail a send.",
+        "Production or published workflow content is view-only in prepared guidance; mutations go to a development or draft copy, then an explicit promotion decision, and only an observed provider result proves the promotion happened.",
     ),
     quality_tier="decision-gated",
     quality_bar=(

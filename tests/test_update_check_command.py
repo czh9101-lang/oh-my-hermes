@@ -312,7 +312,8 @@ class StartupCheckLaunchIntegrationTests(unittest.TestCase):
             run.assert_called_once()
             spawned_argv = run.call_args.args[0]
             self.assertEqual(spawned_argv[0], sys.executable)
-            self.assertEqual(spawned_argv[1:3], ["-m", "omh.cli"])
+            # `-P` keeps a source checkout at the launch cwd from shadowing the package.
+            self.assertEqual(spawned_argv[1:4], ["-P", "-m", "omh.cli"])
             self.assertIn("update", spawned_argv)
             self.assertIn("--no-interactive", spawned_argv)
             # `--yes` would preset the branded-TUI identity choice
@@ -321,7 +322,7 @@ class StartupCheckLaunchIntegrationTests(unittest.TestCase):
             self.assertNotIn("--yes", spawned_argv)
             # The synthesized argv (after the interpreter/module prefix) must
             # be a valid CLI invocation, not just plausible-looking strings.
-            main_module.build_parser().parse_args(spawned_argv[3:])
+            main_module.build_parser().parse_args(spawned_argv[4:])
 
             state = read_json_object(paths.runtime_state_path) or {}
             self.assertIn("last_update", state)

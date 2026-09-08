@@ -229,6 +229,10 @@ SETUP_OPERATOR_SUMMARY_SCHEMA_VERSION = "setup_operator_summary/v1"
 DOCTOR_SUMMARY_SCHEMA_VERSION = "doctor_summary/v1"
 MCP_SETUP_SCHEMA_VERSION = "omh_mcp_setup/v1"
 SELF_UPDATE_REENTRY_ENV = "OMH_UPDATE_COMMAND_PACKAGE_REENTERED"
+# Set by the self-update on the re-entry that restores the known-good
+# generation after a refused candidate; the human summary then says
+# "rollback", never "update complete".
+SELF_UPDATE_ROLLBACK_ENV = "OMH_UPDATE_ROLLBACK_RESTORE"
 SELF_UPDATE_SKIP_ENV = "OMH_SKIP_COMMAND_PACKAGE_UPDATE"
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -3409,7 +3413,11 @@ def _print_install_summary(payload: dict[str, object], *, command: str, language
         skills = []
     dry_run = bool(payload.get("dry_run", False))
     label = "update" if command == "update" else "install"
-    title = tr(language, "install_preview_complete", label=label) if dry_run else tr(language, "install_complete", label=label)
+    restoring = label == "update" and not dry_run and bool(os.environ.get(SELF_UPDATE_ROLLBACK_ENV))
+    if restoring:
+        title = tr(language, "update_rollback_complete")
+    else:
+        title = tr(language, "install_preview_complete", label=label) if dry_run else tr(language, "install_complete", label=label)
     source = str(payload.get("source", "builtin"))
     source_label = tr(language, "source_builtin") if source == "builtin" else source
     print("")
@@ -3497,10 +3505,17 @@ def _print_update_release_card(
     )
     previous_release = _release_card_identity(previous, language=language)
     current_release = _release_card_identity(current, language=language)
-    current_label = "update_card_available_release" if dry_run else "update_card_installed_release"
+    restoring = not dry_run and bool(os.environ.get(SELF_UPDATE_ROLLBACK_ENV))
+    current_label = (
+        "update_card_available_release"
+        if dry_run
+        else "update_card_restored_release"
+        if restoring
+        else "update_card_installed_release"
+    )
     notes_label = "update_card_release_preview" if dry_run else "update_card_release_notes"
     workflows_label = "update_card_workflows_to_refresh" if dry_run else "update_card_workflows_refreshed"
-    title = tr(language, "update_card_title")
+    title = tr(language, "update_card_rollback_title" if restoring else "update_card_title")
 
     print(_color("╔═══════════════════════════════════════════════════════════╗", "1;34", use_color))
     print(_color(f"║{title:^59}║", "1;34", use_color))

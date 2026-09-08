@@ -65,6 +65,11 @@ class LifecycleGrowthReadinessTests(unittest.TestCase):
             "data_evidence_refs": ("evidence_metric",),
             "runtime_evidence_refs": ("evidence_runtime",),
             "causal_evidence_refs": ("evidence_holdout",),
+            "step_outcomes": (
+                {"step_ref": "step_welcome_in_app", "outcome": "matched", "reason_code": "reason_condition_true"},
+                {"step_ref": "step_reminder_email", "outcome": "skipped", "reason_code": "reason_condition_false"},
+            ),
+            "step_trace_state": "recorded",
         }
         values.update(overrides)
         return build_growth_measurement_readout(**values)

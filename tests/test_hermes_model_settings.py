@@ -149,6 +149,32 @@ class HermesModelSettingsTests(unittest.TestCase):
                 self.assertFalse(result["observed"])
                 self.assertEqual(result["reason"], "config_unreadable")
 
+    def test_delegation_block_is_read_beside_the_aliases(self) -> None:
+        # `delegation:` is what every delegate_task child inherits when no OMH
+        # route is set; it is reported as its own entry so the alias tuple
+        # stays the exact auxiliary contract.
+        result = self._read(
+            "model:\n  default: gpt-5.6-sol\nagent:\n  reasoning_effort: medium\n"
+            "delegation:\n  model: 'gpt-6-astra'\n  reasoning_effort: 'high'\n  provider: 'openai-codex'\n"
+            "  max_iterations: 250\n"
+        )
+        self.assertEqual(
+            result["delegation"],
+            {
+                "alias": "delegation",
+                "model": "gpt-6-astra",
+                "effort": "high",
+                "provider": "openai-codex",
+                "source": "config.delegation.model",
+                "configured": True,
+                "label": "gpt-6-astra:high",
+            },
+        )
+        self.assertEqual(tuple(entry["alias"] for entry in result["aliases"]), ("main",) + HERMES_AUX_ALIASES)
+        absent = self._read("model:\n  default: gpt-5.6-sol\n")
+        self.assertFalse(absent["delegation"]["configured"])
+        self.assertEqual(absent["delegation"]["label"], "inherit")
+
     def test_alias_order_is_the_exact_hermes_contract(self) -> None:
         result = self._read("model:\n  default:\n")
         self.assertEqual(

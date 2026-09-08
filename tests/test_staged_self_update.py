@@ -110,7 +110,7 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, "", "")
             if command[1:4] == ["-m", "pip", "install"]:
                 return subprocess.CompletedProcess(command, failure == "pip", "", "pip failed")
-            if command[1:3] == ["-c", "import omh.cli"]:
+            if command[1:4] == ["-P", "-c", "import omh.cli"]:
                 return subprocess.CompletedProcess(command, failure == "import", "", "import failed")
             if "--version" in command:
                 return subprocess.CompletedProcess(command, 0, version or "1.0.7\n", "")
@@ -253,6 +253,58 @@ class StagedSelfUpdateTests(unittest.TestCase):
                 self.assertEqual(result["post_activation"]["reason"], expected_reason)
                 self.assertEqual(sum("--command-package-updated" in call and "update" not in call for call in calls), 2)
                 self._assert_pair(root, previous)
+                # The refused candidate is deleted like a failed staging
+                # candidate; the owner machine kept one on disk until the next
+                # successful update's garbage collection.
+                self.assertFalse(Path(result["candidate"]["path"]).exists())
+
+    def test_rollback_reentry_is_marked_so_its_summary_says_rollback(self):
+        # The rollback re-entry re-renders the known-good pack and, unmarked,
+        # printed the ordinary "Installed release ... OMH update complete."
+        # card -- the owner read that as a downgrade. Only the restoring
+        # re-entry carries the marker; the candidate's re-entry does not.
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy, args, plan = self._fixture(root, pointer=True)
+            reentries = []
+            runner = self._runner(failure="post")
+
+            def recording_runner(command, **kwargs):
+                if "--command-package-updated" in command and "update" not in command:
+                    reentries.append(dict(kwargs["env"]))
+                return runner(command, **kwargs)
+
+            result = self._run(root, args, plan, recording_runner)
+            self.assertTrue(result["rollback"]["performed"])
+            self.assertEqual(len(reentries), 2)
+            self.assertNotIn(self_update.ROLLBACK_RESTORE_ENV, reentries[0])
+            self.assertEqual(reentries[1].get(self_update.ROLLBACK_RESTORE_ENV), "1")
+
+        payload = {
+            "skills": [],
+            "source": "builtin",
+            "command_package": {"updated": True},
+            "release_update": {"previous": {"version": "2.0.2"}, "current": {"version": "2.0.2"}},
+        }
+        for restoring in (False, True):
+            with self.subTest(restoring=restoring):
+                env = {self_update.ROLLBACK_RESTORE_ENV: "1"} if restoring else {}
+                output = io.StringIO()
+                with patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(output):
+                    if not restoring:
+                        os.environ.pop(self_update.ROLLBACK_RESTORE_ENV, None)
+                    setup_commands._print_install_summary(payload, command="update", language="en")
+                printed = output.getvalue()
+                if restoring:
+                    self.assertIn("OMH rollback complete", printed)
+                    self.assertIn("Oh-My-Hermes Rollback", printed)
+                    self.assertIn("Restored release: 2.0.2", printed)
+                    self.assertNotIn("update complete", printed.lower())
+                    self.assertNotIn("Installed release", printed)
+                else:
+                    self.assertIn("OMH update complete.", printed)
+                    self.assertIn("Installed release: 2.0.2", printed)
+                    self.assertNotIn("Rollback", printed)
 
     def test_lock_is_nonblocking_and_does_not_mutate_the_pair(self):
         with TemporaryDirectory() as temporary:
@@ -850,6 +902,54 @@ class StagedSelfUpdateTests(unittest.TestCase):
             candidate = Path(result["candidate"]["path"])
             self.assertEqual(json.loads(manifest_path.read_text())["skills_dir"], str(candidate / "skills"))
             self._assert_pair(root, candidate)
+
+    def test_every_generation_interpreter_call_ignores_the_working_directory(self):
+        # The owner's 2.0.2 -> "2.0.1" update: `omh update` was run from inside
+        # a source checkout, whose top-level `omh/` shim sat at `sys.path[0]`
+        # for every `python -m omh.cli` the transaction spawned. The stale
+        # checkout judged the fresh candidate, refused it, rolled back, and
+        # stamped the manifest with its own version. `-P` keeps the smoke and
+        # both re-entries on the generation's own package.
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            legacy, args, plan = self._fixture(root, pointer=True)
+            plan["release"].version = "1.0.7"
+            commands: list[list[str]] = []
+            fake = self._runner(version="1.0.7\n")
+
+            def run(command, **kwargs):
+                commands.append(list(command))
+                return fake(command, **kwargs)
+
+            result = self._run(root, args, plan, run)
+            self.assertTrue(result["ok"], result)
+            omh_calls = [command for command in commands if "omh.cli" in " ".join(command)]
+            self.assertEqual(len(omh_calls), 4, omh_calls)  # import, version, pack smoke, re-entry
+            for command in omh_calls:
+                self.assertEqual(command[1], "-P", command)
+            self.assertEqual(omh_calls[0][1:4], ["-P", "-c", "import omh.cli"])
+            self.assertEqual(omh_calls[-1][1:4], ["-P", "-m", "omh.cli"])
+            self.assertIn("--command-package-updated", omh_calls[-1])
+
+    def test_dash_p_is_what_keeps_a_checkout_shim_out_of_the_interpreter(self):
+        # The mechanism itself, on the real interpreter: a directory holding an
+        # `omh/cli.py` wins `python -m omh.cli` when it is the cwd, and loses
+        # once `-P` drops the cwd from sys.path.
+        with TemporaryDirectory() as temporary:
+            shadow = Path(temporary) / "omh"
+            shadow.mkdir()
+            (shadow / "__init__.py").write_text("")
+            (shadow / "cli.py").write_text("print('SHADOWED')\n")
+            env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+            env["PYTHONSAFEPATH"] = ""
+            plain = subprocess.run(
+                [sys.executable, "-m", "omh.cli"], cwd=temporary, env=env, text=True, capture_output=True, check=False
+            )
+            isolated = subprocess.run(
+                [sys.executable, "-P", "-m", "omh.cli"], cwd=temporary, env=env, text=True, capture_output=True, check=False
+            )
+            self.assertEqual(plain.stdout.strip(), "SHADOWED")
+            self.assertNotIn("SHADOWED", isolated.stdout)
 
     def test_staged_transaction_regression_guard_names_the_refusal_it_prevents(self):
         # Proves the guard above is load-bearing: judging the candidate by the

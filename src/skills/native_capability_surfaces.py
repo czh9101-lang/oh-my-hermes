@@ -48,7 +48,7 @@ def native_capability_skill_definitions(feature_surface_skill: Callable[..., obj
             good_prompt="Show the local run efficiency report from this run's supplied context budget and timings.",
             bad_prompt="Claim this report proves provider billing, host load, or cron execution without observations.",
             expected_outputs=("run_efficiency_report/v1", "context utilization", "not_observed provider and host gaps"),
-            artifact_expectations=("run_efficiency_report/v1 metadata-only report",),
+            artifact_expectations=("run_efficiency_report/v1 metadata-only report", "supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero"),
             final_checklist=(
                 "The run ID, context budget, surfaces, and supplied observations are explicit.",
                 "Provider billing, cron, and host claims remain not_observed unless separately recorded.",

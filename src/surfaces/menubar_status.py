@@ -59,7 +59,7 @@ def build_menubar_status_payload(
     hermes_agents = _hermes_agent_rows(paths)
     external_executors = _external_executor_rows(paths, limit=safe_limit)
     current_executor, current_executor_source = _select_current_external_executor(paths, external_executors)
-    hermes_sessions = observe_hermes_sessions(paths)
+    hermes_sessions = observe_hermes_sessions(paths, now=now)
     model_settings = read_hermes_model_settings(paths)
     hermes_processes = (
         observe_hermes_processes(now=now) if observe_local_processes else _unrequested_process_observation(now=now)
@@ -463,7 +463,7 @@ def _display(
         headline = "OMH ready" if connection_ready else "OMH needs attention"
     pieces: list[str] = []
     if processes_observed:
-        pieces.append(f"{agent_count} agent · {process_count} processes")
+        pieces.append(f"{_plural(agent_count, 'agent')} · {_plural(process_count, 'process', 'processes')}")
     if sessions_observed:
         pieces.append(f"sessions live {live} / total {_safe_int(hermes_sessions.get('total'), 0)}")
     else:
@@ -481,6 +481,10 @@ def _display(
         "summary_line": " · ".join(pieces),
         "menu_cards": _menu_cards(settings, hermes_sessions, model_settings, current_executor_row),
     }
+
+
+def _plural(count: int, singular: str, plural: str = "") -> str:
+    return f"{count} {singular if count == 1 else (plural or singular + 's')}"
 
 
 def _menu_cards(
@@ -521,15 +525,22 @@ def _sessions_card(hermes_sessions: dict[str, Any]) -> dict[str, Any]:
             "footer": str(hermes_sessions.get("reason", "") or "not observed"),
         }
     live = _safe_int(hermes_sessions.get("live"), 0)
+    stale = _safe_int(hermes_sessions.get("stale"), 0)
     total = _safe_int(hermes_sessions.get("total"), 0)
+    window_minutes = max(1, _safe_int(hermes_sessions.get("live_window_seconds"), 0) // 60)
+    rows = [
+        {"kind": "table_row", "left": "live", "right": str(live), "tone": "ok" if live else "neutral"},
+    ]
+    # Open rows Hermes never closed (crash, killed terminal, orphan not yet
+    # reaped) are shown as their own line instead of inflating `live`.
+    if stale:
+        rows.append({"kind": "table_row", "left": "open, idle", "right": str(stale), "tone": "neutral"})
+    rows.append({"kind": "table_row", "left": "total", "right": str(total), "tone": "ok" if total else "neutral"})
     return {
         "title": "Sessions",
         "columns": ["Hermes session", "Count"],
-        "rows": [
-            {"kind": "table_row", "left": "live", "right": str(live), "tone": "ok" if live else "neutral"},
-            {"kind": "table_row", "left": "total", "right": str(total), "tone": "ok" if total else "neutral"},
-        ],
-        "footer": "Observed from Hermes state.db (read-only).",
+        "rows": rows,
+        "footer": f"live = activity within {window_minutes} min · Hermes state.db (read-only)",
     }
 
 
@@ -549,6 +560,11 @@ def _models_card(hermes_sessions: dict[str, Any], model_settings: dict[str, Any]
     main = aliases.get("main")
     if main is not None and len(rows) < 5:
         rows.append({"kind": "table_row", "left": "main", "right": str(main.get("label", "") or "inherit")})
+    # The delegation model is what fan-out children run when no OMH route is
+    # set; on a machine whose main model differs it is the more useful line.
+    delegation = _dict(model_settings.get("delegation"))
+    if delegation.get("configured") and len(rows) < 5:
+        rows.append({"kind": "table_row", "left": "delegation", "right": str(delegation.get("label", "") or "inherit")})
     inherit_count = sum(
         1
         for alias in HERMES_AUX_ALIASES
@@ -566,7 +582,7 @@ def _models_card(hermes_sessions: dict[str, Any], model_settings: dict[str, Any]
         "title": "Models",
         "columns": ["Alias", "Model"],
         "rows": rows,
-        "footer": "current = live session · main/aux = config.yaml",
+        "footer": "current = live session · main/delegation/aux = config.yaml",
     }
 
 

@@ -280,20 +280,31 @@ def render_memory_blocks(
     budget_chars: int = DEFAULT_SYSTEM_RENDER_BUDGET_CHARS,
     evaluations: dict[str, dict[str, object]] | None = None,
 ) -> str:
+    return render_memory_blocks_counted(blocks, budget_chars=budget_chars, evaluations=evaluations)[0]
+
+
+def render_memory_blocks_counted(
+    blocks: tuple[MemoryBlock, ...] | list[MemoryBlock],
+    *,
+    budget_chars: int = DEFAULT_SYSTEM_RENDER_BUDGET_CHARS,
+    evaluations: dict[str, dict[str, object]] | None = None,
+) -> tuple[str, int]:
+    """The rendered section and how many blocks it carries in full."""
     eligible, evaluated = _renderable(blocks, evaluations)
     if not blocks:
-        return ""
-    lines, used, omissions = ["<memory_blocks>"], 0, _omissions(blocks, evaluated)
+        return "", 0
+    lines, used, rendered, omissions = ["<memory_blocks>"], 0, 0, _omissions(blocks, evaluated)
     for block in eligible:
         element = _render_block(block)
         if used + len(element) > max(budget_chars, 0):
             omissions.append({"block_id": block.block_id, "revision": block.revision, "reason_code": "render_budget_exhausted"})
             continue
         used += len(element)
+        rendered += 1
         lines.append(element)
     lines.extend(_render_omissions(omissions))
     lines.append("</memory_blocks>")
-    return "\n".join(lines)
+    return "\n".join(lines), rendered
 
 
 def render_block_index(

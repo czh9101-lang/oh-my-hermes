@@ -84,9 +84,21 @@
     "global_frequency_budget_ref": "budget_global_weekly",
     "legal_tenant_state": "eligible",
     "locale_state": "eligible",
+    "mutation_route": "development_draft_then_promotion",
     "preference_policy_ref": "policy_preferences_v1",
+    "promotion_decision_state": "pending",
+    "promotion_result_state": "not_observed",
     "quiet_hours_state": "eligible",
     "suppression_precedence": "suppression_overrides_all",
-    "suppression_state": "eligible"
+    "suppression_state": "eligible",
+    "throttle_grouping": {
+      "configured_key_ref": "throttle_key_tenant_expression",
+      "key_kind": "dynamic_expression",
+      "resolved_value_ref": "tenant_acme",
+      "resolved_value_state": "present",
+      "scope": "tenant",
+      "window_reset_consequence": "none"
+    },
+    "workflow_content_state": "production_read_only"
   }
 }

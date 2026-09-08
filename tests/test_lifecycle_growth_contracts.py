@@ -64,6 +64,18 @@ class LifecycleGrowthContractTests(unittest.TestCase):
                 quiet_hours_state="eligible",
                 locale_state="eligible",
                 legal_tenant_state="eligible",
+                throttle_grouping={
+                    "key_kind": "dynamic_expression",
+                    "configured_key_ref": "throttle_key_tenant_expression",
+                    "scope": "tenant",
+                    "resolved_value_state": "present",
+                    "resolved_value_ref": "tenant_acme",
+                    "window_reset_consequence": "none",
+                },
+                workflow_content_state="development_draft",
+                mutation_route="development_draft_then_promotion",
+                promotion_decision_state="approved",
+                promotion_result_state="not_observed",
             ),
             "experiment": build_growth_experiment_plan(
                 lifecycle_growth_id=LIFECYCLE_ID,
@@ -122,6 +134,11 @@ class LifecycleGrowthContractTests(unittest.TestCase):
             "data_evidence_refs": ("evidence_metric_readout",),
             "runtime_evidence_refs": ("evidence_runtime_days",),
             "causal_evidence_refs": ("evidence_holdout_analysis",),
+            "step_outcomes": (
+                {"step_ref": "step_welcome_in_app", "outcome": "matched", "reason_code": "reason_condition_true"},
+                {"step_ref": "step_reminder_email", "outcome": "skipped", "reason_code": "reason_condition_false"},
+            ),
+            "step_trace_state": "recorded",
         }
         values.update(overrides)
         return build_growth_measurement_readout(**values)

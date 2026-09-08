@@ -81,7 +81,7 @@ def _parse_settings(config_text: str) -> tuple[dict[str, str], dict[str, dict[st
             match = _KEY.match(line)
             top_level = match.group(1) if match else ""
             auxiliary_task = ""
-            if top_level in {"model", "agent", "auxiliary"}:
+            if top_level in {"model", "agent", "auxiliary", "delegation"}:
                 value = _scalar_value(line)
                 if value is None or value:
                     return None
@@ -94,7 +94,7 @@ def _parse_settings(config_text: str) -> tuple[dict[str, str], dict[str, dict[st
                 if value is None or value:
                     return None
             continue
-        if top_level in {"model", "agent"} and line.startswith("  ") and not line.startswith("    "):
+        if top_level in {"model", "agent", "delegation"} and line.startswith("  ") and not line.startswith("    "):
             match = _KEY.match(line[2:])
             if match:
                 key = match.group(1)
@@ -102,6 +102,9 @@ def _parse_settings(config_text: str) -> tuple[dict[str, str], dict[str, dict[st
                     ("model", "default"),
                     ("model", "provider"),
                     ("agent", "reasoning_effort"),
+                    ("delegation", "model"),
+                    ("delegation", "provider"),
+                    ("delegation", "reasoning_effort"),
                 }:
                     value = _scalar_value(line)
                     if value is None:
@@ -141,6 +144,7 @@ def _unreadable_result() -> dict[str, Any]:
         "reason": "config_unreadable",
         "provider": "",
         "aliases": [],
+        "delegation": _alias_entry(alias="delegation", model="", effort="", source="config.delegation.model"),
         "configured_count": 0,
         "inherit_count": 0,
         "claim_boundary": _CLAIM_BOUNDARY,
@@ -176,12 +180,24 @@ def read_hermes_model_settings(paths: OmhPaths) -> dict[str, Any]:
             )
         )
     configured_count = sum(1 for entry in aliases if entry["configured"])
+    # `delegation:` is the model every delegate_task child inherits when no
+    # OMH route is set, so it is what the fan-out actually runs on; it is
+    # reported beside the aliases, not among them, because the alias tuple is
+    # the exact Hermes auxiliary contract.
+    delegation = _alias_entry(
+        alias="delegation",
+        model=settings.get("delegation.model", ""),
+        effort=settings.get("delegation.reasoning_effort", ""),
+        source="config.delegation.model",
+    )
+    delegation["provider"] = settings.get("delegation.provider", "")
     return {
         "schema_version": HERMES_MODEL_SETTINGS_SCHEMA_VERSION,
         "observed": True,
         "reason": "",
         "provider": settings.get("model.provider", ""),
         "aliases": aliases,
+        "delegation": delegation,
         "configured_count": configured_count,
         "inherit_count": len(aliases) - configured_count,
         "claim_boundary": _CLAIM_BOUNDARY,

@@ -34,7 +34,9 @@ ARTIFACT_KEYS: Final = {
             "schema_version", "status", "lifecycle_growth_id", "consent_state", "suppression_state",
             "frequency_state", "suppression_precedence", "preference_policy_ref",
             "global_frequency_budget_ref", "campaign_frequency_budget_ref", "channel_eligibility_state",
-            "quiet_hours_state", "locale_state", "legal_tenant_state", "claim_boundary",
+            "quiet_hours_state", "locale_state", "legal_tenant_state", "throttle_grouping",
+            "workflow_content_state", "mutation_route", "promotion_decision_state",
+            "promotion_result_state", "claim_boundary",
         }
     ),
     "growth_experiment_plan/v1": frozenset(
@@ -54,7 +56,7 @@ ARTIFACT_KEYS: Final = {
             "cross_exposure_state", "overlap_state", "primary_metric_state", "guardrail_state",
             "causal_claim_status", "rollback_state", "provider_evidence_refs",
             "actual_exposure_evidence_refs", "data_evidence_refs", "runtime_evidence_refs",
-            "causal_evidence_refs", "disposition", "claim_boundary",
+            "causal_evidence_refs", "step_outcomes", "step_trace_state", "disposition", "claim_boundary",
         }
     ),
     "growth_handoff_disposition/v1": frozenset(

@@ -244,9 +244,15 @@ Claude Code, OMX, OMO, OMC, or generic coding tools cannot be rendered as
 Hermes agents by accident. `display.menu_cards` is the human-facing model for
 the native helper: a Sessions table, a Models table, and one compact coding
 metadata footer. Sessions uses the exact columns `Hermes session` / `Count` and
-only the `live` and `total` rows. Session source or TUI breakdown is
-intentionally not exposed. In Models, `current` is the model observed on the
-live Hermes session; `main` and auxiliary aliases are configuration values.
+the `live`, `total`, and (only when non-zero) `open, idle` rows. `live` is an
+open session with activity inside `LIVE_WINDOW_SECONDS` (15 minutes); open
+rows Hermes never closed (crash, killed terminal, orphan not yet reaped) are
+reported as `open, idle` so they cannot inflate `live`. Session source or TUI
+breakdown is intentionally not exposed. In Models, `current` is the model
+observed on the most recently active live Hermes session and is absent when
+no session is live; `main`, `delegation` (the model an unrouted
+`delegate_task` child inherits), and auxiliary aliases are configuration
+values.
 
 Plain `omh menubar status` renders a short terminal summary from the same
 payload so operators see Summary, Sessions, Models, the compact coding metadata

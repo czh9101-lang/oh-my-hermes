@@ -6468,6 +6468,9 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Delivery and click counts are not product or revenue impact; a causal claim needs a valid observed experiment or another named identification method.
   - Retain bounded metadata and safe references only; never store user identity, event payloads, message bodies, consent records, or transcripts in durable artifacts.
   - Treat small samples, novelty effects, seasonality, concurrent interventions, and inconsistent event semantics as blockers or stated uncertainty, not as results.
+  - A throttle window is identified by its configured key or expression plus the resolved value, scoped to a recipient or tenant; a resolved value is never re-read as a second key, a missing static value stays ungrouped, and an empty dynamic value falls back to the default window.
+  - Per-step matched and skipped outcomes carry a reason and status but never evaluated values or secrets; a step trace is best-effort diagnostics, not delivery evidence, and its absence must not block or fail a send.
+  - Production or published workflow content is view-only in prepared guidance; mutations go to a development or draft copy, then an explicit promotion decision, and only an observed provider result proves the promotion happened.
 - Procedure checks:
   - `lifecycle_target_behavior_check`
     - Required result fields: `lifecycle_stage`, `target_behavior`, `baseline_value`, `baseline_window`, `evidence_refs`, `hypotheses`, `non_goals`, `owner`, `disposition`
@@ -6476,14 +6479,14 @@ These surfaces are generated command references, not installed Hermes workflow s
     - Required result fields: `identity_key`, `canonical_events`, `event_semantics_status`, `entry_conditions`, `exit_conditions`, `exclusions`, `denominator_status`, `idempotency_key`, `reentry_policy`, `collision_policy`, `disposition`
     - Criterion: HOLD when the identity key, event semantics, or denominator is unknown; every eligible audience must carry entry and exit conditions, exclusions, an idempotency key, a re-entry policy, and a collision policy for overlapping campaigns.
   - `lifecycle_safety_eligibility_check`
-    - Required result fields: `consent_basis`, `suppression_precedence`, `legal_tenant_constraints`, `user_preferences`, `channel_eligibility`, `quiet_hours`, `locale`, `global_frequency_budget`, `campaign_frequency_budget`, `disposition`
-    - Criterion: Consent and suppression must come from supplied records, never from product usage or a missing opt-out; HOLD when consent, suppression precedence, channel eligibility, or either frequency budget is unknown.
+    - Required result fields: `consent_basis`, `suppression_precedence`, `legal_tenant_constraints`, `user_preferences`, `channel_eligibility`, `quiet_hours`, `locale`, `global_frequency_budget`, `campaign_frequency_budget`, `throttle_grouping`, `workflow_content_state`, `promotion_decision`, `disposition`
+    - Criterion: Consent and suppression must come from supplied records, never from product usage or a missing opt-out; HOLD when consent, suppression precedence, channel eligibility, or either frequency budget is unknown. The throttle grouping record keeps the configured key or expression apart from its resolved value and names the recipient or tenant scope, the fallback for a missing or empty value, and any window-reset consequence; production or published workflow content is read-only, and every edit routes through a development or draft copy plus an explicit promotion decision.
   - `lifecycle_experiment_validity_check`
     - Required result fields: `treatment_control`, `assignment_unit`, `assignment_stickiness`, `exposure_unit`, `exposure_definition`, `primary_metric`, `guardrail_metrics`, `holdout_rationale`, `minimum_runtime`, `data_health_checks`, `pause_rollback_conditions`, `approval_state`
     - Criterion: Require sticky assignment, exposure defined as actual treatment display or receipt rather than send or eligibility, exactly one primary metric, at least one guardrail, a holdout rationale, a minimum runtime, data-health checks, and pause/rollback conditions; approval_state stays unapproved until a named human approves.
   - `lifecycle_readout_evidence_check`
-    - Required result fields: `eligible_count`, `attempted_count`, `delivered_count`, `displayed_count`, `acted_count`, `outcome_count`, `denominator_status`, `freshness_status`, `sample_ratio_status`, `cross_exposure_status`, `instrumentation_status`, `overlap_status`, `evidence_refs`, `causal_claim_status`, `disposition`
-    - Criterion: Fill each funnel stage only from observed provider or data evidence and keep them separate; pause interpretation on sample-ratio mismatch, cross-exposure, stale data, broken instrumentation, or overlapping interventions; disposition must be exactly one of `ship`, `rollback`, `review`, or `insufficient_data`, and inconclusive data must not force `ship`.
+    - Required result fields: `eligible_count`, `attempted_count`, `delivered_count`, `displayed_count`, `acted_count`, `outcome_count`, `denominator_status`, `freshness_status`, `sample_ratio_status`, `cross_exposure_status`, `instrumentation_status`, `overlap_status`, `step_outcomes`, `step_trace_status`, `evidence_refs`, `causal_claim_status`, `disposition`
+    - Criterion: Fill each funnel stage only from observed provider or data evidence and keep them separate; pause interpretation on sample-ratio mismatch, cross-exposure, stale data, broken instrumentation, or overlapping interventions; disposition must be exactly one of `ship`, `rollback`, `review`, or `insufficient_data`, and inconclusive data must not force `ship`. Record every conditional step as `matched` or `skipped` with its own reason and status, never its evaluated values; a missing or failed best-effort step trace is not delivery evidence and must not turn a send into a failure.
   - `lifecycle_handoff_boundary_check`
     - Required result fields: `action_class`, `target_owner`, `approver`, `evidence_refs`, `timing`, `stop_conditions`, `approval_state`, `readiness`, `disposition`
     - Criterion: Each proposed action must name its class (`connector`, `content`, `analytics`, `product`, `implementation`), owner, approver, evidence refs, timing, and stop conditions; readiness is HOLD while any prior check holds or approval is missing, and no delivery, display, action, outcome, or causal claim may appear without observed evidence.
@@ -6502,7 +6505,7 @@ These surfaces are generated command references, not installed Hermes workflow s
     - Input refs: `target segment`, `channels or product surfaces`, `consent and policy constraints`
     - Output refs: `lifecycle_safety_policy/v1`
     - Check IDs: `lifecycle_safety_eligibility_check`
-    - Instruction: Order suppression precedence above legal and tenant constraints, user preferences, channel eligibility, quiet hours, and locale, then set global and per-campaign frequency budgets; fail closed when any eligibility input is missing.
+    - Instruction: Order suppression precedence above legal and tenant constraints, user preferences, channel eligibility, quiet hours, and locale, then set global and per-campaign frequency budgets; record the throttle grouping key, resolved value, scope, and fallback so distinct recipients or tenants never share one window; treat production workflow content as read-only and route edits to a draft with an explicit promotion decision; fail closed when any eligibility input is missing.
   - `lifecycle_design_experiment` (`production`)
     - Input refs: `lifecycle objective and stage`, `event schema and baseline`, `channels or product surfaces`, `experiment budget`, `decision owner`
     - Output refs: `growth_experiment_plan/v1`
@@ -6512,7 +6515,7 @@ These surfaces are generated command references, not installed Hermes workflow s
     - Input refs: `event schema and baseline`, `experiment budget`, `decision owner`
     - Output refs: `growth_measurement_readout/v1`
     - Check IDs: `lifecycle_readout_evidence_check`
-    - Instruction: Lay out eligible, attempted, delivered, displayed, acted, and outcome stages with denominator and freshness checks; fill them only from observed evidence, keep causal-claim status separate, and record `ship`, `rollback`, `review`, or `insufficient_data` without forcing a decision on thin data.
+    - Instruction: Lay out eligible, attempted, delivered, displayed, acted, and outcome stages with denominator and freshness checks; fill them only from observed evidence, keep causal-claim status separate, list each conditional step as matched or skipped with a redacted reason, and record `ship`, `rollback`, `review`, or `insufficient_data` without forcing a decision on thin data.
   - `lifecycle_validate_handoff` (`validation`)
     - Input refs: `lifecycle objective and stage`, `target segment`, `event schema and baseline`, `channels or product surfaces`, `consent and policy constraints`, `experiment budget`, `decision owner`
     - Output refs: `growth_handoff_disposition/v1`
@@ -8248,6 +8251,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - prepared-vs-observed boundary
 - Artifact expectations:
   - hermes_achievements_observation/v1 metadata-only payload from `omh achievements` when recorded
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Safety rules:
   - An achievements card reflects only locally observed hermes-achievements plugin artifacts; it is not a session-history rescan, badge recomputation, unlock proof beyond those artifacts, or productivity evidence.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
@@ -8809,6 +8813,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - not_observed provider and host gaps
 - Artifact expectations:
   - run_efficiency_report/v1 metadata-only report
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Safety rules:
   - Run efficiency is supplied OMH-local metadata, not provider, billing, cron, or host evidence.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
@@ -10555,6 +10560,7 @@ Plan compact context, token/cost budgets, summarization checkpoints, and overflo
   - expected duration and artifacts
   - available context sources and must-keep facts
   - token, cost, latency, or message-size constraints
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Outputs:
   - context_budget_plan/v1
   - must_keep_context_pack/v1
@@ -12722,6 +12728,7 @@ Prepare a manager-facing quality and throughput review for AI-agent research, co
   - work context or run/session references when available
   - target outcome
   - known evidence gaps
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Outputs:
   - agent_operator_productivity/v1
   - agent_operator_status_card/v1
@@ -12989,6 +12996,7 @@ Prepare a metadata-only health dashboard for OMH skills, observed failure signal
   - catalog/generated/reference surfaces
   - observed failure signals or explicit missing-signal statement
   - pending amendment sources when available
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Outputs:
   - catalog, generated, reference, harness, and capability-surface status
   - observed failure signals, or an explicit statement that none were supplied
@@ -13039,6 +13047,7 @@ Route self-improvement signals to memory, skill, wiki, failure-retrospective, au
   - self-improvement signal when available
   - observed evidence refs when available
   - feedback or failure summary
+  - supplied `session_activity_receipt/v1` when available; unavailable metrics stay unavailable, never zero
 - Outputs:
   - self_improvement_store_routing/v1
   - workflow_learning_trace/v1

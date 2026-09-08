@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -12,7 +13,7 @@ from _local_package import load_local_package
 
 load_local_package()
 from omh.paths import OmhPaths
-from omh.surfaces.hermes_sessions import HERMES_SESSION_SCHEMA_VERSION, observe_hermes_sessions
+from omh.surfaces.hermes_sessions import HERMES_SESSION_SCHEMA_VERSION, LIVE_WINDOW_SECONDS, observe_hermes_sessions
 
 
 CREATE_SESSIONS = """
@@ -32,7 +33,7 @@ create table sessions (
 
 
 class HermesSessionObservationTests(unittest.TestCase):
-    def test_observes_visible_sessions_and_latest_live_model_with_three_selects(self) -> None:
+    def test_observes_visible_sessions_and_latest_live_model_with_two_selects(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = self._paths(Path(tmp))
             paths.hermes_home.mkdir()
@@ -68,13 +69,13 @@ class HermesSessionObservationTests(unittest.TestCase):
                 return observed_connection
 
             with patch("omh.surfaces.hermes_sessions.sqlite3.connect", side_effect=recording_connect):
-                payload = observe_hermes_sessions(paths)
+                payload = observe_hermes_sessions(paths, now="2026-08-04T00:05:00Z")
 
             self.assertEqual(
                 connect_calls,
                 [(f"{db_path.resolve().as_uri()}?mode=ro", {"uri": True, "timeout": 1.0})],
             )
-            self.assertEqual(len(statements), 3)
+            self.assertEqual(len(statements), 2)
             self.assertTrue(all(statement.lower().startswith("select ") for statement in statements))
             self.assertTrue(all("source" not in statement.lower() for statement in statements))
             self.assertTrue(all("title" not in statement.lower() for statement in statements))
@@ -82,7 +83,12 @@ class HermesSessionObservationTests(unittest.TestCase):
             self.assertEqual(payload["schema_version"], HERMES_SESSION_SCHEMA_VERSION)
             self.assertTrue(payload["observed"])
             self.assertEqual(payload["reason"], "")
-            self.assertEqual(payload["live"], 2)
+            # Two rows are open, but only the one touched within the live
+            # window counts as live; the other is open and idle.
+            self.assertEqual(payload["live"], 1)
+            self.assertEqual(payload["open"], 2)
+            self.assertEqual(payload["stale"], 1)
+            self.assertEqual(payload["live_window_seconds"], LIVE_WINDOW_SECONDS)
             self.assertEqual(payload["total"], 3)
             self.assertEqual(
                 payload["current_model"],
@@ -154,7 +160,7 @@ class HermesSessionObservationTests(unittest.TestCase):
                 connection.commit()
                 connection.close()
 
-                payload = observe_hermes_sessions(paths)
+                payload = observe_hermes_sessions(paths, now="2026-08-01T00:01:00Z")
 
                 self.assertTrue(payload["observed"])
                 self.assertEqual(payload["reason"], "")
@@ -175,7 +181,7 @@ class HermesSessionObservationTests(unittest.TestCase):
                 connection.commit()
                 connection.close()
 
-                payload = observe_hermes_sessions(paths)
+                payload = observe_hermes_sessions(paths, now="2026-08-01T00:01:00Z")
 
                 self.assertTrue(payload["observed"])
                 self.assertEqual(
@@ -188,6 +194,39 @@ class HermesSessionObservationTests(unittest.TestCase):
                         "label": "model-only",
                     },
                 )
+
+    def test_open_sessions_without_recent_activity_are_idle_not_live(self) -> None:
+        # The owner's state.db held 53 rows with no `ended_at` (crashes,
+        # killed terminals, orphans Hermes reaps only on its next startup)
+        # whose last activity was two days old, and the menu bar read
+        # "live 53" for two days. Hermes stores REAL epoch seconds.
+        now = 1_800_000_000.0
+        with TemporaryDirectory() as tmp:
+            paths = self._paths(Path(tmp))
+            paths.hermes_home.mkdir()
+            connection = sqlite3.connect(paths.hermes_home / "state.db")
+            connection.execute(CREATE_SESSIONS)
+            rows = [
+                ("tui", "stale-a", None, None, 0, 0, now - 200_000, now - 172_800, "secret", 1),
+                ("tui", "stale-b", None, None, 0, 0, now - 200_000, None, "secret", 2),
+                ("tui", "fresh", '{"provider": "og"}', None, 0, 0, now - 3_000, now - LIVE_WINDOW_SECONDS + 5, "secret", 3),
+                ("tui", "just-outside", None, None, 0, 0, now - 3_000, now - LIVE_WINDOW_SECONDS - 5, "secret", 4),
+            ]
+            connection.executemany("insert into sessions values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+            connection.commit()
+            connection.close()
+
+            payload = observe_hermes_sessions(paths, now=datetime.fromtimestamp(now, tz=timezone.utc))
+
+            self.assertEqual((payload["live"], payload["open"], payload["stale"], payload["total"]), (1, 4, 3, 4))
+            self.assertEqual(payload["current_model"]["value"], "fresh")
+            self.assertEqual(payload["current_model"]["provider"], "og")
+
+            nothing_recent = observe_hermes_sessions(paths, now=datetime.fromtimestamp(now + 86_400, tz=timezone.utc))
+            self.assertEqual((nothing_recent["live"], nothing_recent["stale"]), (0, 4))
+            # No live session means no "current" model: the newest idle row's
+            # model is not what is running now.
+            self.assertFalse(nothing_recent["current_model"]["observed"])
 
     @staticmethod
     def _paths(root: Path) -> OmhPaths:
