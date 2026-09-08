@@ -521,8 +521,11 @@ def _run_auto_update(args: argparse.Namespace, paths, result: dict[str, object])
             # Fail fast on a malformed argv rather than handing it to a
             # subprocess that can only report it as an opaque exit code.
             build_parser().parse_args(update_argv)
+            # `-P`: the launch may happen inside a source checkout whose
+            # top-level `omh/` shim would otherwise sit at sys.path[0] and run
+            # the checkout instead of this installed package.
             completed = subprocess.run(
-                [sys.executable, "-m", "omh.cli", *update_argv],
+                [sys.executable, "-P", "-m", "omh.cli", *update_argv],
                 timeout=_AUTO_UPDATE_SUBPROCESS_TIMEOUT_SECONDS,
             )
             if completed.returncode == 0:
