@@ -27,6 +27,7 @@ from omh.workflows.web_visual_qa_contracts import (
     text,
 )
 
+from .browser_workflow_learning import add_browser_trace_commands
 from .common import _paths, _print_json, _wants_json
 
 
@@ -414,6 +415,7 @@ def _add_web_qa_commands(sub) -> None:
     show.add_argument("--renderer-target", choices=("discord", "slack", "telegram"))
     show.add_argument("--json", action="store_true")
     show.set_defaults(func=cmd_web_qa_show)
+    add_browser_trace_commands(web_qa_sub)
 
 
 __all__ = [

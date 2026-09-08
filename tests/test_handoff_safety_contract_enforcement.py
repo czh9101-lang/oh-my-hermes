@@ -341,6 +341,12 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
         "Git object reads through a temporary object directory plus read-only alternates, disables "
         "fsmonitor and optional locks, streams only changed/untracked bytes, and never starts work."
     ),
+    "src/workflows/browser_workflow_learning_store.py": (
+        "the shared observed-Git-root boundary reached by explicit web-qa trace, observation, "
+        "and promotion commands; runs only bounded local rev-parse --show-toplevel with "
+        "fsmonitor disabled, optional locks suppressed and ambient GIT_* variables removed. "
+        "It starts no browser, agent, model, or remote operation."
+    ),
 }
 
 # Alternative spawn routes. No allowlist: `subprocess` is the only sanctioned
@@ -785,6 +791,11 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
         "as closed internal lists for rev-parse, config, ls-files, status, check-attr, and ls-tree, "
         "never from caller input and never through a shell. It uses no diff/textconv command, so no "
         "repository-configured external diff or textconv helper can execute."
+    ),
+    ("src/workflows/browser_workflow_learning_store.py", ("core.fsmonitor=false", "rev-parse")): (
+        "git -c core.fsmonitor=false --no-optional-locks rev-parse --show-toplevel resolves "
+        "the explicitly named local project for browser evidence and promotion. This bounded "
+        "identity read writes no index or remote and cannot invoke a configured fsmonitor hook."
     ),
     ("src/coding/fanout_artifact_sharing.py", ("check-ignore",)): (
         "`git check-ignore -q --` against the parent checkout, then again inside the fresh unit "
