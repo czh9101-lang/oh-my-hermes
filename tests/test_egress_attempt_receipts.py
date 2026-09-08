@@ -224,6 +224,69 @@ class EgressAttemptStoreTests(unittest.TestCase):
         self.assertLess(elapsed, 0.1)
         self.assertEqual(len(self.store.public_rows()), 1)
 
+    def test_connections_use_ten_millisecond_busy_budget(self) -> None:
+        for cold in (True, False):
+            with self.subTest(cold=cold):
+                connection, created = SchemaProbe.connect(self.store)
+                with closing(connection):
+                    self.assertEqual(created, cold)
+                    self.assertEqual(connection.execute("PRAGMA busy_timeout").fetchone(), (10,))
+                    self.assertEqual(connection.execute("PRAGMA synchronous").fetchone(), (2,))
+                    self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone(), ("delete",))
+                    self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone(), (1,))
+                    self.assertIsNone(connection.isolation_level)
+                    self.assertFalse(connection.in_transaction)
+
+    def test_connections_do_not_reconfigure_busy_handler_through_sql(self) -> None:
+        connect = sqlite3.connect
+        setters: list[str] = []
+
+        def authorize(
+            action: int, first: str | None, second: str | None,
+            _database: str | None, _trigger: str | None,
+        ) -> int:
+            if action == sqlite3.SQLITE_PRAGMA and first == "busy_timeout" and second is not None:
+                setters.append(second)
+            return sqlite3.SQLITE_OK
+
+        def observed_connect(
+            database: Path, *, timeout: float, isolation_level: None
+        ) -> sqlite3.Connection:
+            connection = connect(database, timeout=timeout, isolation_level=isolation_level)
+            connection.set_authorizer(authorize)
+            return connection
+
+        for cold in (True, False):
+            with self.subTest(cold=cold):
+                setters.clear()
+                with patch.object(sqlite3, "connect", side_effect=observed_connect):
+                    connection, created = SchemaProbe.connect(self.store)
+                    with closing(connection):
+                        self.assertEqual(created, cold)
+                self.assertEqual(setters, [])
+
+    def test_writer_lock_blocks_registered_handler_without_consuming_call(self) -> None:
+        _ = self.store.open_attempt(**_request("seed"))
+        rows = self.store.public_rows()
+        handler = Mock(return_value="local-spy-returned")
+        wrapper, args, _, _ = self._registered_handler(handler)
+        with closing(sqlite3.connect(self.store.database_path)) as holder:
+            _ = holder.execute("BEGIN IMMEDIATE")
+            self.assertIn("error", _response(wrapper(args, session_id="session-1")))
+            handler.assert_not_called()
+            self.assertEqual(self.store.public_rows(), rows)
+            holder.rollback()
+
+        # Only an unrecorded identity can succeed once after the lock is released.
+        wrapper, args, _, _ = self._registered_handler(handler)
+        self.assertEqual(wrapper(args, session_id="session-1"), "local-spy-returned")
+        recorded = self.store.public_rows()
+        self.assertEqual(len(recorded), 2)
+        wrapper, args, _, _ = self._registered_handler(handler)
+        self.assertIn("error", _response(wrapper(args, session_id="session-1")))
+        handler.assert_called_once()
+        self.assertEqual(self.store.public_rows(), recorded)
+
     def test_cold_schema_is_atomic_and_repeated_open_does_not_write(self) -> None:
         connect = sqlite3.connect
         visible_objects: list[int] = []

@@ -14,6 +14,7 @@ from .domain_signals import (
     specialist_domain_route_signal,
 )
 from .intent import scrub_diagnostic_status_text
+from .reference_regions import executable_routing_text
 from .localization import normalized_phrase, prepare_routing_text, routing_terms, routing_tokens
 from .visual_qa_cues import contains_cue_phrase
 from .missed_route import is_missed_route_feedback
@@ -1721,7 +1722,7 @@ def recommend_skills(query: str, *, limit: int = 5, apply_guardrails: bool = Tru
 def has_strong_named_catalog_owner(query: str) -> bool:
     """Return whether one catalog name and a second semantic signal match."""
 
-    routing_text = prepare_routing_text(_strip_path_like_fragments(scrub_diagnostic_status_text(query)))
+    routing_text = prepare_routing_text(_strip_path_like_fragments(scrub_diagnostic_status_text(executable_routing_text(query))))
     normalized_query = normalized_phrase(routing_text.scoring_text)
     query_tokens = _tokens(normalized_query)
     if (
@@ -1745,7 +1746,7 @@ def has_strong_named_catalog_owner(query: str) -> bool:
     for prepared in _prepared_routable_definitions():
         if not _phrase_match(normalized_query, prepared.name_phrase):
             continue
-        if _explicit_skill_candidate_is_negated(query, prepared.definition.name):
+        if _explicit_skill_candidate_is_negated(executable_routing_text(query), prepared.definition.name):
             continue
         name_tokens = _tokens(prepared.name_phrase)
         if query_tokens & (prepared.trigger_tokens - name_tokens - _GENERIC_TRIGGER_TOKENS):
@@ -1784,7 +1785,7 @@ def recommendation_for_definition(
 
 @lru_cache(maxsize=2048)
 def _recommend_skills_cached(query: str, apply_guardrails: bool) -> tuple[Recommendation, ...]:
-    routing_query = scrub_diagnostic_status_text(query)
+    routing_query = scrub_diagnostic_status_text(executable_routing_text(query))
     routing_text = prepare_routing_text(_strip_path_like_fragments(routing_query))
     normalized_query = normalized_phrase(routing_text.scoring_text)
     query_tokens = _tokens(normalized_query)
@@ -1820,7 +1821,7 @@ def scored_field_winner_without_explicit_invocation(query: str) -> str:
     lane. This never calls back into `explicit_skill_invocation()`, so there is
     no recursion.
     """
-    routing_query = scrub_diagnostic_status_text(query)
+    routing_query = scrub_diagnostic_status_text(executable_routing_text(query))
     routing_text = prepare_routing_text(_strip_path_like_fragments(routing_query))
     normalized_query = normalized_phrase(routing_text.scoring_text)
     prepared_definitions = _prepared_routable_definitions()
@@ -1870,7 +1871,7 @@ def _scored_field(
             domain_operator_override=domain_operator_override,
         )
         if recommendation is not None:
-            scored.append(recommendation)
+            scored.append(replace(recommendation, suggested_prompt=_suggested_prompt(recommendation.skill, query)))
     scored = [recommendation for recommendation in scored if recommendation.skill not in excluded_domain_skills]
     if explicit_skill != "automation-blueprint" and is_explicit_one_off_request(normalized_query, query_tokens):
         scored = [recommendation for recommendation in scored if recommendation.skill != "automation-blueprint"]
@@ -2128,6 +2129,17 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
             "versioning",
         }
     ),
+    # `frontend` names its scroll-motion lane out of everyday words: "smooth
+    # scroll", "smooth scrolling", "scroll animation", "parallax scroll".
+    # Split into tokens, `scroll` alone credited this workflow for any
+    # sentence that merely mentions scrolling -- "the mouse wheel scroll is
+    # broken in my terminal emulator" moved from clarify to a frontend
+    # dispatch on `scroll` plus the pre-existing `broken`/`terminal`. The
+    # intent lives in the complete phrases, which the phrase match already
+    # scores; `parallax` stays creditable because it is distinctive UI
+    # vocabulary rather than everyday words, and `animation` was frontend
+    # trigger vocabulary before this lane landed.
+    "frontend": frozenset({"effect", "hero", "scroll", "scrolling", "smooth"}),
 }
 
 

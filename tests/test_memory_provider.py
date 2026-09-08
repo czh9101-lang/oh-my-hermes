@@ -729,6 +729,62 @@ class MemoryToolActionTests(unittest.TestCase):
         with patch.dict(os.environ, {"OMH_HOME": str(root / ".omh"), "HERMES_HOME": str(root / ".hermes")}):
             return json.loads(omh_memory_handler(args))
 
+    def test_consolidation_status_preserves_pending_state_and_the_next_brief(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            home = root / ".omh"
+            _write_hermes_memory(root / ".hermes", "x" * 2100)
+            write_dreaming_state(home, record_compaction(record_turn(empty_dreaming_state())))
+            state_path = home / "memory" / "dreaming.json"
+            before = state_path.read_bytes()
+            for _ in range(2):
+                payload = self._call(root, action="consolidation")
+                self.assertEqual(state_path.read_bytes(), before)
+                self.assertFalse(payload["evaluated"])
+                self.assertNotIn("due", payload)
+                self.assertEqual(payload["state"], read_dreaming_state(home))
+                self.assertFalse((home / "memory" / "consolidation.json").exists())
+                self.assertFalse((home / "memory" / "consolidation.jsonl").exists())
+            brief = OmhMemoryProvider(home, hermes_home=root / ".hermes").consolidation_due()
+            self.assertTrue(brief["due"])
+            self.assertEqual(brief["trigger"], "manual")
+            self.assertIn("context_compaction_observed", brief["reasons"])
+            self.assertTrue(any(reason.startswith("headroom_below_floor") for reason in brief["reasons"]))
+
+    def test_consolidation_status_returns_the_due_brief_without_rewriting_it(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            home = root / ".omh"
+            _write_hermes_memory(root / ".hermes", "x" * 2100)
+            provider = OmhMemoryProvider(home, hermes_home=root / ".hermes")
+            brief = provider.consolidation_due()
+            self.assertTrue(brief["due"])
+            files = tuple((home / "memory").iterdir())
+            before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in files if path.is_file()}
+            for _ in range(2):
+                payload = self._call(root, action="consolidation")
+                self.assertTrue(payload["due"])
+                self.assertFalse(payload["evaluated"])
+                for key, value in brief.items():
+                    self.assertEqual(payload[key], value, key)
+                self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in before}, before)
+                self.assertEqual(tuple((home / "memory").iterdir()), files)
+            self.assertIn("<memory_consolidation", provider.render_pack())
+
+    def test_consolidation_status_never_enters_the_provider_lifecycle(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            _write_hermes_memory(root / ".hermes", "x" * 2100)
+            with patch.object(OmhMemoryProvider, "initialize") as initialize, patch.object(
+                OmhMemoryProvider, "consolidation_due", return_value={}
+            ) as evaluate:
+                payload = self._call(root, action="consolidation")
+            initialize.assert_not_called()
+            evaluate.assert_not_called()
+            self.assertFalse(payload["evaluated"])
+            self.assertNotIn("due", payload)
+            self.assertFalse((root / ".omh").exists())
+
     def test_the_default_action_is_still_the_bridge(self) -> None:
         with TemporaryDirectory() as tmp:
             payload = self._call(Path(tmp).resolve())
@@ -2225,6 +2281,22 @@ class RecordsReachPrefetchTests(unittest.TestCase):
             self.assertNotIn("nobody reviewed", pack)
             self.assertNotIn("reviewer said no", pack)
 
+    def test_many_admitted_records_stay_bounded_in_prefetch_and_status(self) -> None:
+        from xml.etree import ElementTree
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for index in range(40):
+                _approve_record(root, f"Approved local fact {index}.")
+            provider = self._provider(root)
+            text = provider.prefetch("")
+            self.assertLessEqual(len(text), 2400)
+            section = ElementTree.fromstring(text)
+            self.assertEqual(len(section.findall("record")), 6)
+            self.assertEqual(section.find("omitted").attrib,
+                             {"count": "34", "reason": "record_limit_reached"})
+            self.assertEqual(provider.recall_status().count, 6)
+
     def test_records_sit_after_blocks_in_one_pack(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2265,10 +2337,11 @@ class RecordsReachPrefetchTests(unittest.TestCase):
             {"record_id": "mem_a", "record_type": "fact", "summary": "a < b & c", "approved_at": "2026-09-01T00:00:00Z"},
             {"record_id": "mem_b", "record_type": "fact", "summary": "x" * 400, "approved_at": "2026-09-02T00:00:00Z"},
         ]
-        text, count = render_memory_records(records, budget_chars=120)
+        text, count = render_memory_records(records, budget_chars=300)
         self.assertEqual(count, 1)
+        self.assertLessEqual(len(text), 300)
         self.assertIn("a &lt; b &amp; c", text)
-        self.assertIn('<omitted record_id="mem_b" reason="render_budget_exhausted" />', text)
+        self.assertIn('<omitted count="1" reason="render_budget_exhausted" />', text)
         text, count = render_memory_records(records, limit=1)
         self.assertEqual(count, 1)
         self.assertIn('reason="record_limit_reached"', text)

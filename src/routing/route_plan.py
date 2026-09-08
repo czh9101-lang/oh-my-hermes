@@ -8,6 +8,7 @@ from ..skills.catalog import routable_definitions
 from ..skills.catalog_types import omh_skill_display_name
 from ..quality.specialist_work import build_specialist_work_quality_contract
 from .localization import normalized_phrase, prepare_routing_text, routing_tokens
+from .reference_regions import executable_routing_text
 
 
 SCHEMA_VERSION = "workflow_route_plan/v1"
@@ -257,7 +258,7 @@ def _build_workflow_route_plan_cached(
         return None
     recommendation_list = _recommendation_list_from_signature(recommendation_signature)
 
-    routing_text = prepare_routing_text(message)
+    routing_text = prepare_routing_text(executable_routing_text(message))
     normalized = normalized_phrase(routing_text.scoring_text)
     tokens = routing_tokens(normalized, stopwords=_STOPWORDS)
     signal_stages = set(_stages_from_signals(normalized, tokens))

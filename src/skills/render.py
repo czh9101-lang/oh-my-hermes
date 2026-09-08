@@ -2527,7 +2527,118 @@ def _ultrawork_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...
             "references/dependency-topology.md",
             _dependency_topology_reference(),
         ),
+        SkillReferenceTemplate(
+            "ultrawork",
+            "references/campaign-orchestrator.md",
+            _campaign_orchestrator_reference(),
+        ),
     )
+
+
+def _campaign_orchestrator_reference() -> str:
+    return """# Campaign Orchestrator Recipe
+
+Load this reference only after the user has explicitly selected `campaign-orchestrator` for an accepted `ultrawork` run. Nothing in ordinary `ulw-work` points here: there is no classifier, no recommendation step, no extra model call, and no plugin tool that decides work is "large enough" for a campaign. If the user did not name the mode, close this file and stay on the parent-led path.
+
+The recipe composes existing primitives. It adds no model category, no scheduler, and no always-loaded context. Prepared routes are not model execution, review, CI, PR readiness, or merge authorization.
+
+## Eligibility
+
+The mode is eligible only when all of the following are already accepted, not merely proposed:
+
+- one objective and its final binary acceptance criteria;
+- exact write boundaries for every unit;
+- one broad verification target owned by the campaign;
+- at least two genuinely separable units (the contract accepts two to sixteen).
+
+A single-owner task, a small parallel task, or an open-ended loop is not a campaign. Say so and route normally.
+
+## Ownership Shape
+
+```text
+current chat parent (model unchanged, narrates, may display or cancel)
+  -> exactly one campaign orchestrator on the `architect` route (Fable-first by shipped default)
+       -> bounded leaves on the `ultrabrain` route (Astra-first by shipped default)
+       -> conflict decisions and one integration fan-in
+  -> one integrated, verified result back to the chat parent
+```
+
+The chat parent keeps its current model and stays the user-facing narrator. It never redispatches a unit while the campaign owner is active.
+
+The orchestrator is the actual graph owner. It is runnable before any leaf exists and has no dependency on unfinished workers. It owns the executable plan, dependency edges, dispatch ledger, result fan-in, conflict decisions, the single broad-suite assignment, and the final go/no-go. A Fable reviewer attached after someone else coordinated the work is the wrong shape; that is a terminal-only integrator, not a campaign owner.
+
+Leaves depend only on actual sibling units, never on the running orchestrator. Each leaf receives one standalone `TASK` / `DELIVERABLE` / `SCOPE` / `VERIFY` / `STOP WHEN` contract, runs its focused check, and returns its result to the orchestrator under the original unit and attempt IDs. A leaf cannot delegate, widen scope, start a continuation campaign, run the broad suite, or treat another worker's incoming result as fresh work. Host enforcement of those limits is required; the prompt text is guidance, not a boundary.
+
+## Routes and Overrides
+
+Both routes reuse the existing configurable mixture chains. `architect` and `ultrabrain` keep their ordinary meanings and remain independently usable outside a campaign. Owner and worker model, provider, and effort overrides are separate inputs and each takes precedence over its chain. Every resolved route carries the actual alias, wire model, provider, effort, and source; the chain head is never assumed to have run.
+
+Campaign code never writes profile-global `delegation.*` keys. Writing those keys and hoping the intended child starts first is dispatch ordering, not an ownership boundary, and a concurrent session could consume the route.
+
+## Host Binding Boundary
+
+A campaign may run only through a trusted host adapter that can, as host capabilities rather than model-supplied booleans:
+
+- derive the invoking session from host context (no caller-selected owner);
+- bind each attempt atomically and immutably to its route, scoped tools, and recipient, with host idempotency;
+- enforce the leaf write scope and a file-only toolset with no terminal, code execution, or delegation;
+- observe execution evidence itself (diff, revision, verification output), not worker summaries;
+- revoke pending routes and stop in-flight work on expiry.
+
+Any host missing one part fails closed. The controller then records `fallback_parent_led` with the graph intact, and the current parent owns the work through ordinary `ulw-work`.
+
+Installed Hermes at `f159e581` has no native per-dispatch model, provider, or effort binding for `delegate_task`, so the native binding is unsupported and is never inferred from a version number or schema field. Kanban rows carry task-local model, provider, and effort pins; the CLI reads existing rows and dependency edges through a read-only database connection and treats them as observed metadata only. Pins are not execution and not confinement. The installed profile resolver also adds `kanban` to a profile that lists only `file`, so the host cannot attest the leaf tool boundary this recipe needs. Because of that, `bind` reports `prepared_binding_observed` with execution `not_observed`, and `start` (native binding) returns `fallback_parent_led` instead of claiming a live Fable or Astra run. A wrapper implementing the full adapter protocol can drive the controller; that wrapper is not shipped here.
+
+## Ledger, Fan-In, and Conflicts
+
+- Campaign, unit, and attempt IDs are stable and derived; the accepted unit set and each unit's scope, acceptance, artifacts, and focused verification command are immutable after preparation. Only dependency edges may be re-planned, and only before any dispatch.
+- The controller locks the whole read-modify-write and records an attempt as `unknown` before crossing the dispatch boundary. A crash or exception after that point does not turn the attempt back into undispatched work, and an `unknown` attempt is never blindly retried. External reconciliation is the only way forward.
+- A unit dispatches once. Duplicate dispatch, duplicate results, late results, foreign results, and forged identities are counted and refused; none can reopen accepted work or trigger a second dispatch.
+- A result is accepted only with exact campaign, attempt, and task identity, actual contained artifact paths with matching content digests, observed changed paths, revision and diff identity, and bounded verification output digest, size, and exit code. A plausible summary completes nothing.
+- Overlapping paths (after canonical spelling, including backslashes) and shared invariants freeze the affected frontier, expire in-flight attempts on that frontier, and name one integration owner. That owner resolves the conflict through inspected evidence; the recipe never adds another leaf to escape a conflict.
+- The broad suite is queued exactly once, to the orchestrator, after every producer result is accepted and every conflict is resolved. Leaves run focused checks only.
+
+## Terminal States and Cleanup
+
+Terminal states are `complete`, `cancelled`, `failed`, `unknown`, `cleanup_pending`, and the explicit `fallback_parent_led`. Every terminal transition expires pending routes and reads back the ordinary delegation route; a later ordinary delegation inheriting the parent route is the proof that cleanup worked. When expiry or the read-back fails, the record stays in `cleanup_pending` with the intended terminal state attached, never a false success, and `recover` may retry cleanup without reopening dispatch.
+
+Explicit fallback preserves the graph, returns ownership to the current parent session, and resets untouched units to prepared. It never promotes an implementation leaf into campaign ownership. Completion requires the observed broad-suite evidence plus observed cleanup. PR creation and merge remain separate user-authorized actions.
+
+## Operator CLI
+
+This is an agent, wrapper, and operator surface under `omh coding`, not an everyday human command. The argv below is the current parser; `--json` is accepted by every subcommand.
+
+```sh
+omh coding campaign prepare --goal GOAL --units UNITS.json --acceptance CRITERION [--acceptance ...] \\
+  --verify COMMAND --workspace DIR --accept [--spawn-plan PLAN.json] \\
+  [--owner-model M] [--owner-provider P] [--owner-effort E] \\
+  [--worker-model M] [--worker-provider P] [--worker-effort E]
+omh coding campaign show CAMPAIGN_ID
+omh coding campaign start CAMPAIGN_ID
+omh coding campaign bind CAMPAIGN_ID [--binding {native,kanban}] [--tasks TASKS.json] [--worker-profile NAME]
+omh coding campaign plan CAMPAIGN_ID --units UNITS.json
+omh coding campaign dispatch CAMPAIGN_ID --unit UNIT_ID
+omh coding campaign accept CAMPAIGN_ID --unit UNIT_ID
+omh coding campaign conflict CAMPAIGN_ID --unit UNIT_ID [--unit ...] --invariant TEXT
+omh coding campaign resolve CAMPAIGN_ID
+omh coding campaign queue-broad CAMPAIGN_ID
+omh coding campaign complete CAMPAIGN_ID
+omh coding campaign cancel CAMPAIGN_ID
+omh coding campaign fail CAMPAIGN_ID
+omh coding campaign timeout CAMPAIGN_ID
+omh coding campaign recover CAMPAIGN_ID
+omh coding campaign fallback CAMPAIGN_ID
+omh coding campaign canary [--input OBSERVATIONS.json]
+```
+
+`prepare` refuses without `--accept` and returns nothing unless the mode is `campaign-orchestrator`. `--spawn-plan` is the existing fanout justification and is required above four units. `bind --binding kanban` needs both `--tasks` (a JSON object mapping `orchestrator` and every unit ID to an existing host task ID) and `--worker-profile`; it verifies pins, idempotency keys, zero retries, assignee, and sibling edges against the stored record and refuses on any mismatch. CLI identity is the OS-observed supervising process, so related commands must run under the same operator or wrapper process; there is no `--owner-session` flag and no flag that declares verification observed. Refusals use OMH's ordinary exit-code-2 convention. Full operator detail lives in `docs/WORK-CAMPAIGN.md`.
+
+## Evidence Boundary
+
+Records live only under the selected OMH home's `runtime/campaigns`, bounded in count, size, and event history, with no prompt bodies, transcripts, provider errors, or raw logs. The default canary report has no observations and reports rates as `null`, never zero. Imported comparisons must be paired baseline and campaign measurements with actual record and input digests and a host-runtime measurement receipt; fixture or unpaired rows are excluded.
+
+No authorized provider campaign has run through this recipe, so Fable and Astra execution, coordination quality, duplicate-work reduction, cost, and latency all remain `not_observed`. One maintainer field report justified building the opt-in mode; it does not justify a default change. Keep the mode explicit until repeated comparable campaigns show a measured benefit.
+"""
 
 
 def _dependency_topology_reference() -> str:
@@ -5792,6 +5903,160 @@ fast for anyone in particular until the field percentile says so.
 
 
 
+def scroll_motion_reference_templates() -> list[SkillReferenceTemplate]:
+    return list(_scroll_motion_reference_templates_cached())
+
+
+@lru_cache(maxsize=1)
+def _scroll_motion_reference_templates_cached() -> tuple[SkillReferenceTemplate, ...]:
+    return (
+        SkillReferenceTemplate(
+            "frontend",
+            "references/scroll-motion-libraries.md",
+            _scroll_motion_libraries_reference(),
+        ),
+    )
+
+
+def _scroll_motion_libraries_reference() -> str:
+    return """# Scroll Motion Libraries
+
+Smooth scroll is a design decision that arrives with an accessibility bill
+attached. This reference is the record for taking a scroll library at all,
+and the integration contract for the one OMH has reviewed.
+
+## Take the native path first
+
+A library is the answer to a requirement, never to an adjective. Work down
+this list and stop at the first row that covers the brief:
+
+| Need | Native answer |
+| --- | --- |
+| Anchor and in-page jumps that glide | CSS `scroll-behavior: smooth` with `scroll-padding-top` for the sticky header |
+| Reveal on entry, progress bars, scroll-linked parallax | CSS scroll-driven animations - `animation-timeline: scroll()` / `view()` - which the browser can run off the main thread |
+| One-off enter animations | `IntersectionObserver` plus a class, no scroll listener at all |
+| Section-by-section paging | CSS `scroll-snap-type` |
+
+`animation-timeline` is the newest row and the one to check rather than
+assume: read its current support against the project's own browser matrix and
+name the fallback before the contract commits to it. The other three rows are
+long-settled.
+
+A scroll library earns its place only when the brief needs an *interpolated
+scroll position that more than one consumer reads*: a WebGL or canvas scene
+synced to the page, a velocity- or progress-driven sequence, horizontal and
+nested axes driven from one loop. "Make it feel premium" is not that
+requirement, and a library added for it buys jank, keyboard bugs, and a
+dependency in exchange for nothing the native rows above could not do.
+
+## Source record
+
+- Lenis, reviewed at `eea71595f5ae595f49b21ed87520822d3624098a` (v1.3.26) on
+  2026-09-08: https://github.com/darkroomengineering/lenis - MIT, no runtime
+  dependencies. It wraps the browser's own scroll instead of replacing it, so
+  `position: sticky` and accessibility keep working, per its own feature
+  list. Vertical, horizontal, and nested axes come from one instance, and
+  the published packages are `lenis`, `lenis/react`, `lenis/vue`,
+  `lenis/framer`, and `lenis/snap`.
+- GSAP is recorded in `omh-apple-design/references/web-production-libraries.md`
+  with its own license note. Read that note there rather than restating it;
+  the GreenSock Standard "no charge" license is not an OSI license.
+
+OMH does not install, vendor, pin, or fetch any of this at runtime. Before
+the selected coding owner adds a dependency, inspect the project's own
+dependency, bundle-size, CSP, and license policy - a reviewed source record
+is not permission to add a package to someone else's build.
+
+## Integration contract
+
+1. **One instance, one loop.** Either `autoRaf: true` or a manual
+   `lenis.raf(time)` call inside the loop the project already runs - never
+   both, and never a second instance per component.
+2. **The recommended stylesheet ships with it.** `lenis/dist/lenis.css` is
+   part of the integration, not an optional extra; `autoToggle` does not work
+   without it.
+3. **Anchors are opt-in.** Upstream states it prevents anchor links from
+   working while scrolling until `anchors: true` (or a `scrollTo` options
+   object) is passed. A deep link that stopped working is this setting.
+4. **Nested scrollables are declared.** Modals, dropdowns, code blocks, chat
+   panes, and map surfaces carry `data-lenis-prevent` (or the
+   wheel/touch/axis-specific variants), or a `prevent` predicate names them.
+   `allowNestedScroll: true` is the shortcut and it walks the DOM tree on
+   every scroll event - upstream documents that cost, so choose it knowingly.
+5. **Teardown is owned.** Call `destroy()` on route change and component
+   unmount. An instance that outlives its route stays subscribed to wheel and
+   touch events, and the next mount's instance then doubles every delta.
+6. **GSAP sync is a fixed recipe.** `lenis.on('scroll', ScrollTrigger.update)`,
+   drive `lenis.raf(time * 1000)` from `gsap.ticker`, and set
+   `gsap.ticker.lagSmoothing(0)`. Two independent rAF loops fight.
+7. **CSS scroll-snap does not survive.** Upstream states it is unsupported;
+   `lenis/snap` is the only supported snapping path.
+8. **A no-build CDN tag is an origin decision.** The one-line drop-in exists,
+   but a third-party script and stylesheet is a CSP, SRI, offline, and
+   supply-chain question for the project, not a convenience.
+
+## Reduced motion is a branch, not a flag
+
+`respectReducedMotion` defaults to `true`, and it is worth knowing exactly
+what that buys. When the user prefers reduced motion, smoothing is disabled -
+`lerp` is forced to `1` so scroll tracks the input device 1:1 and
+`duration`/`easing` are ignored - and programmatic scrolls, including anchor
+links, jump instantly. The instance keeps running so WebGL and DOM
+synchronization stay intact, and the preference is picked up live without a
+reload.
+
+What it does not do is touch the animations *you* wrote. Read
+`lenis.prefersReducedMotion` and branch your own reveals, pins, and parallax
+on it, or the page still moves for someone who asked it not to. Setting
+`respectReducedMotion: false` is a documented opt-out and an accessibility
+decision the user makes explicitly, never a default the implementation picks.
+
+## Limitations to quote, not discover
+
+Upstream publishes these. Reading them late turns each one into a bug report:
+
+- Capped to 60fps on Safari, and 30fps in low power mode.
+- Smooth scroll stops at iframes, which do not forward wheel events.
+- `position: fixed` lags on pre-M1 macOS Safari.
+- `syncTouch` can behave unexpectedly on iOS below 16.
+- No CSS scroll-snap support.
+- Nested scroll containers need the explicit configuration above.
+
+## What it costs, and who pays
+
+Scroll smoothing runs on the main thread and reacts to input, so INP is the
+metric it moves. Name the budget from `references/web-vitals-budgets.md`
+before the change, not after, and capture the baseline on the same device and
+network class.
+
+The rest of the bill is behavioral, and each item is a state someone will hit
+on the first day:
+
+- Keyboard scrolling: Space, PageUp/PageDown, Home/End, and arrow keys.
+- Browser scroll restoration on back/forward, and cold-load deep links.
+- Find-in-page, which scrolls the native way.
+- Screen-reader and focus-driven scrolling into view.
+- Touch, where `syncTouch` changes the feel and the inertia model.
+- Print and reader modes, where none of this exists.
+
+## Verification
+
+Before anyone calls a scroll integration done, these states are rendered and
+observed - captured, not reasoned about: default motion; reduced motion;
+keyboard-only traversal; an anchor deep link on cold load; a nested
+scrollable such as a modal or code block; route change and back; touch on a
+real device; and Safari, because of the frame cap above.
+
+## Boundary
+
+A library selection, an option table, a code recipe, or a prepared handoff is
+not an installed dependency, a rendered frame, a motion proof, an
+accessibility PASS, or a Core Web Vitals measurement. All of those stay
+`prepared_not_observed` until the selected coding owner supplies the observed
+project version, license review, teardown evidence, and rendered states.
+"""
+
+
 def apple_design_reference_templates() -> list[SkillReferenceTemplate]:
     return list(_apple_design_reference_templates_cached())
 
@@ -6058,6 +6323,10 @@ libraries at runtime.
   standalone browser files with `Container` and `Button` WebGL classes and an
   optional `html2canvas` page-capture path. Its visual effect is a web effect,
   not Apple native material.
+- Smooth scroll and scroll-driven motion are recorded separately in
+  `omh-frontend/references/scroll-motion-libraries.md`, with the Lenis source
+  record and the native-first decision order. Read that reference rather than
+  growing a second scroll note here.
 
 ## Selection and integration
 

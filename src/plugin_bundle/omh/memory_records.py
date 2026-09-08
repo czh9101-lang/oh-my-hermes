@@ -72,24 +72,34 @@ def render_memory_records(
     budget_chars: int = DEFAULT_RECORD_RENDER_BUDGET_CHARS,
     limit: int = DEFAULT_RECORD_LIMIT,
 ) -> tuple[str, int]:
-    """The section text and how many records it carries in full."""
+    """Bound the entire section, including escaped text and aggregate omissions.
+
+    Return no section when even its omission report cannot fit. The count
+    includes only complete record elements, never omission metadata.
+    """
     if not records:
         return "", 0
-    lines, used, rendered = ["<memory_records>"], 0, 0
+    lines, rendered = ["<memory_records>"], 0
+    omissions = {"render_budget_exhausted": 0, "record_limit_reached": 0}
+    closing = "</memory_records>"
+    used = len(lines[0]) + 1 + len(closing)
+    # Reserve both possible reports once, not an unbounded line per record.
+    reserve = sum(len(f'\n  <omitted count="{len(records)}" reason="{reason}" />') for reason in omissions)
     for record in records:
-        record_id = _attribute(record.get("record_id", ""))
         if rendered >= max(limit, 0):
-            lines.append(f'  <omitted record_id="{record_id}" reason="record_limit_reached" />')
+            omissions["record_limit_reached"] += 1
             continue
         element = _render_record(record)
-        if used + len(element) > max(budget_chars, 0):
-            lines.append(f'  <omitted record_id="{record_id}" reason="render_budget_exhausted" />')
+        if used + 1 + len(element) + (reserve if len(records) > 1 else 0) > max(budget_chars, 0):
+            omissions["render_budget_exhausted"] += 1
             continue
-        used += len(element)
+        used += 1 + len(element)
         rendered += 1
         lines.append(element)
-    lines.append("</memory_records>")
-    return "\n".join(lines), rendered
+    lines.extend(f'  <omitted count="{count}" reason="{reason}" />' for reason, count in omissions.items() if count)
+    lines.append(closing)
+    text = "\n".join(lines)
+    return (text, rendered) if len(text) <= max(budget_chars, 0) else ("", 0)
 
 
 def _render_record(record: dict[str, Any]) -> str:

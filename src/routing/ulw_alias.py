@@ -31,6 +31,7 @@ from ..skills.catalog import (
 from ..skills.catalog_types import historical_skill_display_names, omh_skill_display_name
 from .visual_qa_cues import contains_cue_phrase
 from .localization import normalized_phrase
+from .reference_regions import executable_routing_text
 
 ULW_ALIAS_TARGET_WORKFLOW = "ultrawork"
 
@@ -161,6 +162,7 @@ def resolve_codex_owner_choice_cue(message: str) -> str | None:
     owner-resolution paths, which already record in-message naming as
     explicit-choice provenance.
     """
+    message = executable_routing_text(message)
     normalized = normalized_phrase(_invocation_stripped(message))
     for index, cue in enumerate(_codex_owner_choice_index()):
         if normalized == cue:
@@ -182,6 +184,7 @@ def resolve_ulw_alias(message: str, *, allow_containment: bool = False) -> dict[
     provide through catalog scoring. Single-token cues never match by
     containment, so ordinary sentences mentioning "team" are not hijacked.
     """
+    message = executable_routing_text(message)
     stripped = _invocation_stripped(message)
     normalized = normalized_phrase(stripped)
     if not normalized:

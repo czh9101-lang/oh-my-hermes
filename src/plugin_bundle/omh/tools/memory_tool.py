@@ -33,8 +33,7 @@ from ..degradation import safe_error_type as _safe_error_type
 from ..hermes_memory import build_hermes_memory_bridge
 from ..host_observation import OBSERVATION_SCHEMA, attach_public_observation, observe_plugin_tool_call
 from ..memory_blocks import read_memory_block, read_memory_blocks, select_memory_blocks
-from ..memory_dreaming import read_dreaming_state
-from ..memory_provider import OmhMemoryProvider
+from ..memory_dreaming import read_dreaming_state, read_latest_consolidation
 
 MEMORY_ACTIONS = ("status", "blocks", "read", "consolidation")
 
@@ -45,7 +44,8 @@ OMH_MEMORY_SCHEMA = {
         "compares Hermes' built-in memory (MEMORY.md, USER.md) against OMH's approved records "
         "and reports what fits under Hermes' character cap; 'blocks' is a review-readable status "
         "listing with admission and replay state; 'read' returns a value only for replay-eligible "
-        "OMH-reviewed blocks; 'consolidation' reports whether a reminder is due and why. Hermes "
+        "OMH-reviewed blocks; 'consolidation' reads the latest recorded reminder and counters "
+        "without evaluating or consuming them (no 'due' field when no brief is recorded). Hermes "
         "native, provider, and vector context is not_omh_reviewed and never grants OMH admission. "
         "Hermes memory entries are never returned, only counted and hashed. OMH cannot change Hermes memory."
     ),
@@ -183,17 +183,18 @@ def _public_replay(evaluation: dict[str, object]) -> dict[str, object]:
 
 
 def _consolidation() -> tuple[dict[str, object], str]:
-    """Whether dreaming is due, and on what evidence.
+    """Read the latest reminder and counters without entering a provider session.
 
-    This never runs consolidation. OMH cannot: the work needs a model, and the
-    only thing that consolidates Hermes memory is Hermes.
+    Like `omh memory dream` without `--evaluate`, this is a status query, not
+    a scheduler trigger. Keep a recorded due brief visible even when its
+    reasons are suppressed for the next evaluation. No brief means unknown,
+    not a fresh evaluation that found nothing due.
     """
     omh_home = _home("OMH_HOME", "~/.omh")
     try:
-        provider = OmhMemoryProvider(omh_home)
-        provider.initialize("", hermes_home=_home("HERMES_HOME", "~/.hermes"))
-        payload = dict(provider.consolidation_due())
+        payload = dict(read_latest_consolidation(omh_home) or {})
         payload["state"] = read_dreaming_state(omh_home)
+        payload["evaluated"] = False
         return payload, "bundle_memory"
     except Exception as exc:
         return _unavailable(_safe_error_type(type(exc).__name__)), "bundle_memory_error"

@@ -124,6 +124,7 @@ class HudCliTests(unittest.TestCase):
             payload["subagents"]["rows"],
             [
                 {
+                    "scope": "global",
                     "state": "running",
                     "task_id": "explore",
                     "role": "explore",
@@ -141,6 +142,7 @@ class HudCliTests(unittest.TestCase):
                     "tokens_per_second": 45,
                 },
                 {
+                    "scope": "global",
                     "state": "running",
                     "task_id": "libraria",
                     "role": "librarian",
@@ -158,6 +160,7 @@ class HudCliTests(unittest.TestCase):
                     "tokens_per_second": None,
                 },
                 {
+                    "scope": "global",
                     "state": "blocked",
                     "task_id": "architec",
                     "role": "architect",
@@ -176,7 +179,7 @@ class HudCliTests(unittest.TestCase):
                 },
             ],
         )
-        self.assertEqual(payload["maestro"], {"status": "idle", "rows": []})
+        self.assertEqual(payload["maestro"], {"status": "idle", "rows": [], "scope": "global"})
         widget_text = "\n".join(payload["display"]["widget_lines"])
         self.assertIn("[OMH]", widget_text)
         self.assertIn("ULW model routing review", widget_text)

@@ -25,6 +25,8 @@ from _local_package import load_local_package
 
 load_local_package()
 
+from omh.converter import convert_from_dir, convert_references_from_dir, convert_skill, discover_skill_files
+from omh.core.errors import OmhError
 from omh.installer import (
     install_skill_pack,
     installed_skill_directories,
@@ -169,6 +171,77 @@ class InstalledLayoutTests(unittest.TestCase):
 
             uninstall_skill_pack(paths, remove_files=True)
             self.assertFalse(apple_dir.exists())
+
+    def test_local_source_ignores_stale_omc_skill_and_reference_copies(self) -> None:
+        raw = "---\nname: omh-browser\n---\nsource-sentinel\n"
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            skill = source / "skills/omh-browser/SKILL.md"
+            reference = skill.parent / "references/procedure.md"
+            reference.parent.mkdir(parents=True)
+            skill.write_text(raw, encoding="utf-8")
+            reference.write_bytes(b"source-reference-sentinel\n")
+            stale = source / ".omc/artifacts/producer-output/skills/omh-browser/SKILL.md"
+            stale_reference = stale.parent / "references/procedure.md"
+            stale_reference.parent.mkdir(parents=True)
+            stale.write_text(raw + "stale-sentinel\n", encoding="utf-8")
+            stale_reference.write_text("stale-reference-sentinel\n", encoding="utf-8")
+
+            self.assertEqual(discover_skill_files(source), [skill])
+            template = convert_skill(raw, skill.parent.name)
+            self.assertEqual(convert_from_dir(source), [template])
+            references = convert_references_from_dir(source)
+            self.assertEqual(
+                [(item.skill_name, item.relative_path, item.content) for item in references],
+                [(template.name, "references/procedure.md", reference.read_text(encoding="utf-8"))],
+            )
+            paths = resolve_paths(root / ".omh", root / ".hermes")
+            manifest = install_skill_pack(paths, source="local", source_dir=source, profile="full")
+            installed = paths.skills_dir / skill_install_relative_dir(template.name)
+            self.assertEqual((installed / "SKILL.md").read_bytes(), template.content.encode("utf-8"))
+            self.assertEqual([record["name"] for record in manifest["skills"]], [template.name])
+            (installed / "references/procedure.md").unlink()
+            install_skill_pack(paths, source="local", source_dir=source, profile="full")
+            self.assertEqual((installed / "references/procedure.md").read_bytes(), reference.read_bytes())
+            self.assertEqual(stale.read_text(encoding="utf-8"), raw + "stale-sentinel\n")
+
+    def test_local_source_discovery_preserves_explicit_sources_and_claude_skills(self) -> None:
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp) / ".omc/artifacts/explicit-source"
+            skill = source / ".claude/skills/team-local/SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_text("---\nname: team-local\n---\n", encoding="utf-8")
+            ignored = source / ".git/archived/SKILL.md"
+            ignored.parent.mkdir(parents=True)
+            ignored.write_bytes(skill.read_bytes())
+            self.assertEqual(discover_skill_files(source), [skill])
+            self.assertEqual([template.name for template in convert_from_dir(source)], ["team-local"])
+
+    def test_local_source_reinstall_preserves_user_modified_skills(self) -> None:
+        for managed in (False, True):
+            with self.subTest(managed=managed), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                source = root / "source"
+                source.mkdir()
+                (source / "SKILL.md").write_text("---\nname: omh-browser\n---\nsource-sentinel\n", encoding="utf-8")
+                paths = resolve_paths(root / ".omh", root / ".hermes")
+                if managed:
+                    install_skill_pack(paths, source="local", source_dir=source, profile="full")
+                target = paths.skills_dir / skill_install_relative_dir("browser-operator") / "SKILL.md"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                user_bytes = b"user-edited-sentinel\n"
+                target.write_bytes(user_bytes)
+                manifest_before = paths.manifest_path.read_bytes() if managed else None
+
+                with self.assertRaises(OmhError):
+                    install_skill_pack(paths, source="local", source_dir=source, profile="full")
+
+                self.assertEqual(target.read_bytes(), user_bytes)
+                if managed:
+                    self.assertEqual(paths.manifest_path.read_bytes(), manifest_before)
+                else:
+                    self.assertFalse(paths.manifest_path.exists())
 
     def test_the_manifest_records_the_categorized_path(self) -> None:
         with TemporaryDirectory() as tmp:

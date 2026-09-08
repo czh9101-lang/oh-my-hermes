@@ -333,12 +333,14 @@ class AttemptStore:
         connection: sqlite3.Connection | None = None
         try:
             self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            # connect installs SQLite's busy handler; do not repeat it via SQL.
+            # Fail closed sooner under contention: native sleeps can overshoot
+            # this retry budget, which is not a whole-operation deadline.
             connection = sqlite3.connect(
                 self.database_path,
-                timeout=0.05,
+                timeout=0.01,
                 isolation_level=None,
             )
-            connection.execute("PRAGMA busy_timeout = 50")
             connection.execute("PRAGMA journal_mode = DELETE")
             connection.execute("PRAGMA synchronous = FULL")
             connection.execute("PRAGMA foreign_keys = ON")

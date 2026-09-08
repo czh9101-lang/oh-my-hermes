@@ -2757,7 +2757,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The user only needs a file, deck, PDF, spreadsheet, HWP, or attachment package; use `materials-package` or `deliverable-package`.
   - The user only needs an image card or infographic prompt; use `img-summary`.
   - The user asks to mark a UI as visually passed without fresh rendered evidence; use `visual-qa` and keep PASS blocked until observed.
-- Strong routing signals: `frontend`, `front-end`, `front end`, `frontend skill`, `web ui`, `ui ux`, `ui/ux`, `landing page`, `web app layout`, `responsive layout`, `responsive design`, `design system`, `component polish`, `layout polish`, `visual polish`, `styling`, `animation`, `motion design`, `accessibility`, `wcag`, `lighthouse`, `core web vitals`, `make it beautiful`, `make it premium`, `make it less ai`, `ai-looking ui`, `ai slop ui`, `generic ui`, `broken layout`, `layout broken`, `frontend qa`, `frontend layout`, `tui design`, `terminal ui design`, `tui layout`, `フロントエンド`, `ランディングページ`, `レスポンシブ対応`, `デザインシステム`, `画面のUI実装`, `프론트엔드`, `웹 ui`, `웹 화면`, `랜딩페이지`, `레이아웃`, `레이아웃 깨짐`, `깨짐`, `디자인 자연스럽게`, `자연스러운 디자인`, `화려하게`, `고급스럽게`, `ai 티`, `ai틱`, `ai 틱`, `반응형`, `접근성`, `前端`, `落地页`, `响应式布局`, `设计系统`
+- Strong routing signals: `frontend`, `front-end`, `front end`, `frontend skill`, `web ui`, `ui ux`, `ui/ux`, `landing page`, `web app layout`, `responsive layout`, `responsive design`, `design system`, `component polish`, `layout polish`, `visual polish`, `styling`, `animation`, `motion design`, `smooth scroll`, `smooth scrolling`, `scroll animation`, `scroll animations`, `parallax scroll`, `parallax hero`, `parallax effect`, `accessibility`, `wcag`, `lighthouse`, `core web vitals`, `make it beautiful`, `make it premium`, `make it less ai`, `ai-looking ui`, `ai slop ui`, `generic ui`, `broken layout`, `layout broken`, `frontend qa`, `frontend layout`, `tui design`, `terminal ui design`, `tui layout`, `フロントエンド`, `ランディングページ`, `レスポンシブ対応`, `デザインシステム`, `画面のUI実装`, `スムーススクロール`, `スクロールアニメーション`, `パララックス`, `프론트엔드`, `웹 ui`, `웹 화면`, `랜딩페이지`, `레이아웃`, `레이아웃 깨짐`, `깨짐`, `디자인 자연스럽게`, `자연스러운 디자인`, `화려하게`, `고급스럽게`, `부드러운 스크롤`, `스크롤 부드럽게`, `스크롤 애니메이션`, `패럴랙스`, `ai 티`, `ai틱`, `ai 틱`, `반응형`, `접근성`, `前端`, `落地页`, `响应式布局`, `设计系统`, `平滑滚动`, `滚动动画`, `视差滚动`
 - Good example:
   - Prompt: frontend 이 대시보드가 AI 티 안 나게 레이아웃과 디자인 시스템을 잡아줘.
   - Expected behavior: Prepare frontend_design_brief/v1, design_system_contract/v1, route/state matrix, implementation handoff, and visual_qa_required/v1.
@@ -2774,6 +2774,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Use references and domain fit to avoid generic AI-looking frontend output; when the user supplies a visual reference, load `references/reference-token-extraction.md` and extract tokens into the contract instead of eyeballing.
   - Prepare a concrete design-system contract before implementation handoff: load `references/design-system-contract.md` and write DESIGN.md before the first component — no component code before the contract exists.
   - Query the local design reference data before fixing tokens: `omh design data --kind palette|font|ux --context <product context>` returns curated palettes, font stacks with CJK notes, and UX guidelines offline. Those rows inform DESIGN.md; the contract, not the query, still gates the code.
+  - Scroll-driven motion is a decision with a bill: load `references/scroll-motion-libraries.md`, take the native path (CSS `scroll-behavior`, scroll-driven animations, `IntersectionObserver`, scroll-snap) unless one interpolated scroll position feeds several consumers, and when a library is chosen (Lenis is the reviewed record) name its reduced-motion branch, anchors, nested scroll, teardown, and INP budget in the contract.
   - For first-time UI creation, name the initial generation branch, reference direction, reusable primitives, state coverage, and required visual QA path.
   - Cover responsive layout, empty/loading/error states, hover/focus/active states, CJK text, accessibility, and performance expectations.
   - State performance as a budget, not an adjective: load `references/web-vitals-budgets.md`, name one metric with its published bar (LCP, INP, CLS), the device and network class it is judged on, the route and load shape, and the baseline captured under that same profile - before the change. A budget chosen after seeing the result describes what happened instead of gating it.
@@ -2831,6 +2832,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Require a design-system contract before broad visual changes.
   - For greenfield UI, require an initial generation contract before implementation handoff so the first generated screen has tokens, references, primitives, states, and QA expectations.
   - Require fresh rendered evidence after the last UI edit before PASS.
+  - Do not hand off a smooth-scroll integration without its reduced-motion branch, keyboard/anchor/nested-scroll behavior, and teardown named; a `respectReducedMotion` option covers the library own scroll, never the animations the project wrote.
   - Do not report a Core Web Vitals number without the device class, route, and load shape it was measured under; a figure from a different profile than the baseline is not a comparison.
   - For Korean/CJK text, clipped glyphs, awkward line breaks, orphan particles, tiny copy, and overflow block visual QA.
   - Do not call external design, image, browser, LLM, or network services from OMH core.
@@ -7307,15 +7309,16 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Separate prepared guidance from observed platform, runtime, connector, file, memory, or delivery evidence.
   - Expose missing tools, credentials, targets, or observations as user-visible gaps.
 - Completion checklist:
-  - The target URL, allowed interactions, prohibited interactions, auth boundary, and stop condition are explicit.
-  - Credentials, login, payment, purchase, destructive submission, scraping, and data export are gated or marked missing.
+  - Specify URL, allowed/prohibited actions, auth boundary, stop condition.
+  - Gate credentials/login/payment/purchase/destruction/scraping/export; observed traces only.
+  - Host request admission (not enablement/adapter presence) gates schemas/context/callbacks/writes. Refuse foreign/stale/expired/released/ambiguous targets; no index fallback.
+  - omh_browser blocks native browser_*; inert by default. Opted-in effects need exact approval: docs/BROWSER-EFFECTS.md.
 - Recovery notes:
-  - If no URL or target page is supplied, ask for the smallest target first.
-  - If login, payment, destructive mutation, or credential use is requested, require an explicit confirmation gate.
-  - If the request is visual correctness rather than page operation, route to visual-qa.
-  - Keep a host receipt BLOCK for production clicks or submits, a retry after an auth, 4xx, assertion, or mutation failure, or more than two transient read-only retries.
-  - The shipped POSIX native agent-browser collector supports only anonymous read-only Chromium on a cold desktop profile; any other engine, profile, fixture, locale, or timezone yields a named blocker such as unsupported_browser_engine_webkit, not a substitution.
-  - If a promoted skill's source trace drifts, `promotion status` unlinks only the managed SKILL.md and keeps generations and receipts; no autoheal, watch, or global fallback exists.
+  - Missing target/confirmation: ask; visual correctness: visual-qa.
+  - Refresh stale state once; never replay unknown work. Reuse acquisitions; only owner adapter/version reaps. Release needs observed cleanup, not mutation approval.
+  - Host receipt BLOCK: production click/submit, retry after auth/4xx/assertion/mutation failure, or over two transient read-only retries.
+  - POSIX native agent-browser collector: cold-desktop anonymous read-only Chromium only; other engine/profile/fixture/locale/timezone: named blocker (unsupported_browser_engine_webkit), never substitution.
+  - Trace drift: `promotion status` unlinks only managed SKILL.md, keeps generations/receipts; no autoheal/watch/global fallback.
 - Required inputs:
   - user request
   - target context
@@ -7327,16 +7330,20 @@ These surfaces are generated command references, not installed Hermes workflow s
   - browser_auth_boundary/v1
   - browser_observation_manifest/v1 when observed
   - browser_confirmation_gate/v1 when destructive
+  - browser_adapter_capabilities/v1 when acquired
+  - browser_session_lease/v1 when acquired
+  - browser_page_state/v1 when observed
   - next action
   - prepared-vs-observed boundary
 - Artifact expectations:
-  - browser_task_card/v1 metadata-only wrapper card when prepared
-  - browser_interaction_scope/v1 with target URL, allowed actions, stop condition, and prohibited actions
-  - browser_auth_boundary/v1 separating supplied credentials, missing credentials, and credential-use prohibition
-  - browser_observation_manifest/v1 only when screenshots, DOM notes, console/network traces, or click traces are observed
-  - browser_skill_promotion/v1 only after `omh web-qa promotion diff`, `approve` of that exact diff digest, and `promote` of one receipt; SKILL.md is the single visibility commit
+  - browser_task_card/v1 metadata only
+  - browser_interaction_scope/v1: URL, allowed/prohibited actions, stop condition
+  - browser_auth_boundary/v1: supplied/missing/prohibited credentials
+  - browser_observation_manifest/v1: observed screenshots/DOM notes/console/network/click traces only
+  - Leases: docs/BROWSER-ADAPTER.md; owner/adapter/version/task scope, cached capabilities, digest-only state, exact revision handles.
+  - browser_skill_promotion/v1: `omh web-qa promotion diff`, `approve` its exact digest, then `promote` one receipt; SKILL.md alone commits visibility
 - Safety rules:
-  - A browser operator card is not browser launch, login, credential validation, page mutation, form submission, purchase/payment/destructive action, screenshot, scraping, or successful interaction evidence unless an observed browser trace records it.
+  - Cards prove no execution. Gate credentials and destructive actions; require observed traces.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
 
 ### workspace-file-operator
@@ -11466,6 +11473,7 @@ Keep public docs accurate, installable, and aligned with actual behavior.
 - Quality tier: `claim-gated`
 - Quality bar:
   - Check public claims against implemented behavior and known limitations.
+  - Run `omh docs claims --check --json` for enrolled claims and consume supported/stale/unresolved/not_run rows with their page, implementation anchor, and repair owner. Keep `omh release drift --json` as separate generated evidence; use docs/DOCUMENTATION-CLAIMS.md for the bounded audit contract.
   - Keep examples reproducible and avoid presenting roadmap as current capability.
   - Regenerate generated references from catalog data instead of hand-editing them.
   - When Hermes owns coding, use `hermes_coding_harness/v1` docs lane state before saying docs sync, PR prep, review, or CI evidence exists.
@@ -11478,6 +11486,7 @@ Keep public docs accurate, installable, and aligned with actual behavior.
   - README/docs updates
   - examples
   - troubleshooting notes
+  - documentation_claim_audit/v1
 - Stop conditions:
   - docs match behavior
   - claims are conservative
@@ -11502,6 +11511,7 @@ Keep public docs accurate, installable, and aligned with actual behavior.
 - Privacy default: `metadata_only`
 - Overclaim guards:
   - Documentation of a future surface is not proof that evidence was observed.
+  - Catalog enrollment and prepared doc edits are prepared_not_observed, not an observed claim audit. Only returned probe facts support deterministic claims; optional model judgments stay advisory and never become release gates.
   - Generated docs must match catalog data before release claims are made.
 - Fallback: If behavior is not implemented yet, label it as roadmap instead of current capability.
 

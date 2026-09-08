@@ -275,9 +275,36 @@ def cmd_harness_validate(args: argparse.Namespace) -> int:
     return 0 if result["ok"] else 1
 
 
+def cmd_docs_claims(args: argparse.Namespace) -> int:
+    from ..maintenance.documentation_claims import documentation_claims_report, format_documentation_claims
+
+    try:
+        payload = documentation_claims_report(
+            root=Path(args.root), claim_ids=tuple(args.claim) if args.claim else None,
+            enable_model=args.enable_model, model_run_cap=args.model_run_cap, timeout=args.timeout,
+        )
+    except ValueError as exc:
+        raise OmhError(str(exc)) from exc
+    if args.json:
+        _print_json(payload)
+    else:
+        print(format_documentation_claims(payload))
+    return 1 if args.check and not payload["ok"] else 0
+
+
 def _add_docs_commands(sub) -> None:
     docs = sub.add_parser("docs", help="Render or check generated OMH workflow reference docs.")
     docs_sub = docs.add_subparsers(dest="docs_command", required=True)
+
+    claims = docs_sub.add_parser("claims", help="Audit reviewed public claims against bounded local implementation probes (maintainers).")
+    claims.add_argument("--check", action="store_true", help="Exit 1 for selected deterministic stale or unresolved claims; model judgments are advisory.")
+    claims.add_argument("--json", action="store_true")
+    claims.add_argument("--claim", action="append", help="Select a reviewed claim ID; repeat for multiple claims. Default: enrolled deterministic set.")
+    claims.add_argument("--root", default=".", help="Trusted source tree containing enrolled pages and implementation anchors.")
+    claims.add_argument("--timeout", type=float, default=10, help="Per-check deadline in seconds (maximum 30).")
+    claims.add_argument("--enable-model", action="store_true", help="Explicit advisory opt-in, requires --claim. Core CLI has no provider adapter: reports not_run.")
+    claims.add_argument("--model-run-cap", type=int, default=1, help="Advisory run cap (0-3); never a release gate.")
+    claims.set_defaults(func=cmd_docs_claims)
 
     docs_workflows = docs_sub.add_parser("workflows")
     docs_workflows.add_argument("--output", default=None)

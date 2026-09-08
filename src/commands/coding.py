@@ -2862,10 +2862,12 @@ def _add_failure_recovery_arguments(parser) -> None:
 
 def _add_coding_commands(sub) -> None:
     from .paired_run import add_coding_paired_run_command
+    from .work_campaign import add_work_campaign_command
 
     coding = sub.add_parser("coding", help="Prepare executor-neutral or tracked coding handoff artifacts.")
     coding_sub = coding.add_subparsers(dest="coding_command", required=True)
     add_coding_paired_run_command(coding_sub)
+    add_work_campaign_command(coding_sub)
 
     fanout = coding_sub.add_parser(
         "fanout",

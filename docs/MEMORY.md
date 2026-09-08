@@ -875,8 +875,13 @@ rendered off the hot path and re-ranked after each turn:
 3. `<memory_records>`: replay-eligible `project_memory_record/v2` records with
    a matching immutable review, ranked by token overlap with the conversation's
    latest message (tag hits weigh extra), then newest approval, cut to six
-   records and 2,400 characters. Each cut is named in place
-   (`render_budget_exhausted`, `record_limit_reached`), never dropped silently.
+   records and 2,400 characters including tags, separators, escaped text, and
+   omission reports. Cuts are aggregated by reason (`render_budget_exhausted`,
+   `record_limit_reached`) with exact counts instead of one line per record.
+   Space for both reports is reserved before selecting multiple records; record
+   ids and types are never shortened to fit, and the existing approval-date and
+   summary projections stay unchanged. A custom budget
+   too small for the omission report returns no section and a zero count.
 
 Records are read from the project store (`<repository>/.omh/memory/records/`
 for the nearest `.git` above the working directory) and then the user store
@@ -933,6 +938,16 @@ The ranking inputs do not expand eligibility or establish truth:
 
 Dreaming prepares a reminder and metadata-only evidence. It never invokes a
 model or performs consolidation, retirement, restore, or prune.
+
+For agents and operators, `omh_memory(action="consolidation")` reads the latest
+recorded brief and scheduler counters without starting a provider session or
+evaluating triggers. It returns `evaluated: false`; `due` and the brief's other
+fields are present only when a readable brief exists. No brief is not evidence
+that nothing is due. Repeated status queries leave counters, suppression state,
+and the pending brief unchanged. `omh memory dream` is likewise read-only;
+explicit `omh memory dream --evaluate` evaluates once under the `manual` trigger
+and may write a reminder. Provider lifecycle hooks retain their scheduled
+evaluation behavior.
 
 ### How a brief reaches the model and the user
 

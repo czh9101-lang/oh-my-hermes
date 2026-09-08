@@ -223,7 +223,8 @@ class TuiSubagentDagModeTests(unittest.TestCase):
 
         native = {
             "status": "observed",
-            "rows": [{"task_id": "native-1", "state": "running"}],
+            "scope": "global",
+            "rows": [{"task_id": "native-1", "state": "running", "scope": "global"}],
             "active": 1,
             "running": 1,
             "blocked": 0,
