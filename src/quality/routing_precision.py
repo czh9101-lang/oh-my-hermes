@@ -1353,6 +1353,41 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "",
         "sales-pipeline-review",
     ),
+    # Point-in-time web evidence (#1403). The guard needs a cutoff or capture
+    # phrase *and* a web context: "as of" alone is how people report status
+    # and ask what a term means, and "snapshot" or "archived" alone name
+    # tests and buckets, so none of these may reach the lookup lane.
+    RoutingPrecisionCase(
+        "as-of-status-report-stays-out-of-web-research",
+        "A status report that happens to say as-of does not open point-in-time research",
+        "as of today I'm done with the migration",
+        "answer_clarification",
+        "",
+        "web-research",
+    ),
+    RoutingPrecisionCase(
+        "as-of-concept-question-stays-direct",
+        "A definition question about the phrase as-of stays direct",
+        "what does 'as of' mean in a contract?",
+        "answer_directly",
+        "direct_answer",
+    ),
+    RoutingPrecisionCase(
+        "jest-snapshot-failure-stays-out-of-web-research",
+        "A snapshot-test failure does not open point-in-time research",
+        "snapshot testing in jest keeps failing",
+        "answer_clarification",
+        "",
+        "web-research",
+    ),
+    RoutingPrecisionCase(
+        "archived-logs-stay-out-of-web-research",
+        "Archived logs in a bucket are not an archived web capture",
+        "the archived logs are in the old bucket",
+        "answer_clarification",
+        "",
+        "web-research",
+    ),
 )
 
 
@@ -4398,6 +4433,50 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "prepare_sales_pipeline_review",
         "sales_pipeline_review",
         "sales-pipeline-review",
+    ),
+    # Point-in-time web evidence (#1403). Before the guard, a pricing noun
+    # sent the as-of question to research-brief, a page noun to the browser
+    # operator, and the Korean archive-capture request to the workspace file
+    # operator; each would have answered from a live page.
+    RoutingInterventionCase(
+        "as-of-pricing-page-reaches-web-research",
+        "An as-of question about a vendor page reaches the web lookup lane, not a market brief",
+        "what did the vendor pricing page say as of 2026-06-01? use archived captures and cite them",
+        "dispatch",
+        "web-research",
+        "run_hermes_research",
+        "web_research",
+        "web-research",
+    ),
+    RoutingInterventionCase(
+        "then-versus-now-snapshot-reaches-web-research",
+        "A then-versus-now snapshot comparison reaches the web lookup lane, not the browser operator",
+        "then versus now: what changed on their pricing page since the archived capture",
+        "dispatch",
+        "web-research",
+        "run_hermes_research",
+        "web_research",
+        "web-research",
+    ),
+    RoutingInterventionCase(
+        "page-as-it-was-reaches-web-research",
+        "A page-as-it-was request reaches the web lookup lane instead of clarification",
+        "show me the page as it was on 2026-06-01",
+        "dispatch",
+        "web-research",
+        "run_hermes_research",
+        "web_research",
+        "web-research",
+    ),
+    RoutingInterventionCase(
+        "korean-archive-capture-reaches-web-research",
+        "A Korean as-of archive-capture request reaches the web lookup lane, not the file operator",
+        "2026년 6월 1일 기준으로 그 페이지에 뭐라고 써 있었는지 아카이브 캡처로 확인해줘",
+        "dispatch",
+        "web-research",
+        "run_hermes_research",
+        "web_research",
+        "web-research",
     ),
 )
 

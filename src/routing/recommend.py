@@ -107,6 +107,10 @@ _GUARDRAIL_CANDIDATE_INJECTION_IDS = frozenset(
         "safe_feature_change_before_generic_plan",
         "img_summary_before_materials_or_delivery",
         "paper_learning_before_materials_or_research_ops",
+        # An as-of question names a page and a date, not a research verb, so
+        # the web lookup lane scores 0 on it until the guard supplies the
+        # candidate its boost lands on.
+        "point_in_time_web_before_live_lookup",
         "source_finder_before_generic_web_research",
         "toolbelt_readiness_before_generic_or_visual_fallback",
         "voice_operator_before_generic_clarification",

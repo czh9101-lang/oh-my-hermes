@@ -29,6 +29,12 @@ from ..routing.catalog_questions import is_skill_catalog_question as _is_skill_c
 from ..routing.chat import public_chat_route_payload, route_explanation_payload
 from ..routing.coding_route_actions import coding_route_decision_payload, resolve_coding_route_decision
 from ..routing.localization import normalized_phrase
+from ..routing.policy import POINT_IN_TIME_WEB_GUARD
+from ..workflows.temporal_source_receipts import (
+    TEMPORAL_EVIDENCE_SURFACES_SCHEMA_VERSION,
+    TEMPORAL_RETRIEVAL_GAP_SCHEMA_VERSION,
+    TEMPORAL_SOURCE_RECEIPT_SCHEMA_VERSION,
+)
 from ..routing.owner_preference import (
     read_owner_preference,
     record_accepted_explicit_choice,
@@ -5102,6 +5108,31 @@ def _route_is_delivery_capability_request(route_payload: dict[str, object]) -> b
     return False
 
 
+# What a research card carries when the request is point-in-time: the receipt
+# every historical claim must cite, the two-surface split a then-versus-now
+# answer keeps, and the gap shape an unbacked claim falls into. Constants, not
+# observations -- the card prepares the contract, it retrieves nothing.
+_POINT_IN_TIME_RESEARCH_STATE: dict[str, object] = {
+    "receipt_schema": TEMPORAL_SOURCE_RECEIPT_SCHEMA_VERSION,
+    "surfaces_schema": TEMPORAL_EVIDENCE_SURFACES_SCHEMA_VERSION,
+    "gap_schema": TEMPORAL_RETRIEVAL_GAP_SCHEMA_VERSION,
+    "historical_claims_require_receipt": True,
+    "live_page_is_historical_evidence": False,
+    "missing_capture_resolution": "abstain_with_unresolved_annex_gap",
+    "network_action": "none",
+}
+
+
+def _route_is_point_in_time_web_request(route_payload: dict[str, object]) -> bool:
+    for recommendation in route_payload.get("recommendations", []):
+        if not isinstance(recommendation, dict):
+            continue
+        matched = {str(item) for item in recommendation.get("matched", []) if str(item)}
+        if POINT_IN_TIME_WEB_GUARD.matched_label in matched:
+            return True
+    return False
+
+
 def _route_is_coding_status_request(route_payload: dict[str, object]) -> bool:
     reason = str(route_payload.get("reason", "")).lower()
     if "coding progress questions" in reason or "progress/status" in reason:
@@ -5924,6 +5955,31 @@ def build_chat_response_from_route(
         if selected == "research" or policy_next_action == "run_hermes_research":
             evidence_boundary = str(policy.get("evidence_boundary", "")) or "A web research card is not source retrieval evidence."
             copy = chat_copy("web_research", locale=copy_locale)
+            research_state: dict[str, object] = {
+                "route_action": action,
+                "confidence": decision.get("confidence", "low"),
+                "selected_workflow": selected,
+                "workflow_explanation_reason": workflow_explanation_reason,
+                "policy_next_action": policy_next_action,
+                "artifact_schema": "web_research_brief/v1",
+                "observation_schema": "source_observation/v1",
+                "research_scope": "source_backed_current_evidence",
+                "evidence_not_observed": [
+                    "source retrieval",
+                    "source access",
+                    "citation verification",
+                    "source diversity",
+                    "freshness confirmation",
+                    "downstream plan or handoff",
+                ],
+            }
+            if _route_is_point_in_time_web_request(decision):
+                research_state["research_scope"] = "point_in_time_web_evidence"
+                research_state["temporal_evidence"] = dict(_POINT_IN_TIME_RESEARCH_STATE)
+                research_state["evidence_not_observed"] = [
+                    "archive capture retrieval",
+                    *research_state["evidence_not_observed"],
+                ]
             return _chat_response(
                 kind="web_research",
                 headline=copy.headline,
@@ -5940,24 +5996,7 @@ def build_chat_response_from_route(
                     _action("show_status", "Show status", "secondary"),
                 ],
                 claim_boundary=evidence_boundary,
-                extra_state={
-                    "route_action": action,
-                    "confidence": decision.get("confidence", "low"),
-                    "selected_workflow": selected,
-                    "workflow_explanation_reason": workflow_explanation_reason,
-                    "policy_next_action": policy_next_action,
-                    "artifact_schema": "web_research_brief/v1",
-                    "observation_schema": "source_observation/v1",
-                    "research_scope": "source_backed_current_evidence",
-                    "evidence_not_observed": [
-                        "source retrieval",
-                        "source access",
-                        "citation verification",
-                        "source diversity",
-                        "freshness confirmation",
-                        "downstream plan or handoff",
-                    ],
-                },
+                extra_state=research_state,
             )
         if policy_next_action == "run_setup_guide":
             evidence_boundary = str(policy.get("evidence_boundary", "")) or (
