@@ -150,6 +150,46 @@ class HudConversationScopeTests(unittest.TestCase):
         self.assertEqual(result['todo']['title'], 'Private plan')
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for the widget boundary')
+    def test_scoped_activity_rows_fit_and_keep_token_columns(self):
+        widget = self.root / 'widget.mjs'
+        widget.write_bytes(widget_payload(Path(sys.executable)))
+        script = """
+import register from './widget.mjs';
+const apps = [], lines = [];
+const h = (tag, props, ...children) => {
+  if (typeof tag === 'function') {
+    const text = tag(props);
+    if (tag.name === 'ActivityRow') lines.push(text);
+    return text;
+  }
+  return children.flat(Infinity).filter(x => x != null).join('');
+};
+register({Box:'box', Text:'text', h, defineWidgetApp: app => {apps.push(app); return app}, openWidget:()=>{}, updateWidget:()=>{}});
+const app = apps.find(x => x.id === 'omh-status');
+const results = [];
+for (const cols of [80, 100]) {
+  for (const model of ['', 'gpt', 'claude-fable-5-1:xhigh'])
+  for (const scopes of [['global', 'global'], ['session', 'session'], ['global', 'session']]) {
+    lines.length = 0;
+    const rows = scopes.map((scope, i) => ({scope, model, task_id:`worker${i}`, action:'A long action title that must yield to the token column', state:'done', elapsed_seconds:12, tokens:12345}));
+    app.render({cols, rows:30, state:{payload:{privacy:'metadata_only', active:true, subagents:{rows}, maestro:{rows:[]}}}, t:{color:{}}});
+    results.push({cols, scopes, lines:[...lines]});
+  }
+}
+console.log(JSON.stringify(results));
+"""
+        result = subprocess.run(['node', '--input-type=module', '-e', script], cwd=self.root,
+                                text=True, capture_output=True, check=True)
+        for case in json.loads(result.stdout):
+            with self.subTest(columns=case['cols'], scopes=case['scopes']):
+                self.assertEqual(len(case['lines']), 2)
+                for scope, line in zip(case['scopes'], case['lines']):
+                    self.assertIn('[global]' if scope == 'global' else '[this chat]', line)
+                    self.assertIn('12.3k tokens', line[:case['cols']])
+                    self.assertLessEqual(len(line), case['cols'] - 2)
+                self.assertEqual(*[line.index('12.3k tokens') for line in case['lines']])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for the widget boundary')
     def test_widget_renders_owned_rows_and_explicit_global_fallback(self):
         # Run the shipped widget's actual Python reader, not a replica of its kwargs.
         self.build()

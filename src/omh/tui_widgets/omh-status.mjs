@@ -343,7 +343,8 @@ export default function register(sdk) {
     return { compact: Math.max(width.compact, cellWidth(routeCompact(text))), full: Math.max(width.full, cellWidth(text)) }
   }, { compact: 0, full: 0 })
 
-  const activityLayout = (row, columns, main, extraSeconds, tokensColumn, routeColumn) => {
+  const scopeLabel = row => row.scope === 'global' ? '[global] ' : row.scope === 'session' ? '[this chat] ' : ''
+  const activityLayout = (row, columns, main, extraSeconds, tokensColumn, routeColumn, scopeWidth) => {
     const state = safeText(row.state) || 'running'
     const stateText = columns < 100 ? ({ running: 'run', blocked: 'block', failed: 'fail' })[state] || state : state
     const taskId = truncateCells(safeText(row.task_id) || safeText(row.role) || 'agent', 8).padEnd(8)
@@ -403,7 +404,8 @@ export default function register(sdk) {
     // so they render as two pieces: same cells as before, split at the dot.
     const tailRest = ` · ${padCells(elapsedText(elapsed) || '0s', 7)}`
     const tailTokens = tokensColumn ? tokensPiece : ''
-    const prefix = `${taskId} `
+    const scope = padCells(scopeLabel(row), scopeWidth)
+    const prefix = `${scope}${taskId} `
     const separator = '  ·  '
     const budget = Math.max(24, columns - 4)
     // The route column exists per LIST, exactly like the tokens column: a
@@ -417,6 +419,9 @@ export default function register(sdk) {
     // title is what shrinks. `architect(claude-fable-5-1:xhigh)` still says
     // which lane, model and effort ran; `category:architect(claude-` does not.
     const routeRoom = budget - cellWidth(prefix) - tailWidth - cellWidth(separator) - 8 - 2
+    // If even the compact identity cannot fit beside a four-cell title,
+    // omit the whole shared route column rather than clipping the token tail.
+    if (routeColumn.compact > routeRoom + 4) routeColumn = { compact: 0, full: 0 }
     const routeShedPrefix = routeColumn.full > routeRoom
     const routeCap = routeShedPrefix ? routeColumn.compact : routeColumn.full
     const routeWidth = routeCap ? cellWidth(separator) + routeCap : 0
@@ -447,12 +452,13 @@ export default function register(sdk) {
       tailRest,
       tailState,
       tailTokens,
+      scope,
       taskId: main ? 'MAIN'.padEnd(8) : taskId,
     }
   }
 
-  function ActivityRow({ columns, extraSeconds, frame, main, row, routeColumn, t, tokensColumn }) {
-    const layout = activityLayout(row, columns, main, extraSeconds, tokensColumn, routeColumn)
+  function ActivityRow({ columns, extraSeconds, frame, main, row, routeColumn, scopeWidth, t, tokensColumn }) {
+    const layout = activityLayout(row, columns, main, extraSeconds, tokensColumn, routeColumn, scopeWidth)
     const blocked = row.state === 'blocked' || row.state === 'failed'
     const done = row.state === 'done'
     const marker = blocked ? '▲' : done ? '✓' : SPINNER_FRAMES[frame % SPINNER_FRAMES.length]
@@ -461,7 +467,7 @@ export default function register(sdk) {
       Text,
       { wrap: 'truncate-end' },
       h(Text, { color: blocked ? t.color.error : done ? t.color.ok : t.color.warn }, `${marker} `),
-      h(Text, { color: t.color.muted }, `${row.scope === 'global' ? '[global] ' : row.scope === 'session' ? '[this chat] ' : ''}${layout.taskId} `),
+      h(Text, { color: t.color.muted }, `${layout.scope}${layout.taskId} `),
       h(Text, { color: t.color.text }, layout.action),
       // Identity, then the measured block, then the rest. The route column
       // and the state/elapsed/tokens tail are fixed widths, so those figures
@@ -530,6 +536,8 @@ export default function register(sdk) {
     // it is what the fixed tail is anchored against, so every row reserves
     // it as soon as one row has a route to show.
     const routeColumn = routeColumnWidth([...mainRows, ...rows])
+    // Scope is a shared column too: mixed ownership must not shift the tail.
+    const scopeWidth = Math.max(0, ...[...mainRows, ...rows].map(row => cellWidth(scopeLabel(row))))
     return h(
       Box,
       { flexDirection: 'column', width: '100%' },
@@ -541,6 +549,7 @@ export default function register(sdk) {
           key: `main-${index}`,
           main: true,
           routeColumn,
+          scopeWidth,
           row,
           t,
           tokensColumn,
@@ -553,6 +562,7 @@ export default function register(sdk) {
           frame,
           key: `${safeText(row.task_id)}-${index}`,
           routeColumn,
+          scopeWidth,
           row,
           t,
           tokensColumn,
