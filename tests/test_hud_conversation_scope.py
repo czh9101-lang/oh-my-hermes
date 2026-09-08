@@ -179,7 +179,8 @@ for (const cols of [80, 100]) {
 console.log(JSON.stringify(results));
 """
         result = subprocess.run(['node', '--input-type=module', '-e', script], cwd=self.root,
-                                text=True, capture_output=True, check=True)
+                                encoding='utf-8', capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
         for case in json.loads(result.stdout):
             with self.subTest(columns=case['cols'], scopes=case['scopes']):
                 self.assertEqual(len(case['lines']), 2)
@@ -204,11 +205,12 @@ console.log(JSON.stringify(results));
         script = """
 import childProcess from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
+import {pathToFileURL} from 'node:url';
 childProcess.execFile = (exe, args, opts, cb) => {
   process.stdout.write(JSON.stringify({exe, args, env: opts.env})); cb(new Error('capture'));
 };
 syncBuiltinESMExports();
-const {default: register} = await import(process.argv[1]);
+const {default: register} = await import(pathToFileURL(process.argv[1]).href);
 register({Box: 'box', Text: 'text', h: () => null, defineWidgetApp: x => x,
           openWidget: () => null, updateWidget: () => null});
 """
@@ -217,9 +219,11 @@ register({Box: 'box', Text: 'text', h: () => null, defineWidgetApp: x => x,
             if reference is not None:
                 active.write_text(json.dumps({'session_id': reference}))
             env = {**os.environ, 'HERMES_TUI_ACTIVE_SESSION_FILE': str(active)}
-            capture = subprocess.run(['node', '--input-type=module', '-e', script, str(widget)], env=env, text=True, capture_output=True, check=True)
+            capture = subprocess.run(['node', '--input-type=module', '-e', script, str(widget)], env=env, encoding='utf-8', capture_output=True)
+            self.assertEqual(capture.returncode, 0, capture.stderr)
             invocation = json.loads(capture.stdout)
-            read = subprocess.run([invocation['exe'], *invocation['args']], env=invocation['env'], text=True, capture_output=True, check=True)
+            read = subprocess.run([invocation['exe'], *invocation['args']], env=invocation['env'], encoding='utf-8', capture_output=True)
+            self.assertEqual(read.returncode, 0, read.stderr)
             rows = json.loads(read.stdout)['subagents']['rows']
             expected = {PARENT_ID: ['own'], 'other-owner': ['other0']}.get(reference or '', ['own', 'other0'])
             self.assertEqual(sorted(row['task_id'] for row in rows), sorted(expected), reference)
@@ -238,7 +242,7 @@ const globalRow = {...payload.subagents.rows[0], scope:'global', task_id:'execut
 const omh = render({...payload, active:true, subagents:{...payload.subagents, scope:'global', rows:[globalRow]}, maestro:{scope:'global', rows:[globalRow]}, graph:{scope:'global', status:'active', nodes:[{node_id:'global-node', state:'running'}]}});
 console.log(JSON.stringify({native, omh}));
 """
-            render = subprocess.run(['node', '--input-type=module', '-e', render_script, read.stdout], cwd=self.root, env=env, text=True, capture_output=True)
+            render = subprocess.run(['node', '--input-type=module', '-e', render_script, read.stdout], cwd=self.root, env=env, encoding='utf-8', capture_output=True)
             self.assertEqual(render.returncode, 0, render.stderr)
             views = json.loads(render.stdout)
             self.assertIn('[global] MAIN', views['omh'])
