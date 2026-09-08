@@ -45,6 +45,7 @@ from .policy import (
     MEMORY_NEW_CAPTURE_PHRASES,
     MEMORY_NEW_SCOPE_PHRASES,
     OMH_INVOCATION_MARKERS,
+    POINT_IN_TIME_WEB_GUARD,
     SKILL_INVOCATION_MARKERS,
     SKILL_SCOUT_CANDIDATE_ALIAS_PHRASES,
     SKILL_SCOUT_CANDIDATE_BLOCKER_PHRASES,
@@ -53,6 +54,7 @@ from .policy import (
     explicit_skill_invocation as explicit_skill_name,
     is_ambiguous_scores,
     meets_confidence_threshold,
+    point_in_time_web_guard_applies,
 )
 from .policy import _doctor_health_guard_applies
 from .policy import _explicit_skill_candidate_is_negated
@@ -4343,6 +4345,14 @@ def _operator_surface_fast_path_decision(
         routing_message
     ) and not _is_skill_scout_candidate_alias_intent(routing_message):
         return None
+    # A page, snapshot, or archive noun reaches the browser and workspace
+    # operator fast paths on its own; an as-of question about that page is a
+    # research question whose historical claims need capture receipts, so it
+    # falls through to scoring where the point-in-time guard ranks the
+    # research lanes.
+    point_in_time_web = _point_in_time_web_intent(routing_message)
+    if point_in_time_web and selected_skill not in ("research", "web-research"):
+        return None
     preempting_skills = (
         _web_research_preempting_skills(routing_message)
         if selected_skill in ("research", "web-research")
@@ -4363,6 +4373,8 @@ def _operator_surface_fast_path_decision(
     selected_harness = primary_harness_for_skill(selected_skill)
     definition = _skill_definition_by_name(selected_skill)
     extra_markers = _operator_surface_extra_markers(selected_skill, phrase)
+    if point_in_time_web:
+        extra_markers = (*extra_markers, POINT_IN_TIME_WEB_GUARD.matched_label)
     matched = (marker, *extra_markers, _operator_surface_phrase_marker(marker, phrase))
     score = _operator_surface_score(selected_skill, extra_markers)
     why = _operator_surface_reason(reason, extra_markers)
@@ -4432,6 +4444,11 @@ def _ai_usability_research_fast_path_match(message: str) -> tuple[str, str, str,
 def _ai_usability_research_cue_matches(cue: str, text: str, compact: str, tokens: set[str]) -> bool:
     normalized = _fast_path_text(cue)
     return normalized in tokens if normalized == "ux" else normalized in text or _fast_path_compact(normalized) in compact
+
+
+def _point_in_time_web_intent(message: str) -> bool:
+    normalized = normalized_phrase(prepare_routing_text(message).scoring_text)
+    return point_in_time_web_guard_applies(normalized, routing_tokens(normalized))
 
 
 def _web_research_preempting_skills(message: str) -> tuple[str, ...]:
@@ -4963,6 +4980,8 @@ def _operator_surface_score(skill: str, extra_markers: tuple[str, ...]) -> int:
 
 
 def _operator_surface_reason(default_reason: str, extra_markers: tuple[str, ...]) -> str:
+    if POINT_IN_TIME_WEB_GUARD.matched_label in extra_markers:
+        return POINT_IN_TIME_WEB_GUARD.why
     if "guard:safe_feature_change" in extra_markers:
         return "Matched safe feature-change language; prepare a reviewed plan before executor handoff."
     if "guard:risky_refactor_before_cleanup" in extra_markers:

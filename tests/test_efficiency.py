@@ -235,7 +235,13 @@ class EfficiencyContractTests(unittest.TestCase):
         # ~11k standing headroom this gate is meant to carry rather than
         # clearing the measurement by a hair; the exact value stays ratcheted in
         # `FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`.
-        self.assertLess(full["skill_body"]["bytes"], 915_000)
+        # 915,000 -> 928,000: the point-in-time receipt rules on the two
+        # research lanes take the full profile to 916,459 bytes on this tree,
+        # which had only ~600 bytes of headroom left under the previous
+        # ceiling after the issue-workflow ratchet. The ceiling restores the
+        # ~11k standing headroom; the exact value stays ratcheted in
+        # `FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`.
+        self.assertLess(full["skill_body"]["bytes"], 928_000)
         self.assertLess(full["repeated"]["share_percent"], 38.0)
 
         # References are progressive disclosure, counted outside the always-loaded body.
