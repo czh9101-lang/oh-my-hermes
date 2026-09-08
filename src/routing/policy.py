@@ -11,6 +11,7 @@ from .executor_cues import (
     contains_boundary_phrase,
 )
 from .intent import classify_omh_quality_intent
+from .reference_regions import executable_routing_text
 from .localization import normalized_phrase, routing_tokens
 from .materials_cues import OFFICE_FILE_MATERIAL_PHRASES
 from .missed_route import has_normalized_missed_omh_workflow_context
@@ -5253,7 +5254,9 @@ _INVOCATION_RUN_CUES = (
 
 
 def explicit_skill_invocation(message: str, names: set[str]) -> str | None:
-    stripped = message.strip()
+    stripped = executable_routing_text(message).strip()
+    if not stripped:
+        return None
     words = [word.strip(":,").lower() for word in stripped.split()]
     if len(words) >= 3 and words[0] == "use" and words[1] in {
         "omh",

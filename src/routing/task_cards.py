@@ -4,6 +4,7 @@ from functools import lru_cache
 import re
 
 from .localization import normalized_phrase, routing_tokens
+from .reference_regions import executable_routing_text
 from .intent import META_OR_FEEDBACK_INTENTS, classify_workflow_intent
 from .policy import _doctor_health_guard_applies
 
@@ -292,11 +293,16 @@ _EXECUTOR_STATUS_META_EXCLUSION_PHRASES = (
 
 def classify_task(message: str) -> dict[str, object] | None:
     """Classify high-level user tasks before choosing lower-level workflow rails."""
-    normalized = normalized_phrase(message)
+    matching_message = executable_routing_text(message)
+    normalized = normalized_phrase(matching_message)
     compact = normalized.replace(" ", "")
-    tokens = set(routing_tokens(message, stopwords=set()))
+    tokens = set(routing_tokens(matching_message, stopwords=set()))
     tokens.update(normalized.split())
-    intent = classify_workflow_intent(message)
+    intent = classify_workflow_intent(matching_message)
+    # Outside routing context may discuss reference terms as feedback; a
+    # quoted name alone must never manufacture that task classification.
+    if intent.routing_context:
+        intent = classify_workflow_intent(message)
 
     maintenance_command = _maintenance_command(normalized, compact, tokens)
     if maintenance_command:
