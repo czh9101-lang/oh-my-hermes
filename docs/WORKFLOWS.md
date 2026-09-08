@@ -11451,6 +11451,7 @@ Keep public docs accurate, installable, and aligned with actual behavior.
 - Quality tier: `claim-gated`
 - Quality bar:
   - Check public claims against implemented behavior and known limitations.
+  - Run `omh docs claims --check --json` for enrolled claims and consume supported/stale/unresolved/not_run rows with their page, implementation anchor, and repair owner. Keep `omh release drift --json` as separate generated evidence; use docs/DOCUMENTATION-CLAIMS.md for the bounded audit contract.
   - Keep examples reproducible and avoid presenting roadmap as current capability.
   - Regenerate generated references from catalog data instead of hand-editing them.
   - When Hermes owns coding, use `hermes_coding_harness/v1` docs lane state before saying docs sync, PR prep, review, or CI evidence exists.
@@ -11463,6 +11464,7 @@ Keep public docs accurate, installable, and aligned with actual behavior.
   - README/docs updates
   - examples
   - troubleshooting notes
+  - documentation_claim_audit/v1
 - Stop conditions:
   - docs match behavior
   - claims are conservative
@@ -11487,6 +11489,7 @@ Keep public docs accurate, installable, and aligned with actual behavior.
 - Privacy default: `metadata_only`
 - Overclaim guards:
   - Documentation of a future surface is not proof that evidence was observed.
+  - Catalog enrollment and prepared doc edits are prepared_not_observed, not an observed claim audit. Only returned probe facts support deterministic claims; optional model judgments stay advisory and never become release gates.
   - Generated docs must match catalog data before release claims are made.
 - Fallback: If behavior is not implemented yet, label it as roadmap instead of current capability.
 

@@ -2344,7 +2344,7 @@ _HARNESSES = [
         "Keep public docs accurate, installable, and aligned with actual behavior.",
         "Use whenever user-facing commands, routing behavior, examples, or release posture change.",
         ("changed behavior", "commands", "limitations", "audience"),
-        ("README/docs updates", "examples", "troubleshooting notes"),
+        ("README/docs updates", "examples", "troubleshooting notes", "documentation_claim_audit/v1"),
         ("docs match behavior", "claims are conservative", "examples are reproducible"),
         ("run public-content scans", "verify commands and file references"),
         "If behavior is not implemented yet, label it as roadmap instead of current capability.",
@@ -2354,6 +2354,7 @@ _HARNESSES = [
         quality_tier="claim-gated",
         quality_bar=(
             "Check public claims against implemented behavior and known limitations.",
+            "Run `omh docs claims --check --json` for enrolled claims and consume supported/stale/unresolved/not_run rows with their page, implementation anchor, and repair owner. Keep `omh release drift --json` as separate generated evidence; use docs/DOCUMENTATION-CLAIMS.md for the bounded audit contract.",
             "Keep examples reproducible and avoid presenting roadmap as current capability.",
             "Regenerate generated references from catalog data instead of hand-editing them.",
             "When Hermes owns coding, use `hermes_coding_harness/v1` docs lane state before saying docs sync, PR prep, review, or CI evidence exists.",
@@ -2362,6 +2363,7 @@ _HARNESSES = [
         wrapper_actions=("show_docs", "record_claim_check", "show_status"),
         overclaim_guards=(
             "Documentation of a future surface is not proof that evidence was observed.",
+            "Catalog enrollment and prepared doc edits are prepared_not_observed, not an observed claim audit. Only returned probe facts support deterministic claims; optional model judgments stay advisory and never become release gates.",
             "Generated docs must match catalog data before release claims are made.",
         ),
     ),

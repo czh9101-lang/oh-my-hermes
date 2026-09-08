@@ -25,6 +25,7 @@ PYTHONPATH=tests uv run python -m unittest tests/test_cli.py -v   # one file
 uv run python -m compileall -q src tests                          # syntax gate
 uv run python -m omh.cli docs workflows --check                   # byte gate
 uv run python -m omh.cli docs roles --check                       # byte gate
+uv run python -m omh.cli docs claims --check --json               # selected claims
 uv run --group lint ruff check src tests                          # static-analysis gate
 git diff --check
 ```

@@ -4723,6 +4723,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                     "common_request_coverage",
                     "hermes_ux_quality",
                     "parity_contracts",
+                    "documentation_claims",
                     "release_checklist",
                 },
             )

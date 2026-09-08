@@ -332,6 +332,7 @@ class ReleaseSmokeTests(unittest.TestCase):
                     "common_request_coverage",
                     "hermes_ux_quality",
                     "parity_contracts",
+                    "documentation_claims",
                     "release_checklist",
                 },
             )

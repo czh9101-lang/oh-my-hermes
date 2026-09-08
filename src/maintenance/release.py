@@ -21,6 +21,7 @@ from ..command_path import (
     path_check_kind,
 )
 from ..local_store import atomic_write_json, read_json_object_result, utc_now
+from .documentation_claims import DocumentationClaimReport, documentation_claims_report
 from .release_identity import (
     RELEASE_EVIDENCE_BUNDLE_SCHEMA_V2,
     build_input_manifest,
@@ -832,6 +833,7 @@ class ReleaseQualityEvidence:
     common_request_coverage: dict[str, object]
     hermes_ux: dict[str, object]
     checklist: dict[str, object]
+    documentation_claims: DocumentationClaimReport
 
 
 def release_readiness_checklist(
@@ -883,6 +885,16 @@ def release_readiness_checklist(
             False,
             "Harness catalog validation exits successfully.",
             "Harness validation proves local schemas and metadata, not runtime execution.",
+        ),
+        ReleaseChecklistItem(
+            "documentation_claims",
+            "Audit enrolled documentation claims",
+            "uv run python -m omh.cli docs claims --check --json",
+            "contract-quality",
+            True,
+            False,
+            "Selected deterministic claims are supported in an observed documentation_claim_audit/v1 report.",
+            "This checklist prepares the command, not its result. Generated drift is separate evidence; optional model judgments never block release.",
         ),
         ReleaseChecklistItem(
             "source_checkout_command_smoke",
@@ -1323,6 +1335,7 @@ def _build_release_quality_evidence(*, release_version: str, omh_command: str) -
         common_request_coverage=common_request_coverage,
         hermes_ux=hermes_ux,
         checklist=checklist,
+        documentation_claims=documentation_claims_report(),
     )
 
 
@@ -1361,6 +1374,7 @@ def _product_readiness_report_from_evidence(
     required_checklist_ids = {
         "unit_tests",
         "docs_workflows_check",
+        "documentation_claims",
         "harness_validate",
         "skill_content_smoke",
         "use_case_readiness",
@@ -1641,6 +1655,16 @@ def _product_readiness_report_from_evidence(
             str(checklist.get("proof_boundary", "")),
         ),
     ]
+    claim_audit = evidence.documentation_claims
+    gates.append(_product_readiness_gate(
+        "documentation_claims", "Observed documentation claim audit",
+        "passed" if claim_audit["ok"] else "failed", True,
+        "Selected deterministic implementation facts; generated equality is a separate evidence class.",
+        "omh docs claims --check --json",
+        [row["id"] for row in claim_audit["claims"]
+         if not row["advisory"] and row["id"] in claim_audit["selection"] and row["state"] != "supported"],
+        [], claim_audit["claim_boundary"],
+    ))
     blocking_failures = [gate for gate in gates if gate["blocking"] and gate["status"] != "passed"]
     warnings = [
         str(warning)
@@ -1660,6 +1684,7 @@ def _product_readiness_report_from_evidence(
         "warnings": warnings,
         "local_artifact_store": local_store_status,
         "gates": gates,
+        "documentation_claims": claim_audit,
         "next_actions": _product_readiness_next_actions(blocking_failures, warnings),
         "boundary": (
             "Product readiness proves deterministic local OMH package and product contracts only. "
@@ -2659,6 +2684,7 @@ def release_evidence_bundle(
         },
         "evidence": {
             "release_checklist": checklist,
+            "documentation_claims": quality_evidence.documentation_claims,
             "product_readiness": product,
             "skill_content": skill_content,
             "use_case_readiness": use_cases,
