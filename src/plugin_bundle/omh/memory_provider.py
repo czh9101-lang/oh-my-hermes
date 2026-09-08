@@ -39,8 +39,20 @@ from typing import Any
 
 try:  # Present only inside the Hermes process.
     from agent.memory_provider import MemoryProvider as _MemoryProviderBase
+    from agent.memory_provider import RecallStatus
 except ImportError:  # pragma: no cover - exercised by the repo's own test run
+    from dataclasses import dataclass
+
     _MemoryProviderBase = object
+
+    @dataclass(frozen=True)
+    class RecallStatus:  # type: ignore[no-redef]
+        """Field-for-field the Hermes contract, so the repo's tests see what Hermes sees."""
+
+        provider_label: str
+        count: int
+        glyph: str = "🧠"
+
 
 from .hermes_memory import count_record_expiry, read_hermes_memory
 from .memory_block_replay import MemoryBlockSelection
@@ -52,6 +64,7 @@ from .memory_blocks import (
     read_memory_blocks,
     render_block_index,
     render_memory_blocks,
+    render_memory_blocks_counted,
     select_memory_blocks,
 )
 from .memory_dreaming import (
@@ -67,8 +80,17 @@ from .memory_dreaming import (
     write_dreaming_state,
 )
 from .memory_eviction import build_eviction_plan
+from .memory_records import (
+    rank_project_memory_records,
+    read_project_memory_records,
+    render_memory_records,
+)
 
 PROVIDER_NAME = "omh"
+# What Hermes prints in front of "recalled N memories" on every surface it
+# speaks through -- CLI, TUI, and each gateway platform -- when a prefetch
+# actually put OMH memory into the turn.
+PROVIDER_LABEL = "OMH"
 WRITE_JOURNAL_SCHEMA_VERSION = "omh_memory_write_journal_entry/v1"
 JOURNAL_LIMIT = 32
 
@@ -98,10 +120,21 @@ class OmhMemoryProvider(_MemoryProviderBase):
         self._hermes_home = Path(str(hermes_home)).expanduser() if hermes_home else None
         self._session_id = ""
         self._writes_enabled = True
+        # Reviewed records live in the project's own `.omh` when a session runs
+        # inside a repository; `initialize` resolves it from the working
+        # directory. The user home is always read as well.
+        self._project_home: Path | None = None
         # prefetch() is called before every API call and the base class asks for
         # it to be fast, so the pack is rendered off the hot path and served
-        # from here.
+        # from here. `_query` is what the pack was ranked for; `_pack_count`
+        # is how many memories it carries in full.
         self._pack = ""
+        self._query = ""
+        self._pack_count = 0
+        # What the LAST prefetch handed Hermes, for the recall indicator: the
+        # base class asks that a stale prior count never be reported.
+        self._served_pack = ""
+        self._served_count = 0
 
     @property
     def name(self) -> str:
@@ -121,6 +154,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
         hermes_home = kwargs.get("hermes_home")
         self._hermes_home = Path(str(hermes_home)).expanduser() if hermes_home else None
         self._writes_enabled = str(kwargs.get("agent_context", "") or "") in _WRITING_CONTEXTS
+        self._project_home = _project_omh_home(kwargs.get("cwd"))
         self._pack = self.render_pack()
         # A session that died rather than ended -- a killed process, a closed
         # laptop, a lost gateway -- never reaches on_session_end, so nothing
@@ -133,6 +167,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
         return []
 
     def prefetch(self, query: str = "", *, session_id: str = "") -> str:
+        self._served_pack, self._served_count = self._pack, self._pack_count
         return self._pack
 
     def queue_prefetch(
@@ -142,13 +177,33 @@ class OmhMemoryProvider(_MemoryProviderBase):
         session_id: str = "",
         now: datetime | None = None,
     ) -> None:
-        """Re-render for the next turn, which is where the base class puts this work."""
+        """Re-render for the next turn, which is where the base class puts this work.
+
+        Hermes queues with the turn that just finished, so the records are
+        ranked for the conversation as it stands, not for the next message.
+        """
+        self._query = str(query or "")
         self._pack = self.render_pack(now=now)
+
+    def recall_status(self) -> RecallStatus | None:
+        """What the last prefetch put into the turn, for Hermes' recall line.
+
+        Hermes prints ``🧠 OMH — recalled N memories`` through its status
+        channel -- CLI, TUI, and every gateway platform alike -- right after the
+        prefetch that carried it, so the user sees memory was used even when
+        the model says nothing about it. Nothing served, nothing said. A pack
+        that is only a reference-block index counts as content without a
+        discrete count, which Hermes renders generically.
+        """
+        if not self._served_pack:
+            return None
+        return RecallStatus(provider_label=PROVIDER_LABEL, count=self._served_count)
 
     def shutdown(self) -> None:
         """Hermes is closing. Last chance to leave a brief behind."""
         self._evaluate_if_due("shutdown")
-        self._pack = ""
+        self._pack, self._pack_count = "", 0
+        self._served_pack, self._served_count = "", 0
 
     # -- Optional hooks -----------------------------------------------------
 
@@ -245,18 +300,29 @@ class OmhMemoryProvider(_MemoryProviderBase):
         return self.consolidation_due(trigger=trigger, messages_at_risk=messages_at_risk)
 
     def render_pack(self, *, now: datetime | None = None) -> str:
-        """System blocks in full, reference blocks by label only."""
+        """System blocks in full, reference blocks by label only, then the
+        reviewed records ranked for the queued query."""
         blocks = read_memory_blocks(self._omh_home)
         selection = self._block_selection(blocks=blocks, now=now)
         system_blocks = tuple(block for block in blocks if block.tier == SYSTEM_TIER)
         reference_blocks = tuple(block for block in blocks if block.tier == REFERENCE_TIER)
-        system = render_memory_blocks(
+        system, block_count = render_memory_blocks_counted(
             system_blocks,
             budget_chars=DEFAULT_SYSTEM_RENDER_BUDGET_CHARS,
             evaluations=selection.evaluations,
         )
         index = render_block_index(reference_blocks, evaluations=selection.evaluations)
-        return "\n".join(part for part in (system, index) if part)
+        records, record_count = render_memory_records(
+            rank_project_memory_records(read_project_memory_records(self._record_homes()), self._query)
+        )
+        self._pack_count = block_count + record_count
+        return "\n".join(part for part in (system, index, records) if part)
+
+    def _record_homes(self) -> tuple[Path, ...]:
+        """The project store first when there is one, then the user store."""
+        if self._project_home is not None and self._project_home != self._omh_home:
+            return (self._project_home, self._omh_home)
+        return (self._omh_home,)
 
     def consolidation_due(
         self,
@@ -655,6 +721,23 @@ def _non_negative_int(value: object) -> int:
 
 def _default_omh_home() -> Path:
     return Path(os.path.expandvars(os.environ.get("OMH_HOME", "") or "~/.omh")).expanduser()
+
+
+def _project_omh_home(cwd: object = None) -> Path | None:
+    """`<repository>/.omh` for the nearest `.git` above the working directory.
+
+    The same rule `omh --scope project` uses: a `.git` directory in a checkout
+    or a `.git` file in a linked worktree marks the root. Hermes passes no
+    working directory to `initialize`, so the process cwd stands in.
+    """
+    try:
+        start = Path(str(cwd)).expanduser() if cwd else Path.cwd()
+        for candidate in (start, *start.parents):
+            if (candidate / ".git").exists():
+                return candidate / ".omh"
+    except OSError:
+        return None
+    return None
 
 
 def _utc_now() -> str:

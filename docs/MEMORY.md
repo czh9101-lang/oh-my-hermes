@@ -862,6 +862,42 @@ Each stage is separate from replay eligibility. The compatibility
 `omh memory apply --batch` path reports `review_required` rather than directly
 writing unreviewed updates.
 
+## Provider Prefetch and the Recall Line
+
+The Hermes memory provider (`memory.provider: omh`) is the lane through which
+reviewed memory reaches a Hermes turn without being asked for. Before every
+model call Hermes takes the provider's prefetch text; OMH serves one pack,
+rendered off the hot path and re-ranked after each turn:
+
+1. system-tier memory blocks in full, under the block render budget;
+2. reference-tier blocks as a label index (values stay behind `omh_memory
+   read`);
+3. `<memory_records>`: replay-eligible `project_memory_record/v2` records with
+   a matching immutable review, ranked by token overlap with the conversation's
+   latest message (tag hits weigh extra), then newest approval, cut to six
+   records and 2,400 characters. Each cut is named in place
+   (`render_budget_exhausted`, `record_limit_reached`), never dropped silently.
+
+Records are read from the project store (`<repository>/.omh/memory/records/`
+for the nearest `.git` above the working directory) and then the user store
+(`~/.omh`); a record id present in both is read from the project. Pending,
+rejected, expired, stale, and legacy v1 records never render. The provider's
+prefetch is not a handoff delivery and does not move the recall usage counters.
+
+When the served pack is non-empty Hermes prints its deterministic recall line
+through its status channel, so it appears on every surface Hermes speaks
+through (CLI, TUI, and each gateway platform) whether or not the model mentions
+memory:
+
+```text
+🧠 OMH — recalled 2 memories
+```
+
+The count is the number of blocks and records the pack carries in full. A pack
+that is only a reference-block index reports content without a count, which
+Hermes renders as `recalled relevant memory`. The line is Hermes' observation
+that OMH memory was in the request; it is not evidence that the model used it.
+
 ## Dreaming
 
 Dreaming has only `off` and `reminder` modes. The reminder scheduler runs
