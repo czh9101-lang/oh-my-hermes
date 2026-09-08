@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .lifecycle_growth_safety import STEP_TRACE_STATES, step_outcome_records, step_outcomes_errors
 from .lifecycle_growth_values import (
     CLAIM_BOUNDARY,
     PREPARED_STATUS,
@@ -27,7 +28,7 @@ _COUNT_FIELDS = (
 )
 
 
-def build_growth_measurement_readout(*, lifecycle_growth_id: str, eligible_count: int, attempted_count: int, delivered_count: int, displayed_count: int, acted_count: int, outcome_count: int, runtime_days_observed: int, denominator_state: str, data_freshness_state: str, instrumentation_state: str, sample_ratio_state: str, cross_exposure_state: str, overlap_state: str, primary_metric_state: str, guardrail_state: str, causal_claim_status: str, rollback_state: str, provider_evidence_refs: Sequence[str], actual_exposure_evidence_refs: Sequence[str], data_evidence_refs: Sequence[str], runtime_evidence_refs: Sequence[str], causal_evidence_refs: Sequence[str]) -> dict[str, object]:
+def build_growth_measurement_readout(*, lifecycle_growth_id: str, eligible_count: int, attempted_count: int, delivered_count: int, displayed_count: int, acted_count: int, outcome_count: int, runtime_days_observed: int, denominator_state: str, data_freshness_state: str, instrumentation_state: str, sample_ratio_state: str, cross_exposure_state: str, overlap_state: str, primary_metric_state: str, guardrail_state: str, causal_claim_status: str, rollback_state: str, provider_evidence_refs: Sequence[str], actual_exposure_evidence_refs: Sequence[str], data_evidence_refs: Sequence[str], runtime_evidence_refs: Sequence[str], causal_evidence_refs: Sequence[str], step_outcomes: Sequence[Mapping[str, str]], step_trace_state: str) -> dict[str, object]:
     counts = {
         "eligible_count": require_nonnegative_count(eligible_count, field="eligible_count"),
         "attempted_count": require_nonnegative_count(attempted_count, field="attempted_count"),
@@ -58,6 +59,8 @@ def build_growth_measurement_readout(*, lifecycle_growth_id: str, eligible_count
         "data_evidence_refs": metadata_refs(data_evidence_refs, field="data_evidence_refs", required=denominator_state == "known"),
         "runtime_evidence_refs": metadata_refs(runtime_evidence_refs, field="runtime_evidence_refs", required=runtime_days > 0),
         "causal_evidence_refs": metadata_refs(causal_evidence_refs, field="causal_evidence_refs", required=causal_claim_status == "established"),
+        "step_outcomes": step_outcome_records(step_outcomes),
+        "step_trace_state": require_state(step_trace_state, field="step_trace_state", allowed=STEP_TRACE_STATES),
         "disposition": "",
         "claim_boundary": CLAIM_BOUNDARY,
     }
@@ -101,6 +104,8 @@ def validate_readout(record: Mapping[str, Any]) -> list[str]:
     errors.extend(refs_errors(record.get("data_evidence_refs"), field="data_evidence_refs", required=record.get("denominator_state") == "known"))
     errors.extend(refs_errors(record.get("runtime_evidence_refs"), field="runtime_evidence_refs", required=positive_count(record.get("runtime_days_observed"))))
     errors.extend(refs_errors(record.get("causal_evidence_refs"), field="causal_evidence_refs", required=record.get("causal_claim_status") == "established"))
+    errors.extend(step_outcomes_errors(record.get("step_outcomes")))
+    errors.extend(state_errors(record.get("step_trace_state"), field="step_trace_state", allowed=STEP_TRACE_STATES))
     if record.get("disposition") != derive_readout_disposition(record):
         errors.append("readout disposition must match derived disposition")
     return errors

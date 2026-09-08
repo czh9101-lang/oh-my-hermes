@@ -3,6 +3,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .lifecycle_growth_safety import (
+    MUTATION_ROUTES,
+    PROMOTION_DECISION_STATES,
+    PROMOTION_RESULT_STATES,
+    THROTTLE_GROUPING_INPUT_KEYS,
+    WORKFLOW_CONTENT_STATES,
+    build_throttle_grouping,
+    throttle_grouping_errors,
+)
 from .lifecycle_growth_values import (
     CLAIM_BOUNDARY,
     PREPARED_STATUS,
@@ -66,7 +75,9 @@ def build_audience_trigger_policy(*, lifecycle_growth_id: str, audience_identity
     )
 
 
-def build_lifecycle_safety_policy(*, lifecycle_growth_id: str, consent_state: str, suppression_state: str, frequency_state: str, suppression_precedence: str, preference_policy_ref: str, global_frequency_budget_ref: str, campaign_frequency_budget_ref: str, channel_eligibility_state: str, quiet_hours_state: str, locale_state: str, legal_tenant_state: str) -> dict[str, object]:
+def build_lifecycle_safety_policy(*, lifecycle_growth_id: str, consent_state: str, suppression_state: str, frequency_state: str, suppression_precedence: str, preference_policy_ref: str, global_frequency_budget_ref: str, campaign_frequency_budget_ref: str, channel_eligibility_state: str, quiet_hours_state: str, locale_state: str, legal_tenant_state: str, throttle_grouping: Mapping[str, str], workflow_content_state: str, mutation_route: str, promotion_decision_state: str, promotion_result_state: str) -> dict[str, object]:
+    if not isinstance(throttle_grouping, Mapping) or {str(key) for key in throttle_grouping} != THROTTLE_GROUPING_INPUT_KEYS:
+        raise ValueError(f"throttle_grouping must carry exactly {sorted(THROTTLE_GROUPING_INPUT_KEYS)}")
     return _record(
         "lifecycle_safety_policy/v1",
         lifecycle_growth_id,
@@ -81,6 +92,11 @@ def build_lifecycle_safety_policy(*, lifecycle_growth_id: str, consent_state: st
         quiet_hours_state=require_state(quiet_hours_state, field="quiet_hours_state", allowed=_SAFETY_STATES),
         locale_state=require_state(locale_state, field="locale_state", allowed=_SAFETY_STATES),
         legal_tenant_state=require_state(legal_tenant_state, field="legal_tenant_state", allowed=_SAFETY_STATES),
+        throttle_grouping=build_throttle_grouping(**{str(key): str(value) for key, value in throttle_grouping.items()}),
+        workflow_content_state=require_state(workflow_content_state, field="workflow_content_state", allowed=WORKFLOW_CONTENT_STATES),
+        mutation_route=require_state(mutation_route, field="mutation_route", allowed=MUTATION_ROUTES),
+        promotion_decision_state=require_state(promotion_decision_state, field="promotion_decision_state", allowed=PROMOTION_DECISION_STATES),
+        promotion_result_state=require_state(promotion_result_state, field="promotion_result_state", allowed=PROMOTION_RESULT_STATES),
     )
 
 
@@ -158,6 +174,11 @@ def validate_safety(record: Mapping[str, Any]) -> list[str]:
     errors.extend(state_errors(record.get("suppression_precedence"), field="suppression_precedence", allowed=("suppression_overrides_all",)))
     for field in ("preference_policy_ref", "global_frequency_budget_ref", "campaign_frequency_budget_ref"):
         errors.extend(ref_errors(record.get(field), field=field, required=True))
+    errors.extend(throttle_grouping_errors(record.get("throttle_grouping")))
+    errors.extend(state_errors(record.get("workflow_content_state"), field="workflow_content_state", allowed=WORKFLOW_CONTENT_STATES))
+    errors.extend(state_errors(record.get("mutation_route"), field="mutation_route", allowed=MUTATION_ROUTES))
+    errors.extend(state_errors(record.get("promotion_decision_state"), field="promotion_decision_state", allowed=PROMOTION_DECISION_STATES))
+    errors.extend(state_errors(record.get("promotion_result_state"), field="promotion_result_state", allowed=PROMOTION_RESULT_STATES))
     return errors
 
 
