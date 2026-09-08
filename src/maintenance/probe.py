@@ -13,7 +13,7 @@ except ImportError:  # pragma: no cover - absent on Windows.
     fcntl = None
 
 from ..capability_roadmap import build_capability_gap_roadmap
-from ..config_adapter import external_dirs, read_config
+from ..config_adapter import external_dir_registered, external_dirs, read_config
 from ..local_store import read_jsonl_objects
 from ..mcp.host_config import mcp_host_config_entry_present
 from ..parity import build_parity_matrix
@@ -480,8 +480,7 @@ def _structural_search_capability(*, which: Callable[[str], str | None] | None =
 def probe_capabilities(paths: OmhPaths, *, include_parity: bool = False, include_roadmap: bool = False) -> dict:
     config_text = read_config(paths.hermes_config_path)
     configured_dirs = external_dirs(config_text)
-    # config.yaml stores external_dirs in POSIX form (config_adapter._normalize).
-    skills_registered = paths.skills_dir.as_posix() in configured_dirs
+    skills_registered = external_dir_registered(configured_dirs, paths.skills_dir)
     capabilities: list[Capability] = []
     buzz = probe_buzz(paths)
     capabilities.append(
