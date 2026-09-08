@@ -208,3 +208,9 @@ def register(ctx):
     _register_optional_hook(ctx, "post_tool_call", post_tool_call)
     _register_optional_hook(ctx, "pre_verify", pre_verify)
     _register_optional_hook(ctx, "transform_tool_result", transform_tool_result)
+    get_config = getattr(ctx, "get_config", None)
+    browser_config = get_config("browser_adapter", {}) if callable(get_config) else {}
+    if isinstance(browser_config, dict) and browser_config.get("enabled") is True:
+        from .browser_bridge import register as register_browser
+
+        ctx.browser_task = register_browser(ctx, browser_config)

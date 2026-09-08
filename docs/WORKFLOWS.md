@@ -7300,13 +7300,12 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Separate prepared guidance from observed platform, runtime, connector, file, memory, or delivery evidence.
   - Expose missing tools, credentials, targets, or observations as user-visible gaps.
 - Completion checklist:
-  - The target URL, allowed interactions, prohibited interactions, auth boundary, and stop condition are explicit.
-  - Credentials, login, payment, purchase, destructive submission, scraping, and data export are gated or marked missing.
-  - Screenshots, DOM state, console/network logs, and click/form traces are reported only from observed browser evidence.
+  - Gate credentials, login, payments, destructive actions and exports; report only observed traces.
+  - Host request admission, not enablement/adapter presence, gates browser schemas/context/callbacks/writes. Refuse foreign/stale/expired/released/ambiguous targets; no index fallback.
+  - Enabled omh_browser blocks native browser_* calls; inert reads only. GET, labels and origins never authorize effects.
 - Recovery notes:
-  - If no URL or target page is supplied, ask for the smallest target needed before opening a browser task.
-  - If login, payment, destructive mutation, or credential use is requested, require an explicit confirmation gate and do not proceed from vague intent.
-  - If the request is visual correctness rather than general page operation, route to visual-qa instead.
+  - Ask for missing targets or confirmation; use visual-qa for visual correctness.
+  - Refresh stale state once; never replay unknown work. Reuse acquisitions; only the owning adapter/version reaps. Release requires observed cleanup, not mutation approval.
 - Required inputs:
   - user request
   - target context
@@ -7318,15 +7317,19 @@ These surfaces are generated command references, not installed Hermes workflow s
   - browser_auth_boundary/v1
   - browser_observation_manifest/v1 when observed
   - browser_confirmation_gate/v1 when destructive
+  - browser_adapter_capabilities/v1 when acquired
+  - browser_session_lease/v1 when acquired
+  - browser_page_state/v1 when observed
   - next action
   - prepared-vs-observed boundary
 - Artifact expectations:
-  - browser_task_card/v1 metadata-only wrapper card when prepared
-  - browser_interaction_scope/v1 with target URL, allowed actions, stop condition, and prohibited actions
-  - browser_auth_boundary/v1 separating supplied credentials, missing credentials, and credential-use prohibition
-  - browser_observation_manifest/v1 only when screenshots, DOM notes, console/network traces, or click traces are observed
+  - browser_task_card/v1 metadata only
+  - browser_interaction_scope/v1: URL, allowed/prohibited actions, stop condition
+  - browser_auth_boundary/v1: supplied/missing/prohibited credentials
+  - browser_observation_manifest/v1: observed traces only
+  - Host lease schemas: docs/BROWSER-ADAPTER.md defines owner/adapter/version/task scope, capability caching, digest-only state and exact revision handles.
 - Safety rules:
-  - A browser operator card is not browser launch, login, credential validation, page mutation, form submission, purchase/payment/destructive action, screenshot, scraping, or successful interaction evidence unless an observed browser trace records it.
+  - Cards prove no execution. Gate credentials and destructive actions; require observed traces.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
 
 ### workspace-file-operator
