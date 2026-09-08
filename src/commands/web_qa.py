@@ -29,6 +29,7 @@ from omh.workflows.web_visual_qa_contracts import (
 
 from .browser_workflow_learning import add_browser_trace_commands
 from .common import _paths, _print_json, _wants_json
+from .web_qa_observations import add_web_qa_observation_commands
 
 
 def cmd_web_qa_package(args: argparse.Namespace) -> int:
@@ -416,6 +417,7 @@ def _add_web_qa_commands(sub) -> None:
     show.add_argument("--json", action="store_true")
     show.set_defaults(func=cmd_web_qa_show)
     add_browser_trace_commands(web_qa_sub)
+    add_web_qa_observation_commands(web_qa_sub)
 
 
 __all__ = [

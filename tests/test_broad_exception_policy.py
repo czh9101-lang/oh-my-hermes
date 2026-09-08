@@ -268,14 +268,30 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "failure as status=internal_error with the exception type on stderr and returns 2. The "
         "failure is never relabeled as a pass or a violation, and stdout stays empty.",
     ),
+    ClassifiedSite(
+        "src/workflows/web_qa_comparison.py",
+        "_canary_requirements",
+        INTENTIONAL,
+        "The explicitly injected deployment resolver may fail with host-specific exceptions. "
+        "The handler adds canary_deployment_resolver_failed and returns no observation; "
+        "comparison stays BLOCK and cannot grant deployment or rollback authority.",
+    ),
+    ClassifiedSite(
+        "src/workflows/web_qa_observation_store.py",
+        "_commit",
+        INTENTIONAL,
+        "Any failure during private staging, publication, or capture readback triggers "
+        "cleanup of this invocation's new directories, then re-raises the original failure. "
+        "It never returns a completed import or hides a failed image verification as success.",
+    ),
 )
 
 # Ruff reports one hit per handler; the inventory is keyed per enclosing
 # function. `_write_candidate_batch`, `_is_catalog_question`, `pre_llm_call`,
 # `_resume_unlocked`, and `_execute_cell` each hold two handlers, so the handler
 # count is five above the anchor count.
-EXPECTED_HANDLER_COUNT = 28
-EXPECTED_ANCHOR_COUNT = 23
+EXPECTED_HANDLER_COUNT = 30
+EXPECTED_ANCHOR_COUNT = 25
 
 
 class DerivedSite(NamedTuple):
