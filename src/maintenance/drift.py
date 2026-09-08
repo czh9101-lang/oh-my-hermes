@@ -188,9 +188,10 @@ def count_metrics() -> tuple[CountMetric, ...]:
             live=_routing_precision_case_count,
             # The public-board contract adds three negative controls: a concept
             # question, a disclosure question, and a team's own board. The
-            # scroll-motion lane adds two parallax negatives (astronomy and
-            # camera optics) for the frontend scroll triggers.
-            expected=186,
+            # scroll-motion lane adds three negatives for the frontend scroll
+            # triggers: two parallax (astronomy, camera optics) and the
+            # terminal-emulator scroll bug that pins the `scroll` hold-back.
+            expected=187,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",

@@ -819,6 +819,19 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_clarification",
         "",
     ),
+    # The loose-token half of the same guard. "scroll" is everyday
+    # vocabulary, so it is held back to whole-phrase matches in
+    # `_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS`; without that hold-back this
+    # sentence dispatched to frontend on `scroll` plus the pre-existing
+    # `broken`/`terminal` triggers. Reporting a tool's scroll bug is not a
+    # UI design brief.
+    RoutingPrecisionCase(
+        "terminal-scroll-bug-stays-out-of-frontend",
+        "A terminal emulator scroll bug never dispatches the frontend workflow",
+        "The mouse wheel scroll is broken in my terminal emulator.",
+        "answer_clarification",
+        "",
+    ),
     # Infra-cache maintenance guards for the "prompt caching"/"prompt cache"/
     # "cache hygiene" triggers: build- and HTTP-cache work shares the word
     # "cache" but has nothing to do with prompt-prefix placement.

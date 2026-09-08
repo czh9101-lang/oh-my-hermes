@@ -40,13 +40,14 @@ def _body(skill: str) -> str:
     raise AssertionError(f"missing skill {skill}")
 
 
-class ScrollMotionReferenceRegistryTests(unittest.TestCase):
-    def _content(self) -> str:
-        for template in scroll_motion_reference_templates():
-            if (template.skill_name, template.relative_path) == REFERENCE:
-                return template.content
-        self.fail(f"{REFERENCE} is not produced")
+def _reference() -> str:
+    for template in scroll_motion_reference_templates():
+        if (template.skill_name, template.relative_path) == REFERENCE:
+            return template.content
+    raise AssertionError(f"{REFERENCE} is not produced")
 
+
+class ScrollMotionReferenceRegistryTests(unittest.TestCase):
     def test_the_packaged_set_includes_it(self) -> None:
         packaged = {(t.skill_name, t.relative_path) for t in builtin_skill_reference_templates()}
         self.assertIn(REFERENCE, packaged)
@@ -54,17 +55,14 @@ class ScrollMotionReferenceRegistryTests(unittest.TestCase):
     def test_the_generated_file_matches_the_template(self) -> None:
         path = REPO_ROOT / "skills" / omh_skill_display_name(REFERENCE[0]) / REFERENCE[1]
         self.assertTrue(path.exists(), path)
-        self.assertEqual(path.read_text(encoding="utf-8"), self._content())
+        self.assertEqual(path.read_text(encoding="utf-8"), _reference())
 
 
 class NativeFirstTests(unittest.TestCase):
-    def _content(self) -> str:
-        return scroll_motion_reference_templates()[0].content
-
     def test_the_native_ladder_comes_before_the_library(self) -> None:
         # A library added for an adjective is the failure this section
         # exists to block, so the native rows must be named individually.
-        content = self._content()
+        content = _reference()
         for native in (
             "scroll-behavior: smooth",
             "scroll-padding-top",
@@ -76,41 +74,35 @@ class NativeFirstTests(unittest.TestCase):
                 self.assertIn(native, content)
 
     def test_the_library_needs_a_requirement_not_an_adjective(self) -> None:
-        content = _unwrapped(self._content())
+        content = _unwrapped(_reference())
         self.assertIn("interpolated scroll position that more than one consumer reads", content)
         self.assertIn('"Make it feel premium" is not that requirement', content)
 
 
 class LenisSourceRecordTests(unittest.TestCase):
-    def _content(self) -> str:
-        return scroll_motion_reference_templates()[0].content
-
     def test_the_source_record_pins_commit_version_and_license(self) -> None:
-        content = self._content()
+        content = _reference()
         self.assertIn("https://github.com/darkroomengineering/lenis", content)
         self.assertIn(LENIS_COMMIT, content)
         self.assertIn("v1.3.26", content)
         self.assertIn("MIT", content)
 
     def test_a_reviewed_record_is_not_permission_to_add_a_dependency(self) -> None:
-        content = _unwrapped(self._content())
+        content = _unwrapped(_reference())
         self.assertIn("OMH does not install, vendor, pin, or fetch any of this at runtime", content)
         self.assertIn("a reviewed source record is not permission to add a package", content)
 
     def test_the_gsap_license_note_is_deferred_not_restated(self) -> None:
         # Restating it is how the "no charge" license drifts into being
         # called an OSI license; the apple-design record owns that wording.
-        content = _unwrapped(self._content())
+        content = _unwrapped(_reference())
         self.assertIn("omh-apple-design/references/web-production-libraries.md", content)
         self.assertIn("is not an OSI license", content)
 
 
 class IntegrationContractTests(unittest.TestCase):
-    def _content(self) -> str:
-        return scroll_motion_reference_templates()[0].content
-
     def test_every_documented_footgun_has_a_numbered_obligation(self) -> None:
-        content = _unwrapped(self._content())
+        content = _unwrapped(_reference())
         for clause in (
             "One instance, one loop",
             "The recommended stylesheet ships with it",
@@ -125,7 +117,7 @@ class IntegrationContractTests(unittest.TestCase):
                 self.assertIn(clause, content)
 
     def test_the_api_names_are_the_ones_upstream_documents(self) -> None:
-        content = self._content()
+        content = _reference()
         for api in (
             "autoRaf: true",
             "lenis.raf(time)",
@@ -142,11 +134,8 @@ class IntegrationContractTests(unittest.TestCase):
 
 
 class ReducedMotionTests(unittest.TestCase):
-    def _content(self) -> str:
-        return scroll_motion_reference_templates()[0].content
-
     def test_the_option_is_described_by_what_it_actually_does(self) -> None:
-        content = _unwrapped(self._content())
+        content = _unwrapped(_reference())
         self.assertIn("`respectReducedMotion` defaults to `true`", content)
         self.assertIn("`lerp` is forced to `1`", content)
         self.assertIn("programmatic scrolls, including anchor links, jump instantly", content)
@@ -154,18 +143,15 @@ class ReducedMotionTests(unittest.TestCase):
     def test_the_option_is_not_mistaken_for_covering_the_projects_animations(self) -> None:
         # This is the whole reason the section exists: the flag makes the
         # library honest and leaves every hand-written reveal untouched.
-        content = _unwrapped(self._content())
+        content = _unwrapped(_reference())
         self.assertIn("What it does not do is touch the animations *you* wrote", content)
         self.assertIn("lenis.prefersReducedMotion", content)
         self.assertIn("never a default the implementation picks", content)
 
 
 class LimitationsAndCostTests(unittest.TestCase):
-    def _content(self) -> str:
-        return scroll_motion_reference_templates()[0].content
-
     def test_upstream_limitations_are_quoted_not_discovered(self) -> None:
-        content = _unwrapped(self._content())
+        content = _unwrapped(_reference())
         self.assertIn("Limitations to quote, not discover", content)
         for limitation in (
             "60fps on Safari",
@@ -178,13 +164,13 @@ class LimitationsAndCostTests(unittest.TestCase):
                 self.assertIn(limitation, content)
 
     def test_the_metric_is_named_and_the_budget_comes_first(self) -> None:
-        content = _unwrapped(self._content())
+        content = _unwrapped(_reference())
         self.assertIn("INP is the metric it moves", content)
         self.assertIn("references/web-vitals-budgets.md", content)
         self.assertIn("before the change, not after", content)
 
     def test_the_behavioral_bill_names_the_states_someone_will_hit(self) -> None:
-        content = self._content()
+        content = _reference()
         for item in (
             "Keyboard scrolling",
             "scroll restoration",
@@ -197,7 +183,7 @@ class LimitationsAndCostTests(unittest.TestCase):
                 self.assertIn(item, content)
 
     def test_verification_is_rendered_states_and_the_boundary_holds(self) -> None:
-        content = _unwrapped(self._content())
+        content = _unwrapped(_reference())
         self.assertIn("captured, not reasoned about", content)
         self.assertIn("an anchor deep link on cold load", content)
         self.assertIn("prepared_not_observed", content)
@@ -242,6 +228,21 @@ class FrontendSkillHookTests(unittest.TestCase):
             with self.subTest(trigger=phrase):
                 self.assertIn(phrase, triggers)
         self.assertNotIn("parallax", triggers)
+
+    def test_the_everyday_scroll_tokens_are_held_back_to_whole_phrases(self) -> None:
+        # Without this hold-back "the mouse wheel scroll is broken in my
+        # terminal emulator" dispatched to frontend on `scroll` plus the
+        # pre-existing `broken`/`terminal` triggers; the negative control
+        # `terminal-scroll-bug-stays-out-of-frontend` is the other half.
+        from omh.routing.recommend import _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS
+
+        held = _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS["frontend"]
+        for token in ("effect", "hero", "scroll", "scrolling", "smooth"):
+            with self.subTest(token=token):
+                self.assertIn(token, held)
+        # `parallax` stays creditable: distinctive UI vocabulary, and the two
+        # optics negatives already hold it under the dispatch threshold.
+        self.assertNotIn("parallax", held)
 
     def test_the_localized_packs_carry_the_scroll_intent(self) -> None:
         import json

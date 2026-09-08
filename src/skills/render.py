@@ -5822,9 +5822,14 @@ this list and stop at the first row that covers the brief:
 | Need | Native answer |
 | --- | --- |
 | Anchor and in-page jumps that glide | CSS `scroll-behavior: smooth` with `scroll-padding-top` for the sticky header |
-| Reveal on entry, progress bars, pinned-ish parallax | CSS scroll-driven animations - `animation-timeline: scroll()` / `view()` - which run off the main thread |
+| Reveal on entry, progress bars, scroll-linked parallax | CSS scroll-driven animations - `animation-timeline: scroll()` / `view()` - which the browser can run off the main thread |
 | One-off enter animations | `IntersectionObserver` plus a class, no scroll listener at all |
 | Section-by-section paging | CSS `scroll-snap-type` |
+
+`animation-timeline` is the newest row and the one to check rather than
+assume: read its current support against the project's own browser matrix and
+name the fallback before the contract commits to it. The other three rows are
+long-settled.
 
 A scroll library earns its place only when the brief needs an *interpolated
 scroll position that more than one consumer reads*: a WebGL or canvas scene
