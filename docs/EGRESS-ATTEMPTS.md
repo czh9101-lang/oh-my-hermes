@@ -56,6 +56,13 @@ the immediate parent directory. A SQLite write/commit/sync error or a POSIX
 directory-sync error blocks the handler, even if the attempt row already committed.
 An unresolved committed row remains non-replayable.
 
+Cold schema creation groups both tables and both indexes in one explicit
+transaction, with the same FULL/DELETE settings, instead of four autocommit
+transactions. A schema statement or commit failure rolls back that transaction
+on close and blocks dispatch. The attempt still has its own commit before the
+handler runs. Reopening an initialized schema does not commit database changes
+or reserve a writer lock for schema checks; there is no cache or prewarming.
+
 This is SQLite's FULL/native-sync contract, not an additional Windows directory
 flush or an unconditional power-loss guarantee. FULL with a DELETE rollback
 journal does not guarantee that the last transaction survives power loss on

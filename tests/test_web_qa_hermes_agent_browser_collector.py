@@ -4,7 +4,10 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from _local_package import load_local_package
 
@@ -48,11 +51,15 @@ class HostCollectorContractTests(unittest.TestCase):
     def test_rejects_forged_normalized_plan_before_output_directory_exists(self) -> None:
         item = request("http://127.0.0.1:8123/index.html")
         item["plan"]["limits"]["max_run_seconds"] = 999_999
-        with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "never-created"
-            with self.assertRaisesRegex(collector.CollectorError, "normalized_plan_invalid"):
-                collector.collect(item, output, 30)
-            self.assertFalse(output.exists())
+        for host, platform in (("native", nullcontext()), ("unsupported", mock.patch.object(collector, "os", SimpleNamespace(name="nt")))):
+            with self.subTest(host=host), platform, tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "never-created"
+                with mock.patch.object(collector.subprocess, "Popen", side_effect=AssertionError("browser must not launch")) as spawn:
+                    with self.assertRaisesRegex(collector.CollectorError, "normalized_plan_invalid"):
+                        collector.collect(item, output, 30)
+                spawn.assert_not_called()
+                self.assertFalse(output.exists())
+                self.assertEqual(list(Path(temporary).iterdir()), [])
 
     def test_actual_redirect_path_is_not_the_requested_navigation_digest(self) -> None:
         requested = "http://127.0.0.1:8123/index.html"
@@ -75,11 +82,32 @@ class HostCollectorContractTests(unittest.TestCase):
 
     def test_all_unsupported_cells_admit_as_named_block_without_browser_commands(self) -> None:
         item = request("http://127.0.0.1:8123/index.html", engine="firefox")
+        for host, platform in (("native", nullcontext()), ("unsupported", mock.patch.object(collector, "os", SimpleNamespace(name="nt")))):
+            with self.subTest(host=host), platform, tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "collection"
+                with mock.patch.object(collector.subprocess, "Popen", side_effect=AssertionError("browser must not launch")) as spawn:
+                    if collector.os.name == "posix":
+                        receipt = collector.collect(item, output, 30)
+                        self.assertEqual([command["operation"] for command in receipt["execution"]["command_results"]], ["capability_preflight"])
+                        self.assertEqual(receipt["cells"][0]["terminal_blocker_id"], "unsupported_browser_engine_firefox")
+                        self.assertEqual(build_web_qa_observation(item["plan"], receipt)["verdict"], "BLOCK")
+                    else:
+                        with self.assertRaisesRegex(collector.CollectorError, "^unsupported_host_platform_posix_file_lock_required$"):
+                            collector.collect(item, output, 30)
+                        self.assertFalse(output.exists())
+                        self.assertEqual(list(Path(temporary).iterdir()), [])
+                spawn.assert_not_called()
+
+    def test_unsupported_host_refuses_chromium_without_output_or_browser_commands(self) -> None:
+        item = request("http://127.0.0.1:8123/index.html")
         with tempfile.TemporaryDirectory() as temporary:
-            receipt = collector.collect(item, Path(temporary), 30)
-        self.assertEqual([command["operation"] for command in receipt["execution"]["command_results"]], ["capability_preflight"])
-        self.assertEqual(receipt["cells"][0]["terminal_blocker_id"], "unsupported_browser_engine_firefox")
-        self.assertEqual(build_web_qa_observation(item["plan"], receipt)["verdict"], "BLOCK")
+            output = Path(temporary) / "never-created"
+            with mock.patch.object(collector, "os", SimpleNamespace(name="nt")), mock.patch.object(collector.subprocess, "Popen", side_effect=AssertionError("browser must not launch")) as spawn:
+                with self.assertRaisesRegex(collector.CollectorError, "^unsupported_host_platform_posix_file_lock_required$"):
+                    collector.collect(item, output, 30)
+            spawn.assert_not_called()
+            self.assertFalse(output.exists())
+            self.assertEqual(list(Path(temporary).iterdir()), [])
 
     def test_worst_case_png_reservation_scales_with_viewport_and_dpr(self) -> None:
         self.assertGreater(collector._png_worst_case_bytes({"width": 7680, "height": 4320, "dpr": 4}), 2_000_000_000)
@@ -107,12 +135,23 @@ class HostCollectorContractTests(unittest.TestCase):
     def test_corrupt_cache_fails_closed_without_collecting(self) -> None:
         item = request("http://127.0.0.1:8123/index.html")
         plan = collector._validate_request(item, 30)
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); cache = root / ".web-qa-collector-cache-v1"; cache.mkdir(mode=0o700)
-            key = collector._sha(collector._canonical(item))
-            (cache / f"{plan['run_id']}-{key}.json").write_text(json.dumps({"request_digest": key, "receipt": {"run_id": plan["run_id"], "release_status": "COLLECTED"}}), encoding="utf-8")
-            with self.assertRaisesRegex(collector.CollectorError, "cached_receipt_invalid"):
-                collector.collect(item, root, 30)
+        for host, platform in (("native", nullcontext()), ("unsupported", mock.patch.object(collector, "os", SimpleNamespace(name="nt")))):
+            with self.subTest(host=host), platform, tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); cache = root / ".web-qa-collector-cache-v1"; cache.mkdir(mode=0o700)
+                key = collector._sha(collector._canonical(item))
+                entry = cache / f"{plan['run_id']}-{key}.json"
+                entry.write_text(json.dumps({"request_digest": key, "receipt": {"run_id": plan["run_id"], "release_status": "COLLECTED"}}), encoding="utf-8")
+                original = entry.read_bytes()
+                metadata = [(path.stat().st_mode, path.stat().st_mtime_ns) for path in (root, cache, entry)]
+                blocker = "cached_receipt_invalid" if collector.os.name == "posix" else "^unsupported_host_platform_posix_file_lock_required$"
+                with mock.patch.object(collector.subprocess, "Popen", side_effect=AssertionError("browser must not launch")) as spawn:
+                    with self.assertRaisesRegex(collector.CollectorError, blocker):
+                        collector.collect(item, root, 30)
+                spawn.assert_not_called()
+                self.assertEqual(list(root.iterdir()), [cache])
+                self.assertEqual(list(cache.iterdir()), [entry])
+                self.assertEqual(entry.read_bytes(), original)
+                self.assertEqual([(path.stat().st_mode, path.stat().st_mtime_ns) for path in (root, cache, entry)], metadata)
 
 
 if __name__ == "__main__":

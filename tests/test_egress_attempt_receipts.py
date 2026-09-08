@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -112,7 +113,7 @@ class EgressAttemptStoreTests(unittest.TestCase):
 
     def test_writer_lock_fails_within_the_bound_without_appending(self) -> None:
         self.store.open_attempt(**_request("seed"))
-        with sqlite3.connect(self.store.database_path) as holder:
+        with closing(sqlite3.connect(self.store.database_path)) as holder:
             holder.execute("BEGIN IMMEDIATE")
             started = time.monotonic()
             with self.assertRaises(self.module.AttemptStoreError):
@@ -120,8 +121,104 @@ class EgressAttemptStoreTests(unittest.TestCase):
             elapsed = time.monotonic() - started
             holder.rollback()
 
+        with self.assertRaises(sqlite3.ProgrammingError):
+            holder.execute("SELECT 1")
         self.assertLess(elapsed, 0.1)
         self.assertEqual(len(self.store.public_rows()), 1)
+
+    def test_cold_schema_is_atomic_and_repeated_open_does_not_write(self) -> None:
+        connect = sqlite3.connect
+        visible_objects: list[int] = []
+        database_path = self.store.database_path
+
+        class ObservedSchema(sqlite3.Connection):
+            def execute(self, sql, *args, **kwargs):
+                cursor = super().execute(sql, *args, **kwargs)
+                if sql.lstrip().startswith("CREATE"):
+                    with closing(connect(database_path)) as observer:
+                        visible_objects.append(observer.execute(
+                            "SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+                        ).fetchone()[0])
+                return cursor
+
+        with patch.object(sqlite3, "connect", side_effect=lambda *a, **kw: connect(
+            *a, **kw, factory=ObservedSchema,
+        )):
+            connection, created = self.store._connect()
+            with closing(connection):
+                self.assertTrue(created)
+                self.assertFalse(connection.in_transaction)
+        self.assertEqual(visible_objects, [0, 0, 0, 0])
+
+        with closing(connect(database_path)) as observer:
+            self.assertEqual(set(observer.execute(
+                "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+            )), {
+                ("table", "egress_attempts"), ("table", "egress_attempt_terminals"),
+                ("index", "egress_attempts_identity_lookup"),
+                ("index", "egress_attempts_recent_lookup"),
+            })
+            self.assertEqual(observer.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
+            version = observer.execute("PRAGMA data_version").fetchone()
+            before = database_path.read_bytes()
+            # Existing-schema reads must not acquire a writer lock or commit changes.
+            observer.execute("BEGIN IMMEDIATE")
+            connection, created = self.module.AttemptStore(self.home)._connect()
+            with closing(connection):
+                self.assertFalse(created)
+                self.assertFalse(connection.in_transaction)
+                self.assertEqual(connection.execute("PRAGMA synchronous").fetchone(), (2,))
+                self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone(), ("delete",))
+                self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone(), (1,))
+            self.assertEqual(self.store.public_rows(), [])
+            observer.rollback()
+            self.assertEqual(observer.execute("PRAGMA data_version").fetchone(), version)
+            self.assertEqual(database_path.read_bytes(), before)
+
+    def test_cold_schema_failure_rolls_back_and_blocks_registered_handler(self) -> None:
+        connect = sqlite3.connect
+        for failure in ("ddl", "commit"):
+            with self.subTest(failure=failure):
+                self.home = Path(self.temporary.name) / failure
+                self.store = self.module.AttemptStore(self.home)
+                denied: list[str] = []
+
+                def failing_connect(*args, **kwargs):
+                    connection = connect(*args, **kwargs)
+
+                    def authorize(action, first, second, database, trigger):
+                        if (
+                            failure == "ddl" and action == sqlite3.SQLITE_CREATE_TABLE
+                            and first == "egress_attempt_terminals"
+                        ) or (
+                            failure == "commit" and action == sqlite3.SQLITE_TRANSACTION
+                            and first == "COMMIT" and connection.total_changes == 0
+                        ):
+                            denied.append(failure)
+                            return sqlite3.SQLITE_DENY
+                        return sqlite3.SQLITE_OK
+
+                    connection.set_authorizer(authorize)
+                    return connection
+
+                handler = Mock(return_value="local-spy-returned")
+                wrapper, args, _, _ = self._registered_handler(handler)
+                with patch.object(sqlite3, "connect", side_effect=failing_connect):
+                    result = wrapper(args, session_id="session-1")
+                handler.assert_not_called()
+                self.assertIn("error", json.loads(result))
+                self.assertEqual(denied, [failure])
+                # Inspect directly: public_rows would repair a partially committed schema.
+                with closing(connect(self.store.database_path)) as observer:
+                    self.assertEqual(observer.execute("SELECT name FROM sqlite_master").fetchall(), [])
+                    self.assertEqual(observer.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
+                # After removing the fault, the same cold store can initialize normally.
+                wrapper, args, _, _ = self._registered_handler(handler)
+                self.assertEqual(wrapper(args, session_id="session-1"), "local-spy-returned")
+                wrapper, args, _, _ = self._registered_handler(handler)
+                self.assertIn("error", json.loads(wrapper(args, session_id="session-1")))
+                handler.assert_called_once()
+                self.assertEqual([row["row_type"] for row in self.store.public_rows()], ["attempt"])
 
     def test_corruption_is_not_replaced_with_an_empty_store(self) -> None:
         self.store.database_path.parent.mkdir(parents=True)
@@ -196,7 +293,8 @@ class EgressAttemptStoreTests(unittest.TestCase):
                 test.assertEqual(self.execute("PRAGMA synchronous").fetchone(), (2,))
                 test.assertEqual(self.execute("PRAGMA journal_mode").fetchone(), ("delete",))
                 super().commit()
-                events.append("committed")
+                if self.total_changes:
+                    events.append("committed")
 
         def handler(args, **kwargs):
             rows = self.module.AttemptStore(self.home).public_rows()
@@ -232,9 +330,20 @@ class EgressAttemptStoreTests(unittest.TestCase):
         self.assertEqual(rows[1]["terminal_state"], "returned")
 
     def test_windows_commit_failure_blocks_handler_and_does_not_mint_attempt(self) -> None:
+        commits: list[str] = []
+        test = self
+
         class FailedCommit(sqlite3.Connection):
             def commit(self) -> None:
-                raise sqlite3.OperationalError("injected SQLITE_IOERR_FSYNC")
+                test.assertEqual(self.execute("PRAGMA synchronous").fetchone(), (2,))
+                test.assertEqual(self.execute("PRAGMA journal_mode").fetchone(), ("delete",))
+                if self.total_changes:
+                    test.assertTrue(self.in_transaction)
+                    test.assertEqual(self.execute("SELECT count(*) FROM egress_attempts").fetchone(), (1,))
+                    commits.append("attempt")
+                    raise sqlite3.OperationalError("injected SQLITE_IOERR_FSYNC")
+                super().commit()
+                commits.append("schema")
 
         handler = Mock()
         wrapper, args, _, _ = self._registered_handler(handler)
@@ -246,12 +355,14 @@ class EgressAttemptStoreTests(unittest.TestCase):
             )),
         ):
             platform_os.name = "nt"
+            self.assertFalse(self.store.database_path.exists())
             started = time.monotonic()
             result = wrapper(args, session_id="session-1")
             elapsed = time.monotonic() - started
         self.assertIn("error", json.loads(result))
         handler.assert_not_called()
         self.assertLess(elapsed, 0.1)
+        self.assertEqual(commits, ["schema", "attempt"])
         self.assertEqual(self.store.public_rows(), [])
 
     def test_posix_directory_failures_block_handler_after_commit(self) -> None:

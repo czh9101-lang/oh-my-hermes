@@ -153,12 +153,21 @@ class WindowsObservationBoundaryTests(unittest.TestCase):
         for target, name, value in (
             (content, "os", self.platform_os),
             (windows, "open", Mock(side_effect=lambda path: os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0)))),
-            (windows, "stat", Mock(side_effect=lambda path: self.convert(os.lstat(path)))),
+            (windows, "stat", Mock(side_effect=self.descriptor_stat)),
             (windows, "fstat", Mock(side_effect=lambda fd: self.convert(os.fstat(fd)))),
         ):
             binding = patch.object(target, name, value)
             binding.start()
             self.addCleanup(binding.stop)
+
+    def descriptor_stat(self, path: bytes) -> windows.Metadata:
+        # Match the facade's fstat family, not CPython Windows path-stat
+        # timestamps/IDs. Reopen the name on every probe to retain race checks.
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+        try:
+            return self.convert(os.fstat(descriptor))
+        finally:
+            os.close(descriptor)
 
     @staticmethod
     def convert(value) -> windows.Metadata:

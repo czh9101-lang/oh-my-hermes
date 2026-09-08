@@ -342,6 +342,9 @@ class AttemptStore:
             connection.execute("PRAGMA journal_mode = DELETE")
             connection.execute("PRAGMA synchronous = FULL")
             connection.execute("PRAGMA foreign_keys = ON")
+            # Publish the schema atomically with one FULL commit, not one per DDL.
+            # Deferred BEGIN keeps existing-schema reads free of writer locks.
+            connection.execute("BEGIN")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS egress_attempts (
@@ -377,9 +380,11 @@ class AttemptStore:
                 )
                 """
             )
+            connection.commit()
             return connection, created
         except (sqlite3.DatabaseError, sqlite3.OperationalError, OSError) as exc:
             if connection is not None:
+                # Closing rolls back any uncommitted schema transaction.
                 connection.close()
             raise AttemptStoreError(f"egress attempt storage failed: {exc}") from exc
 
