@@ -2225,6 +2225,22 @@ class RecordsReachPrefetchTests(unittest.TestCase):
             self.assertNotIn("nobody reviewed", pack)
             self.assertNotIn("reviewer said no", pack)
 
+    def test_many_admitted_records_stay_bounded_in_prefetch_and_status(self) -> None:
+        from xml.etree import ElementTree
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for index in range(40):
+                _approve_record(root, f"Approved local fact {index}.")
+            provider = self._provider(root)
+            text = provider.prefetch("")
+            self.assertLessEqual(len(text), 2400)
+            section = ElementTree.fromstring(text)
+            self.assertEqual(len(section.findall("record")), 6)
+            self.assertEqual(section.find("omitted").attrib,
+                             {"count": "34", "reason": "record_limit_reached"})
+            self.assertEqual(provider.recall_status().count, 6)
+
     def test_records_sit_after_blocks_in_one_pack(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2265,10 +2281,11 @@ class RecordsReachPrefetchTests(unittest.TestCase):
             {"record_id": "mem_a", "record_type": "fact", "summary": "a < b & c", "approved_at": "2026-09-01T00:00:00Z"},
             {"record_id": "mem_b", "record_type": "fact", "summary": "x" * 400, "approved_at": "2026-09-02T00:00:00Z"},
         ]
-        text, count = render_memory_records(records, budget_chars=120)
+        text, count = render_memory_records(records, budget_chars=300)
         self.assertEqual(count, 1)
+        self.assertLessEqual(len(text), 300)
         self.assertIn("a &lt; b &amp; c", text)
-        self.assertIn('<omitted record_id="mem_b" reason="render_budget_exhausted" />', text)
+        self.assertIn('<omitted count="1" reason="render_budget_exhausted" />', text)
         text, count = render_memory_records(records, limit=1)
         self.assertEqual(count, 1)
         self.assertIn('reason="record_limit_reached"', text)
