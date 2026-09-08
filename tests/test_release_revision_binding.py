@@ -288,9 +288,9 @@ class ReleaseRevisionBindingCliContractTests(unittest.TestCase):
                 environment["HOME"] = str(home)
                 environment["USERPROFILE"] = str(home)
                 with patch.dict(os.environ, environment, clear=True):
-                    os.chdir(repo)
+                    # Audit the source checkout; the README-only repo supplies the binding.
                     status, _, stderr = run_cli(
-                        ["release", "evidence-bundle", "--version", "0.0.0", "--write", "--json"],
+                        ["release", "evidence-bundle", "--version", "0.0.0", "--write", "--repo-root", str(repo), "--json"],
                         output_json=False,
                     )
                     configured = home / ".omh" / "runtime" / "release-evidence" / "0.0.0.json"
@@ -298,6 +298,7 @@ class ReleaseRevisionBindingCliContractTests(unittest.TestCase):
                     self.assertTrue(configured.is_file())
                     self.assertFalse((repo / ".omh").exists())
 
+                    os.chdir(repo)
                     status, stdout, stderr = run_cli(
                         [
                             "release",
@@ -380,15 +381,16 @@ class ReleaseRevisionBindingCliContractTests(unittest.TestCase):
             base = ["--omh-home", str(omh_home), "--hermes-home", str(root / ".hermes")]
             previous_cwd = Path.cwd()
             try:
-                os.chdir(repo)
+                # Audit the source checkout; the README-only repo supplies the binding.
                 status, _, stderr = run_cli(
-                    base + ["release", "evidence-bundle", "--version", "0.0.0", "--write", "--json"],
+                    base + ["release", "evidence-bundle", "--version", "0.0.0", "--write", "--repo-root", str(repo), "--json"],
                     output_json=False,
                 )
                 canonical = omh_home / "runtime" / "release-evidence" / "0.0.0.json"
                 self.assertTrue(canonical.is_file())
                 self.assertEqual(status, 0, stderr)
 
+                os.chdir(repo)
                 status, stdout, stderr = run_cli(
                     base + ["release", "evidence-bundle", "--version", "0.0.0", "--verify", str(canonical), "--json"],
                     output_json=False,

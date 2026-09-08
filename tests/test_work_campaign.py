@@ -17,6 +17,7 @@ from omh.coding.work_campaign import (
     Campaign, CampaignError, build_work_campaign, campaign_canary_report,
     kanban_task_manifests, resolve_campaign_routes,
 )
+from omh.quality.reported_rate import reported_rate_shape_errors
 from _work_campaign_support import CampaignHost
 
 
@@ -256,6 +257,11 @@ class WorkCampaignTests(unittest.TestCase):
         for arm in ("parent_led", "campaign"):
             self.assertIsNone(report.get(arm, {}).get("completion", {}).get("percent", "missing"))
             self.assertIsNone(report[arm]["model_calls"])
+            self.assertEqual(report[arm]["measurement_provenance"], [])
+            self.assertNotIn("provenance", report[arm])
+            for name in ("completion", "accepted_units"):
+                self.assertEqual(reported_rate_shape_errors(report[arm][name]), ())
+                self.assertEqual(report[arm][name]["basis"], "no_observations")
 
     def test_fallback_retains_undispatched_graph_for_parent(self):
         self.host.supported = False
@@ -293,7 +299,7 @@ class WorkCampaignTests(unittest.TestCase):
 
     def test_canary_does_not_count_unpaired_or_unverified_observation_dict(self):
         report = campaign_canary_report([dict(arm="campaign", state="complete",
-                                              provenance=dict(source="host_observation", input_digest="fake", run_ref="fake"))])
+                                              measurement_provenance=dict(source="host_observation", input_digest="fake", run_ref="fake"))])
         self.assertIsNone(report["campaign"]["completion"]["percent"])
 
     def test_exception_after_host_side_effect_expires_route_without_retry(self):
@@ -441,30 +447,71 @@ api.act(record['campaign_id'], 'start')
         with self.assertRaises(CampaignError):
             self.api.prepare(**(self.request | {"units": units}))
 
-    def test_canary_observed_pairs_report_measured_accounting_and_provenance(self):
+    def canary_measurement_rows(self, state="complete", execution_source="host_runtime"):
         rows = []
         input_path = self.root / "accepted-input.json"
         input_path.write_text(json.dumps({"objective_ref": "fixture", "units": ["a", "b"]}))
         input_digest = sha256(input_path.read_bytes()).hexdigest()
         for arm in ("parent_led", "campaign"):
-            measurement = dict(arm=arm, state="complete", accepted_units=2, total_units=2,
+            measurement = dict(arm=arm, state=state, accepted_units=2 if state == "complete" else 0, total_units=2,
                                model_calls=3, tokens=1000, cost_usd=0.25, elapsed_seconds=5.0)
-            content = json.dumps(dict(schema_version="host_campaign_measurement/v1", execution_source="host_runtime",
+            content = json.dumps(dict(schema_version="host_campaign_measurement/v1", execution_source=execution_source,
                                       input_digest=input_digest, measurement=measurement)).encode()
             path = self.root / (arm + ".json")
             path.write_bytes(content)
-            rows.append(measurement | {"provenance": dict(source="host_observation", record_path=str(path),
+            rows.append(measurement | {"measurement_provenance": dict(source="host_observation", record_path=str(path),
                                                          record_digest=sha256(content).hexdigest(),
                                                          input_digest=input_digest, input_path=str(input_path), run_ref=arm,
                                                          extra_private_field="secret-value-not-for-report")})
+        return rows
+
+    def test_canary_observed_pairs_report_measured_accounting_and_provenance(self):
+        rows = self.canary_measurement_rows()
         report = campaign_canary_report(rows)
         self.assertEqual(report["campaign"]["completion"]["percent"], 100.0)
         self.assertEqual(report["campaign"]["model_calls"], 3)
         self.assertEqual(report["parent_led"]["cost_usd"], 0.25)
-        self.assertNotIn("extra_private_field", report["campaign"]["provenance"][0])
-        rows[0]["provenance"]["input_digest"] = "b" * 64
+        self.assertNotIn("extra_private_field", report["campaign"]["measurement_provenance"][0])
+        self.assertEqual(set(report["campaign"]["measurement_provenance"][0]),
+                         {"source", "record_path", "record_digest", "input_path", "input_digest", "run_ref"})
+        rows[0]["measurement_provenance"]["input_digest"] = "b" * 64
         with self.assertRaises(ValueError):
             campaign_canary_report(rows)
+
+    def test_canary_noncomplete_observations_count_only_in_denominator(self):
+        for state in ("failed", "cancelled", "unknown"):
+            with self.subTest(state=state):
+                report = campaign_canary_report(self.canary_measurement_rows(state=state))
+                for arm in ("parent_led", "campaign"):
+                    for name in ("completion", "accepted_units"):
+                        rate = report[arm][name]
+                        self.assertEqual(reported_rate_shape_errors(rate), ())
+                        self.assertEqual(rate["numerator"], 0)
+                        self.assertEqual(rate["denominator"], 1 if name == "completion" else 2)
+                        self.assertEqual(rate["percent"], 0.0)
+                    self.assertEqual(len(report[arm]["measurement_provenance"]), 1)
+
+    def test_canary_prepared_fixture_unpaired_and_old_key_are_not_observations(self):
+        for control in ("prepared", "fixture", "unpaired", "old_key"):
+            with self.subTest(control=control):
+                rows = self.canary_measurement_rows(
+                    state="prepared" if control == "prepared" else "complete",
+                    execution_source="fixture" if control == "fixture" else "host_runtime")
+                if control == "unpaired":
+                    rows = rows[:1]
+                if control == "old_key":
+                    for row in rows:
+                        row["provenance"] = row.pop("measurement_provenance")
+                report = campaign_canary_report(rows)
+                for arm in ("parent_led", "campaign"):
+                    self.assertEqual(report[arm]["measurement_provenance"], [])
+                    self.assertNotIn("provenance", report[arm])
+                    for name in ("completion", "accepted_units"):
+                        self.assertEqual(reported_rate_shape_errors(report[arm][name]), ())
+                        self.assertIsNone(report[arm][name]["percent"])
+                        self.assertEqual(report[arm][name]["denominator"], 0)
+                    for name in ("model_calls", "tokens", "cost_usd", "elapsed_seconds"):
+                        self.assertIsNone(report[arm][name])
 
     def test_cleanup_failure_is_not_reported_as_terminal_success(self):
         record = self.start()

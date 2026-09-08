@@ -100,7 +100,10 @@ class BrowserBoundaryTests(unittest.TestCase):
                 pairs = []
                 for value in ("first", "second"):
                     adapter = Adapter()
-                    setattr(adapter, field, value)
+                    if field == "adapter_id":
+                        adapter.adapter_id = value
+                    else:
+                        adapter.adapter_version = value
                     manager = BrowserSessionManager(store, adapter, clock=lambda: self.now)
                     lease = manager.acquire("owner", request())
                     pairs.append((lease["lease_id"], manager, adapter, lease))

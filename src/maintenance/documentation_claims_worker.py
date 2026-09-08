@@ -94,7 +94,7 @@ def _probe(root: Path, claim: DocumentationClaim) -> bool | str:
         _ = _load_module(root, "src/commands/release.py", "omh.commands.release")
         # Load after the selected source modules, so the real parser binds to
         # this fixture's handler rather than a parent-process cached import.
-        main = importlib.import_module("omh.commands.main").main
+        from ..commands.main import main
         output = _BoundedOutput()
         with redirect_stdout(output):
             code = main(["release", "checklist", "--json"])

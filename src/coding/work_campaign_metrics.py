@@ -10,13 +10,14 @@ from ..quality.reported_rate import reported_rate
 
 
 def campaign_canary_report(rows):
+    """Read measurement_provenance receipt bindings, never model-route provenance."""
     if not isinstance(rows, list) or len(rows) > 64:
         raise ValueError("canary_input_cap")
     report: dict[str, Any] = {"schema_version": "work_campaign_canary/v1", "recommendation": "remain_opt_in",
               "model_execution": "not_observed", "quality_benefit": "not_observed"}
     observed = []
     for row in rows:
-        provenance = row.get("provenance", {})
+        provenance = row.get("measurement_provenance", {})
         if (provenance.get("source") != "host_observation" or not provenance.get("record_path")
                 or not re.fullmatch(r"[0-9a-f]{64}", str(provenance.get("input_digest", "")))):
             continue
@@ -34,18 +35,18 @@ def campaign_canary_report(rows):
         if len(accepted_input) > 65536 or sha256(accepted_input).hexdigest() != provenance["input_digest"]:
             raise ValueError("canary_input_digest_mismatch")
         measurement = receipt.get("measurement", {})
-        if measurement != {k: v for k, v in row.items() if k != "provenance"}:
+        if measurement != {k: v for k, v in row.items() if k != "measurement_provenance"}:
             raise ValueError("canary_observation_mismatch")
         for key, value in measurement.items():
             if key not in ("arm", "state") and (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
                 raise ValueError("invalid_canary_measurement")
         if row.get("state") in ("complete", "failed", "cancelled", "unknown"):
             observed.append(row)
-    paired = {r["provenance"]["input_digest"] for r in observed
-              if {x.get("arm") for x in observed if x["provenance"]["input_digest"] == r["provenance"]["input_digest"]}
+    paired = {r["measurement_provenance"]["input_digest"] for r in observed
+              if {x.get("arm") for x in observed if x["measurement_provenance"]["input_digest"] == r["measurement_provenance"]["input_digest"]}
               == {"parent_led", "campaign"}}
     for arm in ("parent_led", "campaign"):
-        selected = [r for r in observed if r.get("arm") == arm and r["provenance"]["input_digest"] in paired]
+        selected = [r for r in observed if r.get("arm") == arm and r["measurement_provenance"]["input_digest"] in paired]
         report[arm] = dict(
             completion=reported_rate(numerator=sum(r.get("state") == "complete" for r in selected),
                                      denominator=len(selected), numerator_of=["complete"],
@@ -55,7 +56,7 @@ def campaign_canary_report(rows):
                                          denominator=sum(r.get("total_units", 0) for r in selected),
                                          numerator_of=["accepted_units"], denominator_of="observed_units",
                                          excluded=["prepared", "fixtures", "missing_host_provenance", "unpaired_inputs"]).to_payload(),
-            provenance=[{key: r["provenance"].get(key) for key in
+            measurement_provenance=[{key: r["measurement_provenance"].get(key) for key in
                          ("source", "record_path", "record_digest", "input_path", "input_digest", "run_ref")} for r in selected],
             **{key: sum(r[key] for r in selected) if selected and all(key in r for r in selected) else None
                for key in ("model_calls", "tokens", "cost_usd", "elapsed_seconds")},

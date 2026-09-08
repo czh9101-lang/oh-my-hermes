@@ -171,7 +171,7 @@ parent fallback preserves the graph and never promotes an implementation leaf.
 
 The default report has no observations: rates are `percent: null`, never 0%.
 `canary --input observations.json` accepts bounded paired baseline/campaign
-measurements. Each row's provenance names an actual `record_path`, matching
+measurements. Each row's `measurement_provenance` object names an actual `record_path`, matching
 SHA-256 `record_digest`, accepted `input_path` and matching `input_digest`, and
 `run_ref`. The input is re-read within a 64 KiB cap and its digest must also be
 bound into the observation receipt. The
@@ -182,6 +182,17 @@ are operator evidence, not cryptographically authenticated provider invoices.
 Missing provider accounting stays null. Completion/accepted-unit rates use
 `reported_rate` with named buckets and exclusions. No default recommendation
 changes automatically, even when an imported comparison is favorable.
+
+Each arm of `work_campaign_canary/v1` emits a `measurement_provenance` list
+containing only `source`, `record_path`, `record_digest`, `input_path`,
+`input_digest`, and `run_ref`. This receipt-binding metadata is distinct from
+the model-selection vocabulary read by `route_provenance()` from
+`coding_model_route/*`; it never selects or changes a route. The unreleased
+canary contract uses `measurement_provenance` on both input rows and output
+arms, not the earlier `provenance` spelling; there is no compatibility alias.
+Observed failed, cancelled, and unknown outcomes count in the completion
+denominator, but not its `complete` numerator. Prepared, fixture, unverified,
+and unpaired rows contribute to neither count.
 
 The isolated QA script records actual CLI inputs, host DB pins/idempotency,
 toolset resolution, native refusal, concurrency, cancellation and cleanup.

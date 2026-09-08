@@ -93,6 +93,74 @@ class DocumentationClaimsTests(unittest.TestCase):
         self.assertTrue(all(row["state"] == "supported" for key, row in rows.items()
                             if key != "release.checklist-prepared" and not row["advisory"]))
 
+    def test_closed_probe_dispatch_reads_each_trusted_root_anchor(self):
+        from omh.catalogs.documentation_claims import documentation_claims
+
+        audit = self.evaluator()
+        claims = {claim.claim_id: claim for claim in documentation_claims()}
+        cases = (
+            ("release.checklist-prepared", "src/commands/release.py",
+             '\ndef cmd_release_checklist(args):\n    _print_json({"observed": True})\n    return 0\n', True),
+            ("release.checklist-symbol", "src/maintenance/release.py",
+             '\nrelease_readiness_checklist = None\n', False),
+            ("reporting.rate-schema", "src/quality/reported_rate.py",
+             '\nREPORTED_RATE_SCHEMA_VERSION = "omh_reported_rate/v2"\n', "omh_reported_rate/v2"),
+            ("reporting.empty-rate", "src/quality/reported_rate.py",
+             '\nNO_OBSERVATIONS_BASIS = "observed_cases"\n', False),
+            ("generated.roles-equality", "src/catalogs/roles.py",
+             '\ndef roles_reference_markdown():\n    return ""\n', False),
+        )
+        for claim_id, relative, mutation, expected in cases:
+            with self.subTest(claim=claim_id), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                claim = claims[claim_id]
+                for source in (*claim.pages, *(anchor.path for anchor in claim.anchors)):
+                    target = root / source
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes((ROOT / source).read_bytes())
+                path = root / relative
+                original = path.read_text()
+                _ = path.write_text(original + mutation)
+                report = audit.documentation_claims_report(root=root, claim_ids=(claim_id,))
+                row = next(row for row in report["claims"] if row["id"] == claim_id)
+                self.assertFalse(report["ok"])
+                self.assertEqual(row["state"], "stale")
+                self.assertEqual(row["observed_fact"], expected)
+                _ = path.write_text(original)
+                restored = audit.documentation_claims_report(root=root, claim_ids=(claim_id,))
+                self.assertTrue(restored["ok"])
+            self.assertFalse(root.exists())
+        self.assertFalse(multiprocessing.active_children())
+
+    def test_trusted_root_probe_ignores_same_size_same_timestamp_bytecode(self):
+        import os
+        import py_compile
+        from omh.catalogs.documentation_claims import documentation_claims
+
+        audit = self.evaluator()
+        claim = next(claim for claim in documentation_claims() if claim.claim_id == "reporting.rate-schema")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative in (*claim.pages, *(anchor.path for anchor in claim.anchors)):
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / relative).read_bytes())
+            path = root / "src/quality/reported_rate.py"
+            original = path.read_bytes()
+            stat = path.stat()
+            _ = py_compile.compile(str(path), doraise=True, invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+            changed = original.replace(b'"omh_reported_rate/v1"', b'"omh_reported_rate/v2"')
+            self.assertNotEqual(changed, original)
+            self.assertEqual(len(changed), len(original))
+            _ = path.write_bytes(changed)
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            report = audit.documentation_claims_report(root=root, claim_ids=(claim.claim_id,))
+        row = next(row for row in report["claims"] if row["id"] == claim.claim_id)
+        self.assertEqual(row["state"], "stale")
+        self.assertEqual(row["observed_fact"], "omh_reported_rate/v2")
+        self.assertFalse(root.exists())
+        self.assertFalse(multiprocessing.active_children())
+
     def test_missing_anchor_is_unresolved(self):
         audit = self.evaluator()
         with tempfile.TemporaryDirectory() as directory:
