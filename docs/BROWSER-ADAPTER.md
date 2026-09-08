@@ -106,9 +106,12 @@ fresh observation when its original handles become stale.
 The default Hermes hook bridge declares `mutation_interception: none`.
 **All native `browser_*` tool calls are blocked while this explicit bridge is
 enabled**, because they cannot attest to these lease/revision checks. The bound
-tool permits only an adapter's inert semantic `read`, not arbitrary page script.
-Navigation, click, type, press, upload/download, console/evaluate and opaque
-actions are blocked pending a capable effect consumer. The host may initialize
+tool defaults to an adapter's inert semantic `read`, not arbitrary page script.
+Explicit `effects_enabled` host setup adds `effect_preview`, `effect_execute`,
+and `effect_abort` to this same admitted tool; see [BROWSER-EFFECTS.md](BROWSER-EFFECTS.md)
+for trusted approval/event binding and supported operation classes. Raw navigation,
+click, type, press, download, console/evaluate and opaque actions stay blocked.
+Upload requires the opted-in held-byte effect path. The host may initialize
 an explicitly scoped session, but cannot infer permission for arbitrary effects.
 This is not an allowance based on a GET method, tool name, button label, or
 same origin; none of those proves side-effect-free behavior.
@@ -123,7 +126,10 @@ role/name digest, new-tab/redirect flags, and opaque preview digest. It does
 all effects before egress, bind a preview to exact lease/tab/revision/target,
 resume exactly once against a durable authorized attempt, and abort/reap on
 refusal. Preview cannot speculatively execute a click or script to learn its
-effects. This issue supplies the protocol, not effect approval or receipts.
+effects. The effect consumer supplies exact-intent approval, one durable generic
+attempt, and a linked receipt only after bounded observed readback. Inert and
+effect operations share the manager's existing action budget and OS lock;
+preview, unapproved execution and replay do not reserve a fresh action.
 
 ## Hard limits and recovery
 

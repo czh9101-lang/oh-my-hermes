@@ -296,6 +296,41 @@ class BrowserSessionManager:
             self.store.save(state)
             return row, tab, page, element
 
+    @contextmanager
+    def effect_boundary(self, owner, task):
+        """Serialize held effects with this same lease store's lifecycle/caps.
+
+        Callbacks are transaction-local; never retain them after scope exit.
+        Only the engine's new, approved durable attempt reserves an action.
+        Replays and previews do not charge. A crash cannot refund a reservation.
+        """
+        with self.store.transaction() as state:
+            def owned(request_owner, lease_id):
+                if request_owner != owner:
+                    raise BrowserContractError("foreign_owner")
+                row = self._owned(state, owner, lease_id)
+                if row["task_ref"] != digest(text(task, 256)):
+                    raise BrowserContractError("foreign_task")
+                return row
+
+            def current(request_owner, lease_id):
+                return self._view(owned(request_owner, lease_id))
+
+            def reserve(request_owner, request):
+                row = owned(request_owner, request["lease_id"])
+                reason = self._unusable(row)
+                if reason:
+                    raise BrowserContractError(reason)
+                needed = "upload" if request["operation"] == "upload" else "click"
+                if needed not in row["actions"] or needed in row["capabilities"]["unsupported"]:
+                    raise BrowserContractError("action_out_of_scope")
+                resolve_handle(row["pages"][request["tab_id"]], request)
+                state["leases"][row["lease_id"]]["action_count"] += 1
+                self.store.save(state)
+                return current(request_owner, row["lease_id"])
+
+            yield current, reserve
+
     def operate(self, owner, request):
         lease_id = request.get("lease_id")
         try:

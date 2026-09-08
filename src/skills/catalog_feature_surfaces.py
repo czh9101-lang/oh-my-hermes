@@ -363,7 +363,7 @@ _FEATURE_SURFACE_SKILLS = (
         final_checklist=(
             "Gate credentials, login, payments, destructive actions and exports; report only observed traces.",
             "Host request admission, not enablement/adapter presence, gates browser schemas/context/callbacks/writes. Refuse foreign/stale/expired/released/ambiguous targets; no index fallback.",
-            "Enabled omh_browser blocks native browser_* calls; inert reads only. GET, labels and origins never authorize effects.",
+            "omh_browser blocks native browser_*; inert by default. Opted-in effects require exact approval: docs/BROWSER-EFFECTS.md.",
         ),
         recovery_notes=(
             "Ask for missing targets or confirmation; use visual-qa for visual correctness.",

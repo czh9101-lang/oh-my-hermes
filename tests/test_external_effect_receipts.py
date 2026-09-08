@@ -216,10 +216,11 @@ class ExternalEffectVocabularyTests(unittest.TestCase):
         self.assertNotIn("requested", RECEIPT_RESULTS)
 
     def test_every_action_and_surface_is_a_closed_vocabulary(self) -> None:
-        self.assertEqual(ACTIONS, ("message_sent", "review_submitted", "ci_run", "merge"))
+        self.assertEqual(ACTIONS, ("message_sent", "review_submitted", "ci_run", "merge", "browser_mutation"))
         self.assertEqual(
             ACTING_SURFACES,
-            ("adapter_quality_delivery", "runtime_review_record", "runtime_ci_record", "runtime_merge_record"),
+            ("adapter_quality_delivery", "runtime_review_record", "runtime_ci_record", "runtime_merge_record",
+             "browser_adapter_readback"),
         )
         with self.assertRaises(ExternalEffectReceiptError):
             build_external_effect_receipt(

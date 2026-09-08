@@ -88,13 +88,14 @@ EXTERNAL_EFFECT_MINT_FAILURE_STORE_NAME = "external_effect_mint_failures.jsonl"
 # Only effects a surface in `ACTING_SURFACES` genuinely produces today. Adding
 # an action without a producer would put a state in status reports that nothing
 # can ever reach.
-ACTIONS = ("message_sent", "review_submitted", "ci_run", "merge")
-TARGET_CLASSES = ("chat_channel", "code_review", "ci_provider", "repository")
+ACTIONS = ("message_sent", "review_submitted", "ci_run", "merge", "browser_mutation")
+TARGET_CLASSES = ("chat_channel", "code_review", "ci_provider", "repository", "endpoint")
 ACTION_TARGET_CLASSES = {
     "message_sent": "chat_channel",
     "review_submitted": "code_review",
     "ci_run": "ci_provider",
     "merge": "repository",
+    "browser_mutation": "endpoint",
 }
 
 # The five states AC1 of issue #836 requires status reports to tell apart.
@@ -118,6 +119,7 @@ ACTING_SURFACES = (
     "runtime_review_record",
     "runtime_ci_record",
     "runtime_merge_record",
+    "browser_adapter_readback",
 )
 
 # Which action and which acting surface a run-scoped effect must carry to back a

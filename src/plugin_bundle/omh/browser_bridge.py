@@ -45,6 +45,9 @@ def register(ctx, config):
     # An adapter is a trusted host-supplied object, never reconstructed from
     # model arguments, import paths, configuration code, or executable names.
     adapter = getattr(ctx, "browser_adapter", None)
+    effects_enabled = (config.get("effects_enabled") is True
+                       and callable(getattr(ctx, "browser_effect_approval", None))
+                       and all(callable(getattr(adapter, name, None)) for name in ("preview", "resume", "abort")))
     manager = None
     admission: ContextVar[_Admission | None] = ContextVar("omh_browser_admission", default=None)
 
@@ -102,7 +105,10 @@ def register(ctx, config):
         current = available()
         if current is None:
             return json.dumps({"status": "blocked", "reason": "admission_required"})
-        if not isinstance(args, dict) or not isinstance(args.get("operation"), str) or args["operation"] not in {"acquire", "act", "observe", "release"}:
+        operations = {"acquire", "act", "observe", "release"}
+        if effects_enabled:
+            operations |= {"effect_preview", "effect_execute", "effect_abort"}
+        if not isinstance(args, dict) or not isinstance(args.get("operation"), str) or args["operation"] not in operations:
             return json.dumps({"status": "blocked", "reason": "invalid_operation"})
         owner = current.identity[0]
         if kwargs.get("session_id", owner) != owner:
@@ -113,7 +119,11 @@ def register(ctx, config):
 
         try:
             lifecycle = get_manager()
-            if args["operation"] == "acquire":
+            if args["operation"].startswith("effect_"):
+                from .browser_effects_bridge import handle
+
+                result = handle(ctx, lifecycle, current, available, args)
+            elif args["operation"] == "acquire":
                 result = lifecycle.acquire(owner, args)
             elif args["operation"] == "release":
                 result = lifecycle.release(owner, args.get("lease_id"))
@@ -145,6 +155,10 @@ def register(ctx, config):
                   "revision": {"type": "integer"}, "handle": {"type": "string"},
                   "role": {"type": "string"}, "name": {"type": "string", "maxLength": 2048},
                   "action": {"type": "string", "enum": ["read"]}}}}
+    if effects_enabled:
+        from .browser_effects_bridge import extend_schema
+
+        extend_schema(schema)
     # True is possible only with Hermes' request-bound bypass of BOTH caches.
     # Also bypass the registry's TTL/last-good cache on inactive probes.
     try:
