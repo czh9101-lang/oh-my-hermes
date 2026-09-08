@@ -234,8 +234,9 @@ against the project-local trace store by trace ID, digest, project identity,
 and origin allowlist. Anything else, including a well-shaped dictionary that
 isn't in the store, is the blocker `untrusted_reusable_trace_reference`.
 This is a reference to reviewed offline evidence. Promoting a trace into a
-project-local skill (issue 1386) is a separate operator flow and is never
-activated by importing an observation.
+project-local skill (issue 1386, see
+[Browser skill promotion](BROWSER-SKILL-PROMOTION.md)) is a separate
+operator flow and is never activated by importing an observation.
 
 #### Performance: lab is diagnostic, field is gated
 

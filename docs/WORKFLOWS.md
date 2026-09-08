@@ -7296,11 +7296,13 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Completion checklist:
   - The target URL, allowed interactions, prohibited interactions, auth boundary, and stop condition are explicit.
   - Credentials, login, payment, purchase, destructive submission, scraping, and data export are gated or marked missing.
-  - Screenshots, DOM state, console/network logs, and click/form traces are reported only from observed browser evidence.
 - Recovery notes:
-  - If no URL or target page is supplied, ask for the smallest target needed before opening a browser task.
-  - If login, payment, destructive mutation, or credential use is requested, require an explicit confirmation gate and do not proceed from vague intent.
-  - If the request is visual correctness rather than general page operation, route to visual-qa instead.
+  - If no URL or target page is supplied, ask for the smallest target first.
+  - If login, payment, destructive mutation, or credential use is requested, require an explicit confirmation gate.
+  - If the request is visual correctness rather than page operation, route to visual-qa.
+  - Keep a host receipt BLOCK for production clicks or submits, a retry after an auth, 4xx, assertion, or mutation failure, or more than two transient read-only retries.
+  - The shipped POSIX native agent-browser collector supports only anonymous read-only Chromium on a cold desktop profile; any other engine, profile, fixture, locale, or timezone yields a named blocker such as unsupported_browser_engine_webkit, not a substitution.
+  - If a promoted skill's source trace drifts, `promotion status` unlinks only the managed SKILL.md and keeps generations and receipts; no autoheal, watch, or global fallback exists.
 - Required inputs:
   - user request
   - target context
@@ -7319,6 +7321,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - browser_interaction_scope/v1 with target URL, allowed actions, stop condition, and prohibited actions
   - browser_auth_boundary/v1 separating supplied credentials, missing credentials, and credential-use prohibition
   - browser_observation_manifest/v1 only when screenshots, DOM notes, console/network traces, or click traces are observed
+  - browser_skill_promotion/v1 only after `omh web-qa promotion diff`, `approve` of that exact diff digest, and `promote` of one receipt; SKILL.md is the single visibility commit
 - Safety rules:
   - A browser operator card is not browser launch, login, credential validation, page mutation, form submission, purchase/payment/destructive action, screenshot, scraping, or successful interaction evidence unless an observed browser trace records it.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
@@ -8679,6 +8682,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Recovery notes:
   - If required context is missing, ask one blocking question or route back to the narrower workflow.
   - If runtime or wrapper evidence is unavailable, keep the status as not_observed and expose the next observable action.
+  - Native write policy `required` stops promotion as unsupported and `not_required` is not an approval; drift unlinks only the managed SKILL.md and keeps generations and receipts, and an incomplete promotion resumes only via explicit `retry --receipt-id`.
 - Required inputs:
   - user request
   - target context
@@ -8690,6 +8694,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - prepared-vs-observed boundary
 - Artifact expectations:
   - workflow-learning/v1 metadata-only runtime or wrapper card when recorded
+  - browser_skill_promotion_approval_receipt/v1 only through `omh web-qa promotion diff` then `approve --reviewed-diff-digest --reviewer` on an approved, replay-passing `omh web-qa trace`; every operation needs its own reviewed exact diff
 - Safety rules:
   - A workflow learning trace, self-improvement store route, patch proposal, or export is process evidence for review. It is not automatic model training, memory mutation, skill mutation, wiki write, automation creation, execution, verification, CI, or merge evidence.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.

@@ -347,6 +347,12 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
         "fsmonitor disabled, optional locks suppressed and ambient GIT_* variables removed. "
         "It starts no browser, agent, model, or remote operation."
     ),
+    "src/workflows/browser_skill_promotion_approval.py": (
+        "explicit web-qa promotion review/approval/activation invokes one shipped, fixed "
+        "read-only preflight script under the installed Hermes interpreter. It verifies native "
+        "project trust, structure, lint, security and stable write policy against private staged "
+        "bytes; it accepts no caller command, executes no skill body, and starts no coding agent."
+    ),
 }
 
 # Alternative spawn routes. No allowlist: `subprocess` is the only sanctioned

@@ -42,13 +42,15 @@ Bad example:
 
 - The target URL, allowed interactions, prohibited interactions, auth boundary, and stop condition are explicit.
 - Credentials, login, payment, purchase, destructive submission, scraping, and data export are gated or marked missing.
-- Screenshots, DOM state, console/network logs, and click/form traces are reported only from observed browser evidence.
 
 ## Recovery Notes
 
-- If no URL or target page is supplied, ask for the smallest target needed before opening a browser task.
-- If login, payment, destructive mutation, or credential use is requested, require an explicit confirmation gate and do not proceed from vague intent.
-- If the request is visual correctness rather than general page operation, route to visual-qa instead.
+- If no URL or target page is supplied, ask for the smallest target first.
+- If login, payment, destructive mutation, or credential use is requested, require an explicit confirmation gate.
+- If the request is visual correctness rather than page operation, route to visual-qa.
+- Keep a host receipt BLOCK for production clicks or submits, a retry after an auth, 4xx, assertion, or mutation failure, or more than two transient read-only retries.
+- The shipped POSIX native agent-browser collector supports only anonymous read-only Chromium on a cold desktop profile; any other engine, profile, fixture, locale, or timezone yields a named blocker such as unsupported_browser_engine_webkit, not a substitution.
+- If a promoted skill's source trace drifts, `promotion status` unlinks only the managed SKILL.md and keeps generations and receipts; no autoheal, watch, or global fallback exists.
 
 ## Workflow Lane
 
@@ -103,6 +105,7 @@ Artifact expectations:
 - browser_interaction_scope/v1 with target URL, allowed actions, stop condition, and prohibited actions
 - browser_auth_boundary/v1 separating supplied credentials, missing credentials, and credential-use prohibition
 - browser_observation_manifest/v1 only when screenshots, DOM notes, console/network traces, or click traces are observed
+- browser_skill_promotion/v1 only after `omh web-qa promotion diff`, `approve` of that exact diff digest, and `promote` of one receipt; SKILL.md is the single visibility commit
 
 Safety rules:
 

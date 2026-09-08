@@ -269,6 +269,23 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "failure is never relabeled as a pass or a violation, and stdout stays empty.",
     ),
     ClassifiedSite(
+        "src/workflows/browser_skill_promotion_native_probe.py",
+        "main",
+        INTENTIONAL,
+        "The fixed native-host subprocess boundary emits a closed unavailable result with "
+        "the exception type. The parent refuses admission on that result; an unexpected "
+        "Hermes SDK failure cannot become trust, a clean scan, or write approval.",
+    ),
+    ClassifiedSite(
+        "src/workflows/browser_skill_promotion_native_probe.py",
+        "_config_snapshot",
+        INTENTIONAL,
+        "A failing native YAML loader or filesystem snapshot returns an invalid snapshot "
+        "sentinel. Its caller marks the complete native policy unavailable. Missing files "
+        "are handled separately before this function, so parse/read failure never becomes "
+        "a missing optional config or a not-required write policy.",
+    ),
+    ClassifiedSite(
         "src/workflows/web_qa_comparison.py",
         "_canary_requirements",
         INTENTIONAL,
@@ -290,8 +307,8 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # function. `_write_candidate_batch`, `_is_catalog_question`, `pre_llm_call`,
 # `_resume_unlocked`, and `_execute_cell` each hold two handlers, so the handler
 # count is five above the anchor count.
-EXPECTED_HANDLER_COUNT = 30
-EXPECTED_ANCHOR_COUNT = 25
+EXPECTED_HANDLER_COUNT = 32
+EXPECTED_ANCHOR_COUNT = 27
 
 
 class DerivedSite(NamedTuple):
