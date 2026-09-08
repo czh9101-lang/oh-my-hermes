@@ -5,12 +5,15 @@ import os
 import subprocess
 import sys
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 from tempfile import TemporaryDirectory
+from typing import Protocol
 
 from _cli_harness import run_cli
 from _local_package import load_local_package
+from _typing_support import override
 
 load_local_package()
 from omh.commands.main import build_parser
@@ -18,12 +21,52 @@ from omh.goal_ledger import goal_ledger_path, read_goal_ledger
 from omh.paths import resolve_paths
 from omh.quality.working_tree_fingerprint import WorkingTreeFingerprint, WorkingTreeFingerprintState, working_tree_content_fingerprint
 from omh.record_revision import APPLIED_MUTATIONS_LIMIT, MAX_MUTATION_ID_CHARS, applied_mutation_key
-from test_working_tree_fingerprint import _git, _init_repo
+from test_working_tree_fingerprint import _git, _init_repo, is_object_list, is_object_mapping
 
 # The digest helper is deliberately private; the deep module is imported here
 # so the planted replay entry below matches what the real cancel computes
 # instead of re-implementing the recipe in the test.
-from omh.workflows.goal_ledger import _mutation_digest
+from omh.workflows import goal_ledger as goal_workflow
+
+
+class _GoalPort(Protocol):
+    def _mutation_digest(self, *parts: object) -> str: ...
+
+
+class _GoalAccess(_GoalPort, Protocol):
+    def digest(self: _GoalPort, *parts: object) -> str:
+        return self._mutation_digest(*parts)
+
+
+_goal_port: _GoalPort = goal_workflow
+
+
+def _object(value: object) -> dict[str, object]:
+    assert is_object_mapping(value)
+    result: dict[str, object] = {}
+    for key, item in value.items():
+        assert isinstance(key, str)
+        result[key] = item
+    return result
+
+
+def _json(text: str, *, decode: Callable[[str], object] = json.loads) -> dict[str, object]:
+    return _object(decode(text))
+
+
+def _items(value: object) -> list[dict[str, object]]:
+    assert is_object_list(value)
+    return [_object(item) for item in value]
+
+
+def _integer(value: object) -> int:
+    assert isinstance(value, int)
+    return value
+
+
+def _text(value: object) -> str:
+    assert isinstance(value, str)
+    return value
 
 
 def _base(root: Path) -> list[str]:
@@ -49,6 +92,7 @@ def _create(base: list[str], goal_id: str = "goal-cli-guard") -> None:
 
 
 class GoalCliRevisionGuardTests(unittest.TestCase):
+    @override
     def setUp(self) -> None:
         # Ledger tests need a supported, stable workspace, not whichever Git
         # normalization attributes happen to be in the test runner's checkout.
@@ -60,7 +104,7 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             "omh.commands.goal.working_tree_content_fingerprint",
             side_effect=lambda: working_tree_content_fingerprint(root),
         )
-        collector.start()
+        _ = collector.start()
         self.addCleanup(collector.stop)
 
     def test_revision_guard_flag_names_are_pinned_on_every_mutation_subcommand(self) -> None:
@@ -74,15 +118,15 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             ("fail", ["--summary", "s", "--reason-code", "target_not_found"]),
         ):
             with self.subTest(subcommand=subcommand):
-                args = parser.parse_args(
-                    ["goal", subcommand, "--goal", "g", *extra, "--expected-revision", "4", "--mutation-id", "m-1"]
-                )
-                self.assertEqual(args.expected_revision, 4)
-                self.assertEqual(args.mutation_id, "m-1")
+                args = _object(vars(parser.parse_args(
+                    ["goal", subcommand, "--goal", "g", *extra, "--expected-revision", "4", "--mutation-id", "m-1"],
+                )))
+                self.assertEqual(args["expected_revision"], 4)
+                self.assertEqual(args["mutation_id"], "m-1")
                 # Absent flags must stay "no guard requested", not 0 / "0".
-                defaults = parser.parse_args(["goal", subcommand, "--goal", "g", *extra])
-                self.assertIsNone(defaults.expected_revision)
-                self.assertEqual(defaults.mutation_id, "")
+                defaults = _object(vars(parser.parse_args(["goal", subcommand, "--goal", "g", *extra])))
+                self.assertIsNone(defaults["expected_revision"])
+                self.assertEqual(defaults["mutation_id"], "")
 
     def test_cancel_reports_the_terminal_state_and_refuses_later_checkpoints(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -92,12 +136,12 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             status, stdout, stderr = run_cli(base + ["goal", "cancel", "--goal", "goal-cli-guard", "--reason", "Superseded"])
 
             self.assertEqual(status, 0, stderr)
-            payload = json.loads(stdout)
+            payload = _json(stdout)
             self.assertTrue(payload["cancelled"])
             self.assertTrue(payload["applied"])
             self.assertFalse(payload["replayed"])
-            self.assertEqual(payload["goal"]["status"], "cancelled")
-            self.assertEqual(payload["completion_gate"]["next_action"], "show_status")
+            self.assertEqual(_object(payload["goal"])["status"], "cancelled")
+            self.assertEqual(_object(payload["completion_gate"])["next_action"], "show_status")
 
             status, stdout, stderr = run_cli(
                 base + ["goal", "checkpoint", "--goal", "goal-cli-guard", "--summary", "After cancel"]
@@ -127,13 +171,13 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             )
 
             self.assertEqual(status, 0, stderr)
-            payload = json.loads(stdout)
+            payload = _json(stdout)
             self.assertTrue(payload["failed"])
             self.assertTrue(payload["applied"])
             self.assertFalse(payload["replayed"])
-            self.assertEqual(payload["goal"]["status"], "failed")
-            self.assertEqual(payload["goal"]["failure_reason_code"], "target_not_found")
-            self.assertEqual(payload["completion_gate"]["next_action"], "show_status")
+            self.assertEqual(_object(payload["goal"])["status"], "failed")
+            self.assertEqual(_object(payload["goal"])["failure_reason_code"], "target_not_found")
+            self.assertEqual(_object(payload["completion_gate"])["next_action"], "show_status")
 
             status, stdout, stderr = run_cli(
                 base + ["goal", "checkpoint", "--goal", "goal-cli-guard", "--summary", "After failure"]
@@ -152,7 +196,7 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             _create(base)
 
             with self.assertRaises(SystemExit):
-                run_cli(
+                _ = run_cli(
                     base
                     + [
                         "goal", "fail", "--goal", "goal-cli-guard",
@@ -166,9 +210,9 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             base = _base(root)
             _create(base)
             paths = resolve_paths(root / ".omh", root / ".hermes")
-            stale_revision = read_goal_ledger(paths, "goal-cli-guard")["record_revision"]
+            stale_revision = _object(read_goal_ledger(paths, "goal-cli-guard"))["record_revision"]
             # Another writer moves the record on while the stale call is in flight.
-            run_cli(base + ["goal", "checkpoint", "--goal", "goal-cli-guard", "--summary", "First", "--status", "in_progress"])
+            _ = run_cli(base + ["goal", "checkpoint", "--goal", "goal-cli-guard", "--summary", "First", "--status", "in_progress"])
 
             status, stdout, stderr = run_cli(
                 base
@@ -191,7 +235,7 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             self.assertTrue(stderr.startswith("omh: "), stderr)
             self.assertIn("record_revision", stderr)
             self.assertNotIn("Traceback", stderr)
-            self.assertEqual(len(read_goal_ledger(paths, "goal-cli-guard")["checkpoints"]), 1)
+            self.assertEqual(len(_items(_object(read_goal_ledger(paths, "goal-cli-guard"))["checkpoints"])), 1)
 
     def test_checkpoint_collects_one_complete_workspace_identity(self) -> None:
         # Given: a checkpoint request and one collector result for its transaction.
@@ -211,7 +255,7 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
 
             self.assertEqual(status, 0, stderr)
             self.assertEqual(collect.call_count, 1)
-            self.assertEqual(json.loads(stdout)["goal"]["checkpoints"][0]["observed_tree"], "f" * 64)
+            self.assertEqual(_items(_object(_json(stdout)["goal"])["checkpoints"])[0]["observed_tree"], "f" * 64)
 
     def test_normalized_workspace_refuses_checkpoint_without_ledger_writes(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -219,7 +263,7 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             _init_repo(workspace)
-            (workspace / ".gitattributes").write_text("tracked.txt text\n", encoding="utf-8")
+            _ = (workspace / ".gitattributes").write_text("tracked.txt text\n", encoding="utf-8")
             base = _base(root)
             _create(base)
             before = {path: path.read_bytes() for path in (root / ".omh").rglob("*") if path.is_file()}
@@ -264,16 +308,16 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
 
             self.assertEqual(first_status, 0, first_stderr)
             self.assertEqual(second_status, 0, second_stderr)
-            first = json.loads(first_stdout)
-            second = json.loads(second_stdout)
+            first = _json(first_stdout)
+            second = _json(second_stdout)
             self.assertFalse(first["replayed"])
             self.assertTrue(second["replayed"])
             # A replay still reports applied=true: the checkpoint the caller
             # asked for is in the record, it was just written by the first try.
             self.assertTrue(second["applied"])
-            self.assertEqual(first["goal"]["record_revision"], second["goal"]["record_revision"])
+            self.assertEqual(_object(first["goal"])["record_revision"], _object(second["goal"])["record_revision"])
             paths = resolve_paths(root / ".omh", root / ".hermes")
-            self.assertEqual(len(read_goal_ledger(paths, "goal-cli-guard")["checkpoints"]), 1)
+            self.assertEqual(len(_items(_object(read_goal_ledger(paths, "goal-cli-guard"))["checkpoints"])), 1)
 
     def test_repeated_cancel_mutation_id_replays_without_a_second_transition(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -284,13 +328,13 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             first_status, first_stdout, _first_stderr = run_cli(command)
             second_status, second_stdout, _second_stderr = run_cli(command)
 
-            first = json.loads(first_stdout)
-            second = json.loads(second_stdout)
+            first = _json(first_stdout)
+            second = _json(second_stdout)
             self.assertEqual((first_status, second_status), (0, 0))
             self.assertFalse(first["replayed"])
             self.assertTrue(second["replayed"])
             self.assertTrue(second["cancelled"])
-            self.assertEqual(first["goal"]["record_revision"], second["goal"]["record_revision"])
+            self.assertEqual(_object(first["goal"])["record_revision"], _object(second["goal"])["record_revision"])
 
     def test_mutation_id_reused_across_operations_is_not_swallowed_as_a_replay(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -300,7 +344,7 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             # A connector deriving mutation ids from one upstream message id
             # sends both a checkpoint and a blocker under that id; the blocker
             # is different intent and must still apply.
-            run_cli(
+            _ = run_cli(
                 base
                 + [
                     "goal",
@@ -331,13 +375,13 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             )
 
             self.assertEqual(status, 0, stderr)
-            payload = json.loads(stdout)
+            payload = _json(stdout)
             self.assertFalse(payload["replayed"])
             self.assertTrue(payload["applied"])
             paths = resolve_paths(root / ".omh", root / ".hermes")
-            stored = read_goal_ledger(paths, "goal-cli-guard")
-            self.assertEqual(len(stored["checkpoints"]), 1)
-            self.assertEqual(len(stored["blockers"]), 1)
+            stored = _object(read_goal_ledger(paths, "goal-cli-guard"))
+            self.assertEqual(len(_items(stored["checkpoints"])), 1)
+            self.assertEqual(len(_items(stored["blockers"])), 1)
 
     def test_connector_style_mutation_ids_are_accepted_by_the_goal_cli(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -364,12 +408,12 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
 
             self.assertEqual(first_status, 0, first_stderr)
             self.assertEqual(second_status, 0)
-            self.assertFalse(json.loads(first_stdout)["replayed"])
-            self.assertTrue(json.loads(second_stdout)["replayed"])
+            self.assertFalse(_json(first_stdout)["replayed"])
+            self.assertTrue(_json(second_stdout)["replayed"])
             paths = resolve_paths(root / ".omh", root / ".hermes")
-            checkpoints = read_goal_ledger(paths, "goal-cli-guard")["checkpoints"]
+            checkpoints = _items(_object(read_goal_ledger(paths, "goal-cli-guard"))["checkpoints"])
             self.assertEqual(len(checkpoints), 1)
-            checkpoint_id = checkpoints[0]["checkpoint_id"]
+            checkpoint_id = _text(checkpoints[0]["checkpoint_id"])
             self.assertNotIn("/", checkpoint_id)
             self.assertNotIn(":", checkpoint_id)
 
@@ -378,7 +422,7 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             root = Path(tmp)
             base = _base(root)
             _create(base)
-            run_cli(
+            _ = run_cli(
                 base
                 + [
                     "goal",
@@ -411,7 +455,7 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             self.assertTrue(stderr.startswith("omh: "), stderr)
             self.assertNotIn("Traceback", stderr)
             paths = resolve_paths(root / ".omh", root / ".hermes")
-            blockers = read_goal_ledger(paths, "goal-cli-guard")["blockers"]
+            blockers = _items(_object(read_goal_ledger(paths, "goal-cli-guard"))["blockers"])
             self.assertEqual(len(blockers), 1)
             self.assertEqual(blockers[0]["summary"], "Original blocker")
 
@@ -427,26 +471,26 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
             _create(base)
             paths = resolve_paths(root / ".omh", root / ".hermes")
             path = goal_ledger_path(paths, "goal-cli-guard")
-            goal = json.loads(path.read_text(encoding="utf-8"))
+            goal = _json(path.read_text(encoding="utf-8"))
             goal["applied_mutations"] = {
                 applied_mutation_key("cancel_goal_ledger", "cancel-1"): {
                     "operation": "cancel_goal_ledger",
-                    "record_revision": int(goal["record_revision"]),
-                    "result_digest": _mutation_digest("cancel_goal_ledger", ""),
+                    "record_revision": _integer(goal["record_revision"]),
+                    "result_digest": _GoalAccess.digest(_goal_port, "cancel_goal_ledger", ""),
                 }
             }
-            path.write_text(json.dumps(goal, sort_keys=True), encoding="utf-8")
+            _ = path.write_text(json.dumps(goal, sort_keys=True), encoding="utf-8")
 
             status, stdout, stderr = run_cli(
                 base + ["goal", "cancel", "--goal", "goal-cli-guard", "--mutation-id", "cancel-1"]
             )
 
             self.assertEqual(status, 1, stderr)
-            payload = json.loads(stdout)
+            payload = _json(stdout)
             self.assertTrue(payload["replayed"])
             self.assertFalse(payload["cancelled"])
             self.assertFalse(payload["applied"])
-            self.assertEqual(payload["goal"]["status"], "active")
+            self.assertEqual(_object(payload["goal"])["status"], "active")
 
     def test_a_retry_after_eviction_with_only_a_mutation_id_leaves_one_blocker(self) -> None:
         # The exact issue #828 repro, end to end through the CLI: the goal CLI
@@ -487,21 +531,21 @@ class GoalCliRevisionGuardTests(unittest.TestCase):
                     ]
                 )
                 self.assertEqual(status, 0, stderr)
-            evicted = json.loads(goal_ledger_path(paths, "goal-cli-guard").read_text(encoding="utf-8"))
-            self.assertGreaterEqual(int(evicted["applied_mutations_floor_revision"]), 1)
+            evicted = _json(goal_ledger_path(paths, "goal-cli-guard").read_text(encoding="utf-8"))
+            self.assertGreaterEqual(_integer(evicted["applied_mutations_floor_revision"]), 1)
             self.assertNotIn(
-                applied_mutation_key("record_goal_blocker", "turn-EVICT-ME"), evicted["applied_mutations"]
+                applied_mutation_key("record_goal_blocker", "turn-EVICT-ME"), _object(evicted["applied_mutations"])
             )
 
             status, stdout, stderr = run_cli(retry)
 
             self.assertEqual(status, 0, stderr)
-            payload = json.loads(stdout)
+            payload = _json(stdout)
             self.assertTrue(payload["applied"])
             self.assertTrue(payload["replayed"])
-            stored = read_goal_ledger(paths, "goal-cli-guard")
-            self.assertEqual([item["blocker_id"] for item in stored["blockers"]], ["turn-EVICT-ME"])
-            self.assertEqual(int(stored["record_revision"]), int(evicted["record_revision"]))
+            stored = _object(read_goal_ledger(paths, "goal-cli-guard"))
+            self.assertEqual([item["blocker_id"] for item in _items(stored["blockers"])], ["turn-EVICT-ME"])
+            self.assertEqual(_integer(stored["record_revision"]), _integer(evicted["record_revision"]))
 
     def test_an_over_long_mutation_id_is_rejected_with_nothing_written(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -572,37 +616,38 @@ class GoalCliRawWorkspaceTests(unittest.TestCase):
             self.assertEqual(created.returncode, 0, created.stderr)
             tracked = workspace / "tracked.txt"
             payload = b"raw\r\nbytes\x1aafter\x00\xff"
-            tracked.write_bytes(payload)
+            _ = tracked.write_bytes(payload)
             # CPython's executable-extension mode must not make a stable
             # Windows checkpoint unreadable or disagree with Git's tree mode.
-            (workspace / "program.exe").write_bytes(payload)
+            _ = (workspace / "program.exe").write_bytes(payload)
             checkpoint = ["goal", "checkpoint", "--goal", "raw", "--summary", "Observed", "--status", "in_progress", "--mutation-id", "raw-retry"]
             first = invoke(checkpoint)
             self.assertEqual(first.returncode, 0, first.stderr)
-            recorded = json.loads(first.stdout)
+            recorded = _json(first.stdout)
             self.assertFalse(recorded["replayed"])
-            self.assertEqual(len(recorded["goal"]["checkpoints"]), 1)
-            self.assertEqual(len(recorded["goal"]["checkpoints"][0]["observed_tree"]), 64)
+            checkpoints = _items(_object(recorded["goal"])["checkpoints"])
+            self.assertEqual(len(checkpoints), 1)
+            self.assertEqual(len(_text(checkpoints[0]["observed_tree"])), 64)
             ledger = goal_ledger_path(resolve_paths(root / ".omh", root / ".hermes"), "raw")
             before = ledger.read_bytes()
             for stage in (True, False):
                 _git(workspace, *(["add", "tracked.txt"] if stage else ["restore", "--staged", "tracked.txt"]))
                 replay = invoke(checkpoint)
                 self.assertEqual(replay.returncode, 0, replay.stderr)
-                self.assertTrue(json.loads(replay.stdout)["replayed"])
+                self.assertTrue(_json(replay.stdout)["replayed"])
                 self.assertEqual(ledger.read_bytes(), before)
             # Same length, changed AFTER Ctrl-Z: a text descriptor would hide it.
-            tracked.write_bytes(payload[:-1] + b"\xfe")
+            _ = tracked.write_bytes(payload[:-1] + b"\xfe")
             conflict = invoke(checkpoint)
             self.assertEqual(conflict.returncode, 2, conflict.stderr)
             self.assertEqual(conflict.stdout, "")
             self.assertEqual(ledger.read_bytes(), before)
-            tracked.write_bytes(payload)
+            _ = tracked.write_bytes(payload)
             reverted = invoke(checkpoint)
             self.assertEqual(reverted.returncode, 0, reverted.stderr)
-            self.assertTrue(json.loads(reverted.stdout)["replayed"])
+            self.assertTrue(_json(reverted.stdout)["replayed"])
             self.assertEqual(ledger.read_bytes(), before)
 
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()

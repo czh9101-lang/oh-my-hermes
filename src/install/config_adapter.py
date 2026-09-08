@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
-from ..local_store import atomic_write_text
-from ..skin_pack import SKIN_NAME, is_omh_skin_name
+from omh.skin_pack import SKIN_NAME, is_omh_skin_name
+
+from ..system.local_store import atomic_write_text
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,7 @@ def _parse_inline_list(value: str) -> list[str] | None:
     inner = value[1:-1].strip()
     if not inner:
         return []
-    items = []
+    items: list[str] = []
     for raw in inner.split(","):
         item = raw.strip().strip("'\"")
         if not item:

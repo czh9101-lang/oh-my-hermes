@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from typing import Mapping
+from typing import Mapping, TypedDict
 
 from ..ingress import CHAT_SOURCES
 from ..plugin_bundle.omh.awareness import awareness_route_hint
@@ -619,12 +619,30 @@ def route_hint_alignment_cases() -> tuple[RouteHintAlignmentCase, ...]:
     )
 
 
+class RouteHintAlignmentSummary(TypedDict):
+    case_count: int
+    hinted_count: int
+    aligned_count: int
+    missing_hint_count: int
+    mismatch_count: int
+    all_aligned: bool
+
+
+class RouteHintAlignmentPayload(TypedDict):
+    schema_version: str
+    source: str
+    summary: RouteHintAlignmentSummary
+    check_basis: list[str]
+    cases: list[dict[str, object]]
+    claim_boundary: str
+
+
 def build_route_hint_alignment_demo(
     *,
     source: str = "discord",
     grounded_score: Mapping[str, object] | None = None,
     chat_card_coverage: Mapping[str, object] | None = None,
-) -> dict[str, object]:
+) -> RouteHintAlignmentPayload:
     if source not in CHAT_SOURCES:
         raise ValueError(f"unsupported demo source: {source}")
     precomputed_routes = _precomputed_route_observations(
@@ -670,7 +688,7 @@ def build_route_hint_alignment_demo(
     }
 
 
-def format_route_hint_alignment_summary(payload: dict[str, object]) -> str:
+def format_route_hint_alignment_summary(payload: Mapping[str, object]) -> str:
     summary = _nested(payload, "summary")
     rows = _dict_rows(payload.get("cases", []))
     total = int(summary.get("case_count", len(rows)) or 0)

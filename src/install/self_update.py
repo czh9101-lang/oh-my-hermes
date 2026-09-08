@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 import hashlib
 import os
@@ -10,30 +11,82 @@ import shutil
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
-from typing import Any, Callable
+from typing import Any, Literal, Protocol, TypedDict
 
 try:
     from ..core.errors import OmhError
     from ..system.local_store import FileLockTimeout, file_lock
     from ..system.paths import managed_command_venv_dir, resolve_paths
     from .self_update_platform import SelfUpdatePlatform
-    from .self_update_state import collect_garbage, commit_activation, generation_entry, interrupted_activation, load_state, mark_activation, mark_switched, migrate_legacy, pointer_target, record_pointer, recovery_target, restore_known_good, save_state, state_path, switch_current
+    from .self_update_state import CleanupResult, GenerationEntry, collect_garbage, commit_activation, generation_entry, interrupted_activation, load_state, mark_activation, mark_switched, migrate_legacy, pointer_target, record_pointer, recovery_target, restore_known_good, save_state, state_path, switch_current
     from .self_update_state_validation import require_generation_path, same_existing_path
 except ImportError:  # pragma: no cover - direct-source installer smoke.
     from core.errors import OmhError
     from system.local_store import FileLockTimeout, file_lock
     from system.paths import managed_command_venv_dir, resolve_paths
     from install.self_update_platform import SelfUpdatePlatform
-    from install.self_update_state import collect_garbage, commit_activation, generation_entry, interrupted_activation, load_state, mark_activation, mark_switched, migrate_legacy, pointer_target, record_pointer, recovery_target, restore_known_good, save_state, state_path, switch_current
+    from install.self_update_state import CleanupResult, GenerationEntry, collect_garbage, commit_activation, generation_entry, interrupted_activation, load_state, mark_activation, mark_switched, migrate_legacy, pointer_target, record_pointer, recovery_target, restore_known_good, save_state, state_path, switch_current
     from install.self_update_state_validation import require_generation_path, same_existing_path
 
 RESULT_SCHEMA_VERSION = "command_package_self_update/v1"
 REENTRY_TIMEOUT_SECONDS = 600.0
-Runner = Callable[..., subprocess.CompletedProcess[str]]
+class Runner(Protocol):
+    """The complete subprocess contract used by a staged self-update."""
+
+    def __call__(
+        self,
+        command: list[str],
+        /,
+        *,
+        text: Literal[True],
+        stdout: int | None,
+        stderr: int | None,
+        env: dict[str, str] | None,
+        timeout: float | None,
+    ) -> subprocess.CompletedProcess[str]: ...
 
 
-def _result(candidate: Path) -> dict[str, Any]:
-    return {"schema_version": RESULT_SCHEMA_VERSION, "ok": False, "phase": "lock", "candidate": generation_entry(candidate), "staging": {"status": "skipped"}, "verification": {"status": "skipped"}, "migration": {"status": "skipped"}, "activation": {"status": "skipped"}, "post_activation": {"status": "skipped"}, "rollback": {"performed": False, "restored": ""}, "recovery": {"status": "skipped", "action": ""}, "cleanup": {"collected": []}}
+
+class PhaseStatus(TypedDict):
+    status: str
+
+
+class PhaseResult(PhaseStatus, total=False):
+    reason: str
+    pointer: str
+    launcher: str
+
+
+class RollbackResult(TypedDict):
+    performed: bool
+    restored: str
+
+
+class RecoveryResult(TypedDict, total=False):
+    status: str
+    action: str
+    selected: str
+    reason: str
+
+
+class SelfUpdateResult(TypedDict):
+    schema_version: str
+    ok: bool
+    phase: str
+    candidate: GenerationEntry
+    staging: PhaseResult
+    verification: PhaseResult
+    migration: PhaseResult
+    activation: PhaseResult
+    post_activation: PhaseResult
+    rollback: RollbackResult
+    recovery: RecoveryResult
+    cleanup: CleanupResult
+
+
+def _result(candidate: Path) -> SelfUpdateResult:
+    entry = generation_entry(candidate)
+    return {"schema_version": RESULT_SCHEMA_VERSION, "ok": False, "phase": "lock", "candidate": entry, "staging": {"status": "skipped"}, "verification": {"status": "skipped"}, "migration": {"status": "skipped"}, "activation": {"status": "skipped"}, "post_activation": {"status": "skipped"}, "rollback": {"performed": False, "restored": ""}, "recovery": {"status": "skipped", "action": ""}, "cleanup": {"collected": []}}
 
 
 def _python(generation: Path, platform: SelfUpdatePlatform) -> str:
@@ -163,7 +216,7 @@ def _switch(root: Path, target: Path, platform: SelfUpdatePlatform) -> None:
         switch_current(root, target)
 
 
-def run_installer_self_update(args: Any, plan: dict[str, object], *, runner: Runner = subprocess.run, platform: SelfUpdatePlatform | None = None) -> dict[str, Any]:
+def run_installer_self_update(args: Any, plan: Mapping[str, object], *, runner: Runner = subprocess.run, platform: SelfUpdatePlatform | None = None) -> SelfUpdateResult:
     """Run stage, verification, pointer activation, rollback, and retention."""
     release = plan.get("release")
     package_url = str(getattr(release, "package_url", "") or "")
@@ -211,7 +264,7 @@ def run_installer_self_update(args: Any, plan: dict[str, object], *, runner: Run
         raise OmhError("another omh update is already in progress; no changes were made") from exc
 
 
-def _activate(root: Path, state: dict[str, Any], candidate: Path, args: Any, runner: Runner, platform: SelfUpdatePlatform, result: dict[str, Any]) -> dict[str, Any]:
+def _activate(root: Path, state: dict[str, Any], candidate: Path, args: Any, runner: Runner, platform: SelfUpdatePlatform, result: SelfUpdateResult) -> SelfUpdateResult:
     result["migration"] = {"status": "ok", "reason": "old pair migrated onto current"}
     previous = Path(str(state["active"]["path"]))
     mark_activation(state, candidate, previous)
@@ -246,7 +299,7 @@ def _activate(root: Path, state: dict[str, Any], candidate: Path, args: Any, run
     return result
 
 
-def _recover_interrupted(root: Path, state: dict[str, Any], interrupted: tuple[Path, Path], args: Any, runner: Runner, platform: SelfUpdatePlatform, result: dict[str, Any]) -> dict[str, Any]:
+def _recover_interrupted(root: Path, state: dict[str, Any], interrupted: tuple[Path, Path], args: Any, runner: Runner, platform: SelfUpdatePlatform, result: SelfUpdateResult) -> SelfUpdateResult:
     candidate, previous = interrupted
     passed, _reason = _reenter(root, candidate, args, runner, platform)
     if passed:
@@ -264,7 +317,7 @@ def _recover_interrupted(root: Path, state: dict[str, Any], interrupted: tuple[P
     return result
 
 
-def _recover_known_good(root: Path, state: dict[str, Any], args: Any, runner: Runner, platform: SelfUpdatePlatform, result: dict[str, Any]) -> dict[str, Any]:
+def _recover_known_good(root: Path, state: dict[str, Any], args: Any, runner: Runner, platform: SelfUpdatePlatform, result: SelfUpdateResult) -> SelfUpdateResult:
     target = recovery_target(root, state)
     previous = Path(str(state["active"]["path"]))
     mark_activation(state, target, previous)

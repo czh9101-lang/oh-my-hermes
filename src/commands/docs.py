@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 from ..catalogs.roles import roles_reference_markdown
 from ..installer import OmhError
@@ -210,7 +211,17 @@ def _default_capability_families_path() -> Path:
     return (Path(plugin_tools.__file__).resolve().parent / "capability_families.json").resolve()
 
 
-def _tap_skills_check_payload(skills_root: Path) -> dict[str, object]:
+class TapSkillsCheckPayload(TypedDict):
+    ok: bool
+    root: str
+    expected: int
+    checked: int
+    missing: list[str]
+    stale: list[str]
+    extra: list[str]
+
+
+def _tap_skills_check_payload(skills_root: Path) -> TapSkillsCheckPayload:
     templates = {omh_skill_display_name(template.name): template for template in builtin_skill_templates()}
     reference_templates = {
         Path(omh_skill_display_name(template.skill_name)) / template.relative_path: template
@@ -239,6 +250,10 @@ def _tap_skills_check_payload(skills_root: Path) -> dict[str, object]:
         "stale": stale,
         "extra": extra,
     }
+
+
+# Public interface for maintenance consumers; retain the original private export.
+tap_skills_check_payload = _tap_skills_check_payload
 
 
 def cmd_harness_list(args: argparse.Namespace) -> int:

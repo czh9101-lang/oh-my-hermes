@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import subprocess
-from typing import Callable
+from typing import Literal, Protocol
 
 try:
     from ..core.errors import OmhError
@@ -23,7 +23,24 @@ WINDOWS_JUNCTION_COMMAND = (
     "New-Item -ItemType Junction -Path $env:OMH_JUNCTION_LINK "
     "-Target $env:OMH_JUNCTION_TARGET -ErrorAction Stop | Out-Null"
 )
-Runner = Callable[..., subprocess.CompletedProcess[str]]
+
+class Runner(Protocol):
+    """The exact subprocess surface used to create a Windows junction."""
+
+    def __call__(
+        self,
+        command: list[str],
+        /,
+        *,
+        shell: Literal[False],
+        cwd: str,
+        env: dict[str, str],
+        text: Literal[True],
+        stdout: int,
+        stderr: int,
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]: ...
+
 
 
 @dataclass(frozen=True)
@@ -127,6 +144,9 @@ def _remove_directory_link(path: Path) -> None:
         path.rmdir()
     else:
         path.unlink()
+
+
+remove_directory_link = _remove_directory_link
 
 
 def _replace_windows_pointer(temporary: Path, current: Path, backup: Path) -> None:

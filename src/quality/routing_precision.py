@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, TypedDict
 
 from ..ingress import CHAT_SOURCES
 from ..routing.action_copy import next_action_label
@@ -4502,7 +4502,36 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
 )
 
 
-def build_routing_precision_demo(*, source: str = "discord") -> dict[str, object]:
+class RoutingPrecisionSummary(TypedDict):
+    case_count: int
+    passing_count: int
+    negative_case_count: int
+    negative_passing_count: int
+    direct_answer_count: int
+    file_lookup_count: int
+    overroute_count: int
+    catalog_picker_count: int
+    generic_ack_count: int
+    intervention_case_count: int
+    intervention_passing_count: int
+    missed_intervention_count: int
+    intervention_generic_ack_count: int
+    total_case_count: int
+    total_passing_count: int
+    all_passing: bool
+
+
+class RoutingPrecisionPayload(TypedDict):
+    schema_version: str
+    source: str
+    summary: RoutingPrecisionSummary
+    check_basis: list[str]
+    cases: list[dict[str, object]]
+    intervention_cases: list[dict[str, object]]
+    claim_boundary: str
+
+
+def build_routing_precision_demo(*, source: str = "discord") -> RoutingPrecisionPayload:
     if source not in CHAT_SOURCES:
         raise ValueError(f"unsupported demo source: {source}")
     rows = [_evaluate_precision_case(case, source=source) for case in ROUTING_PRECISION_CASES]

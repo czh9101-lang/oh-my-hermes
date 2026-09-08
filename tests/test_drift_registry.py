@@ -179,6 +179,7 @@ class DriftReportTests(unittest.TestCase):
             include_tap_skills=False,
         )
         item = payload["drift"][0]
+        assert item["kind"] == "count"
         self.assertEqual(item["kind"], "count")
         self.assertEqual(item["expected"], 59)
         self.assertEqual(item["live"], 60)
@@ -202,6 +203,7 @@ class DriftReportTests(unittest.TestCase):
             artifacts=(),
         )
         item = payload["drift"][0]
+        assert item["kind"] == "budget"
         self.assertEqual(item["kind"], "budget")
         self.assertEqual(item["over_by"], 305)
         self.assertIn("305", item["fix"])
@@ -226,6 +228,7 @@ class DriftReportTests(unittest.TestCase):
                 ),
             )
             item = payload["drift"][0]
+            assert item["kind"] == "generated"
             self.assertEqual(item["state"], "stale")
             self.assertIn("docs roles --output", item["fix"])
 

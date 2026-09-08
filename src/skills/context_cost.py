@@ -25,6 +25,7 @@ from __future__ import annotations
 from .catalog import omh_skill_display_name
 
 from dataclasses import dataclass
+from typing import TypedDict
 
 from .catalog import CORE_PROFILE_SKILLS
 from .packaging import builtin_skill_reference_templates, builtin_skill_templates
@@ -39,6 +40,59 @@ SKILL_CONTEXT_COST_SCHEMA_VERSION = "omh_skill_context_cost/v1"
 CHARS_PER_TOKEN_ESTIMATE = 4
 ULW_CONTEXT_SKILL_BODY_BYTE_CEILING = 24_000
 ULW_CONTEXT_REFERENCE_BYTE_CEILING = 24_000
+
+
+class ContextSize(TypedDict):
+    bytes: int
+    lines: int
+    estimated_tokens: int
+
+
+class ContextShare(ContextSize):
+    share_percent: float
+
+
+class ContextReferences(ContextSize):
+    file_count: int
+    files: list[str]
+
+
+class HeadingRepetition(TypedDict):
+    heading: str
+    occurrences: int
+    distinct_bodies: int
+    bytes: int
+    unique_bytes: int
+    duplicate_bytes: int
+    estimated_duplicate_tokens: int
+
+
+class SkillContextCostProfile(TypedDict):
+    profile: str
+    skill_count: int
+    skill_body: ContextSize
+    repeated: ContextShare
+    skill_specific: ContextShare
+    references: ContextReferences
+    headings: list[HeadingRepetition]
+
+
+class ContextIncrement(TypedDict):
+    skill_body_bytes: int
+    reference_file_count: int
+    reference_bytes: int
+    project_specific_bytes: int
+    source_class: str
+    ceilings: dict[str, int]
+    ceilings_pass: bool
+
+
+class SkillContextCostPayload(TypedDict):
+    schema_version: str
+    description: str
+    chars_per_token_estimate: int
+    catalog_increment: dict[str, ContextIncrement]
+    profiles: list[SkillContextCostProfile]
 
 
 @dataclass(frozen=True)
@@ -74,7 +128,7 @@ def _estimated_tokens(chars: int) -> int:
     return -(-chars // CHARS_PER_TOKEN_ESTIMATE)
 
 
-def _size_payload(text_chars: int, line_count: int) -> dict[str, int]:
+def _size_payload(text_chars: int, line_count: int) -> ContextSize:
     return {
         "bytes": text_chars,
         "lines": line_count,
@@ -99,11 +153,11 @@ def _section_slices(names: set[str], templates: list[_SkillTemplate]) -> list[Se
     return slices
 
 
-def _heading_repetition(slices: list[SectionSlice]) -> list[dict[str, object]]:
+def _heading_repetition(slices: list[SectionSlice]) -> list[HeadingRepetition]:
     grouped: dict[str, list[str]] = {}
     for section in slices:
         grouped.setdefault(section.heading, []).append(section.body)
-    rows: list[dict[str, object]] = []
+    rows: list[HeadingRepetition] = []
     for heading, bodies in grouped.items():
         total_bytes = sum(len(body) for body in bodies)
         distinct = set(bodies)
@@ -123,7 +177,7 @@ def _heading_repetition(slices: list[SectionSlice]) -> list[dict[str, object]]:
     return rows
 
 
-def _reference_payload(names: set[str], reference_templates: list[_SkillReferenceTemplate]) -> dict[str, object]:
+def _reference_payload(names: set[str], reference_templates: list[_SkillReferenceTemplate]) -> ContextReferences:
     templates = [
         template for template in reference_templates if template.skill_name in names
     ]
@@ -148,7 +202,7 @@ def _skill_context_cost_profile(
     profile: str,
     templates: list[_SkillTemplate],
     reference_templates: list[_SkillReferenceTemplate],
-) -> dict[str, object]:
+) -> SkillContextCostProfile:
     names = _profile_skill_names(profile, templates)
     slices = _section_slices(names, templates)
     headings = _heading_repetition(slices)
@@ -172,14 +226,14 @@ def _skill_context_cost_profile(
     }
 
 
-def skill_context_cost_profile(profile: str) -> dict[str, object]:
+def skill_context_cost_profile(profile: str) -> SkillContextCostProfile:
     return _skill_context_cost_profile(profile, builtin_skill_templates(), builtin_skill_reference_templates())
 
 
 def _ulw_context_increment(
     templates: list[_SkillTemplate],
     reference_templates: list[_SkillReferenceTemplate],
-) -> dict[str, object]:
+) -> ContextIncrement:
     skill = next((template for template in templates if template.name == "context"), None)
     references = [template for template in reference_templates if template.skill_name == "context"]
     skill_body_bytes = len(skill.content) if skill is not None else 0
@@ -204,7 +258,7 @@ def _ulw_context_increment(
     }
 
 
-def skill_context_cost_payload() -> dict[str, object]:
+def skill_context_cost_payload() -> SkillContextCostPayload:
     templates = builtin_skill_templates()
     reference_templates = builtin_skill_reference_templates()
     return {

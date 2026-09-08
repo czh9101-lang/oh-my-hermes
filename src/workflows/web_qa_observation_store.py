@@ -24,7 +24,7 @@ from typing import NoReturn
 from ..system.local_store import file_lock
 from .browser_workflow_learning import BrowserTraceError
 from .browser_workflow_learning_store import _root as observed_git_root
-from .web_qa_observation import WebQaObservationError, build_web_qa_observation
+from .web_qa_observation import TrustedTraceResolver, WebQaObservationError, build_web_qa_observation
 from .web_qa_observation_plan import WebQaObservationPlanError, build_web_qa_observation_plan, parse_normalized_web_qa_observation_plan
 
 
@@ -62,7 +62,7 @@ def prepare_web_qa_observation(
     raw_plan: object,
     project_root: str | Path | None = None,
     *,
-    trusted_trace_resolver=None,
+    trusted_trace_resolver: TrustedTraceResolver | None = None,
 ) -> dict[str, object]:
     """Normalize a plan and report whether its terminal identity is stored.
 
@@ -88,7 +88,7 @@ def import_web_qa_observation(
     receipt: object,
     capture_files: Mapping[str, str | Path],
     *,
-    trusted_trace_resolver=None,
+    trusted_trace_resolver: TrustedTraceResolver | None = None,
 ) -> dict[str, object]:
     """Atomically import one canonical plan/receipt and its verified images.
 
@@ -159,7 +159,7 @@ def read_web_qa_observation(
     project_root: str | Path | None,
     run_id: str,
     *,
-    trusted_trace_resolver=None,
+    trusted_trace_resolver: TrustedTraceResolver | None = None,
 ) -> dict[str, object]:
     root = _git_root(project_root)
     _run_id(run_id)
@@ -173,7 +173,7 @@ def observation_envelope(
     project_root: str | Path | None,
     run_id: str,
     *,
-    trusted_trace_resolver=None,
+    trusted_trace_resolver: TrustedTraceResolver | None = None,
 ) -> dict[str, object]:
     """Resolve stored evidence to the closed comparison input envelope."""
     stored = read_web_qa_observation(project_root, run_id, trusted_trace_resolver=trusted_trace_resolver)
@@ -191,7 +191,7 @@ def _normalize_plan(plan: object) -> dict[str, object]:
         raise WebQaObservationStoreError(str(exc)) from exc
 
 
-def _admit(plan: dict[str, object], receipt: object, resolver) -> dict[str, object]:
+def _admit(plan: dict[str, object], receipt: object, resolver: TrustedTraceResolver | None) -> dict[str, object]:
     _bounded(receipt)
     _privacy_safe(receipt)
     try:
@@ -335,7 +335,7 @@ def _verify_capture_bytes(path: Path, capture: dict[str, object]) -> None:
         raise WebQaObservationStoreError("staged capture bytes do not match verified receipt evidence")
 
 
-def _read_optional(root: Path, run_id: str, *, trusted_trace_resolver=None) -> ImportedWebQaObservation | None:
+def _read_optional(root: Path, run_id: str, *, trusted_trace_resolver: TrustedTraceResolver | None = None) -> ImportedWebQaObservation | None:
     _run_id(run_id)
     directory = _observations_dir(root) / run_id
     _safe_child(_observations_dir(root), directory)
@@ -369,7 +369,7 @@ def _record(metadata: dict[str, object]) -> ImportedWebQaObservation:
     )
 
 
-def _validate_metadata(metadata: object, root: Path, resolver) -> None:
+def _validate_metadata(metadata: object, root: Path, resolver: TrustedTraceResolver | None) -> None:
     source = _object(metadata, "stored metadata")
     expected = {"schema_version", "project_identity", "plan", "receipt", "observation", "captures", "timings"}
     if set(source) != expected or source["schema_version"] != WEB_QA_OBSERVATION_STORE_SCHEMA_VERSION:
