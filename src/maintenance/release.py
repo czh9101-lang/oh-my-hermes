@@ -713,7 +713,16 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # body because the choice between a live page and a historical capture is
 # made when the source is cited, not after; the field-level contract lives in
 # `docs/TEMPORAL-SOURCE-RECEIPTS.md`, outside this budget; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 916671
+# 916671 -> 917583: `frontend` gains the scroll-motion lane - seven English
+# scroll/parallax triggers, one quality-bar line, and one safety rule. These
+# belong in the always-loaded body because taking a scroll library at all is
+# decided BEFORE the contract is written: a native-first rule discovered
+# after a smooth-scroll dependency has shipped arrives one dependency and
+# one reduced-motion regression too late. The decision order, the Lenis
+# source record, the integration obligations, and the documented
+# limitations live in `references/scroll-motion-libraries.md`, outside this
+# budget; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 917583
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

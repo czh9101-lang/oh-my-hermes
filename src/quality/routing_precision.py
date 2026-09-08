@@ -797,6 +797,41 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_directly",
         "direct_answer",
     ),
+    # Parallax guards for the scroll-motion triggers. "parallax" is also
+    # plain optics and astronomy vocabulary, which is why the shipped
+    # triggers are the phrases ("parallax scroll", "parallax hero",
+    # "parallax effect") rather than the bare word. These follow the
+    # tui-concept-question shape (no forbidden_candidate: the clarify
+    # fallback may still name low-score candidates, and "interface design"
+    # alone already names frontend) — the case fails on any dispatch,
+    # workflow card, or handoff action.
+    RoutingPrecisionCase(
+        "astronomy-parallax-stays-out-of-frontend",
+        "Stellar parallax discussion never dispatches the frontend workflow",
+        "Stellar parallax measures the distance to nearby stars and is unrelated to interface design.",
+        "answer_clarification",
+        "",
+    ),
+    RoutingPrecisionCase(
+        "camera-parallax-stays-out-of-frontend",
+        "Viewfinder parallax error discussion never dispatches the frontend workflow",
+        "Parallax error in a rangefinder camera viewfinder is unrelated to interface design.",
+        "answer_clarification",
+        "",
+    ),
+    # The loose-token half of the same guard. "scroll" is everyday
+    # vocabulary, so it is held back to whole-phrase matches in
+    # `_WHOLE_PHRASE_ONLY_TRIGGER_TOKENS`; without that hold-back this
+    # sentence dispatched to frontend on `scroll` plus the pre-existing
+    # `broken`/`terminal` triggers. Reporting a tool's scroll bug is not a
+    # UI design brief.
+    RoutingPrecisionCase(
+        "terminal-scroll-bug-stays-out-of-frontend",
+        "A terminal emulator scroll bug never dispatches the frontend workflow",
+        "The mouse wheel scroll is broken in my terminal emulator.",
+        "answer_clarification",
+        "",
+    ),
     # Infra-cache maintenance guards for the "prompt caching"/"prompt cache"/
     # "cache hygiene" triggers: build- and HTTP-cache work shares the word
     # "cache" but has nothing to do with prompt-prefix placement.
@@ -1454,6 +1489,36 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "prepare_visual_qa",
         "visual_qa",
         "visual-qa",
+    ),
+    RoutingInterventionCase(
+        "smooth-scroll-reaches-frontend",
+        "A smooth-scroll request reaches the frontend workflow instead of falling back",
+        "Add smooth scrolling to our marketing site.",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+        "frontend",
+    ),
+    RoutingInterventionCase(
+        "parallax-hero-reaches-frontend",
+        "A parallax hero request reaches the frontend workflow",
+        "Add a parallax hero section to the landing page.",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+        "frontend",
+    ),
+    RoutingInterventionCase(
+        "korean-scroll-animation-reaches-frontend",
+        "A Korean scroll-animation request reaches the frontend workflow",
+        "랜딩페이지에 스크롤 애니메이션 넣어줘.",
+        "dispatch",
+        "frontend",
+        "prepare_frontend_handoff",
+        "frontend_handoff",
+        "frontend",
     ),
     RoutingInterventionCase(
         "blender-product-render-stays-with-frontend",

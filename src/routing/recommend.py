@@ -2128,6 +2128,17 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
             "versioning",
         }
     ),
+    # `frontend` names its scroll-motion lane out of everyday words: "smooth
+    # scroll", "smooth scrolling", "scroll animation", "parallax scroll".
+    # Split into tokens, `scroll` alone credited this workflow for any
+    # sentence that merely mentions scrolling -- "the mouse wheel scroll is
+    # broken in my terminal emulator" moved from clarify to a frontend
+    # dispatch on `scroll` plus the pre-existing `broken`/`terminal`. The
+    # intent lives in the complete phrases, which the phrase match already
+    # scores; `parallax` stays creditable because it is distinctive UI
+    # vocabulary rather than everyday words, and `animation` was frontend
+    # trigger vocabulary before this lane landed.
+    "frontend": frozenset({"effect", "hero", "scroll", "scrolling", "smooth"}),
 }
 
 
