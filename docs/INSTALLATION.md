@@ -1045,6 +1045,17 @@ most-recently-active rule — until each is resumed or switched and the file
 carries its durable key; the plugin tools and the reminder are unaffected
 because Hermes dispatches them with the durable key.
 
+Native agent activity is a separate ownership policy from todos. A mapped
+valid durable identity selects native `state.db` children before row limits
+and totals, following only unambiguous compression continuations, never
+branches or delegated children. Missing, invalid or unmapped identities retain
+the previous global native fallback, including best-effort manifest context.
+Rows and aggregate scope explicitly say `global`; the widget renders those
+labels instead of attributing them to this chat. Mapped native rows omit
+unowned manifest/route labels. OMH executor, Maestro and DAG activity remains
+available in the widget, explicitly global; mixed totals say `this chat + global`.
+This changes display attribution only, not delegation or the todo policy above.
+
 #### Status model: no-run, prepared-handoff, observed-run
 
 `omh setup` deliberately records a safety-first `choose` preference and asks

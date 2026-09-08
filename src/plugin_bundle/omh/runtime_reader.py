@@ -763,21 +763,22 @@ def read_omh_hud(
     graph_preference: str = "auto",
     session_ref: str = "",
     tui_session_ref: str = "",
+    session_scoped: bool = False,
 ) -> dict[str, Any]:
     """The HUD payload for one reading session.
 
-    ``session_ref`` is the reader's own durable session id, as the host
-    dispatched it (plugin tool, hook, operator flag), and is trusted as-is.
-    ``tui_session_ref`` is what the host's active-session file reports for
-    the TUI a widget renders in; on a freshly created session that file
-    holds the gateway's transport id rather than the durable key, so a value
-    that neither names a live TUI row nor owns a record falls back to the
-    most recently active live TUI row instead of rendering nothing.
+    A mapped durable reference scopes native activity to its conversation.
+    Missing/invalid/unmapped identities retain explicitly global native activity.
+    OMH activity remains global; the existing todo ownership policy is unchanged.
     """
     safe_preset = preset if preset in HUD_PRESETS else "focused"
     home = _expand_path(omh_home) if omh_home else _default_omh_home()
     hermes = _expand_path(hermes_home) if hermes_home else _default_hermes_home()
     safe_limit = _safe_limit(limit, default=3)
+    scoped = session_scoped or bool(session_ref or tui_session_ref)
+    reference = session_ref or tui_session_ref
+    # OMH run/binding projections identify executors and wrapper targets, not
+    # the originating Hermes conversation. Do not invent that relationship.
     status_payload = status if status is not None else _read_omh_hud_status(home, limit=safe_limit)
     state = _read_hud_json(home / "runtime" / "state.json", root=home)
     profile = _read_hud_json(home / "setup-profile.json", root=home)
@@ -801,9 +802,6 @@ def read_omh_hud(
         "runtime": _hud_runtime_summary(status_payload, latest_run),
         "achievements": _achievements_summary(hermes),
         "tokens": _token_summary(token_metadata or {}),
-        # Scoped to the reading session: the widget names its own session
-        # (`session_ref`), and a caller that cannot falls back to the live
-        # TUI row, so one session's checklist never renders in another.
         "todo": _todo_summary(home, hermes, session_ref, tui_session_ref),
         # Concurrent tool-call batches observed by the pre_tool_call hook;
         # the [OMH] status line brands a fresh batch as a parallel shot.
@@ -834,6 +832,12 @@ def read_omh_hud(
         "status": "observed" if payload["subagents"]["maestro_rows"] else "idle",
         "rows": payload["subagents"].pop("maestro_rows"),
     }
+    payload["maestro"]["scope"] = "global"
+    payload["runtime"]["scope"] = "global"
+    payload["executor"]["scope"] = "global"
+    for row in payload["maestro"]["rows"] + payload["subagents"]["rows"]:
+        row["scope"] = "global"
+    omh_activity = bool(payload["subagents"]["active"] or payload["subagents"]["rows"])
     # Display-priority ordering applies to BOTH sources: the OMH-side rows
     # keep dispatch order at their producer and can put a blocked row ahead
     # of a running one, which the widget's running-exempt budget would then
@@ -845,7 +849,10 @@ def read_omh_hud(
     payload["subagents"]["rows"] = ordered[:ACTIVITY_ROW_LIMIT]
     # Hermes-native delegate_task children are work the HUD must show even
     # though they never touch the OMH runtime store; see hermes_delegation.
-    native = read_hermes_native_subagents(hermes, omh_home=home)
+    native = read_hermes_native_subagents(hermes, omh_home=home, session_ref=reference if scoped else None)
+    payload["subagents"]["scope"] = (
+        "mixed" if omh_activity and native["scope"] == "session" else native["scope"]
+    )
     if native["rows"]:
         merged = payload["subagents"]
         combined = _ordered_activity_rows(list(merged["rows"]) + list(native["rows"]))
@@ -866,6 +873,7 @@ def read_omh_hud(
         native_rows_present=bool(native["rows"]),
         preference=_hud_graph_preference(graph_preference),
     )
+    payload["graph"]["scope"] = "global"
     payload["active"] = bool(
         payload["runtime"]["workflow"] != "idle"
         or payload["subagents"]["active"]
