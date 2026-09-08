@@ -61,9 +61,20 @@ from omh.plugin_bundle.omh.memory_dreaming import (
     write_dreaming_state,
 )
 from omh.plugin_bundle.omh.memory_eviction import build_eviction_plan, eviction_plan_summary
-from omh.plugin_bundle.omh.memory_provider import PROVIDER_NAME, OmhMemoryProvider
+from omh.plugin_bundle.omh.memory_provider import PROVIDER_LABEL, PROVIDER_NAME, OmhMemoryProvider, RecallStatus
+from omh.plugin_bundle.omh.memory_records import (
+    rank_project_memory_records,
+    read_project_memory_records,
+    render_memory_records,
+)
 from omh.plugin_bundle.omh.metadata import MEMORY_PROVIDER_NAME, PROVIDED_TOOLS
 from omh.plugin_bundle.omh.tools.memory_tool import MEMORY_ACTIONS, OMH_MEMORY_SCHEMA, omh_memory_handler
+from omh.paths import resolve_paths
+from omh.workflows.memory import (
+    approve_project_memory_candidate,
+    capture_project_memory_candidate,
+    reject_project_memory_candidate,
+)
 
 HERMES_DELIMITER = "§"
 
@@ -450,7 +461,8 @@ class ProviderRegistrationTests(unittest.TestCase):
 class ProviderLifecycleTests(unittest.TestCase):
     def _provider(self, root: Path, *, agent_context: str = "primary") -> OmhMemoryProvider:
         provider = OmhMemoryProvider(root / ".omh")
-        provider.initialize("session-1", hermes_home=str(root / ".hermes"), agent_context=agent_context)
+        # `cwd=root`: the fixture is its own project, never the checkout the tests run from.
+        provider.initialize("session-1", hermes_home=str(root / ".hermes"), agent_context=agent_context, cwd=str(root))
         return provider
 
     def test_availability_is_a_local_check_with_no_network(self) -> None:
@@ -579,7 +591,7 @@ class LossPreventionTests(unittest.TestCase):
 
     def _provider(self, root: Path, session: str = "s1") -> OmhMemoryProvider:
         provider = OmhMemoryProvider(root / ".omh")
-        provider.initialize(session, hermes_home=str(root / ".hermes"), agent_context="primary")
+        provider.initialize(session, hermes_home=str(root / ".hermes"), agent_context="primary", cwd=str(root))
         return provider
 
     def _briefs(self, root: Path) -> list[dict]:
@@ -2170,3 +2182,180 @@ class BundleReplayAdmissionTests(unittest.TestCase):
     def _call_tool(root: Path, **args: object) -> dict:
         with patch.dict(os.environ, {"OMH_HOME": str(root / ".omh"), "HERMES_HOME": str(root / ".hermes")}):
             return json.loads(omh_memory_handler(args))
+
+
+def _approve_record(root: Path, summary: str, *, home: str = ".omh", **capture: object) -> dict:
+    """One reviewed, replay-eligible v2 record through the real capture/approve path."""
+    paths = resolve_paths(root / home, root / ".hermes")
+    captured = capture_project_memory_candidate(paths, summary, **capture)
+    return approve_project_memory_candidate(paths, str(captured["candidate"]["candidate_id"]), approved_by="user")["record"]
+
+
+class RecordsReachPrefetchTests(unittest.TestCase):
+    """README 08 promises the next session a ranked, budgeted pack of what a
+    reviewer admitted. Measured before this: the provider served blocks only,
+    so an approved record never reached a Hermes turn."""
+
+    def _provider(self, root: Path, *, cwd: Path | None = None) -> OmhMemoryProvider:
+        provider = OmhMemoryProvider(root / ".omh")
+        provider.initialize("s1", hermes_home=str(root / ".hermes"), agent_context="primary", cwd=str(cwd or root))
+        return provider
+
+    def test_an_approved_record_is_served_and_a_pending_or_rejected_one_is_not(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _approve_record(root, "Release cuts run the Cut Release workflow first.", record_type="procedure")
+            paths = resolve_paths(root / ".omh", root / ".hermes")
+            capture_project_memory_candidate(paths, "Pending: nobody reviewed this yet.")
+            rejected = capture_project_memory_candidate(paths, "Rejected: the reviewer said no.")
+            reject_project_memory_candidate(paths, str(rejected["candidate"]["candidate_id"]), reason="wrong")
+
+            pack = self._provider(root).prefetch("release")
+            self.assertIn("<memory_records>", pack)
+            self.assertIn("Release cuts run the Cut Release workflow first.", pack)
+            self.assertIn('type="procedure"', pack)
+            self.assertNotIn("nobody reviewed", pack)
+            self.assertNotIn("reviewer said no", pack)
+
+    def test_records_sit_after_blocks_in_one_pack(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_memory_block(root / ".omh", approve_memory_block(build_memory_block("facts", "OMH wraps Hermes.")))
+            _approve_record(root, "Tests need PYTHONPATH=tests.")
+            pack = self._provider(root).prefetch("")
+            self.assertLess(pack.index("<memory_blocks>"), pack.index("<memory_records>"))
+
+    def test_the_queued_query_ranks_the_records(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _approve_record(root, "The menubar helper polls every thirty seconds.", tags=["menubar"])
+            _approve_record(root, "Release notes are edited with gh release edit.", tags=["release"])
+            provider = self._provider(root)
+            provider.queue_prefetch("why does the menubar lag")
+            pack = provider.prefetch("why does the menubar lag")
+            self.assertLess(pack.index("menubar helper"), pack.index("Release notes"))
+            provider.queue_prefetch("cut a release")
+            pack = provider.prefetch("cut a release")
+            self.assertLess(pack.index("Release notes"), pack.index("menubar helper"))
+
+    def test_the_project_store_is_read_when_the_session_runs_inside_a_repository(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            (repo / ".git").mkdir(parents=True)
+            (repo / "src" / "deep").mkdir(parents=True)
+            _approve_record(root, "Project-scoped: the API lives under src/api.", home="repo/.omh")
+            _approve_record(root, "User-scoped: the owner prefers Korean replies.")
+            pack = self._provider(root, cwd=repo / "src" / "deep").prefetch("")
+            self.assertIn("Project-scoped", pack)
+            self.assertIn("User-scoped", pack)
+            # Outside any repository only the user store is read.
+            self.assertNotIn("Project-scoped", self._provider(root, cwd=root).prefetch(""))
+
+    def test_summaries_are_escaped_and_the_budget_names_what_it_cut(self) -> None:
+        records = [
+            {"record_id": "mem_a", "record_type": "fact", "summary": "a < b & c", "approved_at": "2026-09-01T00:00:00Z"},
+            {"record_id": "mem_b", "record_type": "fact", "summary": "x" * 400, "approved_at": "2026-09-02T00:00:00Z"},
+        ]
+        text, count = render_memory_records(records, budget_chars=120)
+        self.assertEqual(count, 1)
+        self.assertIn("a &lt; b &amp; c", text)
+        self.assertIn('<omitted record_id="mem_b" reason="render_budget_exhausted" />', text)
+        text, count = render_memory_records(records, limit=1)
+        self.assertEqual(count, 1)
+        self.assertIn('reason="record_limit_reached"', text)
+        self.assertEqual(render_memory_records([]), ("", 0))
+
+    def test_ranking_is_query_overlap_then_recency_then_id(self) -> None:
+        older = {"record_id": "mem_z", "summary": "deploy runbook", "approved_at": "2026-09-01T00:00:00Z"}
+        newer = {"record_id": "mem_a", "summary": "coffee machine", "approved_at": "2026-09-05T00:00:00Z"}
+        same_day = {"record_id": "mem_b", "summary": "tea kettle", "approved_at": "2026-09-05T00:00:00Z"}
+        ranked = rank_project_memory_records([older, newer, same_day], "")
+        self.assertEqual([r["record_id"] for r in ranked], ["mem_a", "mem_b", "mem_z"])
+        ranked = rank_project_memory_records([older, newer, same_day], "deploy the runbook")
+        self.assertEqual(ranked[0]["record_id"], "mem_z")
+        # Korean queries match on character bigrams, so a particle does not hide the noun.
+        korean = {"record_id": "mem_k", "summary": "메뉴바 헬퍼는 30초마다 갱신한다", "approved_at": "2026-09-01T00:00:00Z"}
+        ranked = rank_project_memory_records([newer, korean], "메뉴바가 왜 느리지")
+        self.assertEqual(ranked[0]["record_id"], "mem_k")
+
+    def test_a_record_id_shared_by_two_homes_is_read_once_project_first(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            record = _approve_record(root, "From the project store.")
+            user_home = root / "user"
+            (user_home / "memory").mkdir(parents=True)
+            # Copy the whole store so the review link stays valid, then reword.
+            import shutil
+
+            shutil.copytree(root / ".omh" / "memory", user_home / "memory", dirs_exist_ok=True)
+            path = user_home / "memory" / "records" / f"{record['record_id']}.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["summary"] = "From the user store."
+            path.write_text(json.dumps(data), encoding="utf-8")
+            records = read_project_memory_records((root / ".omh", user_home))
+            self.assertEqual([r["summary"] for r in records], ["From the project store."])
+
+
+class RecallIndicatorTests(unittest.TestCase):
+    """Hermes prints `🧠 <label> — recalled N memories` on every surface it speaks
+    through, right after the prefetch that carried it, by asking each provider
+    `recall_status()`. OMH answered None forever, so three weeks of daily use
+    never showed the user that OMH memory was in play."""
+
+    def _provider(self, root: Path) -> OmhMemoryProvider:
+        provider = OmhMemoryProvider(root / ".omh")
+        provider.initialize("s1", hermes_home=str(root / ".hermes"), agent_context="primary", cwd=str(root))
+        return provider
+
+    def test_the_status_matches_the_hermes_contract_field_for_field(self) -> None:
+        status = RecallStatus(provider_label="OMH", count=2)
+        self.assertEqual((status.provider_label, status.count, status.glyph), ("OMH", 2, "🧠"))
+        self.assertEqual(PROVIDER_LABEL, "OMH")
+
+    def test_nothing_served_means_no_indicator(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".omh").mkdir()
+            provider = self._provider(root)
+            self.assertIsNone(provider.recall_status())
+            self.assertEqual(provider.prefetch("anything"), "")
+            self.assertIsNone(provider.recall_status())
+
+    def test_the_count_is_what_the_last_prefetch_carried_in_full(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_memory_block(root / ".omh", approve_memory_block(build_memory_block("facts", "OMH wraps Hermes.")))
+            _approve_record(root, "Tests need PYTHONPATH=tests.")
+            provider = self._provider(root)
+            self.assertIsNone(provider.recall_status(), "the pack is rendered but not yet served")
+            provider.prefetch("hello")
+            self.assertEqual(provider.recall_status(), RecallStatus(provider_label="OMH", count=2))
+
+            # A reference block reaches the pack as a label only, which is
+            # content without a discrete count -- Hermes renders that generically.
+            delete_memory_block(root / ".omh", "facts", "system")
+            for path in (root / ".omh" / "memory" / "records").glob("*.json"):
+                path.unlink()
+            write_memory_block(
+                root / ".omh",
+                approve_memory_block(build_memory_block("runbook", "value", description="How to deploy.", tier="reference")),
+            )
+            provider.queue_prefetch("")
+            provider.prefetch("hello")
+            self.assertEqual(provider.recall_status(), RecallStatus(provider_label="OMH", count=0))
+
+    def test_a_stale_count_is_never_reported(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_memory_block(root / ".omh", approve_memory_block(build_memory_block("facts", "OMH wraps Hermes.")))
+            provider = self._provider(root)
+            provider.prefetch("hello")
+            self.assertEqual(provider.recall_status().count, 1)
+            delete_memory_block(root / ".omh", "facts", "system")
+            provider.queue_prefetch("")
+            self.assertEqual(provider.recall_status().count, 1, "queueing is not serving")
+            self.assertEqual(provider.prefetch("hello"), "")
+            self.assertIsNone(provider.recall_status())
+            provider.shutdown()
+            self.assertIsNone(provider.recall_status())

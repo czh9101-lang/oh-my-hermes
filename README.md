@@ -306,7 +306,8 @@ date; confirming it resets the clock, silence ages it from active to
 reference to archive. The next session gets a recall pack ranked for its task
 and cut to a token budget, with conflicts and duplicates resolved. Hermes'
 own memory is never read or patched; this store is OMH's, file-backed and
-reviewed.
+reviewed. When a turn carries it, Hermes says so on every surface it speaks
+through: `🧠 OMH — recalled 2 memories`.
 
 <p align="center">
   <img src="assets/showcase-08-memory.svg" alt="Long-term memory: admission cards, one record's lifecycle, attention tiers, and a budgeted recall pack for the next session" width="1080">
