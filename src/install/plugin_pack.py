@@ -348,13 +348,25 @@ def _copy_plugin_bundle(target: Path, file_records: list[dict[str, str]]) -> Non
     try:
         _copy_resource_tree(root, tmp)
         atomic_write_json(tmp / PLUGIN_MANAGED_MANIFEST, _new_plugin_manifest(target, file_records))
-        if target.exists():
+        # `is_directory_link` as well as `exists`, for the same reason the
+        # ownership guard needs it: a dangling link occupies the path while
+        # `exists()` reports it absent. Skipping the rename-aside for it leaves
+        # `tmp.rename(target)` renaming a directory over a link, which is the
+        # ENOTDIR this change exists to stop -- so --force could not repair the
+        # very machine the guard tells the operator to repair with it. The
+        # guard has already established that OMH owns the path or that --force
+        # was given.
+        if target.exists() or is_directory_link(target):
             target.rename(backup)
         tmp.rename(target)
         discard_path(backup, ignore_errors=True)
     except OSError:
         discard_path(tmp, ignore_errors=True)
-        if backup.exists() and not target.exists():
+        # The rollback asks about links too, or it skips the one case it must
+        # not skip. A dangling link renamed aside answers False to
+        # `backup.exists()`, so without this the operator's link would be gone
+        # and `.omh.previous` would be left holding it.
+        if (backup.exists() or is_directory_link(backup)) and not (target.exists() or is_directory_link(target)):
             backup.rename(target)
         raise
 
