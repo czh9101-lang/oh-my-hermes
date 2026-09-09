@@ -12,9 +12,11 @@ canonical `omh runtime workflow-artifact lifecycle-growth <operation>` interface
 
 Concept-level prior art (pinned, MIT outside enterprise directories; no code
 copied, no integration adopted): PostHog `5f8bc937` for actual-display exposure
-and launch/pause/stop controls, GrowthBook `82b82d08` for sticky assignment,
-guardrails, minimum runtime, and the ship/rollback/review/insufficient-data
-vocabulary, Dittofeed `52b2bee9` for entry/exit, re-entry, and idempotency,
+and launch/pause/stop controls, GrowthBook `095f6164` for sticky assignment,
+guardrails, minimum runtime, the ship/rollback/review/insufficient-data
+vocabulary, and the analysis-run state distinction that keeps queued, running,
+failed, canceled, and never-started work apart from a missing result (issue
+#1429), Dittofeed `52b2bee9` for entry/exit, re-entry, and idempotency,
 Novu `c7bc772f` for preference precedence, digest/throttle windows, throttle
 grouping identity, per-step matched/skipped tracing, and production read-only
 workflow content (issue #1400).
@@ -175,13 +177,13 @@ DEFINITION = SkillDefinition(
         ),
         ProcedureCheck(
             _CHECK_READOUT,
-            ("eligible_count", "attempted_count", "delivered_count", "displayed_count", "acted_count", "outcome_count", "denominator_status", "freshness_status", "sample_ratio_status", "cross_exposure_status", "instrumentation_status", "overlap_status", "step_outcomes", "step_trace_status", "evidence_refs", "causal_claim_status", "disposition"),
-            "Fill each funnel stage only from observed provider or data evidence and keep them separate; pause interpretation on sample-ratio mismatch, cross-exposure, stale data, broken instrumentation, or overlapping interventions; disposition must be exactly one of `ship`, `rollback`, `review`, or `insufficient_data`, and inconclusive data must not force `ship`. Record every conditional step as `matched` or `skipped` with its own reason and status, never its evaluated values; a missing or failed best-effort step trace is not delivery evidence and must not turn a send into a failure.",
+            ("eligible_count", "attempted_count", "delivered_count", "displayed_count", "acted_count", "outcome_count", "denominator_status", "freshness_status", "sample_ratio_status", "cross_exposure_status", "instrumentation_status", "overlap_status", "step_outcomes", "step_trace_status", "analysis_run_state", "analysis_observed_at", "analysis_delay_status", "evidence_refs", "causal_claim_status", "disposition"),
+            "Fill each funnel stage only from observed provider or data evidence and keep them separate; pause interpretation on sample-ratio mismatch, cross-exposure, stale data, broken instrumentation, or overlapping interventions; disposition must be exactly one of `ship`, `rollback`, `review`, or `insufficient_data`, and inconclusive data must not force `ship`. Record every conditional step as `matched` or `skipped` with its own reason and status, never its evaluated values; a missing or failed best-effort step trace is not delivery evidence and must not turn a send into a failure. Name the analysis run as exactly one of `not_started`, `queued`, `running`, `completed`, `failed`, `canceled`, or `unknown` with the time that state was observed; a queued or running analysis holds the disposition at `review` or `insufficient_data`, and elapsed time against a supplied service expectation is a delay warning that never rewrites the state.",
         ),
         ProcedureCheck(
             _CHECK_HANDOFF,
-            ("action_class", "target_owner", "approver", "evidence_refs", "timing", "stop_conditions", "approval_state", "readiness", "disposition"),
-            "Each proposed action must name its class (`connector`, `content`, `analytics`, `product`, `implementation`), owner, approver, evidence refs, timing, and stop conditions; readiness is HOLD while any prior check holds or approval is missing, and no delivery, display, action, outcome, or causal claim may appear without observed evidence.",
+            ("action_class", "target_owner", "approver", "evidence_refs", "timing", "stop_conditions", "analysis_cancellation", "approval_state", "readiness", "disposition"),
+            "Each proposed action must name its class (`connector`, `content`, `analytics`, `product`, `implementation`), owner, approver, evidence refs, timing, and stop conditions; readiness is HOLD while any prior check holds or approval is missing, and no delivery, display, action, outcome, or causal claim may appear without observed evidence. A cancellation or status-reconciliation handoff names the exact run and its scope, and keeps three states apart: the prepared request, which stays `prepared_not_observed`; an observed provider acknowledgement; and an observed terminal cancellation, which alone may back a `canceled` run state.",
         ),
     ),
     procedure_steps=(
@@ -208,13 +210,13 @@ DEFINITION = SkillDefinition(
         ProcedureStep(
             "lifecycle_prepare_measurement_readout", "validation", (_INPUT_EVENTS, _INPUT_BUDGET, _INPUT_OWNER),
             (_READOUT,), (_CHECK_READOUT,),
-            "Lay out eligible, attempted, delivered, displayed, acted, and outcome stages with denominator and freshness checks; fill them only from observed evidence, keep causal-claim status separate, list each conditional step as matched or skipped with a redacted reason, and record `ship`, `rollback`, `review`, or `insufficient_data` without forcing a decision on thin data.",
+            "Lay out eligible, attempted, delivered, displayed, acted, and outcome stages with denominator and freshness checks; fill them only from observed evidence, keep causal-claim status separate, list each conditional step as matched or skipped with a redacted reason, record the analysis run's state and the time it was observed alongside any delay against a supplied service expectation, and record `ship`, `rollback`, `review`, or `insufficient_data` without forcing a decision on thin data.",
         ),
         ProcedureStep(
             "lifecycle_validate_handoff", "validation", _ALL_INPUTS,
             (_HANDOFF,),
             (_CHECK_TARGET, _CHECK_AUDIENCE, _CHECK_SAFETY, _CHECK_EXPERIMENT, _CHECK_READOUT, _CHECK_HANDOFF),
-            "Propose connector, content, analytics, product, or implementation actions with owner, approver, evidence refs, timing, and stop conditions; return HOLD readiness while any check holds or approval is missing, route validated product changes to `product-brief`, and never report a send, display, action, outcome, or causal effect that was not observed.",
+            "Propose connector, content, analytics, product, or implementation actions with owner, approver, evidence refs, timing, and stop conditions; prepare any cancellation or status-reconciliation request against the exact named run and leave it `prepared_not_observed` until a provider result is observed; return HOLD readiness while any check holds, approval is missing, or the latest analysis run is still in flight, route validated product changes to `product-brief`, and never report a send, display, action, outcome, cancellation, or causal effect that was not observed.",
         ),
     ),
     artifact_expectations=(
@@ -230,6 +232,10 @@ DEFINITION = SkillDefinition(
         "A throttle window is identified by its configured key or expression plus the resolved value, scoped to a recipient or tenant; a resolved value is never re-read as a second key, a missing static value stays ungrouped, and an empty dynamic value falls back to the default window.",
         "Per-step matched and skipped outcomes carry a reason and status but never evaluated values or secrets; a step trace is best-effort diagnostics, not delivery evidence, and its absence must not block or fail a send.",
         "Production or published workflow content is view-only in prepared guidance; mutations go to a development or draft copy, then an explicit promotion decision, and only an observed provider result proves the promotion happened.",
+        "A missing analysis result is not proof that no analysis is running; name the run state and the time it was observed, and never report a queued or running analysis as failed, canceled, absent, or complete.",
+        "Elapsed time is a delay warning measured against a supplied service expectation, never evidence about a run; no fixed staleness cutoff may overwrite an observed in-flight state, and analysis-job runtime, experiment minimum runtime, and source-data freshness stay three separate questions.",
+        "While the latest observed run is queued or running, do not start or recommend another analysis; reconcile the existing work first, and select the newest in-flight run rather than the newest run of any kind.",
+        "A cancellation or status-reconciliation handoff is prepared, never performed: it names the exact run and scope, stays `prepared_not_observed`, and only an observed provider result may record acceptance or a terminal cancellation.",
     ),
     quality_tier="decision-gated",
     quality_bar=(
@@ -254,6 +260,7 @@ DEFINITION = SkillDefinition(
     recovery_notes=(
         "If consent, suppression, identity, event semantics, denominator, or the decision owner is unknown, return HOLD with the missing fields and ask for the one input that unblocks the smallest next step.",
         "If provider or data evidence for delivery, display, action, or outcome is unavailable, keep every readout stage not_observed and set the disposition to `insufficient_data` or `review` rather than `ship`.",
+        "If a readout is missing, ask for the analysis run state and its observation time before concluding anything: a queued or long-running analysis holds for reconciliation, while failed, canceled, and never-started runs each need a different next step.",
     ),
     good_example=SkillExample(
         prompt="Our day-7 retention dropped for new workspace admins; design an in-app onboarding journey and a holdout experiment so we know whether it works.",

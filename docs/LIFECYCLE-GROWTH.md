@@ -32,10 +32,11 @@ wrong artifact slots or unequal IDs.
 - `build_growth_measurement_readout` creates `growth_measurement_readout/v1`
   with distinct funnel counts, provider delivery, actual exposure, data,
   runtime, and causal evidence references, a bounded list of per-step
-  outcome records, and a step trace state.
+  outcome records, a step trace state, and a nested analysis status record.
 - `build_growth_handoff_disposition` creates `growth_handoff_disposition/v1`
   with typed connector/content/analytics/product/implementation actions,
-  owner, approver, connector evidence state, timing, and stop conditions.
+  owner, approver, connector evidence state, timing, stop conditions, and a
+  nested analysis cancellation handoff.
 
 `validate_lifecycle_growth_artifact(record) -> list[str]` never raises for
 malformed artifacts. It rejects raw-payload-shaped keys and returns structural,
@@ -73,6 +74,53 @@ storage key, feature flag, dashboard state, or enum.
   `not_observed` until a provider result is observed. Readiness reuses the
   same reasons, so a production edit or an unpromoted draft holds a launch.
 
+## Analysis-run state
+
+`omh.workflows.lifecycle_growth_analysis` holds the provider-neutral records
+adopted from the issue #1429 source review. A missing result used to be
+indistinguishable from a queued, running, failed, canceled, or never-started
+analysis; these records keep those apart. None of them names a provider model,
+controller, endpoint, query state, or timeout.
+
+- `build_analysis_status` records one run as exactly one of `not_started`,
+  `queued`, `running`, `completed`, `failed`, `canceled`, or `unknown`, with a
+  safe `run_ref`, the `observed_at` time that state was observed, the run's
+  `elapsed_minutes`, and evidence references. A `not_started` record may carry
+  `observed_at` — looking and finding nothing is an observation — but no run
+  reference, elapsed time, or evidence. Every state except `not_started` and
+  `unknown` requires an evidence handle.
+- `delay_state` is derived, never told, and is a second axis rather than a
+  substitute for the first. It is `not_applicable` for a settled or unstarted
+  run, `unknown` for in-flight work with no supplied
+  `service_expectation_minutes`, and otherwise `within_expectation` or
+  `delayed`. OMH hard-codes no staleness cutoff, so a queued run older than
+  any particular window stays queued and is reported as delayed, never as
+  failed, canceled, or absent.
+- `derive_readout_disposition` gates on the run after the rollback branch: an
+  observed guardrail breach still outranks everything, an in-flight run makes
+  the readout `review` however good the numbers look, and any state other than
+  `completed` leaves them `insufficient_data`. Analysis-job runtime,
+  experiment minimum runtime, and source-data freshness stay three separate
+  questions: an experiment can satisfy its exposure window while its analysis
+  is still queued, and a completed run can still read stale source data.
+- `select_latest_analysis_run` prefers the newest in-flight run over a newer
+  settled one, ordering by observed time with the supplied position as the
+  tiebreak, and reports `in_flight`, `settled`, or `none` with the selected
+  run's reference, state, observation time, and evidence.
+  `route_lifecycle_analysis_request` holds a further analysis while that
+  selection is in flight unless `reconciliation_state` is `reconciled`; a
+  `READY` verdict means nothing observed blocks preparing another run, not
+  that one may be started.
+- `build_analysis_cancellation` keeps three states apart. `handoff_status` is
+  `prepared_not_observed` on every record, including one carrying observations,
+  because OMH only ever prepared the request. `acknowledgement_state` records
+  an observed provider acceptance or rejection, and `result_state` records an
+  observed terminal outcome; an observed result requires an acknowledgement,
+  and `observed_canceled` requires an accepted request plus evidence.
+  Readiness cross-checks the two artifacts: a `canceled` run state needs an
+  observed cancellation result, an observed cancellation contradicts an
+  in-flight state, and a `single_run` request naming another run holds.
+
 ## Launch, entry, and readout
 
 `prepare_lifecycle_growth` consumes the five launch artifacts (`brief`,
@@ -85,7 +133,8 @@ or mismatched lifecycle ID.
 
 A supplied `readout` is optional at launch but represents an existing observed
 run. Its stale data, unknown denominator, broken instrumentation, sample-ratio
-mismatch, cross-exposure, or overlap pauses readiness.
+mismatch, cross-exposure, or overlap pauses readiness, and so does a queued or
+running analysis: preparing another one while work is in flight duplicates it.
 
 `evaluate_lifecycle_growth_entry` is a pure metadata decision. It returns
 `HOLD` for a duplicate event ID, disallowed or unexited re-entry, or active
@@ -95,12 +144,15 @@ overlap; it neither adds a person to an audience nor starts a journey.
 `insufficient_data`. It requires non-zero eligible/displayed/outcome stages,
 valid actual-exposure/runtime/causal references, and a valid causal method
 before `ship`. `evaluate_lifecycle_growth` also compares observed runtime days
-with the experiment's minimum runtime, so an early readout cannot ship.
+with the experiment's minimum runtime, so an early readout cannot ship. Both
+derived results report `analysis_run_state`, `analysis_observed_at`, and
+`analysis_delay_state` beside the counts.
 
 All records have `prepared_not_observed` status. Evidence references identify
 what a later caller asserts was observed; the records and derived local results
-are not proof that a provider delivered, displayed, measured, or caused an
-outcome.
+are not proof that a provider delivered, displayed, measured, canceled, or
+caused an outcome. A prepared cancellation handoff in particular is not an
+external mutation, a provider request, or a stopped analysis.
 
 ## Integration boundary
 

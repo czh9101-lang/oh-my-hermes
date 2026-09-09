@@ -3,6 +3,16 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
+from .lifecycle_growth_analysis import (
+    IN_FLIGHT_ANALYSIS_STATES,
+    analysis_cancellation_hold_reasons,
+    analysis_run_state,
+    analysis_status_field,
+    build_analysis_cancellation,
+    build_analysis_status,
+    route_lifecycle_analysis_request,
+    select_latest_analysis_run,
+)
 from .lifecycle_growth_artifacts import (
     build_audience_trigger_policy,
     build_growth_experiment_plan,
@@ -81,8 +91,7 @@ def prepare_lifecycle_growth(artifacts: Mapping[str, Mapping[str, Any]]) -> dict
     _hold_for_audience(records["audience"], errors)
     _hold_for_experiment(records["experiment"], errors)
     _hold_for_handoff(records["handoff"], errors)
-    if "readout" in records and readout_lifecycle_growth(records["readout"])["interpretation_state"] == "HOLD":
-        errors.append("observed readout interpretation is on hold")
+    _hold_for_analysis(records, errors)
     return _readiness(errors)
 
 
@@ -111,6 +120,9 @@ def evaluate_lifecycle_growth(experiment: Mapping[str, Any], readout: Mapping[st
         "actual_exposure_count": result["actual_exposure_count"],
         "delivery_count": result["delivery_count"],
         "runtime_days_observed": result["runtime_days_observed"],
+        "analysis_run_state": result["analysis_run_state"],
+        "analysis_observed_at": result["analysis_observed_at"],
+        "analysis_delay_state": result["analysis_delay_state"],
         "artifact_errors": _errors(result.get("artifact_errors")) + errors,
         "claim_boundary": "Assignment is not exposure; evaluation is derived from bounded caller-supplied metadata only.",
     }
@@ -129,8 +141,11 @@ def readout_lifecycle_growth(readout: Mapping[str, Any]) -> dict[str, object]:
         "action_count": _count(readout, "acted_count"),
         "outcome_count": _count(readout, "outcome_count"),
         "runtime_days_observed": _count(readout, "runtime_days_observed"),
+        "analysis_run_state": analysis_run_state(readout),
+        "analysis_observed_at": analysis_status_field(readout, "observed_at"),
+        "analysis_delay_state": analysis_status_field(readout, "delay_state"),
         "artifact_errors": errors,
-        "claim_boundary": "This derived readout is not provider, delivery, display, outcome, or causal evidence.",
+        "claim_boundary": "This derived readout is not provider, delivery, display, outcome, or causal evidence. Analysis-run state and its observation time are reported as the provider observed them, and elapsed time never restates them.",
     }
 
 
@@ -208,6 +223,25 @@ def _hold_for_experiment(experiment: Mapping[str, Any], errors: list[str]) -> No
         errors.append("experiment data health is not healthy")
 
 
+def _hold_for_analysis(records: Mapping[str, Mapping[str, Any]], errors: list[str]) -> None:
+    """Hold on an unfinished analysis, and on a cancellation the run does not support.
+
+    A supplied readout stands for an existing run. While its analysis is queued
+    or running, preparing another one duplicates work that is already in
+    flight, so readiness holds until the caller reconciles it. The cancellation
+    cross-check is here rather than in either validator because it is the only
+    place that sees the observed run state and the prepared handoff together.
+    """
+    readout = records.get("readout")
+    if readout is None:
+        return
+    if readout_lifecycle_growth(readout)["interpretation_state"] == "HOLD":
+        errors.append("observed readout interpretation is on hold")
+    if analysis_run_state(readout) in IN_FLIGHT_ANALYSIS_STATES:
+        errors.append("the latest analysis run is still in flight; reconcile it before preparing another")
+    errors.extend(analysis_cancellation_hold_reasons(readout.get("analysis_status"), records["handoff"].get("analysis_cancellation")))
+
+
 def _hold_for_handoff(handoff: Mapping[str, Any], errors: list[str]) -> None:
     if handoff.get("connector_evidence_state") != "observed_available":
         errors.append("connector is not observed available")
@@ -233,6 +267,9 @@ def _count(record: Mapping[str, Any], field: str) -> int:
 
 
 __all__ = [
+    "analysis_cancellation_hold_reasons",
+    "build_analysis_cancellation",
+    "build_analysis_status",
     "build_audience_trigger_policy",
     "build_growth_experiment_plan",
     "build_growth_handoff_disposition",
@@ -246,6 +283,8 @@ __all__ = [
     "evaluate_lifecycle_growth_entry",
     "prepare_lifecycle_growth",
     "readout_lifecycle_growth",
+    "route_lifecycle_analysis_request",
     "route_lifecycle_workflow_mutation",
+    "select_latest_analysis_run",
     "validate_lifecycle_growth_artifact",
 ]

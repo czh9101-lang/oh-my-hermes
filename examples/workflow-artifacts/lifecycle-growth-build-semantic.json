@@ -59,6 +59,14 @@
   },
   "handoff": {
     "action_owner": "owner_lifecycle_ops",
+    "analysis_cancellation": {
+      "acknowledgement_state": "not_observed",
+      "cancel_scope": "single_run",
+      "evidence_refs": [],
+      "request_state": "prepared",
+      "result_state": "not_observed",
+      "run_ref": "analysis_run_activation_q3_02"
+    },
     "approver": "owner_growth",
     "connector_evidence_refs": [
       "evidence_connector_observed"

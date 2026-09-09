@@ -56,14 +56,16 @@ ARTIFACT_KEYS: Final = {
             "cross_exposure_state", "overlap_state", "primary_metric_state", "guardrail_state",
             "causal_claim_status", "rollback_state", "provider_evidence_refs",
             "actual_exposure_evidence_refs", "data_evidence_refs", "runtime_evidence_refs",
-            "causal_evidence_refs", "step_outcomes", "step_trace_state", "disposition", "claim_boundary",
+            "causal_evidence_refs", "step_outcomes", "step_trace_state", "analysis_status", "disposition",
+            "claim_boundary",
         }
     ),
     "growth_handoff_disposition/v1": frozenset(
         {
             "schema_version", "status", "lifecycle_growth_id", "proposed_action_refs",
             "proposed_action_kinds", "action_owner", "approver", "connector_evidence_state",
-            "connector_evidence_refs", "timing_state", "stop_condition_refs", "claim_boundary",
+            "connector_evidence_refs", "timing_state", "stop_condition_refs", "analysis_cancellation",
+            "claim_boundary",
         }
     ),
 }
