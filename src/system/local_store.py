@@ -5,6 +5,7 @@ import json
 import os
 import random
 import secrets
+import shutil
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -40,6 +41,58 @@ def ensure_dir(path: Path, *, private: bool = False) -> None:
     path.mkdir(parents=True, exist_ok=True)
     if private:
         path.chmod(0o700)
+
+
+def is_junction(path: Path) -> bool:
+    """True when *path* is a Windows directory junction.
+
+    ``Path.is_junction`` only ever returns True on Windows, so the probe is
+    fetched by name rather than called directly.
+    """
+    probe = getattr(path, "is_junction", None)
+    return bool(probe and probe())
+
+
+def is_directory_link(path: Path) -> bool:
+    """True when *path* is a symlink or a Windows directory junction.
+
+    A directory link answers True to ``is_dir()`` when it resolves and False
+    when it dangles, so every removal or replacement decision has to ask about
+    the link itself before it asks about the link's target.
+    """
+    return path.is_symlink() or is_junction(path)
+
+
+def discard_path(path: Path, *, ignore_errors: bool = False) -> None:
+    """Remove *path* whatever it is: symlink, junction, file, or directory.
+
+    ``shutil.rmtree`` cannot remove a symbolic link. It descends into the
+    link's target, fails, and with ``ignore_errors=True`` leaves the link in
+    place without a word. A leftover link at a path an install is about to
+    rename over then breaks that rename, because ``rename(2)`` refuses to
+    rename a directory over a non-directory (``ENOTDIR``). Removal therefore
+    has to dispatch on the entry type, and a directory link has to be unlinked
+    as a link rather than walked as a directory.
+
+    ``ignore_errors`` mirrors ``shutil.rmtree``'s flag and extends it to the
+    unlink branches, so a best-effort pre-clean stays best-effort for every
+    entry type instead of only for real directories. A missing path is always
+    a no-op.
+    """
+    if path.is_dir() and not is_directory_link(path):
+        shutil.rmtree(path, ignore_errors=ignore_errors)
+        return
+    if not path.exists() and not is_directory_link(path):
+        return
+    try:
+        if is_junction(path):
+            # A junction is a directory entry; unlink refuses it on Windows.
+            path.rmdir()
+        else:
+            path.unlink()
+    except OSError:
+        if not ignore_errors:
+            raise
 
 
 def ensure_file(path: Path, *, private: bool = False) -> None:

@@ -1,21 +1,25 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import importlib.resources as resources
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
 import unittest
 from types import ModuleType
+from typing import Any
 from unittest import mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from _cli_harness import run_cli
 from _local_package import load_local_package
+from _platform_support import requires_symlinks
 
 load_local_package()
 
@@ -23,7 +27,7 @@ from omh.commands import setup as _setup_module
 from omh.paths import resolve_paths
 from omh.install.plugin_loader_observation import observe_real_loader_registration
 from omh.plugin_pack import inspect_plugin_bundle
-from omh.install.plugin_pack import _SmokeContext, validate_tool_definitions
+from omh.install.plugin_pack import _SmokeContext, install_plugin_bundle, validate_tool_definitions
 from omh.plugin_bundle.omh.tools import evidence_tool
 from omh.plugin_bundle.omh.metadata import PROVIDED_HOOKS, PROVIDED_TOOLS, TOOL_FILE_STEMS
 from omh.release_smoke_core import CommandResult
@@ -1441,6 +1445,189 @@ class UpdateRefreshesTheBundleTests(unittest.TestCase):
             status, _, stderr = run_cli(base + ["update"])
             self.assertEqual(status, 0, stderr)
             self.assertEqual(marker.read_text(encoding="utf-8"), "# edited outside OMH\n")
+
+
+@requires_symlinks
+class SymlinkedPluginDirectoryTests(unittest.TestCase):
+    """A plugin directory that is a link, not a directory (issue from PR #1430).
+
+    An older OMH layout pointed a bot profile's `plugins/omh` at a shared
+    location with a symlink. `_copy_plugin_bundle` renamed that link aside to
+    `.omh.previous` and then cleaned up with `shutil.rmtree(..., ignore_errors=True)`,
+    which cannot unlink a symlink: it descends into the target, fails, and says
+    nothing. The stale link survived, and the next update's
+    `target.rename(backup)` hit `rename(dir, symlink)` -- ENOTDIR -- and took
+    down `omh update` for every profile on the machine.
+
+    The link is also what the ownership guard has to see. `Path.exists` follows
+    it, so a dangling link reads as an empty path and would let the replacement
+    run without `--force` on something OMH never wrote.
+    """
+
+    def _bundle_dir(self, hermes_home: Path) -> Path:
+        return hermes_home / "plugins" / "omh"
+
+    def _link_bundle_to_shared(self, root: Path) -> tuple[Path, Path]:
+        """Recreate the older layout: `plugins/omh` is a link to a shared tree."""
+        bundle = self._bundle_dir(root / ".hermes")
+        shared = root / ".hermes" / "shared-omh"
+        bundle.rename(shared)
+        bundle.symlink_to(shared, target_is_directory=True)
+        return bundle, shared
+
+    def test_two_consecutive_updates_replace_a_symlinked_bundle(self) -> None:
+        # One update is not enough to prove the fix: the crash was on the
+        # SECOND update, after the first one left an unremovable `.omh.previous`
+        # link behind. Both updates have to succeed and the leftover has to be
+        # gone before the machine is actually repaired.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+            status, _, stderr = run_cli(base + ["setup"])
+            self.assertEqual(status, 0, stderr)
+            bundle, _ = self._link_bundle_to_shared(root)
+            self.assertTrue(bundle.is_symlink())
+
+            status, _, stderr = run_cli(base + ["update"])
+            self.assertEqual(status, 0, stderr)
+            self.assertFalse(bundle.is_symlink())
+            self.assertTrue((bundle / "memory_provider.py").is_file())
+
+            leftover = bundle.parent / ".omh.previous"
+            self.assertFalse(leftover.is_symlink())
+            self.assertFalse(leftover.exists())
+
+            status, _, stderr = run_cli(base + ["update"])
+            self.assertEqual(status, 0, stderr)
+            self.assertTrue((bundle / "memory_provider.py").is_file())
+
+    def test_a_stale_previous_link_does_not_block_an_update(self) -> None:
+        # The leftover from the old code path, reproduced directly: a machine
+        # that already carries `.omh.previous` as a symlink must still update.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+            status, _, stderr = run_cli(base + ["setup"])
+            self.assertEqual(status, 0, stderr)
+            bundle = self._bundle_dir(root / ".hermes")
+            stale = bundle.parent / ".omh.previous"
+            stale.symlink_to(root / ".hermes" / "gone", target_is_directory=True)
+
+            status, _, stderr = run_cli(base + ["update"])
+            self.assertEqual(status, 0, stderr)
+            self.assertFalse(stale.is_symlink())
+            self.assertTrue((bundle / "memory_provider.py").is_file())
+
+    def test_a_dangling_plugin_link_is_kept_without_force(self) -> None:
+        # `Path.exists` follows the link, so a dangling one reads as absent.
+        # Without the link-aware ownership guard the replacement path runs on
+        # a link OMH cannot prove it wrote, and the operator's pointer is gone
+        # with a clean exit code. It has to be kept and named instead.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+            status, _, stderr = run_cli(base + ["setup"])
+            self.assertEqual(status, 0, stderr)
+            bundle, shared = self._link_bundle_to_shared(root)
+            shutil.rmtree(shared)
+            self.assertTrue(bundle.is_symlink())
+            self.assertFalse(bundle.exists())
+
+            status, stdout, stderr = run_cli(base + ["update"])
+            self.assertEqual(status, 0, stderr)
+            self.assertTrue(bundle.is_symlink())
+            self.assertEqual(os.readlink(bundle), str(shared))
+            self.assertIn("use --force to replace it", stdout + stderr)
+
+    def test_a_dangling_plugin_link_is_replaced_with_force(self) -> None:
+        # The other half of that guard, and the reason the replacement asks
+        # `is_directory_link` and not only `exists`. The note above tells the
+        # operator that --force is the remedy; when --force then died on
+        # `rename(dir, symlink)` with ENOTDIR, the guard was naming a remedy
+        # that did not exist.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+            status, _, stderr = run_cli(base + ["setup"])
+            self.assertEqual(status, 0, stderr)
+            bundle, shared = self._link_bundle_to_shared(root)
+            shutil.rmtree(shared)
+
+            status, _, stderr = run_cli(base + ["update", "--force"])
+            self.assertEqual(status, 0, stderr)
+            self.assertFalse(bundle.is_symlink())
+            self.assertTrue((bundle / "memory_provider.py").is_file())
+            self.assertFalse((bundle.parent / ".omh.previous").is_symlink())
+            self.assertFalse((bundle.parent / ".omh.previous").exists())
+
+    def _rename_failing_into(self, target: Path) -> Any:
+        """Patch for `Path.rename` that fails only the install of the new tree.
+
+        The rollback renames `.omh.previous` back onto the same target, so the
+        source name is what separates the two -- matching on the destination
+        alone would break the rollback this is meant to exercise.
+        """
+        real_rename = Path.rename
+
+        def failing_rename(self: Path, dest: Any) -> Path:
+            if self.name.endswith(".installing") and Path(dest) == target:
+                raise OSError(errno.EXDEV, "forced install failure")
+            return real_rename(self, dest)
+
+        return failing_rename
+
+    def test_a_failed_rename_restores_a_symlinked_bundle(self) -> None:
+        # The rollback is the whole reason the replacement renames aside rather
+        # than deleting. If the install of the new tree fails after the link has
+        # been moved to `.omh.previous`, the operator gets their link back.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            omh_home, hermes_home = root / ".omh", root / ".hermes"
+            base = ["--omh-home", str(omh_home), "--hermes-home", str(hermes_home)]
+            status, _, stderr = run_cli(base + ["setup"])
+            self.assertEqual(status, 0, stderr)
+            _, shared = self._link_bundle_to_shared(root)
+            # `resolve_paths` resolves the home, so the product's spelling of
+            # the plugin directory is the one the rename is compared against.
+            paths = resolve_paths(omh_home, hermes_home)
+            target = paths.hermes_plugin_dir
+
+            with mock.patch.object(Path, "rename", self._rename_failing_into(target)):
+                with self.assertRaises(OSError):
+                    install_plugin_bundle(paths)
+
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(os.readlink(target), str(shared))
+            self.assertFalse((target.parent / ".omh.previous").exists())
+            self.assertFalse((target.parent / ".omh.previous").is_symlink())
+            self.assertFalse((target.parent / ".omh.installing").exists())
+
+    def test_a_failed_rename_restores_a_dangling_plugin_link(self) -> None:
+        # The case the rollback could not see. A dangling link renamed aside to
+        # `.omh.previous` answers False to `backup.exists()`, so reading it as
+        # absent leaves the target gone and the operator's link stranded under
+        # the backup name -- the one outcome the error message cannot help them
+        # undo, because it never names where the link went.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            omh_home, hermes_home = root / ".omh", root / ".hermes"
+            base = ["--omh-home", str(omh_home), "--hermes-home", str(hermes_home)]
+            status, _, stderr = run_cli(base + ["setup"])
+            self.assertEqual(status, 0, stderr)
+            _, shared = self._link_bundle_to_shared(root)
+            shutil.rmtree(shared)
+            paths = resolve_paths(omh_home, hermes_home)
+            target = paths.hermes_plugin_dir
+
+            with mock.patch.object(Path, "rename", self._rename_failing_into(target)):
+                with self.assertRaises(OSError):
+                    install_plugin_bundle(paths, force=True)
+
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(os.readlink(target), str(shared))
+            self.assertFalse((target.parent / ".omh.previous").is_symlink())
+            self.assertFalse((target.parent / ".omh.previous").exists())
+            self.assertFalse((target.parent / ".omh.installing").exists())
 
 
 class UpdateCarriesRegistrationTests(unittest.TestCase):

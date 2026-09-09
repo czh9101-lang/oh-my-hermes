@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..core.errors import OmhError
 from ..converter import convert_from_dir, convert_references_from_dir
-from ..local_store import atomic_write_text, read_json_object_result
+from ..local_store import atomic_write_text, discard_path, is_directory_link, read_json_object_result
 from ..manifest import local_modifications, new_manifest, read_manifest, skill_records, write_manifest
 from ..paths import (
     OmhPaths,
@@ -891,7 +891,7 @@ def _collect_removal(
     force: bool,
     managed_plugin: bool = False,
 ) -> None:
-    if not path.exists() and not path.is_symlink():
+    if not path.exists() and not is_directory_link(path):
         return
     if managed_plugin and not _looks_like_managed_plugin(path):
         decision = resolve_approval_tier(
@@ -903,10 +903,7 @@ def _collect_removal(
     if dry_run:
         would_remove.append(str(path))
         return
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path)
-    else:
-        path.unlink()
+    discard_path(path)
     removed.append(str(path))
 
 

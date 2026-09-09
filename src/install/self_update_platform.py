@@ -10,10 +10,10 @@ from typing import Literal, Protocol
 
 try:
     from ..core.errors import OmhError
-    from ..system.local_store import atomic_write_text
+    from ..system.local_store import atomic_write_text, is_directory_link, is_junction
 except ImportError:  # pragma: no cover - direct-source installer smoke.
     from core.errors import OmhError
-    from system.local_store import atomic_write_text
+    from system.local_store import atomic_write_text, is_directory_link, is_junction
 
 
 JUNCTION_TIMEOUT_SECONDS = 15.0
@@ -62,7 +62,7 @@ class SelfUpdatePlatform:
         return venv / ("Scripts" if self.is_windows else "bin")
 
     def link_target(self, root: Path, link: Path) -> Path | None:
-        if not _is_directory_link(link):
+        if not is_directory_link(link):
             return None
         try:
             raw = os.readlink(link)
@@ -127,20 +127,15 @@ class SelfUpdatePlatform:
         atomic_write_text(launcher, f'@echo off\r\n"{_windows_spelling(target)}" %*\r\n')
 
 
-def _is_junction(path: Path) -> bool:
-    is_junction = getattr(path, "is_junction", None)
-    return bool(is_junction and is_junction())
-
-
-def _is_directory_link(path: Path) -> bool:
-    return path.is_symlink() or _is_junction(path)
-
-
 def _remove_directory_link(path: Path) -> None:
-    is_junction = _is_junction(path)
-    if not path.exists() and not path.is_symlink() and not is_junction:
+    # `is_junction` / `is_directory_link` come from `local_store` so that the
+    # generation-pointer seam here and the plugin-install cleanup share one
+    # answer to "is this entry a link?". Two answers is how a junction ends up
+    # walked as a directory on Windows.
+    junction = is_junction(path)
+    if not path.exists() and not path.is_symlink() and not junction:
         return
-    if is_junction:
+    if junction:
         path.rmdir()
     else:
         path.unlink()
@@ -151,7 +146,7 @@ remove_directory_link = _remove_directory_link
 
 def _replace_windows_pointer(temporary: Path, current: Path, backup: Path) -> None:
     """Switch a junction pair without replacing an existing junction in place."""
-    had_current = _is_directory_link(current)
+    had_current = is_directory_link(current)
     if current.exists() and not had_current:
         raise OSError(f"current generation pointer is not a directory junction: {current}")
     if had_current:
@@ -159,7 +154,7 @@ def _replace_windows_pointer(temporary: Path, current: Path, backup: Path) -> No
     try:
         os.replace(temporary, current)
     except OSError:
-        if had_current and _is_directory_link(backup) and not _is_directory_link(current):
+        if had_current and is_directory_link(backup) and not is_directory_link(current):
             os.replace(backup, current)
         raise
     if had_current:
