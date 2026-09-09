@@ -749,13 +749,11 @@ _FEATURE_SURFACE_SKILLS = (
             "barge-in handling",
             "voice tool safety",
             "spoken tool safety",
-            "실시간 음성 커넥터",
-            "실시간 음성 준비",
-            "음성 커넥터 준비",
-            "음성 커넥터 시험",
-            "음성 게이트웨이 준비",
-            "음성 턴 무결성",
-            "음성 시험 영수증",
+            # Korean reaches this lane through the realtime-voice carve-out in
+            # `src/routing/policy.py`, not through this table: the per-skill
+            # Hangul freeze in `tests/test_routing_language_policy.py` exists so
+            # an existing skill's Korean table is never padded, and a new
+            # capability inside an existing skill is not a reason to raise it.
         ),
         "Use before adopting, enabling, or routing an external plugin/connector/API when Hermes must compare capability, auth, cost, modality, freshness, safety, fallback, and observable trial evidence. Use it for an optional memory provider too, where enabling, switching, pausing, or removing it also needs identity scope, automatic hooks, retention, deletion, export, and switching answered before adoption.",
         category="connector",

@@ -744,7 +744,7 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # irreversible adoption too late. The field-level contract lives in
 # `src/workflows/memory_provider_posture.py`, outside this budget; warranted
 # growth.
-# 919894 -> 923034: `external-connector-readiness` binds realtime voice
+# 919894 -> 922941: `external-connector-readiness` binds realtime voice
 # adoption to `realtime_voice_trial_receipt/v1` (#1426) - the receipt and
 # verdict outputs, three safety rules, one checklist line, one recovery note,
 # and the English voice triggers - while `voice-input` and
@@ -756,7 +756,7 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # integrity first. The field-level contract lives in
 # `docs/REALTIME-VOICE-TRIAL-RECEIPTS.md`, outside this budget; warranted
 # growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 923034
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 922941
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

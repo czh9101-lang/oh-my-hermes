@@ -19,6 +19,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from _cli_harness import run_cli
+from _credential_fixtures import AWS_ACCESS_KEY_ID
 from _local_package import load_local_package
 
 load_local_package()
@@ -580,7 +581,7 @@ class PrivacyTests(unittest.TestCase):
                     occurred=True,
                     requested_path_outcome="failed",
                     fallback_path_ref="half-duplex-turn-taking",
-                    reason="token AKIAIOSFODNN7EXAMPLE was rejected",
+                    reason=f"gateway rejected {AWS_ACCESS_KEY_ID}",
                     relative_to_audible="before_audible",
                 )
             )
