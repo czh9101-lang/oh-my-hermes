@@ -8,6 +8,7 @@ import importlib
 import importlib.util
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Barrier
 import unittest
 from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack, runtime_checkable
@@ -15,31 +16,69 @@ from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack, runtime_checkable
 if TYPE_CHECKING:
     from omh.workflows.agent_board import AgentBoard, AgentBoardRequest, HostIdentity, NativeAction
 
+from _cli_harness import run_cli
 from _local_package import load_local_package
 
 load_local_package()
 
-# Frozen supported subset of the researched native schemas, not a fake executor.
-FIELDS = {
-    "create": ("title assignee", "parents idempotency_key initial_status model provider completion_contract"),
-    "link": ("parent_id child_id", ""),
-    "comment": ("task_id body", ""),
-    "heartbeat": ("", "task_id note"),
-    "request_review": ("summary", "task_id reviewer metadata"),
-    "request_changes": ("reason", "task_id"),
-    "block": ("reason", "task_id kind"),
-    "unblock": ("task_id", ""),
-    "complete": ("", "task_id summary result metadata created_cards"),
-    "show": ("", "task_id"),
-    "list": ("", "assignee status tenant include_archived limit"),
-    "attachments": ("", "task_id"),
-}
+# Preserve helper exports while sharing the exact fixture with component QA.
+from five_issue_cases.kanban import (
+    FIELDS as FIELDS, SuppliedSchema as SuppliedSchema,
+    request as request, supplied_schemas as supplied_schemas,
+)
+from omh.coding.fanout_failure_diagnostics import is_object_list, is_string_map
 
 
-class SuppliedSchema(TypedDict):
-    type: str
-    properties: dict[str, dict[str, str]]
-    required: list[str]
+ROOT = Path(__file__).resolve().parents[1]
+NATIVE_ACTIONS_EXAMPLE = ROOT / "examples" / "agent-board" / "native-actions.json"
+NATIVE_ACTIONS_MESSAGE = "agent-board coordinate durable work across profiles on the qa-board"
+
+
+def native_actions_example() -> dict[str, object]:
+    """Canonical producer for the committed wrapper-actions example.
+
+    Every section is the exact output of a public OMH API on fixed inputs. The
+    prepared request uses the shared fixture host schemas, so the example is
+    fixture-attributed: zero native calls, no native execution evidence.
+    """
+    from omh.workflows.agent_board import AgentBoard, HostIdentity, board_reference
+    from omh.wrapper.contract import build_agent_board_status_interaction, build_chat_interaction_payload
+
+    board = AgentBoard("qa-board", board_reference("example-root", "qa-board"))
+    prepared = board.prepare(request(), host=HostIdentity("example-session", "example-task", "example-call"),
+                             schemas=supplied_schemas(), hooks=frozenset({"pre_tool_call", "post_tool_call"}),
+                             board_is_safe=True)
+    return {
+        "schema_version": "agent_board_native_actions_example/v1",
+        "purpose": ("Wrapper actions and the prepared native action for one durable agent-board request, "
+                    "regenerated from public OMH APIs by tests/test_agent_board_kanban.py."),
+        "provenance": {"kind": "fixture", "host_schemas": "tests/five_issue_cases/kanban.py::supplied_schemas",
+                       "native_calls": 0, "native_execution": False,
+                       "claim_boundary": "A prepared native action is not an invocation, and a fixture host is not native Hermes evidence."},
+        "chat_interaction": {"message": NATIVE_ACTIONS_MESSAGE, "source": "discord",
+                             "payload": build_chat_interaction_payload(NATIVE_ACTIONS_MESSAGE, source="discord")},
+        "prepared_request": dict(prepared),
+        "status_interaction": build_agent_board_status_interaction(prepared, source="discord"),
+    }
+
+
+class _Decoder(Protocol):
+    def loads(self, s: str) -> object: ...
+
+
+_decoder: _Decoder = json
+
+
+def parsed_object(raw: str) -> dict[str, object]:
+    decoded = _decoder.loads(raw)
+    assert is_string_map(decoded), "json_not_object"
+    return decoded
+
+
+def write_native_actions_example() -> None:
+    NATIVE_ACTIONS_EXAMPLE.parent.mkdir(parents=True, exist_ok=True)
+    _ = NATIVE_ACTIONS_EXAMPLE.write_text(json.dumps(native_actions_example(), indent=2, ensure_ascii=False) + "\n",
+                                          encoding="utf-8")
 
 
 class PrepareOptions(TypedDict, total=False):
@@ -67,38 +106,6 @@ class BoardModule(Protocol):
 @runtime_checkable
 class QaModule(Protocol):
     def run_case(self, case_id: str) -> Mapping[str, object]: ...
-
-
-def supplied_schemas() -> dict[str, SuppliedSchema]:
-    schemas: dict[str, SuppliedSchema] = {}
-    for operation, (required, optional) in FIELDS.items():
-        fields = (required + " " + optional + " board").split()
-        properties = {name: {"type": "string"} for name in fields}
-        for name in ("parents", "created_cards"):
-            if name in properties:
-                properties[name] = {"type": "array"}
-        if "metadata" in properties:
-            properties["metadata"] = {"type": "object"}
-        if "limit" in properties:
-            properties["limit"] = {"type": "integer"}
-        if "include_archived" in properties:
-            properties["include_archived"] = {"type": "boolean"}
-        schemas["kanban_" + operation] = {
-            "type": "object", "properties": properties, "required": required.split(),
-        }
-    schemas["delegate_task"] = {
-        "type": "object", "properties": {"tasks": {"type": "array"}}, "required": ["tasks"],
-    }
-    return schemas
-
-
-def request(operation: str = "create", request_id: str = "qa-create-1",
-            arguments: dict[str, object] | None = None, **extra: object) -> dict[str, object]:
-    if arguments is None:
-        arguments = {"title": "qa-task", "assignee": "qa-profile"}
-    return {"action": "prepare", "request_id": request_id, "coordination": "durable",
-            "operation": operation, "board": "qa-board", "profile": "qa-profile",
-            "arguments": arguments, **extra}
 
 
 class AgentBoardFoundation(unittest.TestCase):
@@ -516,19 +523,113 @@ class AgentBoardFoundation(unittest.TestCase):
                 shipped = root / "skills" / "omh-agent-board" / reference.relative_path
                 self.assertTrue(shipped.read_bytes() == reference.content.encode("utf-8"), "shipped_reference_bytes_differ")
 
+    def test_k7_generated_projections_match_canonical_bytes(self):
+        # Shipped-copy equality for every projection the five-issue work
+        # touches: rendered skill/reference templates, the workflow reference,
+        # and the capability-family sidecar. Bytes only; no phrase is pinned.
+        from omh.capabilities.families import standalone_capability_families_json
+        from omh.skill_pack import builtin_skill_templates, builtin_skill_reference_templates
+        from omh.skills.catalog_types import omh_skill_display_name
+        from omh.skills.render import workflow_reference_markdown
+
+        root = Path(__file__).resolve().parents[1]
+        skills = {"omh-agent-board", "omh-lifecycle-growth"}
+        references = {
+            ("omh-routing", "references/workflow-artifacts.md"),
+            ("omh-lifecycle-growth", "references/procedure.md"),
+            ("omh-lifecycle-growth", "references/full-contract.md"),
+        }
+        projections: list[tuple[Path, bytes]] = [
+            (root / "docs" / "WORKFLOWS.md", workflow_reference_markdown().encode("utf-8")),
+            (root / "src" / "plugin_bundle" / "omh" / "tools" / "capability_families.json",
+             standalone_capability_families_json().encode("utf-8")),
+        ]
+        for template in builtin_skill_templates():
+            name = omh_skill_display_name(template.name)
+            if name in skills:
+                projections.append((root / "skills" / name / "SKILL.md", template.content.encode("utf-8")))
+        for reference in builtin_skill_reference_templates():
+            key = (omh_skill_display_name(reference.skill_name), reference.relative_path)
+            if key in references:
+                projections.append((root / "skills" / key[0] / key[1], reference.content.encode("utf-8")))
+        self.assertEqual(len(projections), 2 + len(skills) + len(references))
+        stale = [str(path.relative_to(root)) for path, expected in projections if path.read_bytes() != expected]
+        self.assertEqual(stale, [])
+
+    def test_k7_native_actions_example_matches_canonical_producers(self):
+        # Parse-equality against the producer, like the demo cards; then the
+        # public CLI must project the same wrapper actions for the same message.
+        def section(value: object, *keys: str) -> dict[str, object]:
+            for key in keys:
+                self.assertTrue(is_string_map(value), key)
+                assert is_string_map(value)
+                value = value[key]
+            self.assertTrue(is_string_map(value), keys)
+            assert is_string_map(value)
+            return value
+
+        self.assertTrue(NATIVE_ACTIONS_EXAMPLE.is_file(), "missing committed agent-board native actions example")
+        shipped = parsed_object(NATIVE_ACTIONS_EXAMPLE.read_text(encoding="utf-8"))
+        expected = parsed_object(json.dumps(native_actions_example()))
+        self.assertEqual(shipped, expected)
+        native_action = section(shipped, "prepared_request", "native_action")
+        self.assertEqual(native_action["tool_name"], "kanban_create")
+        self.assertEqual(section(native_action, "arguments")["idempotency_key"], "qa-create-1")
+        self.assertIsNone(section(shipped, "status_interaction", "status")["native_action"])
+        self.assertEqual(section(shipped, "provenance")["native_calls"], 0)
+        with TemporaryDirectory(prefix="agent-board-example-") as temporary:
+            home = Path(temporary)
+            status, stdout, stderr = run_cli(["--omh-home", str(home / "omh"), "--hermes-home", str(home / "hermes"),
+                                              "chat", "interact", "--source", "discord", "--json", NATIVE_ACTIONS_MESSAGE])
+        self.assertEqual(status, 0, stderr)
+        cli_actions = section(parsed_object(stdout), "chat_response")["actions"]
+        self.assertTrue(is_object_list(cli_actions))
+        assert is_object_list(cli_actions)
+        self.assertEqual(cli_actions, section(shipped, "chat_interaction", "payload", "chat_response")["actions"])
+        self.assertEqual([section(action)["id"] for action in cli_actions],
+                         ["prepare_agent_board_card", "refresh_status", "show_status"])
+        prepare_payload = section(cli_actions[0], "payload")
+        self.assertEqual(prepare_payload["tool_name"], "omh_agent_board")
+        self.assertEqual(prepare_payload["execution_policy"], "prepare_only")
+
     def test_k8_foundation_qa_does_not_claim_integrated_pass(self):
         name = "five_issue_cases.kanban"
-        self.assertIsNotNone(importlib.util.find_spec(name), "missing foundation-only QA producer")
+        self.assertIsNotNone(importlib.util.find_spec(name), "missing installed component QA producer")
+        from unittest.mock import patch
         from five_issue_cases import kanban as qa
-        assert isinstance(qa, QaModule)
+        from five_issue_cases import kanban_native
         for case in ("K1", "K2", "K3", "K4", "K5", "K6", "K7", "K8"):
-            result = qa.run_case(case)
-            self.assertFalse(result["pass"])
-            self.assertEqual(result["provenance"], {"kind": "local", "scope": "foundation",
-                "native_required": case in {"K1", "K4", "K6", "K8"}, "native_available": False})
-            self.assertEqual(result["cleanup"], {"owned_resources": [], "terminated_processes": [],
-                "removed_paths": [], "verified_absent": True, "errors": []})
-            self.assertTrue(result["blocked_reason"])
+            # Foundation characterization must not depend on whether THIS machine
+            # has an installed Hermes host; the native path is the parent's surface.
+            with patch.object(kanban_native, "native_host_available", return_value=False):
+                result = qa.run_case(case)
+            native_required = case in {"K1", "K4", "K6", "K8"}
+            # Without a native host only the fixture cases and the local
+            # generated-equality case (K7) can pass; native-required cases block.
+            self.assertEqual(result["pass"], case in {"K2", "K3", "K5", "K7"})
+            self.assertEqual(result["provenance"], {"kind": "local" if case == "K7" else "fixture",
+                "scope": "surface",
+                "native_required": native_required, "native_available": False})
+            self.assertTrue(result["cleanup"]["verified_absent"])
+            self.assertEqual(result["cleanup"]["errors"], [])
+            self.assertEqual(result["cleanup"]["terminated_processes"], [])
+            self.assertEqual(result["observations"]["native_calls"], 0)
+            if case != "K7":
+                self.assertTrue(result["observations"]["component_pass"])
+                self.assertTrue(result["observations"]["decisive_assertions"])
+                self.assertTrue(result["cleanup"]["removed_paths"])
+            else:
+                checks = result["observations"]["checks"]
+                assert isinstance(checks, dict)
+                self.assertTrue(checks["skill_bytes_equal"])
+            if native_required:
+                self.assertTrue(result["blocked_reason"])
+            else:
+                self.assertIsNone(result["blocked_reason"])
+
+
+# The criterion entrypoint also discovers the installed bridge regressions.
+from test_agent_board_plugin import AgentBoardIntegration as AgentBoardIntegration
 
 
 if __name__ == "__main__":

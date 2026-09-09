@@ -79,6 +79,7 @@ class AgentBoardRequest(TypedDict):
 
 class AgentBoardSnapshot(TypedDict):
     schema_version: str
+    board: str
     board_ref: str
     observation_ref: str
     requests: list[AgentBoardRequest]
@@ -264,7 +265,7 @@ def _arguments(operation: str, payload: dict[str, object], request_id: str, boar
     return {"tool_name": "kanban_" + operation, "arguments": args}
 
 
-def _schema_supported(schema: object, action: NativeAction) -> bool:
+def native_schema_supported(schema: object, action: NativeAction) -> bool:
     if not _is_dict(schema):
         return False
     # Accept parameters, native name/parameters schema, or exposed function schema.
@@ -399,7 +400,7 @@ class AgentBoard:
         if action is not None:
             if schemas is None or tool not in schemas:
                 missing.append(tool)
-            elif not _schema_supported(schemas[tool], action):
+            elif not native_schema_supported(schemas[tool], action):
                 missing.append("schema:" + tool)
         missing.extend(name for name in ("pre_tool_call", "post_tool_call") if name not in hooks)
         if host is None:
@@ -421,6 +422,10 @@ class AgentBoard:
                 if previous.argument_digest != digest:
                     entry.state, entry.reason = "denied", "request_digest_changed"
                     return self._projection(entry)
+                # Completed create deduplication is a readback, not new host
+                # authority. Cross-profile/restart callers get the same ID.
+                if previous.operation == "create" and previous.state == "observed":
+                    return self._projection(previous)
                 if host is not None and previous.scope_ref and previous.scope_ref != host.scope_ref:
                     entry.state, entry.reason = "denied", "foreign_host_scope"
                     return self._projection(entry)
@@ -455,7 +460,7 @@ class AgentBoard:
         with self._lock:
             entry = self._requests.get(request_id)
             if (entry is None or entry.state != "prepared" or entry.call_ref is not None
-                    or entry.scope_ref != host.scope_ref or entry.action is None):
+                    or entry.scope_ref != host.scope_ref):
                 return False
             if entry.expected is not None and entry.expected != self.observation_ref:
                 entry.state, entry.reason = "denied", "stale_observation"
@@ -488,7 +493,8 @@ class AgentBoard:
             return False
 
     def observe(self, request_id: str, *, host: HostIdentity, tool_name: str,
-                arguments: Mapping[str, object], result: object) -> dict[str, object] | None:
+                arguments: Mapping[str, object], result: object,
+                binding_is_safe: bool = True) -> dict[str, object] | None:
         """Accept only the paired post callback; retain no raw native response.
 
         Unpaired/foreign/replayed callbacks return None without changing state.
@@ -501,7 +507,9 @@ class AgentBoard:
                 return None
             reason = None
             facts: dict[str, object] = {}
-            if not self._matches(entry, tool_name, arguments):
+            if not binding_is_safe:
+                reason = "board_binding_changed"
+            elif not self._matches(entry, tool_name, arguments):
                 reason = "arguments_changed"
             elif entry.route == "delegation":
                 # Native delegation has its own normal parent loop and receipts.
@@ -510,9 +518,9 @@ class AgentBoard:
             else:
                 try:
                     parsed = _parse_result(result)
-                    if entry.action is None:
-                        raise ValueError("missing_action")
-                    facts = _result_facts(entry.operation, entry.action["arguments"], parsed, self.board, self.board_ref)
+                    # Durable reload intentionally restores no action text. The
+                    # paired callback supplies arguments matching the frozen digest.
+                    facts = _result_facts(entry.operation, dict(arguments), parsed, self.board, self.board_ref)
                 except ValueError as error:
                     # Every error here is a closed, module-authored reason code.
                     reason = str(error)
@@ -539,15 +547,203 @@ class AgentBoard:
             self._facts = self._facts[-MAX_OPERATION_FACTS:]
             return copy.deepcopy(receipt)
 
+    def matching_requests(self, *, host: HostIdentity | None, tool_name: str,
+                          arguments: Mapping[str, object]) -> list[str]:
+        """Find only OMH-origin actions; unrelated native calls remain native.
+
+        Create keys reserve a board-wide identity even if a caller changes the
+        body or session. Other actions require exact digest AND host scope.
+        """
+        with self._lock:
+            matches = [entry for entry in self._requests.values()
+                       if (tool_name == "kanban_create" and entry.operation == "create"
+                           and arguments.get("idempotency_key") == entry.request_id)
+                       or ((host is None or entry.scope_ref == host.scope_ref)
+                           and self._matches(entry, tool_name, arguments)
+                           and (entry.state not in {"observed", "failed"}
+                                or (entry.requires_reconciliation and entry.reconciled_by is None)
+                                or (host is not None and entry.call_ref == host.call_ref)))]
+            # An explicitly prepared fresh request may repeat an operation.
+            # Historical denied/observed rows cannot shadow that new intent.
+            active = [entry for entry in matches if entry.state == "prepared"]
+            return [entry.request_id for entry in (active or matches)]
+
+    @classmethod
+    def restore(cls, board: str, board_ref: str, raw: str) -> AgentBoard:
+        """Reload a bounded closed metadata snapshot, never an execution grant.
+
+        No action bodies are restored. Interrupted pre markers remain reserved;
+        the bridge additionally requires a process-local pre before any post.
+        Reject the whole record on corruption rather than dropping dedup keys.
+        """
+        data = _parse_result(raw)
+        instance = cls(board, board_ref)
+        sequence = _observation_sequence(data.get("observation_ref"))
+        instance._sequence = sequence
+        rows = _array(data.get("requests"))
+        if len(rows) > MAX_REQUESTS:
+            raise ValueError("invalid_state")
+        for item in rows:
+            row = _object(item)
+            request_id = _reference(row.get("request_id"))
+            operation = _reference(row.get("operation"))
+            route = _choice(row.get("route"), {"kanban", "delegation"})
+            state = _choice(row.get("state"), {"prepared", "unavailable", "denied", "failed", "observed"})
+            expected = row.get("expected_observation_ref")
+            if expected is not None:
+                _ = _observation_sequence(expected)
+            reason = row.get("reason")
+            if reason is not None:
+                reason = _reference(reason)
+            call = row.get("host_call_ref")
+            if call is not None:
+                call = _hash_reference(call)
+            scope = row.get("host_scope_ref")
+            scope = "" if scope == "" else _hash_reference(scope)
+            entry = _Request(request_id, _digest(["agent_board_request/v1", board_ref, request_id]),
+                             route, operation, _hash_reference(row.get("argument_digest")), scope,
+                             None, expected if isinstance(expected, str) else None,
+                             [_reference(value) for value in _array(row.get("required_capabilities"))],
+                             state=state, reason=reason,
+                             missing=[_reference(value) for value in _array(row.get("missing_capabilities"))],
+                             call_ref=call,
+                             requires_reconciliation=_boolean(row.get("requires_reconciliation")),
+                             task_refs=tuple(_reference(value) for value in _array(row.get("task_refs"))))
+            if len(entry.task_refs) > 2:
+                raise ValueError("invalid_state")
+            reconciled = row.get("reconciled_by")
+            if reconciled is not None:
+                _ = _observation_sequence(reconciled)
+                entry.reconciled_by = str(reconciled)
+            receipts = _array(row.get("observed_receipts"))
+            if len(receipts) > 1 or (state in {"failed", "observed"}) != bool(receipts):
+                raise ValueError("invalid_state")
+            if receipts:
+                receipt = _stored_receipt(receipts[0], board_ref)
+                if (receipt["request_ref"] != entry.request_ref
+                        or receipt["argument_digest"] != entry.argument_digest
+                        or receipt["host_call_ref"] != call or receipt["operation"] != operation
+                        or receipt["state"] != state or receipt["reason"] != reason
+                        or _observation_sequence(receipt["observation_ref"]) > sequence):
+                    raise ValueError("invalid_state")
+                entry.receipt = receipt
+            if request_id in instance._requests or instance._projection(entry) != row:
+                raise ValueError("invalid_state")
+            instance._requests[request_id] = entry
+        facts = [_stored_receipt(value, board_ref) for value in _array(data.get("operation_facts"))]
+        receipts_by_sequence = sorted((entry.receipt for entry in instance._requests.values()
+                                       if entry.receipt is not None),
+                                      key=lambda row: _observation_sequence(row["observation_ref"]))
+        if facts != receipts_by_sequence[-MAX_OPERATION_FACTS:]:
+            raise ValueError("invalid_state")
+        instance._facts = facts
+        if instance.snapshot() != data:
+            raise ValueError("invalid_state")
+        return instance
+
     def snapshot(self) -> AgentBoardSnapshot:
         """Metadata-only local projection; not an auto-resumable execution store."""
         with self._lock:
-            return {"schema_version": "agent_board_state/v1", "board_ref": self.board_ref,
+            return {"schema_version": "agent_board_state/v1", "board": self.board, "board_ref": self.board_ref,
                     "observation_ref": self.observation_ref,
                     "requests": [self._projection(entry) for entry in self._requests.values()],
                     "operation_facts": copy.deepcopy(self._facts),
                     "truncated": self._sequence > MAX_OPERATION_FACTS,
                     "claim_boundary": CLAIM_BOUNDARY}
+
+
+def _choice(value: object, choices: set[str]) -> str:
+    if not isinstance(value, str) or value not in choices:
+        raise ValueError("invalid_state")
+    return value
+
+
+def _boolean(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError("invalid_state")
+    return value
+
+
+def _hash_reference(value: object) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+        raise ValueError("invalid_state")
+    return value
+
+
+def _observation_sequence(value: object) -> int:
+    if not isinstance(value, str) or not re.fullmatch(r"observation:(0|[1-9][0-9]{0,18})", value):
+        raise ValueError("invalid_state")
+    return int(value.split(":")[1])
+
+
+def _stored_receipt(value: object, board_ref: str) -> dict[str, object]:
+    row = _object(value)
+    common = {"schema_version", "request_ref", "argument_digest", "observation_ref", "board_ref",
+              "operation", "host_call_ref", "state", "reason", "requires_reconciliation", "truncated", "claim_boundary"}
+    operation = _reference(row.get("operation"))
+    fields: dict[str, set[str]] = {
+        "create": {"task_id", "landed_status"}, "link": {"parent_id", "child_id"},
+        "comment": {"task_id", "comment_id"}, "heartbeat": {"task_id"},
+        "request_review": {"task_id", "run_id", "landed_status"},
+        "request_changes": {"task_id", "run_id", "landed_status", "implementer"},
+        "block": {"task_id", "run_id", "landed_status", "block_kind"},
+        "unblock": {"task_id", "landed_status"}, "complete": {"task_id", "run_id"},
+        "show": {"task_id", "landed_status", "parent_ids", "child_ids"},
+        "list": {"task_ids", "count", "limit", "next_limit", "promoted"},
+        "attachments": {"task_id", "attachment_refs"},
+    }
+    state = _choice(row.get("state"), {"observed", "failed"})
+    expected: set[str] = common.copy()
+    if state == "observed":
+        expected.add("fact")
+        expected.update(fields.get(operation, set()))
+    if operation == "show" and "run_id" in row and state == "observed":
+        expected.add("run_id")
+    if (set(row) != expected or row.get("schema_version") != "agent_board_receipt/v1"
+            or row.get("board_ref") != board_ref or row.get("claim_boundary") != CLAIM_BOUNDARY
+            or row.get("requires_reconciliation") is not (state == "failed")):
+        raise ValueError("invalid_state")
+    _ = _boolean(row["truncated"])
+    for key in ("request_ref", "argument_digest", "host_call_ref"):
+        _ = _hash_reference(row[key])
+    _ = _observation_sequence(row["observation_ref"])
+    if state == "failed":
+        _ = _reference(row["reason"])
+    elif (row["reason"] is not None or operation not in fields
+          or row["fact"] != {"request_review": "review_requested", "request_changes": "changes_requested"}.get(operation, operation)):
+        raise ValueError("invalid_state")
+    for key in ("task_id", "parent_id", "child_id", "implementer"):
+        if key in row:
+            _ = _reference(row[key])
+    if "landed_status" in row:
+        _ = _choice(row["landed_status"], set(_STATUSES))
+    if "block_kind" in row:
+        _ = _choice(row["block_kind"], {"dependency", "needs_input", "capability", "transient"})
+    for key in ("comment_id", "run_id", "count", "limit", "next_limit", "promoted"):
+        if key in row and row[key] is not None:
+            _ = _integer(row[key])
+    for key in ("parent_ids", "child_ids", "task_ids"):
+        if key in row:
+            values = _array(row[key])
+            if len(values) > MAX_TASK_IDS:
+                raise ValueError("invalid_state")
+            for item in values:
+                _ = _reference(item)
+    if "attachment_refs" in row:
+        refs = _array(row["attachment_refs"])
+        if len(refs) > MAX_ATTACHMENT_REFS:
+            raise ValueError("invalid_state")
+        for value in refs:
+            ref = _object(value)
+            if (set(ref) != {"board_ref", "task_id", "attachment_id", "size", "content_type"}
+                    or ref["board_ref"] != board_ref or ref["task_id"] != row["task_id"]):
+                raise ValueError("invalid_state")
+            _ = _integer(ref["attachment_id"], 1)
+            _ = _integer(ref["size"], 0, 25 * 1024 * 1024)
+            mime = ref["content_type"]
+            if not isinstance(mime, str) or not _MIME.fullmatch(mime):
+                raise ValueError("invalid_state")
+    return row
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

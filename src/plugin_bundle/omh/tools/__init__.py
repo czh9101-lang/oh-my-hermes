@@ -7,6 +7,7 @@ from typing import Any
 # without importing the Hermes registration context; parity with the
 # `register()` body is a test, not a convention.
 BUILTIN_TOOL_NAMES: tuple[str, ...] = (
+    "omh_agent_board",
     "omh_capabilities",
     "omh_context",
     "omh_delegate_route",
@@ -32,6 +33,7 @@ def builtin_tool_schemas() -> tuple[dict[str, Any], ...]:
     the plugin bundle is loaded by Hermes, and a module-level import graph here
     would pull every tool module in on package import.
     """
+    from .agent_board_tool import OMH_AGENT_BOARD_SCHEMA
     from .capability_tool import OMH_CAPABILITIES_SCHEMA
     from .chat_tool import OMH_INTERACT_SCHEMA
     from .context_tool import OMH_CONTEXT_SCHEMA
@@ -49,6 +51,7 @@ def builtin_tool_schemas() -> tuple[dict[str, Any], ...]:
     from .todo_tool import OMH_TODO_SCHEMA
 
     schemas = (
+        OMH_AGENT_BOARD_SCHEMA,
         OMH_CAPABILITIES_SCHEMA,
         OMH_CONTEXT_SCHEMA,
         OMH_DELEGATE_ROUTE_SCHEMA,
