@@ -17,7 +17,7 @@ The command returns `workflow_artifact_operation_result/v1`. It does not echo th
 | Workflow | Operations | Explicit durable operation |
 | --- | --- | --- |
 | `decision-prototype` | `prepare`, `validate`, `observe`, `receipt`, `handoff`, `persist` | `persist` writes the validated existing prototype artifact store. |
-| `lifecycle-growth` | `build`, `prepare`, `validate`, `evaluate`, `readout` | `build` derives the five prepared artifacts from semantic fields; returned JSON is the durable serializable artifact. |
+| `lifecycle-growth` | `build`, `prepare`, `validate`, `evaluate`, `readout`, `audience`, `promote`, `graduate` | `build` derives the five prepared artifacts from semantic fields; returned JSON is the durable serializable artifact. |
 | `product-discovery-validation` | `build`, `prepare`, `validate`, `audience-gate`, `evaluate`, `handoff`, `append` | `build` derives the five pre-decision artifacts and their hashes; `append` uses the existing append-only discovery store. |
 | `sales-pipeline-review` | `prepare`, `validate`, `evaluate`, `handoff` | None; returned JSON is the durable serializable artifact. |
 
@@ -35,6 +35,72 @@ Validation is not readiness. For example, an `audience_trigger_policy/v1` or `li
 
 Preparation does not write state. Persist only when the producer already owns a store and the caller invokes `persist` or `append` explicitly. The stores receive validated artifact metadata only; this CLI never stores a raw input body, raw export, message body, transcript, command body, or execution claim by default.
 
+## Lifecycle launch review (agent/operator reference)
+
+The new operations return separate `prepared_not_observed` records, not additions
+inside the six closed lifecycle artifact schemas. `validate` continues to accept
+only those six original artifact shapes. No operation launches treatment, carries
+configuration into a provider, or deletes a gate; `READY` is local preparation,
+not observed execution. These contracts are provider- and executor-neutral.
+
+- `audience` returns `launch_audience_review/v1`. Its exact input keys are
+  `lifecycle_growth_id`, `evaluation_semantics` (`first_match` or `unknown`),
+  `rules` (at most 32), and `holdout_exclusion_share` (0..100). Each rule has
+  `rule_ref`, `evaluation_domain_ref`, `bucketing_domain_ref`, `bucketing_subject`
+  (`person`, `group`, or `device`), `condition_refs`, `rollout_share`, `result_kind`
+  (`on`, `variant`, or `split`), and `variant_ref` (required for `variant`, null
+  otherwise). An unconditional 100% first-match rule shadows later rules only in
+  the identical evaluation domain, bucketing domain, and subject. Null domains
+  or unknown semantics yield unknown reachability and `HOLD`. Reachable means
+  not provably shadowed, not targeted membership or actual exposure. Partial
+  shares, variants, and holdout exclusions remain configuration only.
+- `promote` returns `launch_promotion_preflight/v1`. Required inputs are
+  `lifecycle_growth_id`, `source_environment_ref`, `target_environment_ref`,
+  `dependency_refs_satisfied`, `dependency_refs_to_create`, `schedule_refs`,
+  and `approvals` with exactly two booleans: `carry_dependencies` and
+  `carry_schedules`. Both false means no carry. Satisfied and to-create
+  dependencies must be disjoint. The target always defaults to `disabled`.
+  Optional `safety` supplies the existing `workflow_content_state`,
+  `mutation_route`, `promotion_decision_state`, and `promotion_result_state`
+  policy fields. Missing safety holds. Carry consent cannot replace the existing
+  approved development-draft promotion gate, and approval is not an observed
+  promotion result. Carried lists describe proposals, not created dependencies
+  or schedules.
+- `graduate` returns `launch_graduation_check/v1`. Required inputs are
+  `lifecycle_growth_id`, `rollout_observed_state` (`complete`, `partial`, or
+  `unknown`), `evidence_refs`, and `rollback_conditions_state` (`satisfied`,
+  `unsatisfied`, or `unknown`). Only complete rollout with nonempty supplied
+  evidence references and satisfied rollback conditions proposes separate cleanup.
+  OMH does not independently verify those references or infer actual deletion.
+
+All reference lists above are bounded to eight opaque references. Extra or
+missing operation keys and malformed values are invalid input (CLI exit 2), not
+runtime outages. A valid prepared `HOLD` still returns CLI exit 0.
+
+`evaluate` still accepts `experiment` and `readout`. It also accepts optional
+`evaluation_context` with exactly `experiment_reference_state`
+(`resolved`, `deleted`, `unknown`) and `baseline_exposure_state`
+(`observed`, `absent`, `unknown`). Omitted or null context preserves the original
+output exactly. Present context adds `evidence_reason_codes` and `blocked`:
+
+- Deleted reference: `experiment_reference_deleted`, blocked, `HOLD`,
+  `insufficient_data`.
+- Absent baseline: `baseline_exposure_absent`, `HOLD`, `insufficient_data`.
+- Zero displayed exposure: `exposure_absent`, never inferred exposure from delivery.
+- Unknown reference/baseline: its own unknown reason and `HOLD`.
+
+Resolved/observed context cannot upgrade an existing runtime, data-health,
+validation, or rollback hold. All original artifact errors remain. The disposition
+vocabulary stays `ship`, `rollback`, `review`, `insufficient_data`; all evaluation
+results remain derived from bounded caller-supplied evidence, not provider calls.
+
+For example, an agent can submit this complete synthetic graduation proposal via
+`omh runtime workflow-artifact lifecycle-growth graduate --input -`:
+
+```json
+{"lifecycle_growth_id":"launch_a","rollout_observed_state":"complete","evidence_refs":["rollout_evidence"],"rollback_conditions_state":"satisfied"}
+```
+
 ## Complete JSON examples
 
 These repository-local files are complete, synthetic-only inputs derived from the public builders and typed sales input. The focused CLI test executes each exact file through a temporary OMH and Hermes home.
@@ -43,6 +109,7 @@ These repository-local files are complete, synthetic-only inputs derived from th
 | --- | --- | --- |
 | `decision-prototype prepare` | [`examples/workflow-artifacts/decision-prototype-prepare.json`](../examples/workflow-artifacts/decision-prototype-prepare.json) | `prepared_not_observed` |
 | `lifecycle-growth build` | [`examples/workflow-artifacts/lifecycle-growth-build-semantic.json`](../examples/workflow-artifacts/lifecycle-growth-build-semantic.json) | derived valid artifacts; `prepare` returns `HOLD` |
+| `lifecycle-growth audience` | [`examples/workflow-artifacts/lifecycle-growth-launch.json`](../examples/workflow-artifacts/lifecycle-growth-launch.json) | `prepared_not_observed`; the second rule is `reachable: false` |
 | `product-discovery-validation build` | [`examples/workflow-artifacts/product-discovery-validation-build-semantic.json`](../examples/workflow-artifacts/product-discovery-validation-build-semantic.json) | derived valid package; `evaluate` returns `inconclusive` |
 | `sales-pipeline-review prepare` | [`examples/workflow-artifacts/sales-pipeline-review-prepare-ready.json`](../examples/workflow-artifacts/sales-pipeline-review-prepare-ready.json) | `READY` |
 
@@ -58,6 +125,10 @@ uv run python -m omh.cli --omh-home "$OMH_HOME" --hermes-home "$HERMES_HOME" \
   --input examples/workflow-artifacts/lifecycle-growth-build-semantic.json
 
 uv run python -m omh.cli --omh-home "$OMH_HOME" --hermes-home "$HERMES_HOME" \
+  runtime workflow-artifact lifecycle-growth audience \
+  --input examples/workflow-artifacts/lifecycle-growth-launch.json
+
+uv run python -m omh.cli --omh-home "$OMH_HOME" --hermes-home "$HERMES_HOME" \
   runtime workflow-artifact product-discovery-validation build \
   --input examples/workflow-artifacts/product-discovery-validation-build-semantic.json
 
@@ -66,7 +137,7 @@ uv run python -m omh.cli --omh-home "$OMH_HOME" --hermes-home "$HERMES_HOME" \
   --input examples/workflow-artifacts/sales-pipeline-review-prepare-ready.json
 ```
 
-The prototype file declares a bounded planned command line and its expected metadata observation. It contains neither a script body nor a transcript, and the result does not claim that the command ran. The lifecycle and discovery files are semantic builder inputs: they contain no schema version, status, claim boundary, or discovery artifact id. The discovery input deliberately contains only `synthetic` evidence, so evaluating its built package demonstrates `inconclusive`, not customer validation.
+The prototype file declares a bounded planned command line and its expected metadata observation. It contains neither a script body nor a transcript, and the result does not claim that the command ran. The lifecycle build and discovery files are semantic builder inputs: they contain no schema version, status, claim boundary, or discovery artifact id. The lifecycle launch file is an ordered first-match audience with an unconditional 100 percent catch-all ahead of a narrower paid-plan rule in the same domain; the review marks that later rule unreachable as configuration analysis, never as observed targeting or exposure. The discovery input deliberately contains only `synthetic` evidence, so evaluating its built package demonstrates `inconclusive`, not customer validation.
 
 The CLI wraps each operation payload under `result`. To use a built lifecycle result with `prepare`, pass that `result` object as the next input. To evaluate a built discovery package, pass `{"package": <build result>, "now": "<ISO-8601 timestamp>"}`; `build` cannot mint a decision receipt.
 

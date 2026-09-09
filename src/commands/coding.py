@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
 import math
 import re
@@ -9,6 +10,7 @@ from pathlib import Path
 
 from ..coding_delegation import CODING_EXECUTOR_TARGETS, build_coding_delegation_payload, coding_delegation_record_payload
 from ..coding.diagnostic_execution import DiagnosticExecutionEngine
+from ..coding.fanout_failure_diagnostics import FailureDiagnostic, is_string_map, read_failure_diagnostic
 from ..coding.fanout_final_review_hook import FinalReviewWaveEngine
 from ..coding.final_review_local_engine import (
     FinalReviewLocalEngineConfig,
@@ -1777,6 +1779,7 @@ def cmd_coding_fanout_show(args: argparse.Namespace) -> int:
         observed = "not_observed"
         latest_event = ""
         history: dict[str, object] = {}
+        diagnostic = None
         if run_ref and (paths.runtime_runs_dir / run_ref / "run.json").exists():
             try:
                 shown = show_run(paths, run_ref, history_limit=history_limit)
@@ -1784,6 +1787,7 @@ def cmd_coding_fanout_show(args: argparse.Namespace) -> int:
                 shown = None
             if isinstance(shown, dict):
                 watched_runs.append(run_ref)
+                _, diagnostic = _fanout_run_diagnostic(shown, run_ref)
                 shown_history = shown.get("history")
                 if isinstance(shown_history, dict):
                     journal_bounds = shown_history.get("journal_events")
@@ -1803,6 +1807,7 @@ def cmd_coding_fanout_show(args: argparse.Namespace) -> int:
             "latest_observed_event": latest_event,
             "run_ref": run_ref,
             "journal_event_counts": history,
+            **({"failure_diagnostic": diagnostic} if diagnostic is not None else {}),
         }
     board = {
         "schema_version": "fanout_board/v1",
@@ -1899,11 +1904,41 @@ def _bounded_fanout_brief_scalar(value: object) -> str:
     return redact_metadata_text(value, limit=80)
 
 
+def _fanout_run_diagnostic(
+    shown: Mapping[str, object], run_ref: str,
+) -> tuple[bool, FailureDiagnostic | None]:
+    """Use full-history lifecycle data even when the emitted journal tail is one."""
+    lifecycle = shown.get("lifecycle")
+    if not is_string_map(lifecycle) or not lifecycle.get("journal_event_count"):
+        return False, None
+    match = re.fullmatch(r"(fanout-[0-9a-f]{12})-(.+)", run_ref)
+    attempt = lifecycle.get("attempt_id")
+    if match is None or not isinstance(attempt, str):
+        return True, None
+    diagnostic = read_failure_diagnostic(
+        lifecycle.get("failure_diagnostic"), fanout_id=match[1], unit_id=match[2], attempt_id=attempt,
+    )
+    return True, diagnostic if diagnostic is not None and diagnostic["run_ref"] == run_ref else None
+
+
+def _fanout_summary_diagnostic(
+    summary: Mapping[str, object] | None, entry: Mapping[str, object], run_ref: str,
+) -> FailureDiagnostic | None:
+    from ..workflows.observation_journal import project_bound_failure_diagnostic
+
+    match = re.fullmatch(r"(fanout-[0-9a-f]{12})-(.+)", run_ref)
+    if match is None or summary is None or summary.get("fanout_id") != match[1]:
+        return None
+    return project_bound_failure_diagnostic(entry, fanout_id=match[1], unit_id=match[2], run_ref=run_ref)
+
+
 def cmd_coding_fanout_brief(args: argparse.Namespace) -> int:
     from ..coding.fanout_artifacts import fanout_dispatch_summary_path, read_fanout_contract
+    from ..coding.fanout_capacity import read_capacity_fields
     from ..coding.fanout_contracts import FANOUT_UNIT_OWNERS, PREPARED_NOT_OBSERVED
     from ..coding.status_board import model_label_for
-    from ..local_store import read_json_object_result
+    from ..workflows.observation_journal import failure_diagnostic_text
+    from ..system.local_store import read_json_object_result
     from ..runtime.artifacts import show_run
     from ..system.metadata_safety import redact_metadata_text
 
@@ -1921,7 +1956,7 @@ def cmd_coding_fanout_brief(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as exc:
         raise OmhError(f"fanout contract not found: {exc}") from exc
     dispatch_summary, summary_error = read_json_object_result(fanout_dispatch_summary_path(paths, str(fanout_id)))
-    dispatched_units = {
+    dispatched_units: dict[str, dict[str, object]] = {
         str(entry.get("unit_id", "")): entry
         for entry in (dispatch_summary or {}).get("units", [])
         if isinstance(entry, dict)
@@ -1942,6 +1977,7 @@ def cmd_coding_fanout_brief(args: argparse.Namespace) -> int:
         dispatched = dispatched_units.get(unit_id, {})
         run_ref = str(unit.get("run_ref", ""))
         latest_summary = ""
+        diagnostic = _fanout_summary_diagnostic(dispatch_summary, dispatched, run_ref)
         observed_status = "not_observed"
         if run_ref and (paths.runtime_runs_dir / run_ref / "run.json").exists():
             try:
@@ -1950,6 +1986,9 @@ def cmd_coding_fanout_brief(args: argparse.Namespace) -> int:
                 shown = None
             if isinstance(shown, dict):
                 watched_runs.append(run_ref)
+                journal_observed, current_diagnostic = _fanout_run_diagnostic(shown, run_ref)
+                if journal_observed:
+                    diagnostic = current_diagnostic
                 events = [event for event in shown.get("journal_events", []) or [] if isinstance(event, dict)]
                 if events:
                     # Journal summaries written before the write-site redaction
@@ -2006,7 +2045,9 @@ def cmd_coding_fanout_brief(args: argparse.Namespace) -> int:
                 # exists to preserve.
                 "recovery": _brief_recovery(dispatched),
                 "decline_reason": _brief_decline_reason(dispatched),
-                "summary": latest_summary,
+                "summary": failure_diagnostic_text(diagnostic)[:_FANOUT_BRIEF_SUMMARY_LIMIT] if diagnostic is not None else latest_summary,
+                **({"failure_diagnostic": diagnostic} if diagnostic is not None else {}),
+                **read_capacity_fields(dispatched),
             }
         )
     payload = {
@@ -2031,15 +2072,14 @@ def cmd_coding_fanout_brief(args: argparse.Namespace) -> int:
 def cmd_coding_fanout_status(args: argparse.Namespace) -> int:
     """Render one fanout's unit roster from observed journal events.
 
-    Read-only by construction: the projection touches the observation journal
-    and nothing else, so this surface can never advance a unit, revive one, or
-    record that someone looked.
+    Journal evidence plus read-only contract/workspace/binary checks for copy-only
+    session actions. This never advances a unit, revives one, or records a read.
     """
     from ..coding.fanout_status import project_fanout_status, render_fanout_status_text
 
     paths = _paths(args)
     try:
-        roster = project_fanout_status(paths, args.fanout_id)
+        roster = project_fanout_status(paths, args.fanout_id, unit_id=getattr(args, 'unit', None))
     except (OSError, ValueError) as exc:
         raise OmhError(f"fanout status unavailable: {exc}") from exc
     if _wants_json(args):
@@ -2107,6 +2147,10 @@ def _fanout_brief_unit_line(unit: dict) -> str:
     summary = str(unit.get("summary", "") or "")
     if summary:
         line += f" — {summary}"
+    from ..coding.fanout_capacity import read_capacity_fields
+    capacity = read_capacity_fields(unit).get('capacity')
+    if isinstance(capacity, dict):
+        line += f" — capacity: {capacity['status']}; {capacity['next_action']}"
     return line
 
 
@@ -3045,6 +3089,7 @@ def _add_coding_commands(sub) -> None:
         required=True,
         help="Fanout id whose unit roster is projected from the observation journal.",
     )
+    fanout_status.add_argument('--unit', help='Select one observed unit for read-only session/resume projection.')
     fanout_status.add_argument("--json", action="store_true", help="Emit the machine payload instead of plain text.")
     fanout_status.set_defaults(func=cmd_coding_fanout_status)
 

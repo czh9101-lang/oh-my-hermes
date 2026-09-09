@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -49,6 +50,228 @@ def _canonical_bytes(value: object) -> bytes:
         separators=(",", ":"),
         ensure_ascii=False,
     ).encode("utf-8")
+
+
+_decode_wrapper_json: Callable[[str], object] = json.loads
+
+
+class FiveIssueWrapperSurfaceTests(unittest.TestCase):
+    """Wrapper integration uses real metadata producers, never native-success fixtures."""
+
+    def record(self, value: object) -> dict[str, object]:
+        from omh.coding.fanout_failure_diagnostics import is_string_map
+        self.assertTrue(is_string_map(value))
+        assert is_string_map(value)
+        return value
+
+    def rows(self, value: object) -> list[object]:
+        from omh.coding.fanout_failure_diagnostics import is_object_list
+        self.assertTrue(is_object_list(value))
+        assert is_object_list(value)
+        return value
+
+    def actions(self, value: object) -> dict[str, dict[str, object]]:
+        return {str(self.record(row)["id"]): self.record(row) for row in self.rows(value)}
+
+    def test_k1_board_action_reaches_prepare_status_tool_without_authority(self) -> None:
+        from test_agent_board_kanban import AgentBoardFoundation, request
+        fixture = AgentBoardFoundation()
+        with mock.patch("subprocess.Popen", side_effect=AssertionError("chat cannot launch")):
+            payload = build_chat_interaction_payload("agent-board coordinate durable work", source="discord")
+        response = self.record(payload["chat_response"])
+        actions = self.actions(response["actions"])
+        prepare = self.record(actions["prepare_agent_board_card"]["payload"])
+        self.assertEqual(prepare.get("tool_name"), "omh_agent_board")
+        self.assertEqual(prepare["execution_policy"], "prepare_only")
+        self.assertEqual(prepare["arguments"], {"action": "prepare"})
+        self.assertEqual(prepare["required_input"], ["request_id", "coordination", "operation", "board", "profile", "arguments"])
+        choices = self.record(prepare["coordination_options"])
+        self.assertEqual(choices, {"durable": "kanban", "bounded_research": "delegation"})
+        for coordination, expected in choices.items():
+            source = request() if coordination == "durable" else request(
+                "research", "research-1", {"tasks": [{"goal": "bounded", "context": "parent"}]},
+                coordination=coordination)
+            result = fixture.prepare(fixture.board(), source, schemas={})
+            self.assertEqual(result["route"], expected)
+            self.assertEqual(result["state"], "unavailable")
+            self.assertIsNone(result["native_action"])
+        status = self.record(actions["refresh_status"]["payload"])
+        self.assertEqual(status["tool_name"], "omh_agent_board")
+        self.assertEqual(status["arguments"], {"action": "status"})
+        self.assertEqual(status["required_input"], ["request_id"])
+        self.assertEqual(self.record(response["state"])["phase"], "agent_board_prepared")
+
+    def test_l6_lifecycle_action_uses_current_operation_registry_and_real_cli(self) -> None:
+        from omh.workflows.workflow_artifact_operations import WORKFLOW_ARTIFACT_OPERATIONS
+        from test_lifecycle_growth_upstream import audience, promotion
+        payload = build_chat_interaction_payload("lifecycle-growth prepare an onboarding experiment", source="slack")
+        response = self.record(payload["chat_response"])
+        action = self.actions(response["actions"])["prepare_lifecycle_growth"]
+        binding = self.record(action["payload"])
+        self.assertEqual(binding.get("command_prefix"), ["omh", "runtime", "workflow-artifact", "lifecycle-growth"])
+        self.assertEqual(binding["operations"], list(WORKFLOW_ARTIFACT_OPERATIONS["lifecycle-growth"]))
+        self.assertEqual(binding["execution_policy"], "metadata_only")
+        command = self.rows(binding["command_prefix"])
+        samples = {"audience": audience(), "promote": promotion(), "graduate": {
+            "lifecycle_growth_id": "launch-a", "rollout_observed_state": "complete",
+            "evidence_refs": ["rollout-a"], "rollback_conditions_state": "satisfied"}}
+        for operation, sample in samples.items():
+            with TemporaryDirectory(prefix="wrapper-lifecycle-") as temporary:
+                home = Path(temporary)
+                code, output, error = run_cli([
+                    "--omh-home", str(home / "omh"), "--hermes-home", str(home / "hermes"),
+                    *[str(part) for part in command[1:]], operation, "--input", "-",
+                ], stdin_text=json.dumps(sample))
+                self.assertEqual(code, 0, error)
+                result = self.record(self.record(_decode_wrapper_json(output))["result"])
+                self.assertEqual(result["status"], "prepared_not_observed")
+                self.assertFalse((home / "omh").exists())
+            self.assertFalse(home.exists())
+        self.assertEqual(self.record(response["state"])["artifact_schema"], "lifecycle_growth_card/v1")
+
+    def test_k2_k6_board_status_reads_only_and_preserves_each_evidence_state(self) -> None:
+        from omh.wrapper import contract
+        from test_agent_board_kanban import AgentBoardFoundation, request
+        self.assertTrue(hasattr(contract, "build_agent_board_status_interaction"), "missing native board wrapper status")
+        fixture = AgentBoardFoundation()
+        board = fixture.board()
+        _ = fixture.prepare(board, schemas={})
+
+        def check(expected: str, *, in_flight: bool = False) -> dict[str, object]:
+            before = board.snapshot()
+            with mock.patch("subprocess.Popen", side_effect=AssertionError("status cannot launch")):
+                payload = contract.build_agent_board_status_interaction(board.status("qa-create-1"), source="discord")
+            self.assertEqual(board.snapshot(), before)
+            response = self.record(payload["chat_response"])
+            state = self.record(response["state"])
+            actual = self.record(state["agent_board"])
+            self.assertEqual(actual, dict(board.status("qa-create-1")))
+            self.assertEqual(actual["state"], expected)
+            self.assertEqual(actual["in_flight"], in_flight)
+            self.assertIsNone(actual["native_action"])
+            self.assertFalse(state["execution_observed"])
+            self.assertEqual((state["review_status"], state["ci_status"], state["merge_status"]), ("not_observed",) * 3)
+            self.assertNotIn("PRIVATE_BOARD_BODY", json.dumps(payload))
+            self.assertEqual(self.record(payload["status_card"])["steps"], self.record(response["status_card"])["steps"])
+            for step in self.rows(self.record(payload["status_card"])["steps"]):
+                self.assertEqual(set(self.record(step)), {"id", "label", "state", "detail"})
+            return actual
+
+        unavailable = check("unavailable")
+        self.assertIn("kanban_create", self.rows(unavailable["missing_capabilities"]))
+        prepared = fixture.prepare(board, request(arguments={"title": "PRIVATE_BOARD_BODY", "assignee": "qa-profile"}))
+        # A changed create digest is denied; use a fresh board for the lifecycle.
+        self.assertEqual(prepared["state"], "denied")
+        board = fixture.board()
+        prepared = fixture.prepare(board, request(arguments={"title": "PRIVATE_BOARD_BODY", "assignee": "qa-profile"}))
+        _ = check("prepared")
+        self.assertTrue(fixture.begin(board, prepared))
+        _ = check("prepared", in_flight=True)
+        _ = fixture.observe(board, prepared, {"ok": True, "task_id": "T-native", "status": "ready"})
+        observed = check("observed")
+        self.assertEqual(observed["observed_receipts"], board.status("qa-create-1")["observed_receipts"])
+        for result, expected in (({"error": "PRIVATE_BOARD_BODY"}, "failed"),):
+            board = fixture.board()
+            prepared = fixture.prepare(board)
+            self.assertTrue(fixture.begin(board, prepared))
+            _ = fixture.observe(board, prepared, result)
+            self.assertTrue(check(expected)["requires_reconciliation"])
+        board = fixture.board()
+        _ = fixture.prepare(board, request(expected_observation_ref="observation:9"))
+        _ = check("denied")
+
+    def test_k6_installed_bridge_status_is_directly_renderable_after_restart(self) -> None:
+        from omh.wrapper import contract
+        from test_agent_board_plugin import HOOKS, bridge_api, host, native_action
+        from five_issue_cases.kanban import request, supplied_schemas
+        with TemporaryDirectory(prefix="wrapper-board-bridge-") as temporary:
+            home = Path(temporary)
+            bridge = bridge_api().AgentBoardBridge(home, root_identity="fixture-root")
+            prepared = bridge.prepare(request(), host=host(), schemas=supplied_schemas(), hooks=HOOKS)
+            action = native_action(prepared)
+            self.assertIsNone(bridge.pre(host=host("create"), schemas=supplied_schemas(), hooks=HOOKS, **action))
+            receipt = bridge.post(host=host("create"), **action, result='{"ok":true,"task_id":"T1","status":"ready"}')
+            self.assertIsNotNone(receipt)
+            restarted = bridge_api().AgentBoardBridge(home, root_identity="fixture-root")
+            status = restarted.status("qa-board", "qa-create-1")
+            payload = contract.build_agent_board_status_interaction(status)
+            self.assertEqual(self.record(payload["status"])["observed_receipts"], [receipt])
+            before = json.dumps(prepared, sort_keys=True)
+            preview = contract.build_agent_board_status_interaction(prepared)
+            self.assertIsNone(self.record(preview["status"])["native_action"])
+            self.assertEqual(json.dumps(prepared, sort_keys=True), before)
+            self.assertNotIn("qa-task", json.dumps(preview))
+        self.assertFalse(home.exists())
+
+    def test_c5_d1_fanout_status_preserves_bound_capacity_diagnostic_and_legacy(self) -> None:
+        from omh.wrapper import contract
+        from omh.coding.fanout_capacity import AdmissionBinding, AdmissionReceipt, CapacityTrip, capacity_fields
+        from omh.workflows.observation_journal import append_observation_event
+        from test_fanout_diagnostic_views import ATTEMPT, FANOUT, RUN, UNIT, diagnostic, event
+        self.assertTrue(hasattr(contract, "build_fanout_status_interaction"), "missing observed fanout wrapper status")
+        with TemporaryDirectory(prefix="wrapper-fanout-") as temporary:
+            paths = resolve_paths(Path(temporary) / "omh", Path(temporary) / "hermes")
+            expected = diagnostic()
+            _ = append_observation_event(paths, dict(event("worker_dispatch", status="observed")))
+            _ = append_observation_event(paths, dict(event(diag=expected)))
+            binding = AdmissionBinding("codex", FANOUT, UNIT, RUN, 1, "a" * 40, "worktree-core", "invocation-one", ATTEMPT)
+            trip = CapacityTrip(AdmissionReceipt("fixture", "fixture/v1", binding, True, 3), 2)
+            capacity = capacity_fields(binding, trip, status="executor_capacity_rejected", process_started=True)
+            _ = append_observation_event(paths, dict(event("capacity_admission_observed"), capacity=capacity, invocation_id="invocation-one"))
+            before = {path: path.read_bytes() for path in paths.omh_home.rglob("*") if path.is_file()}
+            with mock.patch("subprocess.Popen", side_effect=AssertionError("legacy status cannot launch")):
+                payload = contract.build_fanout_status_interaction(paths, fanout_id=FANOUT, unit_id=UNIT, source="slack")
+            self.assertEqual(before, {path: path.read_bytes() for path in paths.omh_home.rglob("*") if path.is_file()})
+            response = self.record(payload["chat_response"])
+            roster = self.record(self.record(response["state"])["fanout_status"])
+            units = self.rows(roster["units"])
+            self.assertEqual(len(units), 1)
+            unit = self.record(units[0])
+            self.assertEqual(unit["capacity"], capacity)
+            self.assertEqual(unit["failure_diagnostic"], expected)
+            self.assertFalse(unit["process_succeeded"])
+            self.assertFalse(self.record(unit["resume"])["available"])
+            self.assertNotIn("copy_fanout_resume", self.actions(response["actions"]))
+            steps = self.rows(self.record(payload["status_card"])["steps"])
+            self.assertEqual(self.record(steps[0])["state"], unit["lifecycle_state"])
+            self.assertEqual(set(self.record(steps[0])), {"id", "label", "state", "detail"})
+            with self.assertRaises(ValueError):
+                _ = contract.build_fanout_status_interaction(paths, fanout_id=FANOUT, unit_id="foreign")
+        self.assertFalse(Path(temporary).exists())
+
+    def test_s2_fanout_wrapper_uses_real_selected_resume_projection(self) -> None:
+        from omh.wrapper import contract
+        from omh.coding.fanout_status import project_fanout_status
+        from five_issue_cases import sessions
+        self.assertTrue(hasattr(contract, "build_fanout_status_interaction"), "missing observed fanout wrapper status")
+        checked: list[str] = []
+
+        def inspect_status(paths: OmhPaths, fanout_id: str, *, unit_id: str | None = None) -> dict[str, object]:
+            expected: dict[str, object] = project_fanout_status(paths, fanout_id, unit_id=unit_id)
+            for item in self.rows(expected["units"]):
+                unit = self.record(item)
+                selected_id = str(unit["unit_id"])
+                resume = self.record(unit["resume"])
+                payload = contract.build_fanout_status_interaction(paths, fanout_id=fanout_id, unit_id=selected_id)
+                response = self.record(payload["chat_response"])
+                actions = self.actions(response["actions"])
+                if resume["available"]:
+                    action = self.record(actions["copy_fanout_resume"]["payload"])
+                    self.assertEqual(action, {"fanout_id": fanout_id, "unit_id": selected_id, **resume})
+                    self.assertEqual(action["execution_policy"], "copy_only")
+                else:
+                    self.assertNotIn("copy_fanout_resume", actions)
+                checked.append(selected_id)
+            return expected
+
+        # The producer still executes its actual reader/CLI and real local protocol
+        # processes. The observer adds wrapper assertions without replacing evidence.
+        with mock.patch.object(sessions, "project_fanout_status", side_effect=inspect_status):
+            result = sessions.run_case("S2")
+        self.assertTrue(result["pass"], result["blocked_reason"])
+        self.assertFalse(result["provenance"]["native_available"])
+        self.assertTrue(result["cleanup"]["verified_absent"])
+        self.assertEqual(set(checked), {"a", "b"})
 
 
 class DomainContextAttachmentTests(unittest.TestCase):

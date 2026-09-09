@@ -1,0 +1,27 @@
+{
+  "lifecycle_growth_id": "launch_onboarding_nudge",
+  "evaluation_semantics": "first_match",
+  "rules": [
+    {
+      "rule_ref": "rule_catch_all",
+      "evaluation_domain_ref": "domain_workspace_admins",
+      "bucketing_domain_ref": "bucket_workspace_admins",
+      "bucketing_subject": "person",
+      "condition_refs": [],
+      "rollout_share": 100,
+      "result_kind": "on",
+      "variant_ref": null
+    },
+    {
+      "rule_ref": "rule_paid_accounts",
+      "evaluation_domain_ref": "domain_workspace_admins",
+      "bucketing_domain_ref": "bucket_workspace_admins",
+      "bucketing_subject": "person",
+      "condition_refs": ["condition_paid_plan"],
+      "rollout_share": 50,
+      "result_kind": "variant",
+      "variant_ref": "variant_treatment"
+    }
+  ],
+  "holdout_exclusion_share": 10
+}

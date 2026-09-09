@@ -9,10 +9,15 @@ progressive-disclosure procedure the existing renderer turns into
 `catalog_definitions.py` imports this module as the single installed definition
 source. Its artifacts guide human review and handoff; runtime operations are exposed through the
 canonical `omh runtime workflow-artifact lifecycle-growth <operation>` interface.
+The launch-review operations `audience`, `promote`, and `graduate` (issue #1399)
+return separate versioned records and do not change the six artifacts below.
 
 Concept-level prior art (pinned, MIT outside enterprise directories; no code
-copied, no integration adopted): PostHog `5f8bc937` for actual-display exposure
-and launch/pause/stop controls, GrowthBook `095f6164` for sticky assignment,
+copied, no integration adopted): PostHog `ae880d30` for actual-display exposure,
+launch/pause/stop controls, ordered audience reachability, read-only promotion
+preflight, separate post-rollout gate cleanup, and deleted-reference/no-data
+evaluation classes (issue #1399 review; `docs/SKILL-SOURCES.md` records the
+five community commits), GrowthBook `095f6164` for sticky assignment,
 guardrails, minimum runtime, the ship/rollback/review/insufficient-data
 vocabulary, and the analysis-run state distinction that keeps queued, running,
 failed, canceled, and never-started work apart from a missing result (issue

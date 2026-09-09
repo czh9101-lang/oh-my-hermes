@@ -1,0 +1,729 @@
+{
+  "schema_version": "agent_board_native_actions_example/v1",
+  "purpose": "Wrapper actions and the prepared native action for one durable agent-board request, regenerated from public OMH APIs by tests/test_agent_board_kanban.py.",
+  "provenance": {
+    "kind": "fixture",
+    "host_schemas": "tests/five_issue_cases/kanban.py::supplied_schemas",
+    "native_calls": 0,
+    "native_execution": false,
+    "claim_boundary": "A prepared native action is not an invocation, and a fixture host is not native Hermes evidence."
+  },
+  "chat_interaction": {
+    "message": "agent-board coordinate durable work across profiles on the qa-board",
+    "source": "discord",
+    "payload": {
+      "schema_version": "chat_interaction/v1",
+      "source": "discord",
+      "source_metadata": {},
+      "message_sha256": "a66af2ebd370e60cbdf12995229c980389fe391cb512db4f193d7a8efdde1fee",
+      "message_length": 67,
+      "thread_key": "discord:channel:a66af2ebd370",
+      "mode": "route",
+      "next_action": "prepare_agent_board_card",
+      "redaction_policy": "metadata_only",
+      "overclaim_guard": [
+        "Prepared handoff is not execution evidence.",
+        "Review, verification, CI, and merge status require separate observed evidence.",
+        "Hermes orchestrates; selected coding executors perform main coding work."
+      ],
+      "route": {
+        "schema_version": 1,
+        "source": "discord",
+        "action": "dispatch",
+        "selected_skill": "agent-board",
+        "selected_harness": "agent-board",
+        "candidate_skill": "agent-board",
+        "candidate_harness": "agent-board",
+        "confidence": "high",
+        "score": 12,
+        "threshold": "high",
+        "explicit": true,
+        "ambiguous": false,
+        "reason": "Explicit workflow invocation wins over heuristic routing.",
+        "clarification": "",
+        "recommendations": [
+          {
+            "skill": "agent-board",
+            "score": 12,
+            "confidence": "high",
+            "matched": [
+              "explicit_invocation",
+              "name:agent-board"
+            ],
+            "reasoning_demand": "standard",
+            "next_action": "prepare_agent_board_card",
+            "evidence_boundary": "An agent board card is not proof that another Hermes target accepted, worked, heartbeat-ed, or completed.",
+            "wrapper_guidance": "Show task, handoff, heartbeat, blocker, and completion states per target/thread; require target-specific evidence before advancing."
+          }
+        ],
+        "input_language": {
+          "schema_version": "routing_input_language/v1",
+          "script": "latin",
+          "trigger_support": "trigger_backed",
+          "trigger_backed_scripts": [
+            "han",
+            "hangul",
+            "kana",
+            "latin"
+          ],
+          "boundary": "Trigger tables carry the scripts the shipped language packs cover. A script marked model_selection_required is not unsupported; it means a deterministic trigger score is not evidence of intent and the decision belongs to model selection over supplied candidates."
+        },
+        "route_decision": {
+          "schema_version": "route_decision/v1",
+          "router_stage": "explicit",
+          "action": "dispatch",
+          "selected_skill": "agent-board",
+          "selected_harness": "agent-board",
+          "confidence": "high",
+          "explicit": true
+        },
+        "skill_governance": {
+          "status": "resolved",
+          "selected_skills": [
+            "agent-board"
+          ],
+          "selected_policy": {
+            "skills": [
+              "agent-board"
+            ]
+          },
+          "selected_native_skills": [],
+          "native_recommendations": [],
+          "runtime_priority_observed": false,
+          "policy_prepared": true,
+          "prepared_status": "policy_prepared",
+          "evidence_boundary": "prepared_not_observed",
+          "errors": [],
+          "policy_decision_identity": {
+            "policy": {
+              "skills": [
+                "agent-board"
+              ]
+            },
+            "executor": "",
+            "source": {}
+          },
+          "policy_decision_digest": "8d80115e57d26c54104cc14c61e6e4d9eff1a630332959dfe8c88470ee207a6d"
+        },
+        "native_skill_recommendations": [],
+        "routing_instruction": "Use the `agent-board` workflow for this chat message.",
+        "routing_prompt_template": "Use the `agent-board` workflow for this chat message.\n\nRouting reason: Explicit workflow invocation wins over heuristic routing.\n\nUser message:\n{message}",
+        "route_explanation": {
+          "schema_version": "route_explanation/v1",
+          "selected_workflow": "agent-board",
+          "selected_harness": "agent-board",
+          "action": "dispatch",
+          "confidence": "high",
+          "score": 12,
+          "why_this_workflow": "Explicit workflow invocation wins over heuristic routing.",
+          "next_action": "prepare_agent_board_card",
+          "next_action_label": "preparing an agent board card",
+          "recommended_reply": "I will use `agent-board` first and start by preparing an agent board card. This is still not evidence of target acceptance.",
+          "primary_action_label": "Open agent-board",
+          "primary_action_hint": "Route to `agent-board` and start by preparing an agent board card; do not claim target acceptance until observed.",
+          "not_evidence_yet": [
+            "target acceptance",
+            "work progress",
+            "heartbeat",
+            "completion"
+          ],
+          "claim_boundary": "An agent board card is not proof that another Hermes target accepted, worked, heartbeat-ed, or completed.",
+          "headline": "Use `agent-board` for this request.",
+          "summary": "`agent-board` is selected because Explicit workflow invocation wins over heuristic routing. Next action: preparing an agent board card (`prepare_agent_board_card`).",
+          "rendering_hint": "Show this as the compact why / next / not-yet-evidence card in chat surfaces."
+        }
+      },
+      "omh_orchestration_guidance": {
+        "schema_version": "omh_orchestration_guidance/v1",
+        "mode": "guided_first_use",
+        "selected_workflow": "agent-board",
+        "selected_harness": "agent-board",
+        "accepted_pattern_count": 0,
+        "next_action": "recommend_omh_orchestration",
+        "confirmation": {
+          "required": false,
+          "policy": "optional_first_use",
+          "boundary": "Gates still apply to destructive, credentialed, external-write, deploy, and executor-dispatch actions."
+        },
+        "problem_solving_contract": {
+          "steps": [
+            "frame_problem_and_success_criteria",
+            "select_omh_workflow_and_harness",
+            "use_native_hermes_capabilities_as_needed",
+            "preserve_prepared_and_observed_evidence_boundary"
+          ],
+          "boundary": "Prepared guidance only; not research, execution, review, CI, or merge evidence."
+        },
+        "native_skill_governance": {
+          "role": "subordinate_capability",
+          "candidate_skills": [],
+          "can_override_omh": false,
+          "selection_policy": "OMH selects the workflow; Hermes-native skills are optional capabilities within that workflow."
+        }
+      },
+      "chat_response": {
+        "schema_version": "chat_response/v1",
+        "kind": "agent_board",
+        "visibility": "thread",
+        "headline": "[omh] agent-board - I can prepare a board for multiple Hermes agents.",
+        "plain_headline": "I can prepare a board for multiple Hermes agents.",
+        "body": "I will prepare the agent board: targets, roles, tasks, handoff lanes, heartbeat expectations, blocker states, and completion rules. For parallel coding splits, `omh coding fanout` freezes the unit split into a merge contract and `omh coding fanout show` is the live evidence view. Other agents accepting, working, heartbeat-ing, or completing work remains unobserved until target-specific evidence exists.",
+        "state": {
+          "phase": "agent_board_prepared",
+          "next_action": "prepare_agent_board_card",
+          "thread_key": "discord:channel:a66af2ebd370",
+          "route_action": "dispatch",
+          "confidence": "high",
+          "selected_workflow": "agent-board",
+          "workflow_explanation_reason": "Explicit workflow invocation wins over heuristic routing. Selected `omh-agent-board` because this request matches that workflow's triggers. Show task, handoff, heartbeat, blocker, and completion states per target/thread; require target-specific evidence before advancing.",
+          "policy_next_action": "prepare_agent_board_card",
+          "artifact_schema": "agent_board_card/v1",
+          "recommended_flow": [
+            "detect_targets",
+            "assign_role_lanes",
+            "record_task_and_handoff_states",
+            "require_target_specific_heartbeat_evidence"
+          ],
+          "evidence_not_observed": [
+            "target acceptance",
+            "agent heartbeat",
+            "task execution",
+            "blocker resolution",
+            "handoff receipt",
+            "completion"
+          ],
+          "workflow_explanation": {
+            "schema_version": "omh_workflow_explanation/v1",
+            "selected_workflow": "agent-board",
+            "label": "agent-board",
+            "selected_harness": "agent-board",
+            "why_this_workflow": "Explicit workflow invocation wins over heuristic routing. Selected `omh-agent-board` because this request matches that workflow's triggers. Show task, handoff, heartbeat, blocker, and completion states per target/thread; require target-specific evidence before advancing.",
+            "next_action": "prepare_agent_board_card",
+            "next_action_label": "prepare agent board card",
+            "recommended_reply": "I will use `omh-agent-board` and start with prepare agent board card. This is still not evidence of target acceptance.",
+            "primary_action_label": "Open omh-agent-board",
+            "primary_action_hint": "Route to `omh-agent-board` and run `prepare agent board card`; do not claim target acceptance until observed.",
+            "not_evidence_yet": [
+              "target acceptance",
+              "agent heartbeat",
+              "task execution",
+              "blocker resolution",
+              "handoff receipt",
+              "completion"
+            ],
+            "claim_boundary": "An agent board card is not proof that another Hermes target accepted, worked, heartbeat-ed, or completed. It is not target acceptance, agent heartbeat, task execution, blocker resolution, handoff receipt, or completion evidence.",
+            "rendering_hint": "Show this as a compact why/next/not-evidence card in chat surfaces.",
+            "workflow_context_card": {
+              "id": "automation_and_status",
+              "label": "Automation and status",
+              "user_signal": "recurring digest, cron-like request, gateway command, browser/page or file operation, live provider lookup, health check, status confusion, failure audit, workflow learning, or runtime question",
+              "omh_pattern": "prepare a schedule/status/browser/file/command/connector/live-info/repair/audit/learning card, name required tools or evidence, then keep observed runtime state separate",
+              "representative_workflows": [
+                "workspace-audit",
+                "production-audit",
+                "automation-blueprint",
+                "github-event-ops",
+                "github-issue-intake",
+                "agent-board",
+                "gateway-intent-card",
+                "voice-operator",
+                "browser-operator",
+                "workspace-file-operator",
+                "command-operator",
+                "external-connector-readiness",
+                "physical-device-readiness",
+                "connector-operator",
+                "live-info-operator",
+                "agent-ops-review",
+                "agent-debug",
+                "failure-signal-audit",
+                "instinct-ledger",
+                "agent-evaluation",
+                "rules-distill",
+                "skill-scout",
+                "skill-health",
+                "workflow-learning",
+                "run-efficiency",
+                "provider-profile-posture",
+                "toolbelt-readiness",
+                "harness-session-inventory",
+                "model-setup",
+                "parallel-tools",
+                "websearch-setup",
+                "morning-brief",
+                "doctor"
+              ],
+              "user_examples": [
+                "Every morning send a digest if something changed",
+                "Why did this route to plan? Make it a regression."
+              ],
+              "first_response_shape": "Show the prepared status, schedule, browser, file, command, connector, live-info, audit, or learning shape, name the missing evidence, and expose refresh, repair, review, or remediation-route actions.",
+              "not_evidence_until_observed": [
+                "schedule creation",
+                "connector I/O",
+                "live data retrieval",
+                "browser interaction",
+                "command execution",
+                "runtime load",
+                "audit remediation"
+              ]
+            },
+            "workflow_context_id": "automation_and_status",
+            "route_action": "dispatch",
+            "route_next_action": "prepare_agent_board_card",
+            "route_recommended_reply": "I will use `agent-board` first and start by preparing an agent board card. This is still not evidence of target acceptance.",
+            "route_primary_action_label": "Open agent-board",
+            "route_primary_action_hint": "Route to `agent-board` and start by preparing an agent board card; do not claim target acceptance until observed."
+          }
+        },
+        "usage_trace": {
+          "schema_version": "omh_usage_trace/v1",
+          "brand": "omh",
+          "visibility": "visible_prefix",
+          "visible_prefix": "[omh] agent-board",
+          "label": "agent-board",
+          "selected_workflow": "agent-board",
+          "selected_harness": "agent-board",
+          "phase": "agent_board_prepared",
+          "next_action": "prepare_agent_board_card",
+          "evidence_state": "prepared_not_observed",
+          "claim_boundary": "This trace is a routing/status marker, not execution evidence.",
+          "workflow_context_id": "automation_and_status"
+        },
+        "messenger_rendering": {
+          "schema_version": "omh_messenger_rendering/v1",
+          "render_profile": "limited_markdown",
+          "visible_prefix": "[omh] agent-board",
+          "first_line": "[omh] agent-board - I can prepare a board for multiple Hermes agents.",
+          "body_format": "messenger_safe_markdown",
+          "body_text": "I will prepare the agent board: targets, roles, tasks, handoff lanes, heartbeat expectations, blocker states, and completion rules. For parallel coding splits, `omh coding fanout` freezes the unit split into a merge contract and `omh coding fanout show` is the live evidence view. Other agents accepting, working, heartbeat-ing, or completing work remains unobserved until target-specific evidence exists.",
+          "body_blocks": [
+            {
+              "type": "paragraph",
+              "text": "I will prepare the agent board: targets, roles, tasks, handoff lanes, heartbeat expectations, blocker states, and completion rules. For parallel coding splits, `omh coding fanout` freezes the unit split into a merge contract and `omh coding fanout show` is the live evidence view. Other agents accepting, working, heartbeat-ing, or completing work remains unobserved until target-specific evidence exists."
+            }
+          ],
+          "fallback_body_format": "messenger_safe_markdown",
+          "fallback_body_text": "I will prepare the agent board: targets, roles, tasks, handoff lanes, heartbeat expectations, blocker states, and completion rules. For parallel coding splits, `omh coding fanout` freezes the unit split into a merge contract and `omh coding fanout show` is the live evidence view. Other agents accepting, working, heartbeat-ing, or completing work remains unobserved until target-specific evidence exists.",
+          "fallback_body_blocks": [
+            {
+              "type": "paragraph",
+              "text": "I will prepare the agent board: targets, roles, tasks, handoff lanes, heartbeat expectations, blocker states, and completion rules. For parallel coding splits, `omh coding fanout` freezes the unit split into a merge contract and `omh coding fanout show` is the live evidence view. Other agents accepting, working, heartbeat-ing, or completing work remains unobserved until target-specific evidence exists."
+            }
+          ],
+          "preferred_blocks": [
+            "short_paragraph",
+            "bulleted_list",
+            "numbered_list",
+            "code_block",
+            "status_lines"
+          ],
+          "avoid_blocks": [
+            "markdown_table",
+            "wide_table",
+            "large_unbroken_block"
+          ],
+          "chunking": {
+            "max_recommended_chars": 1700,
+            "hard_limit_chars": 1900,
+            "split_on": [
+              "headings",
+              "bullets",
+              "paragraphs"
+            ]
+          },
+          "chunked_body_texts": [
+            "I will prepare the agent board: targets, roles, tasks, handoff lanes, heartbeat expectations, blocker states, and completion rules. For parallel coding splits, `omh coding fanout` freezes the unit split into a merge contract and `omh coding fanout show` is the live evidence view. Other agents accepting, working, heartbeat-ing, or completing work remains unobserved until target-specific evidence exists."
+          ],
+          "follow_up_texts": [],
+          "transforms_applied": [],
+          "fallback_transforms_applied": [],
+          "prefix_policy": {
+            "default": "once_per_response_first_line",
+            "repeat_when": "adapter_splits_response_across_separate_messages_or_chunks",
+            "do_not_repeat": "every_paragraph_or_every_line"
+          },
+          "density_policy": {
+            "max_heading_levels": 2,
+            "max_bullets": 12,
+            "avoid": [
+              "nested_bullets",
+              "bold_inside_bullets",
+              "tables_on_limited_profiles"
+            ]
+          },
+          "platform_hints": {
+            "discord": "Start the first message with the visible prefix, prefer bullets or numbered lists over tables, and repeat the prefix only if the adapter splits a long response into separate messages.",
+            "slack": "Start the response with the visible prefix, prefer blocks or bullets over wide Markdown tables, and keep claim boundaries visible.",
+            "telegram": "Start the response with the visible prefix, keep sections short, avoid table layouts, and post body_text as plain text WITHOUT parse_mode; if you opt into MarkdownV2 you must escape every reserved character yourself.",
+            "hermes": "Render body_text as rich Markdown when the Hermes surface supports it; use fallback_body_text when relaying to a narrow chat adapter.",
+            "generic": "Use body_text for the declared render_profile; use fallback_body_text if the actual surface cannot render Markdown tables."
+          },
+          "table_policy": "convert_tables_to_bullets_for_messenger",
+          "body_preview": "I will prepare the agent board: targets, roles, tasks, handoff lanes, heartbeat expectations, blocker states, and completion rules. For parallel coding splits, `omh coding fanou...",
+          "claim_boundary": "An agent board card is not proof that another Hermes target accepted, worked, heartbeat-ed, or completed. It is not target acceptance, agent heartbeat, task execution, blocker resolution, handoff receipt, or completion evidence."
+        },
+        "actions": [
+          {
+            "id": "prepare_agent_board_card",
+            "label": "Open agent board",
+            "style": "primary",
+            "enabled": true,
+            "payload": {
+              "tool_name": "omh_agent_board",
+              "arguments": {
+                "action": "prepare"
+              },
+              "required_input": [
+                "request_id",
+                "coordination",
+                "operation",
+                "board",
+                "profile",
+                "arguments"
+              ],
+              "coordination_options": {
+                "durable": "kanban",
+                "bounded_research": "delegation"
+              },
+              "execution_policy": "prepare_only"
+            }
+          },
+          {
+            "id": "refresh_status",
+            "label": "Refresh status",
+            "style": "secondary",
+            "enabled": true,
+            "payload": {
+              "tool_name": "omh_agent_board",
+              "arguments": {
+                "action": "status"
+              },
+              "required_input": [
+                "request_id"
+              ],
+              "execution_policy": "read_only"
+            }
+          },
+          {
+            "id": "show_status",
+            "label": "Show status",
+            "style": "secondary",
+            "enabled": true,
+            "payload": {
+              "command_prefix": [
+                "omh",
+                "coding",
+                "fanout",
+                "status"
+              ],
+              "required_input": [
+                "fanout_id"
+              ],
+              "optional_input": [
+                "unit_id"
+              ],
+              "wrapper_api": "omh.wrapper.contract.build_fanout_status_interaction",
+              "execution_policy": "read_only"
+            }
+          }
+        ],
+        "claim_boundary": "An agent board card is not proof that another Hermes target accepted, worked, heartbeat-ed, or completed. It is not target acceptance, agent heartbeat, task execution, blocker resolution, handoff receipt, or completion evidence."
+      }
+    }
+  },
+  "prepared_request": {
+    "schema_version": "agent_board_request/v1",
+    "request_id": "qa-create-1",
+    "request_ref": "sha256:ee5b36ac11da4ceec317a1f9f1042f9a75ba66d16baa52ffb82bb449d68432b1",
+    "board_ref": "sha256:3bd4aade44835b744f23d30807e3b17d362f696ef25fe8c6161af33c264332ff",
+    "route": "kanban",
+    "operation": "create",
+    "argument_digest": "sha256:31fce8f1d8327f4f9036f3cb776500b08a08b4ebee2e1ebc7e7303cd542ec6fe",
+    "state": "prepared",
+    "reason": null,
+    "observation_ref": "observation:0",
+    "expected_observation_ref": null,
+    "required_capabilities": [
+      "kanban_create",
+      "pre_tool_call",
+      "post_tool_call",
+      "host_identity",
+      "board_binding",
+      "native_mutation_guard"
+    ],
+    "missing_capabilities": [],
+    "native_action": {
+      "tool_name": "kanban_create",
+      "arguments": {
+        "title": "qa-task",
+        "assignee": "qa-profile",
+        "board": "qa-board",
+        "idempotency_key": "qa-create-1"
+      }
+    },
+    "observed_receipts": [],
+    "requires_reconciliation": false,
+    "task_refs": [],
+    "host_scope_ref": "sha256:9bc93d6ffa8b5d1186ddeed347409509e2c1d4a4ef5d16127d8cbbfebb326dfa",
+    "host_call_ref": null,
+    "in_flight": false,
+    "reconciled_by": null,
+    "claim_boundary": "Prepared actions are not invocations; receipts prove only the correlated operation, not review approval, CI or merge."
+  },
+  "status_interaction": {
+    "schema_version": "chat_interaction/v1",
+    "source": "discord",
+    "source_metadata": {},
+    "message_sha256": "",
+    "message_length": 0,
+    "thread_key": "discord:channel:e3b0c44298fc",
+    "mode": "status",
+    "next_action": "refresh_status",
+    "status": {
+      "schema_version": "agent_board_request/v1",
+      "request_id": "qa-create-1",
+      "request_ref": "sha256:ee5b36ac11da4ceec317a1f9f1042f9a75ba66d16baa52ffb82bb449d68432b1",
+      "board_ref": "sha256:3bd4aade44835b744f23d30807e3b17d362f696ef25fe8c6161af33c264332ff",
+      "route": "kanban",
+      "operation": "create",
+      "argument_digest": "sha256:31fce8f1d8327f4f9036f3cb776500b08a08b4ebee2e1ebc7e7303cd542ec6fe",
+      "state": "prepared",
+      "reason": null,
+      "observation_ref": "observation:0",
+      "expected_observation_ref": null,
+      "required_capabilities": [
+        "kanban_create",
+        "pre_tool_call",
+        "post_tool_call",
+        "host_identity",
+        "board_binding",
+        "native_mutation_guard"
+      ],
+      "missing_capabilities": [],
+      "native_action": null,
+      "observed_receipts": [],
+      "requires_reconciliation": false,
+      "task_refs": [],
+      "host_scope_ref": "sha256:9bc93d6ffa8b5d1186ddeed347409509e2c1d4a4ef5d16127d8cbbfebb326dfa",
+      "host_call_ref": null,
+      "in_flight": false,
+      "reconciled_by": null,
+      "claim_boundary": "Prepared actions are not invocations; receipts prove only the correlated operation, not review approval, CI or merge."
+    },
+    "status_card": {
+      "schema_version": "status_card/v1",
+      "run_id": "",
+      "kind": "agent_board",
+      "severity": "info",
+      "headline": "Here is the agent board observation.",
+      "summary": "create: prepared.",
+      "next_action": "refresh_status",
+      "primary_action": "refresh_status",
+      "steps": [
+        {
+          "id": "create",
+          "label": "create",
+          "state": "prepared",
+          "detail": "qa-create-1"
+        }
+      ],
+      "claim_boundary": "Prepared actions are not invocations; receipts prove only the correlated operation, not review approval, CI or merge."
+    },
+    "chat_response": {
+      "schema_version": "chat_response/v1",
+      "kind": "agent_board",
+      "visibility": "thread",
+      "headline": "[omh] status - Here is the agent board observation.",
+      "plain_headline": "Here is the agent board observation.",
+      "body": "create: prepared.",
+      "state": {
+        "phase": "status",
+        "next_action": "refresh_status",
+        "thread_key": "discord:channel:e3b0c44298fc",
+        "agent_board": {
+          "schema_version": "agent_board_request/v1",
+          "request_id": "qa-create-1",
+          "request_ref": "sha256:ee5b36ac11da4ceec317a1f9f1042f9a75ba66d16baa52ffb82bb449d68432b1",
+          "board_ref": "sha256:3bd4aade44835b744f23d30807e3b17d362f696ef25fe8c6161af33c264332ff",
+          "route": "kanban",
+          "operation": "create",
+          "argument_digest": "sha256:31fce8f1d8327f4f9036f3cb776500b08a08b4ebee2e1ebc7e7303cd542ec6fe",
+          "state": "prepared",
+          "reason": null,
+          "observation_ref": "observation:0",
+          "expected_observation_ref": null,
+          "required_capabilities": [
+            "kanban_create",
+            "pre_tool_call",
+            "post_tool_call",
+            "host_identity",
+            "board_binding",
+            "native_mutation_guard"
+          ],
+          "missing_capabilities": [],
+          "native_action": null,
+          "observed_receipts": [],
+          "requires_reconciliation": false,
+          "task_refs": [],
+          "host_scope_ref": "sha256:9bc93d6ffa8b5d1186ddeed347409509e2c1d4a4ef5d16127d8cbbfebb326dfa",
+          "host_call_ref": null,
+          "in_flight": false,
+          "reconciled_by": null,
+          "claim_boundary": "Prepared actions are not invocations; receipts prove only the correlated operation, not review approval, CI or merge."
+        },
+        "execution_observed": false,
+        "review_status": "not_observed",
+        "ci_status": "not_observed",
+        "merge_status": "not_observed",
+        "workflow_explanation": {
+          "schema_version": "omh_workflow_explanation/v1",
+          "selected_workflow": "",
+          "label": "status",
+          "selected_harness": "",
+          "why_this_workflow": "Using the `status` response state for this step.",
+          "next_action": "refresh_status",
+          "next_action_label": "refresh status",
+          "recommended_reply": "I will use `status` and start with refresh status. This is still not evidence of review.",
+          "primary_action_label": "Open status",
+          "primary_action_hint": "Route to `status` and run `refresh status`; do not claim review until observed.",
+          "not_evidence_yet": [
+            "review",
+            "CI",
+            "merge"
+          ],
+          "claim_boundary": "Prepared actions are not invocations; receipts prove only the correlated operation, not review approval, CI or merge.",
+          "rendering_hint": "Show this as a compact why/next/not-evidence card in chat surfaces."
+        }
+      },
+      "usage_trace": {
+        "schema_version": "omh_usage_trace/v1",
+        "brand": "omh",
+        "visibility": "visible_prefix",
+        "visible_prefix": "[omh] status",
+        "label": "status",
+        "selected_workflow": "",
+        "selected_harness": "",
+        "phase": "status",
+        "next_action": "refresh_status",
+        "evidence_state": "routing_not_execution",
+        "claim_boundary": "This trace is a routing/status marker, not execution evidence."
+      },
+      "messenger_rendering": {
+        "schema_version": "omh_messenger_rendering/v1",
+        "render_profile": "limited_markdown",
+        "visible_prefix": "[omh] status",
+        "first_line": "[omh] status - Here is the agent board observation.",
+        "body_format": "messenger_safe_markdown",
+        "body_text": "create: prepared.",
+        "body_blocks": [
+          {
+            "type": "paragraph",
+            "text": "create: prepared."
+          }
+        ],
+        "fallback_body_format": "messenger_safe_markdown",
+        "fallback_body_text": "create: prepared.",
+        "fallback_body_blocks": [
+          {
+            "type": "paragraph",
+            "text": "create: prepared."
+          }
+        ],
+        "preferred_blocks": [
+          "short_paragraph",
+          "bulleted_list",
+          "numbered_list",
+          "code_block",
+          "status_lines"
+        ],
+        "avoid_blocks": [
+          "markdown_table",
+          "wide_table",
+          "large_unbroken_block"
+        ],
+        "chunking": {
+          "max_recommended_chars": 1700,
+          "hard_limit_chars": 1900,
+          "split_on": [
+            "headings",
+            "bullets",
+            "paragraphs"
+          ]
+        },
+        "chunked_body_texts": [
+          "create: prepared."
+        ],
+        "follow_up_texts": [],
+        "transforms_applied": [],
+        "fallback_transforms_applied": [],
+        "prefix_policy": {
+          "default": "once_per_response_first_line",
+          "repeat_when": "adapter_splits_response_across_separate_messages_or_chunks",
+          "do_not_repeat": "every_paragraph_or_every_line"
+        },
+        "density_policy": {
+          "max_heading_levels": 2,
+          "max_bullets": 12,
+          "avoid": [
+            "nested_bullets",
+            "bold_inside_bullets",
+            "tables_on_limited_profiles"
+          ]
+        },
+        "platform_hints": {
+          "discord": "Start the first message with the visible prefix, prefer bullets or numbered lists over tables, and repeat the prefix only if the adapter splits a long response into separate messages.",
+          "slack": "Start the response with the visible prefix, prefer blocks or bullets over wide Markdown tables, and keep claim boundaries visible.",
+          "telegram": "Start the response with the visible prefix, keep sections short, avoid table layouts, and post body_text as plain text WITHOUT parse_mode; if you opt into MarkdownV2 you must escape every reserved character yourself.",
+          "hermes": "Render body_text as rich Markdown when the Hermes surface supports it; use fallback_body_text when relaying to a narrow chat adapter.",
+          "generic": "Use body_text for the declared render_profile; use fallback_body_text if the actual surface cannot render Markdown tables."
+        },
+        "table_policy": "convert_tables_to_bullets_for_messenger",
+        "body_preview": "create: prepared.",
+        "claim_boundary": "Prepared actions are not invocations; receipts prove only the correlated operation, not review approval, CI or merge."
+      },
+      "actions": [
+        {
+          "id": "refresh_status",
+          "label": "Refresh status",
+          "style": "primary",
+          "enabled": true,
+          "payload": {
+            "tool_name": "omh_agent_board",
+            "arguments": {
+              "action": "status",
+              "request_id": "qa-create-1"
+            },
+            "execution_policy": "read_only"
+          }
+        }
+      ],
+      "claim_boundary": "Prepared actions are not invocations; receipts prove only the correlated operation, not review approval, CI or merge.",
+      "status_card": {
+        "schema_version": "status_card/v1",
+        "run_id": "",
+        "kind": "agent_board",
+        "severity": "info",
+        "headline": "Here is the agent board observation.",
+        "summary": "create: prepared.",
+        "next_action": "refresh_status",
+        "primary_action": "refresh_status",
+        "steps": [
+          {
+            "id": "create",
+            "label": "create",
+            "state": "prepared",
+            "detail": "qa-create-1"
+          }
+        ],
+        "claim_boundary": "Prepared actions are not invocations; receipts prove only the correlated operation, not review approval, CI or merge."
+      }
+    },
+    "redaction_policy": "metadata_only",
+    "overclaim_guard": [
+      "Prepared handoff is not execution evidence.",
+      "Review, verification, CI, and merge status require separate observed evidence.",
+      "Hermes orchestrates; selected coding executors perform main coding work."
+    ]
+  }
+}

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -61,7 +64,6 @@ from omh.coding.parallelism_policy import (  # noqa: E402
 from omh.coding.executor_progress import read_progress_binding  # noqa: E402
 from omh.runtime.artifacts import append_journal_observation, create_run, show_run  # noqa: E402
 from omh.system.local_store import atomic_write_json, utc_now  # noqa: E402
-from omh.system.output_truncation import resolve_spill_reference  # noqa: E402
 from omh.system.paths import OmhPaths  # noqa: E402
 
 _GOAL = "split the sample feature across agents"
@@ -120,7 +122,7 @@ def _agent_runner(*, fail_units: set[str] | None = None, timeout_units: set[str]
     return runner
 
 
-def _ready(paths, profile, **kwargs):
+def _ready(paths: OmhPaths, profile: str, **kwargs: object) -> dict[str, object]:
     return {"status": "ready", "profile": profile}
 
 
@@ -152,6 +154,22 @@ def _stub_executor_script(root: Path) -> Path:
     return script
 
 
+def _prompted_sidecar(argv: list[str]) -> Path:
+    match = re.search(r'JSON sidecar to exactly (.+)\.', ' '.join(argv))
+    if match is None:
+        raise AssertionError('missing invocation sidecar path')
+    return Path(match[1])
+
+
+@dataclass
+class _ObservedScriptRunner:
+    run: Callable[..., object]
+    spawned: list[list[str]]
+
+    def __call__(self, *args: object, **kwargs: object) -> object:
+        return self.run(*args, **kwargs)
+
+
 def _sidecar_script_runner(script: Path, mode: str, sidecar: Path, payload: dict[str, object]):
     spawned: list[list[str]] = []
 
@@ -160,15 +178,14 @@ def _sidecar_script_runner(script: Path, mode: str, sidecar: Path, payload: dict
             return subprocess.run(argv, **kwargs)
         spawned.append(list(argv))
         return subprocess.run(
-            [sys.executable, str(script), mode, str(sidecar), json.dumps(payload)],
+            [sys.executable, str(script), mode, str(_prompted_sidecar(argv)), json.dumps(payload)],
             cwd=kwargs.get("cwd"),
             text=True,
             capture_output=True,
             timeout=kwargs.get("timeout"),
         )
 
-    runner.spawned = spawned
-    return runner
+    return _ObservedScriptRunner(runner, spawned)
 
 
 _SECRET = "s3cret-source-line-that-must-never-leave-the-worktree"
@@ -282,7 +299,10 @@ class FanoutUnitResultIntakeTests(unittest.TestCase):
             self.assertEqual(core["unit_result_status"], "unit_result_validated")
             self.assertEqual(core["unit_result"]["schema_version"], "fanout_unit_result/v1")
             prompt = " ".join(runner.spawned[0])
-            self.assertIn(str(sidecar), prompt)
+            intake = _prompted_sidecar(runner.spawned[0])
+            self.assertFalse(intake.is_relative_to(paths.omh_home))
+            self.assertFalse(intake.exists())
+            self.assertFalse(sidecar.exists())
             self.assertIn("observed_by", prompt)
             self.assertIn("observation_source", prompt)
             events = [event["event"] for event in show_run(paths, core["run_ref"])["journal_events"]]
@@ -301,8 +321,7 @@ class FanoutUnitResultIntakeTests(unittest.TestCase):
             def runner(argv, **kwargs):
                 if argv[0] == "git":
                     return subprocess.run(argv, **kwargs)
-                sidecar.parent.mkdir(parents=True, exist_ok=True)
-                sidecar.write_text(json.dumps(payload), encoding="utf-8")
+                _prompted_sidecar(argv).write_text(json.dumps(payload), encoding="utf-8")
                 return _FakeCompleted(3, "cannot be done: target not found")
 
             summary = self._dispatch(paths, repo, sha, contract, runner)
@@ -352,8 +371,7 @@ class FanoutUnitResultIntakeTests(unittest.TestCase):
                 return subprocess.run(argv, **kwargs)
             spawned.append(list(argv))
             if sidecar_payload is not None and sidecar is not None:
-                sidecar.parent.mkdir(parents=True, exist_ok=True)
-                sidecar.write_text(json.dumps(sidecar_payload), encoding="utf-8")
+                _prompted_sidecar(argv).write_text(json.dumps(sidecar_payload), encoding="utf-8")
             return _FakeCompleted(0, stdout)
 
         runner.spawned = spawned
@@ -457,7 +475,8 @@ class FanoutUnitResultIntakeTests(unittest.TestCase):
             events = show_run(paths, core["run_ref"])["journal_events"]
             invalid = next(event for event in events if event["event"] == "unit_result_invalid")
             self.assertEqual(invalid["status"], "observed")
-            self.assertEqual(invalid["evidence_refs"], [str(sidecar)])
+            self.assertEqual(invalid["evidence_refs"], [])
+            self.assertFalse(_prompted_sidecar(runner.spawned[0]).exists())
             self.assertIn("checks[0].status", invalid["summary"])
 
     def test_foreign_identity_sidecar_is_invalid_and_never_echoed(self) -> None:
@@ -479,8 +498,105 @@ class FanoutUnitResultIntakeTests(unittest.TestCase):
                 self.assertFalse(core["result_schema_valid"])
                 self.assertEqual(core["unit_result_status"], "unit_result_invalid")
                 self.assertIn(field, core["unit_result_error"])
-                self.assertIn(repr(foreign_value), core["unit_result_error"])
+                self.assertNotIn(repr(foreign_value), core["unit_result_error"])
                 self.assertNotIn("unit_result", core)
+
+    def test_d5_dispatcher_exception_preserves_summary_and_reraises(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, _sidecar, _script = self._setup(tmp)
+            def runner(argv, **kwargs):
+                if argv[0] == 'git':
+                    return subprocess.run(argv, **kwargs)
+                raise RuntimeError('PRIVATE_OBSERVER_BODY')
+            with self.assertRaisesRegex(RuntimeError, '^PRIVATE_OBSERVER_BODY$'):
+                self._dispatch(paths, repo, sha, contract, runner)
+            path = fanout_dispatch_summary_path(paths, str(contract['fanout_id']))
+            self.assertTrue(path.exists(), 'dispatcher failure lost the batch summary')
+            stored = json.loads(path.read_text())
+            core = stored['units'][0]
+            self.assertFalse(core['process_succeeded'])
+            self.assertEqual(core['failure_diagnostic']['phase'], 'dispatcher')
+            self.assertIsNone(core['failure_diagnostic']['returncode'])
+            self.assertNotIn('PRIVATE_OBSERVER_BODY', path.read_text())
+
+    def test_d5_dispatcher_fault_keeps_completed_sibling_evidence(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, _contract, _sidecar, _script = self._setup(tmp)
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, _UNITS[:2]))
+            def runner(argv, **kwargs):
+                if argv[0] == 'git':
+                    return subprocess.run(argv, **kwargs)
+                if argv[0] == 'claude':
+                    raise RuntimeError('observer_failure')
+                _prompted_sidecar(argv).write_text(json.dumps(_unit_result_payload(contract, sha)))
+                return _FakeCompleted(0, '')
+            with self.assertRaisesRegex(RuntimeError, '^observer_failure$'):
+                dispatch_fanout(paths, contract, goal_text=_GOAL, repo_root=repo,
+                                base_sha=sha, runner=runner, readiness=_ready,
+                                concurrency=1, max_retries=0)
+            summary = json.loads(fanout_dispatch_summary_path(paths, str(contract['fanout_id'])).read_text())
+            units = {unit['unit_id']: unit for unit in summary['units']}
+            self.assertTrue(units['core']['process_succeeded'])
+            self.assertTrue(units['core']['result_schema_valid'])
+            self.assertNotIn('failure_diagnostic', units['core'])
+            self.assertEqual(units['docs']['failure_diagnostic']['phase'], 'dispatcher')
+
+    def test_d5_launch_timeout_and_real_exit_provenance_stay_distinct(self) -> None:
+        for failure, phase, reason in (
+            (FileNotFoundError('PRIVATE_ERROR'), 'launch', 'missing_binary'),
+            (PermissionError('PRIVATE_ERROR'), 'launch', 'spawn_error'),
+            (subprocess.TimeoutExpired('fixture', 1, output=b'compiler failed\n'), 'timeout', 'deadline'),
+        ):
+            with self.subTest(phase=phase, reason=reason), TemporaryDirectory() as tmp:
+                paths, repo, sha, contract, _sidecar, _script = self._setup(tmp)
+                def runner(argv, **kwargs):
+                    if argv[0] == 'git':
+                        return subprocess.run(argv, **kwargs)
+                    raise failure
+                summary = self._dispatch(paths, repo, sha, contract, runner)
+                diagnostic = summary['units'][0]['failure_diagnostic']
+                self.assertEqual((diagnostic['phase'], diagnostic['reason']), (phase, reason))
+                self.assertEqual(diagnostic['exit_code_source'], 'not_observed')
+                self.assertIsNone(diagnostic['returncode'])
+                self.assertNotIn('PRIVATE_ERROR', json.dumps(summary))
+        from five_issue_cases.diagnostics import exercise_dispatch
+        from omh.coding.fanout_failure_diagnostics import is_string_map, is_object_list
+        for code in (124, 127):
+            observed = exercise_dispatch(stderr=b'compiler failed\n', exit_code=code)
+            summary = observed['observations']['summary']
+            assert is_string_map(summary)
+            units = summary['units']
+            assert is_object_list(units) and is_string_map(units[0])
+            diagnostic = units[0]['failure_diagnostic']
+            assert is_string_map(diagnostic)
+            self.assertEqual((diagnostic['phase'], diagnostic['returncode'], diagnostic['exit_code_source']),
+                             ('worker', code, 'process'))
+            self.assertTrue(observed['cleanup']['verified_absent'])
+
+    def test_d4_known_safe_template_in_sidecar_is_still_private(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, _contract, sidecar, script = self._setup(tmp)
+            goal = 'compiler failed'
+            contract = write_fanout_contract(paths, build_fanout_contract(goal, [_UNITS[0]]))
+            payload = _unit_result_payload(contract, sha, findings=[goal])
+            runner = _sidecar_script_runner(script, 'valid', sidecar, payload)
+            summary = dispatch_fanout(paths, contract, goal_text=goal, repo_root=repo,
+                                      base_sha=sha, runner=runner, readiness=_ready, max_retries=0)
+            self.assertTrue(summary['units'][0]['result_schema_valid'])
+            self.assertNotIn(goal, json.dumps(summary['units'][0]['unit_result']))
+
+    def test_d5_invalid_result_is_diagnosed_without_changing_process_success(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract, sidecar, script = self._setup(tmp)
+            runner = _sidecar_script_runner(script, 'corrupt', sidecar, {})
+            summary = self._dispatch(paths, repo, sha, contract, runner)
+            core = summary['units'][0]
+            self.assertTrue(core['process_succeeded'])
+            self.assertFalse(core['result_schema_valid'])
+            self.assertIn('failure_diagnostic', core)
+            self.assertEqual(core['failure_diagnostic']['phase'], 'unit_result')
+            self.assertEqual(core['failure_diagnostic']['reason'], 'malformed_result')
+            self.assertEqual(core['failure_diagnostic']['returncode'], 0)
 
     def test_executor_cannot_launder_a_check_as_dispatcher_observed(self) -> None:
         violations = (
@@ -1005,7 +1121,6 @@ class FanoutDispatchEngineTests(unittest.TestCase):
         # ever overlap, while the unconfigured claude-code owner is ungated
         # and the whole batch still completes.
         import threading as _threading
-        import time as _time
 
         goal = "gate the codex lane"
         units = [
@@ -1020,6 +1135,8 @@ class FanoutDispatchEngineTests(unittest.TestCase):
             lock = _threading.Lock()
             live = {"codex": 0}
             max_live = {"codex": 0}
+            first_codex = _threading.Event()
+            other_owner = _threading.Event()
 
             def runner(argv, **kwargs):
                 if argv[0] == "git":
@@ -1029,7 +1146,11 @@ class FanoutDispatchEngineTests(unittest.TestCase):
                     with lock:
                         live["codex"] += 1
                         max_live["codex"] = max(max_live["codex"], live["codex"])
-                _time.sleep(0.05)
+                    first_codex.set()
+                    self.assertTrue(other_owner.wait(timeout=10))
+                else:
+                    self.assertTrue(first_codex.wait(timeout=10))
+                    other_owner.set()
                 if is_codex:
                     with lock:
                         live["codex"] -= 1
@@ -3309,7 +3430,6 @@ class FanoutBriefCliTests(unittest.TestCase):
                 {"unit_id": "core", "title": "Core", "owner": "codex", "file_scope": ["src/core/"]},
             ]
             contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, units))
-            sidecar = unit_result_path(paths, contract["fanout_id"], "core")
             payload = _unit_result_payload(
                 contract, sha, process_status="process_declined", decline_reason="refused_by_policy"
             )
@@ -3317,8 +3437,7 @@ class FanoutBriefCliTests(unittest.TestCase):
             def runner(argv, **kwargs):
                 if argv[0] == "git":
                     return subprocess.run(argv, **kwargs)
-                sidecar.parent.mkdir(parents=True, exist_ok=True)
-                sidecar.write_text(json.dumps(payload), encoding="utf-8")
+                _prompted_sidecar(argv).write_text(json.dumps(payload), encoding="utf-8")
                 return _FakeCompleted(3, "refused")
 
             dispatch_fanout(
@@ -3598,7 +3717,7 @@ def _verification_runner(script: Path, sidecar: Path, payload: dict[str, object]
             return subprocess.run(argv, **kwargs)
         if argv[0] in {"codex", "claude"}:
             return subprocess.run(
-                [sys.executable, str(script), mode, str(sidecar), json.dumps(payload)],
+                [sys.executable, str(script), mode, str(_prompted_sidecar(argv)), json.dumps(payload)],
                 cwd=kwargs.get("cwd"),
                 text=True,
                 capture_output=True,
@@ -3621,7 +3740,7 @@ def _verification_runner(script: Path, sidecar: Path, payload: dict[str, object]
 
 
 class FanoutUnitOutputSpillTests(unittest.TestCase):
-    def test_a_flooding_unit_spills_and_the_journal_line_stays_resolvable(self) -> None:
+    def test_a_flooding_success_keeps_no_raw_output_or_spill(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
@@ -3629,15 +3748,13 @@ class FanoutUnitOutputSpillTests(unittest.TestCase):
             contract = write_fanout_contract(
                 paths, build_fanout_contract(_GOAL, [dict(unit) for unit in _UNITS])
             )
-            sidecar = unit_result_path(paths, contract["fanout_id"], "core")
             payload = _unit_result_payload(contract, sha)
             flood = "flood-line\n" * 900
 
             def runner(argv, **kwargs):
                 if argv[0] == "git":
                     return subprocess.run(argv, **kwargs)
-                sidecar.parent.mkdir(parents=True, exist_ok=True)
-                sidecar.write_text(json.dumps(payload), encoding="utf-8")
+                _prompted_sidecar(argv).write_text(json.dumps(payload), encoding="utf-8")
                 return subprocess.CompletedProcess(argv, 0, flood, "")
 
             summary = dispatch_fanout(
@@ -3652,32 +3769,19 @@ class FanoutUnitOutputSpillTests(unittest.TestCase):
             )
             core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
 
-            record = core["output_truncation"]
-            self.assertTrue(record["truncated"])
-            self.assertEqual(record["reason_code"], "output_cap")
-            self.assertEqual(record["original_bytes"], len(flood))
-            self.assertEqual(record["kept_bytes"], 2000)
-            self.assertEqual(record["spill_status"], "written")
-            self.assertEqual(resolve_spill_reference(record["spill"]), flood)
-            self.assertFalse(core["stderr_truncation"]["truncated"])
-
-            events = show_run(paths, core["run_ref"])["journal_events"]
-            worker = [event for event in events if event["event"] == "executor_result_observed"][-1]
-            # The journal caps `summary` at 500 characters, so the notice it
-            # carries is the compact one and the resolvable pointer rides in
-            # `evidence_refs` where nothing can cut it in half.
-            self.assertIn("[output truncated:", worker["summary"])
-            self.assertIn("continuation=evidence_refs", worker["summary"])
-            self.assertTrue(worker["summary"].endswith("]"))
-            self.assertLess(len(worker["summary"]), 500)
-            self.assertNotIn("...", worker["summary"])
-            self.assertEqual(
-                worker["evidence_refs"],
-                [
-                    f"output_spill:{record['spill']['path']}"
-                    f":sha256:{record['spill']['sha256']}:{record['spill']['byte_count']}"
-                ],
-            )
+            self.assertTrue(core['process_succeeded'])
+            self.assertTrue(core['result_schema_valid'])
+            self.assertNotIn('output_truncation', core)
+            self.assertNotIn('stderr_truncation', core)
+            self.assertNotIn('failure_diagnostic', core)
+            self.assertFalse(paths.runtime_output_spills_dir.exists())
+            events = show_run(paths, core['run_ref'])['journal_events']
+            worker = [event for event in events if event['event'] == 'executor_result_observed'][-1]
+            self.assertLess(len(worker['summary']), 500)
+            self.assertEqual(worker['evidence_refs'], [])
+            for artifact in paths.omh_home.rglob('*'):
+                if artifact.is_file():
+                    self.assertNotIn(flood.encode(), artifact.read_bytes())
 
 
 class FanoutDispatchVerificationTests(unittest.TestCase):
@@ -3769,7 +3873,8 @@ class FanoutDispatchVerificationTests(unittest.TestCase):
             self.assertEqual(core["verification_status"], "failed")
             self.assertEqual([row["status"] for row in core["verification_checks"]], ["passed", "failed"])
             self.assertEqual(len(core["verification_failures"]), 1)
-            self.assertIn("exit 3: boom", core["verification_failures"][0])
+            self.assertEqual(core['failure_diagnostic']['returncode'], 3)
+            self.assertEqual(core['failure_diagnostic']['streams'][0]['state'], 'withheld')
             self.assertFalse(_unit_verification_is_observed(paths, core["run_ref"]))
             self.assertFalse(core["unit_verification_observed"])
             self.assertFalse(core["integration_ready"])
@@ -3783,34 +3888,31 @@ class FanoutDispatchVerificationTests(unittest.TestCase):
 
             core = self._dispatch(paths, repo, sha, contract, runner, run_verification=True)
 
-            records = core["verification_output_truncation"]
-            self.assertEqual(len(records), 1)
-            self.assertFalse(records[0]["truncated"])
-            self.assertEqual(records[0]["reason_code"], "not_truncated")
-            self.assertNotIn("[output truncated:", core["verification_failures"][0])
+            diagnostic = core['failure_diagnostic']
+            self.assertEqual(diagnostic['phase'], 'verification')
+            self.assertEqual(diagnostic['returncode'], 3)
+            self.assertFalse(diagnostic['streams'][0]['truncated'])
+            self.assertIsNone(diagnostic['streams'][0]['original_bytes'])
+            self.assertNotIn('verification_output_truncation', core)
 
-    def test_a_flooding_failure_spills_and_the_failure_row_names_the_spill(self) -> None:
+    def test_a_flooding_failure_is_bounded_and_never_spills(self) -> None:
         with TemporaryDirectory() as tmp:
             paths, repo, sha, contract, runner = self._setup(tmp, [_FLOODING_COMMAND])
 
             core = self._dispatch(paths, repo, sha, contract, runner, run_verification=True)
 
-            records = core["verification_output_truncation"]
-            self.assertEqual(len(records), 1)
-            record = records[0]
-            self.assertTrue(record["truncated"])
-            self.assertEqual(record["reason_code"], "output_cap")
-            self.assertEqual(record["original_bytes"], len(_FLOODING_OUTPUT))
-            self.assertEqual(record["kept_bytes"], 300)
-            self.assertEqual(record["spill_status"], "written")
-            # The rendered row -- the surface a reader actually sees -- says
-            # truncated, why, and where the rest lives.
-            detail = core["verification_failures"][0]
-            self.assertIn("[output truncated:", detail)
-            self.assertIn("reason=output_cap", detail)
-            self.assertIn(record["spill"]["path"], detail)
-            self.assertNotIn("...", detail)
-            self.assertEqual(resolve_spill_reference(record["spill"]), _FLOODING_OUTPUT)
+            diagnostic = core['failure_diagnostic']
+            self.assertEqual(diagnostic['phase'], 'verification')
+            self.assertEqual(diagnostic['returncode'], 4)
+            record = diagnostic['streams'][0]
+            self.assertTrue(record['truncated'])
+            self.assertEqual(record['truncation_reason'], 'byte_limit')
+            self.assertIsNone(record['original_bytes'])
+            self.assertLessEqual(record['kept_bytes'], record['limit_bytes'])
+            self.assertEqual(record['state'], 'withheld')
+            self.assertNotIn('verification_output_truncation', core)
+            self.assertFalse(paths.runtime_output_spills_dir.exists())
+            self.assertNotIn(_FLOODING_OUTPUT, json.dumps(core))
 
     def test_a_command_that_cannot_start_is_a_failed_check_not_a_failed_dispatch(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -4028,7 +4130,7 @@ class FanoutDispatchPlannedVerificationTests(unittest.TestCase):
             if argv[0] in sidecars:
                 sidecar, payload = sidecars[argv[0]]
                 return subprocess.run(
-                    [sys.executable, str(script), "valid", str(sidecar), json.dumps(payload)],
+                    [sys.executable, str(script), "valid", str(_prompted_sidecar(argv)), json.dumps(payload)],
                     cwd=kwargs.get("cwd"),
                     text=True,
                     capture_output=True,
@@ -5106,6 +5208,34 @@ class FanoutUnitRetryTests(unittest.TestCase):
         )
         # min(2 * 2^(n-1), 30) at the 75% jitter floor.
         self.assertEqual(delays, [1.5, 3.0])
+
+    def test_d6_retry_uses_fresh_capture_attempt_and_clears_live_old_failure(self) -> None:
+        delays: list[float] = []
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            attempts: list[Path] = []
+            live: list[dict[str, object]] = []
+            def runner(argv, **kwargs):
+                if argv[0] == 'git':
+                    return subprocess.run(argv, **kwargs)
+                attempts.append(_prompted_sidecar(argv))
+                if len(attempts) == 1:
+                    return _FakeCompleted(1, 'Error: socket hang up')
+                from omh.workflows.observation_journal import project_run_failure_diagnostic
+                run_ref = str(contract['fanout_id']) + '-core'
+                live.append(project_run_failure_diagnostic(
+                    show_run(paths, run_ref)['journal_events'], run_id=run_ref))
+                attempts[-1].write_text(json.dumps(_unit_result_payload(contract, sha)))
+                return _FakeCompleted(0, '')
+            summary = self._dispatch(paths, repo, sha, contract, runner, delays)
+            entry = summary['units'][0]
+            self.assertEqual(len(attempts), 2)
+            self.assertNotEqual(attempts[0], attempts[1])
+            self.assertTrue(all(not path.exists() for path in attempts))
+            self.assertNotEqual(entry['retry']['decisions'][0]['attempt_id'], entry['attempt_id'])
+            self.assertNotIn('failure_diagnostic', entry)
+            self.assertNotIn('failure_diagnostic', live[0])
+            self.assertEqual(live[0]['attempt_id'], entry['attempt_id'])
 
     def test_a_transient_failure_with_observed_side_effects_is_surfaced_not_retried(self) -> None:
         # The predicate this whole policy exists for: the failure is retryable,

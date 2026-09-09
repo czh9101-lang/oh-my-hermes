@@ -6916,12 +6916,14 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Separate prepared guidance from observed platform, runtime, connector, file, memory, or delivery evidence.
   - Expose missing tools, credentials, targets, or observations as user-visible gaps.
 - Completion checklist:
-  - Confirm the workflow target, evidence boundary, and stop condition are named.
-  - Report which outputs are prepared, observed, blocked, or missing.
-  - Name the smallest next verification or handoff instead of claiming completion from narration.
+  - Choose the coordination from the request: `durable` (restart survival, cross-profile pickup) prepares a `kanban_*` action on the named board; `bounded_research` prepares one `delegate_task` action. Never substitute one route for the other when its surface is missing.
+  - Call `omh_agent_board` `prepare`, then invoke the returned `native_action` through the normal Hermes tool loop; OMH never calls a native tool itself and grants no host permission.
+  - Report the request state exactly: `prepared`, `unavailable` (named `missing_capabilities`, zero native calls), `denied`, `observed`, or `failed`. A `complete` receipt implies no review approval, CI, or merge; a `running` readback is a claim, not dispatch proof.
+  - Agent/operator reference: docs/AGENT-BOARD.md; wrapper actions example: examples/agent-board/native-actions.json.
 - Recovery notes:
-  - If required context is missing, ask one blocking question or route back to the narrower workflow.
-  - If runtime or wrapper evidence is unavailable, keep the status as not_observed and expose the next observable action.
+  - If `prepare` returns `unavailable`, name the missing capability (tool, schema, hook, host identity, board binding, or native compare-and-swap) and keep the card prepared-only.
+  - If a receipt is `failed` or `requires_reconciliation`, run an observed `show` on the same task before the next mutation; never retry a `create` automatically. Repeating a `create` with the same `request_id` returns the already observed task.
+  - No native `kanban_dispatch` tool exists: dispatch stays `unavailable` and an operator claim is the observed path. A positive `request_changes` needs a review-claimed run from the host's own review dispatcher.
 - Required inputs:
   - user request
   - target context
@@ -6929,10 +6931,12 @@ These surfaces are generated command references, not installed Hermes workflow s
   - known missing evidence
 - Expected outputs:
   - agent-board/v1 card or guidance
+  - agent_board_request/v1 record from the `omh_agent_board` plugin tool
   - next action
   - prepared-vs-observed boundary
 - Artifact expectations:
   - agent-board/v1 metadata-only runtime or wrapper card when recorded
+  - agent_board_state/v1 bounded board snapshot under the OMH home: request digests, receipts, and task references only; never raw bodies, comments, attachments, or host identity
 - Safety rules:
   - An agent board card is not proof that another Hermes agent accepted, executed, heartbeat-ed, or completed work unless target-specific evidence exists.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.

@@ -9,8 +9,12 @@ and the reaper terminates only marker-named pids — never by process name.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import ExitStack
 import os
+import select
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -102,8 +106,19 @@ class SignalSafeRunnerTests(unittest.TestCase):
 
         def on_spawn(process) -> None:
             seen["pid"] = process.pid
+            self.assertTrue(select.select([process.stdout], [], [], 5)[0])
+            self.assertEqual(os.read(process.stdout.fileno(), 6), b'ready\n')
 
-        script = "import subprocess, time; subprocess.Popen(['sleep', '60']); time.sleep(60)"
+        script = (
+            'import subprocess, signal, sys\n'
+            'child = subprocess.Popen([sys.executable, "-c", "import signal; signal.pause()"] )\n'
+            'def stop(*_):\n'
+            ' child.wait(timeout=5)\n'
+            ' sys.exit(0)\n'
+            'signal.signal(signal.SIGTERM, stop)\n'
+            'print("ready", flush=True)\n'
+            'signal.pause()\n'
+        )
         with self.assertRaises(subprocess.TimeoutExpired):
             signal_safe_unit_runner(
                 [sys.executable, "-c", script],
@@ -114,13 +129,6 @@ class SignalSafeRunnerTests(unittest.TestCase):
             )
         # The leader AND its grandchild are gone: signalling the dead group
         # raises, which is the proof the tree did not outlive the timeout.
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            try:
-                os.killpg(seen["pid"], 0)
-            except ProcessLookupError:
-                break
-            time.sleep(0.05)
         with self.assertRaises(ProcessLookupError):
             os.killpg(seen["pid"], 0)
 
@@ -130,27 +138,46 @@ class SignalSafeRunnerTests(unittest.TestCase):
         was captured so far), at least one snapshot arrives while the child
         still runs, and the returned CompletedProcess is byte-complete."""
         script = (
-            "import time\n"
-            "print('line-a', flush=True)\n"
-            "time.sleep(2)\n"
-            "print('line-b', flush=True)\n"
+            'import socket, sys\n'
+            'with socket.create_connection(("127.0.0.1", int(sys.argv[1])), 30) as control:\n'
+            " print('line-a', flush=True)\n"
+            ' control.sendall(b"R")\n'
+            ' assert control.recv(1) == b"F"\n'
+            " print('line-b', flush=True)\n"
         )
         snapshots: list[str] = []
-        poll = fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS
-        fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS = 0.2
-        try:
+        spawned: list[subprocess.Popen[str] | subprocess.Popen[bytes]] = []
+        live_at_release: list[bool] = []
+        with ExitStack() as stack:
+            listener = stack.enter_context(socket.socket())
+            listener.bind(('127.0.0.1', 0))
+            listener.listen(1)
+            listener.settimeout(5)
+            address: Callable[[], tuple[str, int]] = listener.getsockname
+            controls: list[socket.socket] = []
+            def on_spawn(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> None:
+                spawned.append(process)
+                control = stack.enter_context(listener.accept()[0])
+                controls.append(control)
+                control.settimeout(5)
+                self.assertEqual(control.recv(1), b'R')
+            def observed(text: str) -> None:
+                snapshots.append(text)
+                if 'line-a' in text and not live_at_release:
+                    live_at_release.append(spawned[0].poll() is None)
+                    controls[0].sendall(b'F')
             completed = signal_safe_unit_runner(
-                [sys.executable, "-c", script],
+                [sys.executable, "-c", script, str(address()[1])],
                 text=True,
                 capture_output=True,
                 timeout=30,
-                on_output=snapshots.append,
+                on_spawn=on_spawn,
+                on_output=observed,
             )
-        finally:
-            fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS = poll
+        self.assertEqual(live_at_release, [True])
         self.assertEqual(completed.returncode, 0)
-        self.assertIn("line-a", completed.stdout)
-        self.assertIn("line-b", completed.stdout)
+        assert isinstance(completed.stdout, str)
+        self.assertEqual(completed.stdout, "line-a\nline-b\n")
         self.assertTrue(snapshots)
         for snapshot in snapshots:
             self.assertTrue(completed.stdout.startswith(snapshot))
@@ -168,7 +195,7 @@ class SignalSafeRunnerTests(unittest.TestCase):
         try:
             with self.assertRaises(subprocess.TimeoutExpired):
                 signal_safe_unit_runner(
-                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    [sys.executable, "-c", "import signal; signal.pause()"],
                     text=True,
                     capture_output=True,
                     timeout=0.5,
@@ -177,13 +204,6 @@ class SignalSafeRunnerTests(unittest.TestCase):
                 )
         finally:
             fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS = poll
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            try:
-                os.killpg(seen["pid"], 0)
-            except ProcessLookupError:
-                break
-            time.sleep(0.05)
         with self.assertRaises(ProcessLookupError):
             os.killpg(seen["pid"], 0)
 
@@ -195,7 +215,7 @@ class SignalSafeRunnerTests(unittest.TestCase):
         fanout_dispatch_module.UNIT_OUTPUT_POLL_SECONDS = 0.2
         try:
             completed = signal_safe_unit_runner(
-                [sys.executable, "-c", "import time; print('ok', flush=True); time.sleep(1)"],
+                [sys.executable, "-c", "print('ok', flush=True)"],
                 text=True,
                 capture_output=True,
                 timeout=30,
@@ -347,9 +367,8 @@ class AsyncSignalTests(unittest.TestCase):
                 )
 
             def fire_sigterm() -> None:
-                first_spawn.wait(timeout=30)
-                time.sleep(0.2)
-                os.kill(os.getpid(), signal.SIGTERM)
+                if first_spawn.wait(timeout=30):
+                    os.kill(os.getpid(), signal.SIGTERM)
 
             killer = _threading.Thread(target=fire_sigterm)
             killer.start()
@@ -374,11 +393,6 @@ class AsyncSignalTests(unittest.TestCase):
             self.assertTrue(stored and stored.get("interrupted"))
             # Every spawned stand-in group is dead — a spawn that raced the
             # signal was terminated by the runner's register-then-check.
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                if all(not _group_exists(pid) for pid in spawn_pids):
-                    break
-                time.sleep(0.05)
             for pid in spawn_pids:
                 self.assertFalse(_group_exists(pid), f"group {pid} outlived the interrupt")
 

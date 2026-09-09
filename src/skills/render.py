@@ -631,6 +631,8 @@ The bounded JSON result is `workflow_artifact_operation_result/v1`; the CLI is m
 Public contract and synthetic command inputs: [`docs/WORKFLOW-ARTIFACTS.md`](https://github.com/rlaope/oh-my-hermes/blob/main/docs/WORKFLOW-ARTIFACTS.md).
 
 `build` derives schemas, statuses, metadata, and discovery hashes; `validate` is structural, not readiness. `prepare`/`evaluate` apply gates, so lifecycle may return `HOLD` for unknown consent and synthetic discovery remains `inconclusive`. Preparation does not persist; only explicit producer-owned `persist` or `append` writes validated metadata. `handoff` is proposed and executor-neutral and never dispatches, executes, or approves implementation.
+
+Lifecycle launch review (`audience`, `promote`, `graduate`) returns separate `prepared_not_observed` records outside the six closed artifact schemas. Reachability is configuration analysis, not targeted membership or exposure; a promotion preflight defaults the target to `disabled` and carries dependencies or schedules only on explicit approval; a graduation check proposes cleanup only from supplied complete-rollout evidence and satisfied rollback conditions. `evaluate` accepts optional `evaluation_context`; omitting it preserves the original output.
 """.rstrip() + "\n"
 
 

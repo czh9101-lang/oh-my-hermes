@@ -18,14 +18,28 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from tempfile import TemporaryDirectory
+from uuid import uuid4
+from contextlib import nullcontext
+from typing import Any, BinaryIO, Callable, Iterable, Mapping, Sequence
 
 from ..runtime.artifacts import append_journal_observation, create_run, show_run
 from ..system.approval_tier import TIER_AUTO_ALLOWED, resolve_approval_tier
 from ..system.local_store import atomic_write_json, ensure_dir, locked_json_update, read_json_object_result, utc_now
 from ..system.security_posture import resolve_security_posture
 from ..system.metadata_safety import redact_metadata_text
-from ..system.output_truncation import spill_evidence_ref, truncate_output, truncation_notice
+from .fanout_output import FanoutOutput
+from .fanout_executor_sessions import SessionBinding, SessionDecoder, bound_session_fields, observe_session_workspace, read_session_receipt
+from .executor_readiness import negotiate_session_capability, observe_session_binary
+from .fanout_capacity import (
+    AdmissionBinding, CapacityBlocked, CapacityTrip, CodexAdmissionObserver, CodexAdmissionSource, LaunchCallable,
+    CODEX_ADMISSION_SUPPORT, CAPACITY_STATUSES, OwnerLaunchGate, capacity_fields,
+    capacity_summary, codex_admission_source, read_capacity_fields,
+)
+from .fanout_artifacts import fanout_contract_digest
+from ..workflows.observation_journal import project_run_executor_session, read_observation_events
+from .fanout_failure_diagnostics import build_failure_diagnostic
+from ..workflows.observation_journal import project_run_failure_diagnostic
 from ..system.paths import OmhPaths
 from ._hermes_child_process import terminate_process_group
 from .action_gate import recheck_safety_profile_revision
@@ -137,8 +151,9 @@ from .fanout_unit_results import (
     FANOUT_UNIT_RESULT_PROCESS_STATUSES,
     validate_check_rows,
     validate_unit_result,
+    read_unit_result_input,
 )
-from .unit_telemetry import parse_unit_telemetry
+from .unit_telemetry import native_unit_telemetry, parse_unit_telemetry
 
 FANOUT_DISPATCH_SCHEMA_VERSION = "fanout_dispatch_summary/v1"
 
@@ -240,10 +255,12 @@ def signal_safe_unit_runner(
     errors: str | None = None,
     capture_output: bool = False,
     timeout: float | None = None,
-    on_spawn: Callable[[subprocess.Popen], None] | None = None,
+    on_spawn: Callable[[subprocess.Popen[bytes] | subprocess.Popen[str]], None] | None = None,
     on_output: Callable[[str], None] | None = None,
     confinement_command: Sequence[str] | None = None,
-) -> subprocess.CompletedProcess:
+    output_capture: FanoutOutput | None = None,
+    launch: LaunchCallable | None = None,
+) -> subprocess.CompletedProcess[bytes] | subprocess.CompletedProcess[str]:
     """Drop-in for `subprocess.run` that owns each child as a process group.
 
     A blocking `subprocess.run` orphans the agent CLI when the dispatcher
@@ -260,16 +277,18 @@ def signal_safe_unit_runner(
     other shape keeps the plain blocking `communicate` exactly as before.
     """
     pipe = subprocess.PIPE if capture_output else None
-    process = subprocess.Popen(
-        list(confinement_command or argv),
-        cwd=cwd,
-        env=dict(env) if env is not None else None,
-        text=text,
-        errors=errors,
-        stdout=pipe,
-        stderr=pipe,
-        start_new_session=os.name != "nt",
-    )
+    def spawn():
+        return subprocess.Popen(
+            list(confinement_command or argv),
+            cwd=cwd,
+            env=dict(env) if env is not None else None,
+            text=False if output_capture is not None else text,
+            errors=None if output_capture is not None else errors,
+            stdout=pipe,
+            stderr=pipe,
+            start_new_session=os.name != "nt",
+        )
+    process = spawn() if launch is None else launch(spawn)
     with process:
         _register_live_unit(process)
         try:
@@ -285,7 +304,10 @@ def signal_safe_unit_runner(
                 # A raising hook must not leak the child it was handed.
                 terminate_process_group(process, UNIT_TERMINATE_GRACE_SECONDS, signal.SIGTERM)
                 raise
-            if on_output is not None and capture_output and text:
+            if output_capture is not None:
+                _capture_binary_output(process, output_capture, timeout=timeout, on_output=on_output)
+                stdout, stderr = '', ''
+            elif on_output is not None and capture_output and text:
                 stdout, stderr = _communicate_with_output_polls(
                     process,
                     timeout=timeout,
@@ -300,6 +322,8 @@ def signal_safe_unit_runner(
             terminate_process_group(process, UNIT_TERMINATE_GRACE_SECONDS, signal.SIGTERM)
             raise
         finally:
+            if output_capture is not None:
+                output_capture.finish_pending()
             _unregister_live_unit(process)
     return subprocess.CompletedProcess(list(argv), int(process.returncode or 0), stdout, stderr)
 
@@ -311,6 +335,63 @@ signal_safe_unit_runner.accepts_on_spawn = True  # type: ignore[attr-defined]
 # Same marker pattern for the mid-run stdout seam: injected test runners keep
 # the plain protocol unless they opt in, exactly like `accepts_on_spawn`.
 signal_safe_unit_runner.accepts_on_output = True  # type: ignore[attr-defined]
+setattr(signal_safe_unit_runner, 'accepts_output_capture', True)
+setattr(signal_safe_unit_runner, 'accepts_launch', True)
+
+
+def _capture_binary_output(
+    process: subprocess.Popen[bytes], capture: FanoutOutput, *, timeout: float | None,
+    on_output: Callable[[str], None] | None,
+) -> None:
+    """Drain bounded binary chunks, propagate observer faults, and always reap.
+
+    Each reader owns one pipe. A fault terminates the owned group immediately;
+    readers continue draining without observers until EOF, then the caller sees
+    the original fault. Neither reader accumulates a raw stream.
+    """
+    errors: list[BaseException] = []
+    failed = threading.Event()
+    deadline = None if timeout is None else time.monotonic() + timeout
+
+    def drain(name: str, stream: BinaryIO) -> None:
+        try:
+            while chunk := os.read(stream.fileno(), 8192):
+                if not failed.is_set():
+                    capture.feed(name, chunk)
+                    if name == 'stdout' and on_output is not None:
+                        # Only bounded allowlisted counters enter the old HUD hook.
+                        _snapshot_output(on_output, [json.dumps({'usage': capture.usage})])
+        except BaseException as exc:
+            errors.append(exc)
+            failed.set()
+            _ = terminate_process_group(process, UNIT_TERMINATE_GRACE_SECONDS, signal.SIGTERM)
+
+    threads = [threading.Thread(target=drain, args=(name, stream))
+               for name, stream in (('stdout', process.stdout), ('stderr', process.stderr))
+               if stream is not None]
+    for thread in threads:
+        thread.start()
+    complete = False
+    try:
+        _ = process.wait(timeout=timeout)
+        for thread in threads:
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            thread.join(timeout=remaining)
+            if thread.is_alive():
+                assert timeout is not None
+                raise subprocess.TimeoutExpired(process.args, timeout)
+        if errors:
+            raise errors[0]
+        complete = True
+    finally:
+        if not complete:
+            failed.set()
+            _ = terminate_process_group(process, UNIT_TERMINATE_GRACE_SECONDS, signal.SIGTERM)
+        for thread in threads:
+            thread.join(timeout=UNIT_TERMINATE_GRACE_SECONDS)
+            if thread.is_alive():
+                raise RuntimeError('fanout_output_drain_not_reaped')
+        capture.finish_pending(complete=complete)
 
 # Cadence of mid-run stdout snapshots handed to `on_output`. Also the upper
 # bound the poll loop waits between liveness checks, so timeout precision is
@@ -571,16 +652,6 @@ UNIT_VERIFICATION_CLAIM_BOUNDARY = (
 # commands, which finish well inside that; the ceiling is here so one hung
 # command cannot hold a whole dispatch open.
 _VERIFICATION_COMMAND_TIMEOUT = 600
-_MAX_VERIFICATION_OUTPUT_TAIL = 300
-# What a dispatched unit's stdout/stderr keeps in memory for the summary and
-# the journal. Everything above it spills, so the bound costs context rather
-# than evidence.
-_MAX_UNIT_OUTPUT_TAIL = 2000
-# The journal's own `summary` field is capped at 500 characters upstream, so
-# this second bound over an already-bounded tail leaves room for the rest of
-# the line. The resolvable pointer rides in `evidence_refs`, which has no such
-# ceiling, rather than in prose a bare slice could cut in half.
-_MAX_UNIT_SUMMARY_TAIL = 300
 EXECUTOR_LIMIT_SIGNALS_SCHEMA_VERSION = "executor_limit_signals/v1"
 EXECUTOR_LIMIT_SIGNALS_CLAIM_BOUNDARY = (
     "A limit signal records that one observed local dispatch failure matched a rate/usage-limit shape. "
@@ -1204,8 +1275,10 @@ def _run_verification_command(
     timeout: int | None = None,
     confinement: FanoutFilesystemConfinement | None = None,
     environment_policy: Mapping[str, object] | None = None,
+    on_failure: Callable[[FanoutOutput, str, int | None, str], None] | None = None,
+    known_secrets: tuple[str, ...] = (),
 ) -> tuple[str, str, dict[str, Any] | None]:
-    """Run one command in the unit worktree; return status, bounded tail, truncation record.
+    """Run a check with bounded separate streams and no raw spill.
 
     Never raises: a command that cannot start is a failed check, not a failed
     dispatch. `shell=False`, so the argv comes from the contract's own frozen
@@ -1221,10 +1294,19 @@ def _run_verification_command(
     ceiling remains the default and nothing here can widen it.
     """
     effective_timeout = timeout if isinstance(timeout, int) and timeout > 0 else _VERIFICATION_COMMAND_TIMEOUT
+    capture = FanoutOutput(known_secrets=known_secrets)
+    binary_capture = bool(getattr(runner, 'accepts_output_capture', False))
+
+    def failed(reason: str, code: int | None, source: str, detail: str):
+        capture.finish_pending()
+        if on_failure is not None:
+            on_failure(capture, reason, code, source)
+        return 'failed', detail, None
+
     try:
         env_overrides, argv = verification_command_argv(command)
-    except FanoutContractError as exc:
-        return "failed", str(exc), None
+    except FanoutContractError:
+        return failed('denial', None, 'not_observed', 'invalid verification command')
     try:
         environment_decision = resolve_child_environment(
             os.environ if child_env is None else child_env,
@@ -1236,7 +1318,8 @@ def _run_verification_command(
         if not environment_decision.ready:
             missing = ", ".join(environment_decision.receipt["missing"])
             denied = ", ".join(environment_decision.receipt["denied"])
-            return "failed", f"child environment policy not ready: missing={missing}; denied={denied}", None
+            return failed('denial', None, 'not_observed',
+                          f"child environment policy not ready: missing={missing}; denied={denied}")
         environment = environment_decision.environment
         active_confinement = confinement
         if runner is signal_safe_unit_runner and active_confinement is None:
@@ -1258,35 +1341,27 @@ def _run_verification_command(
             text=True,
             capture_output=True,
             timeout=effective_timeout,
+            **({'output_capture': capture} if binary_capture else {}),
             **({"confinement_command": confinement_command} if confinement_command is not None else {}),
         )
         exit_code = int(getattr(completed, "returncode", 1))
-        combined = (
-            f"{getattr(completed, 'stdout', '') or ''}{getattr(completed, 'stderr', '') or ''}"
-        )
+        if not binary_capture:
+            capture.feed_legacy('stdout', getattr(completed, 'stdout', None))
+            capture.feed_legacy('stderr', getattr(completed, 'stderr', None))
     except FileNotFoundError:
-        return "failed", f"{argv[0]} not found on PATH", None
-    except subprocess.TimeoutExpired:
-        return "failed", f"timed out after {effective_timeout}s", None
-    except (OSError, subprocess.SubprocessError, TypeError, ValueError) as exc:
-        return "failed", f"could not run: {exc}", None
+        return failed('missing_binary', None, 'not_observed', 'verification binary not found on PATH')
+    except subprocess.TimeoutExpired as exc:
+        if not binary_capture:
+            capture.feed_legacy('stdout', exc.output, complete=False)
+            capture.feed_legacy('stderr', exc.stderr, complete=False)
+        return failed('deadline', None, 'not_observed', f'timed out after {effective_timeout}s')
+    except (OSError, subprocess.SubprocessError, TypeError, ValueError):
+        return failed('spawn_error', None, 'not_observed', 'verification command could not run')
     if exit_code == 0:
-        return "passed", "", None
-    # The bound is the same 300 it always was; what changed is that the bytes it
-    # drops are now written whole to a content-addressed spill and the row
-    # carries a pointer to them, so a reader chasing a failure is not left with
-    # the last 300 bytes of a build log and no way back to the rest.
-    bounded = truncate_output(
-        combined,
-        limit_bytes=_MAX_VERIFICATION_OUTPUT_TAIL,
-        source=f"fanout unit verification command: {command}",
-        keep="tail",
-        spill_dir=spill_dir,
-    )
-    tail = redact_metadata_text(bounded.kept_text, limit=_MAX_VERIFICATION_OUTPUT_TAIL)
-    notice = truncation_notice(bounded.record)
-    detail = f"exit {exit_code}: {tail}"
-    return "failed", f"{detail} {notice}" if notice else detail, bounded.record
+        return 'passed', '', None
+    detail = '; '.join(f"{stream['stream']}: {stream['text']}" for stream in capture.streams()
+                       if stream['text'])
+    return failed('nonzero', exit_code, 'process', f'exit {exit_code}: {detail}')
 
 
 def _run_planned_verification(
@@ -1308,6 +1383,8 @@ def _run_planned_verification(
     producer_evidence: bool = False,
     confinement: FanoutFilesystemConfinement | None = None,
     environment_policy: Mapping[str, object] | None = None,
+    on_failure: Callable[[FanoutOutput, str, int | None, str], None] | None = None,
+    known_secrets: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Run a metadata-carrying unit's checks through the revision-bound plan engine.
 
@@ -1354,6 +1431,7 @@ def _run_planned_verification(
             timeout=node.timeout,
             confinement=confinement,
             environment_policy=environment_policy,
+            on_failure=on_failure, known_secrets=known_secrets,
         )
 
     result = (
@@ -1611,6 +1689,8 @@ def _run_unit_verification(
     execution_gate: VerificationExecutionGate | None = None,
     confinement: FanoutFilesystemConfinement | None = None,
     environment_policy: Mapping[str, object] | None = None,
+    on_failure: Callable[[FanoutOutput, str, int | None, str], None] | None = None,
+    known_secrets: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Run one unit's declared verification commands and record what was observed.
 
@@ -1644,6 +1724,7 @@ def _run_unit_verification(
             integration_ready=lambda: False,
             confinement=confinement,
             environment_policy=environment_policy,
+            on_failure=on_failure, known_secrets=known_secrets,
         )
     rows: list[dict[str, object]] = []
     failures: list[str] = []
@@ -1655,9 +1736,9 @@ def _run_unit_verification(
                 worktree,
                 runner,
                 child_env,
-                spill_dir=paths.runtime_output_spills_dir,
                 confinement=confinement,
                 environment_policy=environment_policy,
+                on_failure=on_failure, known_secrets=known_secrets,
             )
 
         outcome = (
@@ -1771,6 +1852,7 @@ def dispatch_fanout(
     diagnostic_engine: DiagnosticExecutionEngine | None = None,
     final_review_engine: FinalReviewWaveEngine | None = None,
     emit_health_events: bool = False,
+    capacity_sources: Sequence[CodexAdmissionSource] = (),
     health_clock: Callable[[], int] = monotonic_milliseconds,
 ) -> dict[str, Any]:
     # The spawn guard runs before every other check, including the two
@@ -1799,6 +1881,7 @@ def dispatch_fanout(
                     dry_run=dry_run,
                 ).receipt()
             return summary
+    launch_gate = OwnerLaunchGate()
     spawn_ledger = _SpawnLedger(
         FANOUT_RUN_SPAWN_CEILING_DEFAULT if spawn_ceiling is None else spawn_ceiling
     )
@@ -1881,6 +1964,18 @@ def dispatch_fanout(
         if resume_plan is None
         else {str(decision["unit_id"]): decision for decision in resume_plan["decisions"]}
     )
+
+    if resume_plan is not None and not only_units:
+        for row in (resume_journal or {}).get('units', []):
+            if isinstance(row, Mapping) and read_capacity_fields(row):
+                decision = {'unit_id': str(row['unit_id']), 'prior_state': str(row['terminal_state']),
+                    'action': 'hold_replay_unsafe', 'reason': 'capacity_requires_explicit_unit_selection',
+                    'carry_forward': dict(row)}
+                resume_decisions[str(row['unit_id'])] = decision
+        resume_plan['decisions'] = [resume_decisions[str(row['unit_id'])] for row in resume_plan['decisions']]
+        resume_plan['selected_units'] = [uid for uid in resume_plan['selected_units']
+                                         if resume_decisions[uid]['action'] not in RESUME_HOLD_ACTIONS]
+        resume_plan['held_units'] = [uid for uid in order if resume_decisions[uid]['action'] in RESUME_HOLD_ACTIONS]
 
     if selected_capability_invalid:
         invalid_reason = (
@@ -2017,6 +2112,15 @@ def dispatch_fanout(
         # across every eligible unit in this dispatch.
         "diagnostic_engine": diagnostic_engine,
         "health_events": health_events,
+        "invocation_id": str(uuid4()),
+        "session_contract_digest": fanout_contract_digest(contract),
+        "launch_gate": launch_gate,
+        "capacity_sources": capacity_sources,
+        "capacity_resume_rows": {
+            str(row.get('unit_id')): row for row in (resume_journal or {}).get('units', [])
+            if isinstance(row, Mapping) and only_units and row.get('unit_id') in only_units
+            and row.get('status') in CAPACITY_STATUSES
+        },
     }
 
     def _dispatch_with_owner_gate(unit: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
@@ -2049,6 +2153,7 @@ def dispatch_fanout(
     installed_term = False
     previous_term: Any = None
     interrupted_by: BaseException | None = None
+    dispatcher_error: Exception | None = None
     futures: dict[str, Any] = {}
     pool = ThreadPoolExecutor(max_workers=max(1, concurrency))
     try:
@@ -2088,7 +2193,8 @@ def dispatch_fanout(
             for unit_id in list(pending):
                 if unit_id in futures:
                     continue
-                if any(_dependency_failed(results.get(dep)) for dep in units[unit_id].get("depends_on", [])):
+                deps = units[unit_id].get('depends_on', [])
+                if all(dep in results for dep in deps) and any(_dependency_failed(results.get(dep)) for dep in deps):
                     results[unit_id] = _blocked(units[unit_id], results)
                     pending.remove(unit_id)
             available_slots = (
@@ -2178,6 +2284,38 @@ def dispatch_fanout(
                 entry.pop("failure_kind", None)
                 entry.pop("limit_shaped", None)
                 entry.pop("limit_pattern", None)
+    except Exception as exc:
+        # Preserve completed siblings and the failing attempt before propagating
+        # the original error. No replacement process or recovery is authorized.
+        dispatcher_error = exc
+        _INTERRUPT_FLAG.set()
+        pool.shutdown(wait=False, cancel_futures=True)
+        terminate_live_unit_groups()
+        pool.shutdown(wait=True)
+        for unit_id in pending:
+            future = futures.get(unit_id)
+            if future is None or future.cancelled():
+                results[unit_id] = _skipped(units[unit_id], UNIT_STATUS_NOT_STARTED_CANCELLED)
+            elif future.exception() is None:
+                results[unit_id] = future.result()
+            else:
+                run_ref = str(units[unit_id]['run_ref'])
+                owner = str(units[unit_id].get('owner') or 'choose')
+                events = read_observation_events(paths, run_id=run_ref)
+                projection: dict[str, object] = project_run_failure_diagnostic(events, run_id=run_ref)
+                attempt_id = str(projection.get('attempt_id') or uuid4().hex)
+                if 'failure_diagnostic' not in projection:
+                    projection = {'attempt_id': attempt_id, 'failure_diagnostic':
+                        build_failure_diagnostic(
+                            fanout_id=fanout_id, unit_id=unit_id, run_ref=run_ref, owner=owner,
+                            attempt_id=attempt_id, worktree_ref=None, base_sha=base_sha,
+                            observed_revision=None, phase='dispatcher', reason='internal_error',
+                            returncode=None, exit_code_source='not_observed')}
+                projection.update(project_run_executor_session(events, run_id=run_ref))
+                results[unit_id] = {
+                    'unit_id': unit_id, 'run_ref': run_ref, 'owner': owner,
+                    'status': 'dispatcher_failed', **_dispatch_status_ladder(), **projection}
+        pending.clear()
     finally:
         # Idempotent after the success/interrupt shutdowns; without it, a
         # worker exception re-raised by future.result() leaks live pool
@@ -2199,7 +2337,7 @@ def dispatch_fanout(
         # the operator already asked for it to stop.
         failure_recovery = (
             None
-            if (dry_run or interrupted_by is not None)
+            if (dry_run or interrupted_by is not None or dispatcher_error is not None)
             else _run_failure_recovery(
                 paths,
                 results=results,
@@ -2221,7 +2359,7 @@ def dispatch_fanout(
         # the pool has drained, so every selected unit is terminal and those
         # checks may run now — once per integrated revision, with unit-tier
         # receipts sharing the process the worker already ran.
-        if run_verification and not dry_run and interrupted_by is None and verification_execution_gate is not None:
+        if run_verification and not dry_run and interrupted_by is None and dispatcher_error is None and verification_execution_gate is not None:
             _run_integration_verification_wave(
                 paths,
                 results=results,
@@ -2243,7 +2381,7 @@ def dispatch_fanout(
         if verification_execution_gate is not None:
             verification_execution_gate.shutdown()
     final_review: dict[str, object] | None = None
-    if final_review_engine is not None:
+    if final_review_engine is not None and dispatcher_error is None:
         current_integrated_revision = (
             _verification_worktree_revision(runner, integrated_worktree)
             if integrated_worktree is not None
@@ -2294,6 +2432,17 @@ def dispatch_fanout(
             )
     summary_units = [results[unit_id] for unit_id in order]
     for entry in summary_units:
+        if entry.get('status') == 'blocked_by_capacity_dependency' and not entry.get('capacity'):
+            trigger = next((results[dep].get('capacity') for dep in entry['blocked_on']
+                            if results.get(dep, {}).get('capacity')), None)
+            if trigger is not None:
+                trip = launch_gate.rejection(str(trigger['owner']))
+                if trip is not None:
+                    binding = AdmissionBinding(str(entry['owner']), fanout_id, str(entry['unit_id']),
+                        str(entry['run_ref']), 1, base_sha, str(_worktree_path(repo_root, str(entry['unit_id']))),
+                        str(unit_dispatch_kwargs['invocation_id']), str(uuid4()))
+                    entry.update(_capacity_entry(paths, units[str(entry['unit_id'])], binding, trip,
+                        status='blocked_by_capacity_dependency', contract_digest=fanout_contract_digest(contract)))
         decision = resume_decisions.get(str(entry.get("unit_id", "")))
         if decision is not None and "resume" not in entry:
             # A re-dispatched unit says which resume rule admitted it, so the
@@ -2322,6 +2471,8 @@ def dispatch_fanout(
         "base_sha": base_sha,
         "claim_boundary": f"{DISPATCH_CLAIM_BOUNDARY} {FANOUT_CLAIM_BOUNDARY}",
     }
+    summary['capacity'] = capacity_summary(summary_units,
+        requested=(concurrency_policy or {}).get('requested', concurrency), effective=max(1, concurrency))
     if final_review is not None:
         summary.update(final_review)
     summary["review_dispatch_budget"] = {
@@ -2373,6 +2524,7 @@ def dispatch_fanout(
         # re-dispatch (`--unit b`) does not erase unit a's observed telemetry
         # with a skipped placeholder.
         summary_path = fanout_dispatch_summary_path(paths, fanout_id)
+        summary['contract_digest'] = fanout_contract_digest(contract)
         stored = _merged_dispatch_summary(summary_path, summary)
         atomic_write_json(summary_path, stored, private=True)
         # The CLI prints what this returns, so the rollups it carries have to
@@ -2392,6 +2544,8 @@ def dispatch_fanout(
         summary["run_journal_path"] = str(
             write_fanout_run_journal(fanout_run_journal_path(paths, fanout_id), journal)
         )
+    if dispatcher_error is not None:
+        raise dispatcher_error
     if isinstance(interrupted_by, SystemExit):
         # The summary is written; now honor the termination that was asked
         # for, so a supervisor still observes the death it requested (OMO's
@@ -2503,6 +2657,10 @@ def _run_failure_recovery(
                 timeout=timeout,
                 routing=hermes_routing or {},
                 hermes_child=hermes_child,
+                launch_gate=unit_dispatch_kwargs['launch_gate'],
+                fanout_id=str(unit_dispatch_kwargs['fanout_id']),
+                invocation_id=str(unit_dispatch_kwargs['invocation_id']),
+                base_sha=str(unit_dispatch_kwargs['base_sha']),
             )
         elif decision["choice"] == CHOICE_WAIT:
             # No re-dispatch: the mark on the unit is the whole action, and the
@@ -2658,10 +2816,12 @@ def _retarget_dispatch(
         "handoff": handoff,
         "depends_on": [],
     }
+    retarget_kwargs = dict(unit_dispatch_kwargs)
+    retarget_kwargs['ignore_limit_signal'] = False
     result = _dispatch_unit(
         paths,
         retargeted,
-        **{**dict(unit_dispatch_kwargs), "ignore_limit_signal": False},
+        **retarget_kwargs,
         capability_precheck=(new_owner, snapshot, []),
     )
     result["retargeted_from"] = {"unit_id": unit_id, "owner": failed_owner}
@@ -2676,6 +2836,8 @@ def _hermes_recovery_dispatch(
     timeout: int,
     routing: Mapping[str, Any],
     hermes_child: Callable[..., Mapping[str, Any]] | None,
+    launch_gate: OwnerLaunchGate | None = None,
+    fanout_id: str = '', invocation_id: str = '', base_sha: str = '',
 ) -> dict[str, Any]:
     """Re-run one failed unit through the Hermes subagent lane, in its worktree.
 
@@ -2697,14 +2859,22 @@ def _hermes_recovery_dispatch(
         }
     dispatcher = hermes_child if hermes_child is not None else dispatch_unit_via_hermes_child
     run_ref = str(unit.get("run_ref", unit_id))
-    attempt = dispatcher(
-        prompt=build_unit_prompt(unit, goal_text),
-        routing=routing,
-        parent_run_id=run_ref,
-        run_id=f"{run_ref}-hermes-recovery",
-        cwd=worktree,
-        timeout_seconds=float(timeout),
-    )
+    binding = AdmissionBinding('hermes', fanout_id, unit_id, run_ref, 1, base_sha,
+                               str(worktree), invocation_id, str(uuid4()))
+    launch = (launch_gate or OwnerLaunchGate()).context(binding).launch
+    try:
+        attempt = dispatcher(
+            prompt=build_unit_prompt(unit, goal_text),
+            routing=routing,
+            parent_run_id=run_ref,
+            run_id=f"{run_ref}-hermes-recovery",
+            cwd=worktree,
+            timeout_seconds=float(timeout),
+            **({'launch': launch} if hermes_child is None or getattr(hermes_child, 'accepts_launch', False) else {}),
+        )
+    except CapacityBlocked as exc:
+        attempt = {'status': 'not_started_capacity_blocked',
+                   'capacity': capacity_fields(binding, exc.trip, status='not_started_capacity_blocked', process_started=False)}
     return {
         "unit_id": unit_id,
         "owner": "hermes",
@@ -2767,6 +2937,13 @@ def _with_carried_recovery(
     carried: list[dict[str, Any]] = []
     for entry in units:
         merged = merged_by_id.get(str(entry.get("unit_id", "")))
+        if isinstance(merged, Mapping) and entry.get('status') in _DISPATCH_SKIP_STATUSES:
+            read = read_session_receipt(merged.get('executor_session')).receipt
+            if read is not None and all(entry.get(key) == merged.get(key) for key in ('unit_id', 'run_ref', 'owner')):
+                fields = bound_session_fields(merged, fanout_id=read.binding.fanout_id,
+                    unit_id=str(entry['unit_id']), run_ref=str(entry['run_ref']))
+                if fields:
+                    entry = {**entry, 'attempt_id': read.binding.attempt_id, **fields}
         if "recovery" not in entry and isinstance(merged, Mapping) and isinstance(merged.get("recovery"), Mapping):
             carried.append({**entry, "recovery": dict(merged["recovery"])})
         else:
@@ -2835,7 +3012,17 @@ def _merged_dispatch_summary(summary_path: Path, summary: dict[str, Any]) -> dic
         if entry.get("status") in _DISPATCH_SKIP_STATUSES and isinstance(earlier, dict):
             # A skipped unit carries no telemetry; the earlier observed entry
             # is the richer record and stays.
-            merged_units.append(earlier)
+            preserved = dict(earlier)
+            receipt = read_session_receipt(preserved.get('executor_session')).receipt
+            if receipt is not None and (
+                receipt.binding.contract_digest != summary.get('contract_digest')
+                or receipt.binding.fanout_id != summary.get('fanout_id')
+                or receipt.binding.base_sha != summary.get('base_sha')
+                or any(earlier.get(key) != entry.get(key) for key in ('unit_id', 'run_ref', 'owner'))
+            ):
+                preserved.pop('executor_session', None)
+                preserved.pop('session_recovery_snapshot', None)
+            merged_units.append(preserved)
         elif (
             isinstance(earlier, dict)
             and "recovery" in earlier
@@ -3058,6 +3245,7 @@ def _close_fanout_progress_binding(
     title: str,
     owner: str,
     stdout_text: str,
+    reported_telemetry: Mapping[str, object] | None = None,
 ) -> None:
     """Best-effort: report the unit's terminal state and close its row.
 
@@ -3076,7 +3264,8 @@ def _close_fanout_progress_binding(
     if binding is None:
         return
     try:
-        telemetry = parse_unit_telemetry(owner, stdout_text)
+        telemetry = (parse_unit_telemetry(owner, stdout_text) if reported_telemetry is None
+                     else dict(reported_telemetry))
         cost_usd = telemetry.get("cost_usd")
         # A dispatcher-terminated unit closes its binding as cancelled, not as
         # failed. `_INTERRUPT_FLAG` is the host's own observation that it sent
@@ -3246,6 +3435,42 @@ def _live_unit_telemetry_reporter(
     return report
 
 
+def _record_capacity(paths: OmhPaths, unit: Mapping[str, object], capacity: Mapping[str, object]) -> None:
+    owner, run_ref = str(capacity['owner']), str(capacity['run_ref'])
+    _ensure_unit_run(paths, unit, owner)
+    append_journal_observation(paths, {
+        'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
+        'event': 'capacity_admission_observed', 'status': 'blocked',
+        'worker_ref': str(unit['unit_id']), 'runtime_profile': owner,
+        'attempt_id': str(capacity['attempt_id']), 'invocation_id': str(capacity['invocation_id']),
+        'capacity': dict(capacity), 'summary': str(capacity['status'])})
+
+
+def _capacity_entry(paths: OmhPaths, unit: Mapping[str, object], binding: AdmissionBinding,
+                    trip: CapacityTrip, *, status: str = 'not_started_capacity_blocked',
+                    worktree_created: bool = False, contract_digest: str = '') -> dict[str, object]:
+    capacity = capacity_fields(binding, trip, status=status, process_started=False)
+    entry: dict[str, object] = {**_skipped(unit, status), 'attempt_id': binding.attempt_id,
+             'invocation_id': binding.invocation_id, 'capacity': capacity,
+             'planned_worktree_path': binding.worktree, 'worktree_created': worktree_created,
+             'depends_on': unit.get('depends_on') or [],
+             'capacity_lineage': _capacity_lineage(unit, binding, contract_digest, observed_created=worktree_created)}
+    if worktree_created:
+        entry['worktree_path'] = binding.worktree
+    _record_capacity(paths, unit, capacity)
+    return entry
+
+
+def _capacity_lineage(unit: Mapping[str, object], binding: AdmissionBinding, contract_digest: str,
+                      *, observed_created: bool = True) -> dict[str, object]:
+    workspace = observe_session_workspace(binding.worktree) if observed_created else None
+    return {'fanout_id': binding.fanout_id, 'unit_id': binding.unit_id, 'run_ref': binding.run_ref,
+            'owner': binding.owner, 'base_sha': binding.base_sha, 'worktree_path': str(Path(binding.worktree).resolve()),
+            'branch': str(unit.get('branch_suggestion', f'agent/{binding.unit_id}')),
+            'contract_digest': contract_digest,
+            'incarnation_id': workspace.incarnation.incarnation_id if workspace is not None else None}
+
+
 def _dispatch_unit(
     paths: OmhPaths,
     unit: Mapping[str, Any],
@@ -3277,13 +3502,47 @@ def _dispatch_unit(
     verification_execution_gate: VerificationExecutionGate | None = None,
     diagnostic_engine: DiagnosticExecutionEngine | None = None,
     health_events: FanoutHealthEvents | None = None,
+    invocation_id: str = "",
+    intake_root: Path | None = None,
+    session_contract_digest: str = "",
+    launch_gate: OwnerLaunchGate | None = None,
+    capacity_sources: Sequence[CodexAdmissionSource] = (),
+    capacity_resume_rows: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, Any]:
+    if intake_root is None:
+        # One owner for all return inputs, including exceptions and refusals.
+        # Dry-run names a planned path but creates no resource.
+        holder = (nullcontext(str(repo_root / '.omh-planned-intake')) if dry_run
+                  else TemporaryDirectory(prefix='omh-fanout-intake-'))
+        with holder as directory:
+            return _dispatch_unit(
+                paths, unit, goal_text=goal_text, repo_root=repo_root, base_sha=base_sha,
+                timeout=timeout, dry_run=dry_run, run_verification=run_verification,
+                source_ref=source_ref, runner=runner, readiness=readiness,
+                current_catalog_digest=current_catalog_digest, fanout_id=fanout_id,
+                discoveries=discoveries, capability_precheck=capability_precheck,
+                spawn_stagger=spawn_stagger, spawn_ledger=spawn_ledger,
+                dispatch_depth=dispatch_depth, base_env=base_env, environment_policy=environment_policy,
+                max_retries=max_retries, rng=rng, sleep=sleep, ignore_limit_signal=ignore_limit_signal,
+                review_budget=review_budget, verification_wave_width=verification_wave_width,
+                verification_execution_gate=verification_execution_gate,
+                diagnostic_engine=diagnostic_engine, health_events=health_events,
+                invocation_id=invocation_id or str(uuid4()), intake_root=Path(directory),
+                session_contract_digest=session_contract_digest,
+                launch_gate=launch_gate, capacity_sources=capacity_sources,
+                capacity_resume_rows=capacity_resume_rows)
     from .model_inventory import catalog_fingerprint_note
 
     unit_id = str(unit["unit_id"])
     run_ref = str(unit.get("run_ref", unit_id))
     handoff = unit.get("handoff", {}) if isinstance(unit.get("handoff"), Mapping) else {}
     owner, capability_snapshot, capability_errors = capability_precheck
+    launch_gate = launch_gate or OwnerLaunchGate()
+    blocked = launch_gate.rejection(owner)
+    if blocked is not None and not dry_run:
+        binding = AdmissionBinding(owner, fanout_id, unit_id, run_ref, 1, base_sha,
+            str(_worktree_path(repo_root, unit_id)), invocation_id, str(uuid4()))
+        return _capacity_entry(paths, unit, binding, blocked, contract_digest=session_contract_digest)
     if capability_errors or capability_snapshot is None:
         return {
             "unit_id": unit_id,
@@ -3374,11 +3633,8 @@ def _dispatch_unit(
             )
         return not_ready
     discovery = (discoveries or {}).get(owner)
-    sidecar_path = None
-    if fanout_id:
-        from .fanout_artifacts import unit_result_path
-
-        sidecar_path = unit_result_path(paths, fanout_id, unit_id)
+    attempt_id = str(uuid4())
+    sidecar_path = intake_root / f"{attempt_id}.json" if fanout_id else None
     prompt = build_unit_prompt(
         unit,
         goal_text,
@@ -3541,6 +3797,18 @@ def _dispatch_unit(
     child_env = child_environment.environment
     from .worktree_creator import ensure_fanout_unit_worktree
 
+    diagnostic_context = {
+        "fanout_id": fanout_id, "unit_id": unit_id, "run_ref": run_ref, "owner": owner,
+        "attempt_id": attempt_id, "worktree_ref": str(worktree), "base_sha": base_sha,
+        "observed_revision": None,
+    }
+    known_secrets = (goal_text, prompt, *tuple(
+        value for key, value in child_env.items()
+        if any(marker in key.upper() for marker in ('TOKEN', 'SECRET', 'PASSWORD', 'API_KEY'))
+    )[:126])
+    prior = project_run_executor_session(read_observation_events(paths, run_id=run_ref), run_id=run_ref)
+    previous_receipt = read_session_receipt(prior.get('executor_session')).receipt
+    predecessor_attempt_id = previous_receipt.binding.attempt_id if previous_receipt is not None else None
     worktree_record = ensure_fanout_unit_worktree(
         paths,
         repo_root=repo_root,
@@ -3550,18 +3818,37 @@ def _dispatch_unit(
         source_ref=source_ref,
         run_ref=run_ref,
         runner=runner,
+        failure_diagnostic_context={**diagnostic_context, "known_secrets": known_secrets},
+        capacity_resume=(capacity_resume_rows or {}).get(unit_id),
+        contract_digest=session_contract_digest,
     )
-    if not worktree_record.get("created"):
+    if not worktree_record.get("created") and not worktree_record.get('reused'):
         return {
             "unit_id": unit_id,
             "run_ref": run_ref,
             "owner": owner,
             "status": "worktree_failed",
+            "attempt_id": attempt_id,
+            **({"failure_diagnostic": worktree_record["failure_diagnostic"]}
+               if "failure_diagnostic" in worktree_record else {}),
             "refusal": str(worktree_record.get("refusal", "")),
             "reason": str(worktree_record.get("reason", "")),
             **_dispatch_status_ladder(),
         }
     worktree = Path(str(worktree_record["worktree_path"]))
+    session_capability = (negotiate_session_capability(owner, argv[0], env=child_env)
+                          if argv and getattr(runner, 'accepts_output_capture', False) else None)
+    if session_capability is not None:
+        worktree = worktree.resolve()
+    def session_argv(command: list[str]) -> list[str]:
+        if session_capability is None or session_capability.protocol is None:
+            return command
+        flags = ['--json'] if owner == 'codex' else ['--output-format', 'stream-json', '--verbose']
+        # Keep the Codex positional prompt last and all original model/permission options.
+        index = 2 if owner == 'codex' else 1
+        return [session_capability.binary_identity.resolved_path, *command[1:index], *flags, *command[index:]]
+    if argv is not None:
+        argv = session_argv(argv)
     verification_argv: list[list[str]] = []
     for command in declared_verification_commands(unit):
         try:
@@ -3571,7 +3858,8 @@ def _dispatch_unit(
         verification_argv.append(check_argv)
     confinement = (
         prepare_fanout_filesystem_confinement(
-            worktree, child_env, (argv, *verification_argv), owner=owner
+            worktree, child_env, (argv, *verification_argv), owner=owner,
+            intake_root=intake_root,
         )
         if runner is signal_safe_unit_runner
         else None
@@ -3610,22 +3898,14 @@ def _dispatch_unit(
         # stays explainable from the journal alone: the observation schema
         # carries only fixed fields, so the note rides in free-text summary.
         dispatch_summary = f"{dispatch_summary} (shared_artifacts: {', '.join(shared_artifacts['linked'])})"
-    append_journal_observation(
-        paths,
-        {
-            "target_type": "run",
-            "target_id": run_ref,
-            "run_id": run_ref,
-            "event": "worker_dispatch",
-            "status": "observed",
-            "summary": dispatch_summary,
-            "worker_ref": unit_id,
-            "worktree_ref": str(worktree),
-            # The schema has carried this field all along and nothing set it,
-            # so the runtime name survived only inside free-text `summary`.
-            "runtime_profile": owner,
-        },
-    )
+    def dispatch_observed() -> None:
+        append_journal_observation(paths, {
+            'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
+            'event': 'worker_dispatch', 'attempt_id': attempt_id, 'status': 'observed',
+            'summary': dispatch_summary, 'worker_ref': unit_id,
+            'worktree_ref': str(worktree), 'runtime_profile': owner})
+    if not getattr(runner, 'accepts_launch', False):
+        dispatch_observed()
     started_at = utc_now()
     started_clock = time.monotonic()
     stderr_tail = ""
@@ -3663,6 +3943,19 @@ def _dispatch_unit(
     # another one. An empty list means the unit succeeded first try.
     retry_decisions: list[dict[str, Any]] = []
     attempt = 0
+    telemetry: dict[str, object] = {}
+    capture = FanoutOutput(known_secrets=known_secrets)
+    failure_diagnostic = None
+    session_fields: dict[str, object] = {}
+    capacity_trip: CapacityTrip | None = None
+
+    def diagnostic(phase: str, reason: str, code: int | None, source: str):
+        return build_failure_diagnostic(
+            fanout_id=fanout_id, unit_id=unit_id, run_ref=run_ref, owner=owner,
+            attempt_id=attempt_id, worktree_ref=str(worktree), base_sha=base_sha,
+            observed_revision=None, phase=phase, reason=reason, returncode=code,
+            exit_code_source=source, streams=capture.streams())
+
     try:
         progress_binding = _open_fanout_progress_binding(
             paths,
@@ -3680,6 +3973,8 @@ def _dispatch_unit(
             # against; injected test runners keep the plain protocol.
             def _record_pid(process: subprocess.Popen) -> None:
                 nonlocal progress_binding
+                if getattr(runner, 'accepts_launch', False):
+                    dispatch_observed()
                 _write_inflight(
                     paths,
                     fanout_id,
@@ -3726,8 +4021,50 @@ def _dispatch_unit(
             output_tail = ""
             stdout_text = ""
             stderr_tail = ""
-            output_truncation: dict[str, Any] | None = None
-            stderr_truncation: dict[str, Any] | None = None
+            if attempt > 1:
+                previous_path = sidecar_path
+                predecessor_attempt_id = attempt_id
+                attempt_id = str(uuid4())
+                sidecar_path = intake_root / f"{attempt_id}.json" if fanout_id else None
+                if previous_path is not None and sidecar_path is not None:
+                    prompt = prompt.replace(str(previous_path), str(sidecar_path))
+                    argv = build_dispatch_argv(owner, prompt, effective_model_route)
+                    assert argv is not None  # Same previously admitted owner and route.
+                    argv = session_argv(argv)
+                    if confinement is not None:
+                        spawn_kwargs['confinement_command'] = confinement.command(argv)
+                if not getattr(runner, 'accepts_launch', False):
+                    dispatch_observed()
+            launch_workspace = observe_session_workspace(str(worktree)) if session_capability is not None else None
+            decoder = SessionDecoder(session_capability) if session_capability is not None else None
+            admission_observer = CodexAdmissionObserver()
+            admission_binding = AdmissionBinding(owner, fanout_id, unit_id, run_ref, attempt,
+                base_sha, str(worktree), invocation_id, attempt_id)
+            source = codex_admission_source(session_capability, capacity_sources)
+            launch_context = launch_gate.context(admission_binding, support=CODEX_ADMISSION_SUPPORT if source else None)
+            if getattr(runner, 'accepts_launch', False):
+                spawn_kwargs['launch'] = launch_context.launch
+            session_binding = (SessionBinding(fanout_id, unit_id, run_ref, attempt_id,
+                session_contract_digest, str(worktree.resolve()), launch_workspace.incarnation,
+                base_sha, launch_workspace.head, predecessor_attempt_id)
+                if launch_workspace is not None and session_contract_digest else None)
+            telemetry = {}
+            def observe_native(stream: str, event: dict[str, object]) -> None:
+                admission_observer.observe(stream, event)
+                if stream != 'stdout' or decoder is None:
+                    return
+                decoder.observe(event, event_ref=f'stdout:{decoder.event_count + 1}')
+                if event.get('parent_tool_use_id') is None and event.get('type') == (
+                        'turn.completed' if owner == 'codex' else 'result'):
+                    telemetry.clear()
+                    telemetry.update(native_unit_telemetry(owner, event))
+            protocol = ('codex' if owner == 'codex' else 'claude') if (
+                session_capability is not None and session_capability.protocol is not None) else 'plain'
+            capture = FanoutOutput(protocol=protocol, observer=observe_native, known_secrets=known_secrets)
+            failure_diagnostic = None
+            binary_capture = bool(getattr(runner, 'accepts_output_capture', False))
+            if binary_capture:
+                spawn_kwargs['output_capture'] = capture
             exit_code = 1
             if health_events is not None and attempt > 1:
                 health_events.queued(
@@ -3759,42 +4096,101 @@ def _dispatch_unit(
                     **spawn_kwargs,
                 )
                 exit_code = int(getattr(completed, "returncode", 1))
-                stdout_text = str(getattr(completed, "stdout", "") or "")
-                # The tails are what rides into the summary and the journal; the
-                # bytes above them used to be dropped on the floor. They now go
-                # to a content-addressed spill, and the records below carry a
-                # pointer a later step can resolve.
-                bounded_stdout = truncate_output(
-                    stdout_text,
-                    limit_bytes=_MAX_UNIT_OUTPUT_TAIL,
-                    source=f"fanout unit {unit_id} stdout",
-                    keep="tail",
-                    spill_dir=paths.runtime_output_spills_dir,
-                )
-                bounded_stderr = truncate_output(
-                    str(getattr(completed, "stderr", "") or ""),
-                    limit_bytes=_MAX_UNIT_OUTPUT_TAIL,
-                    source=f"fanout unit {unit_id} stderr",
-                    keep="tail",
-                    spill_dir=paths.runtime_output_spills_dir,
-                )
-                output_tail = bounded_stdout.kept_text
-                stderr_tail = bounded_stderr.kept_text
-                output_truncation = bounded_stdout.record
-                stderr_truncation = bounded_stderr.record
+                if not binary_capture:
+                    raw_stdout = getattr(completed, 'stdout', None)
+                    if isinstance(raw_stdout, str):
+                        telemetry = parse_unit_telemetry(owner, raw_stdout)
+                    capture.feed_legacy('stdout', raw_stdout)
+                    capture.feed_legacy('stderr', getattr(completed, 'stderr', None))
+                    del raw_stdout
+                del completed
+                if source is not None and (session_capability is None or
+                        observe_session_binary(source.resolved_path) != session_capability.binary_identity):
+                    source = None
+                receipt = admission_observer.receipt(capture, binding=admission_binding, source=source,
+                    returncode=exit_code, process_started=binary_capture and 'launch' in spawn_kwargs,
+                    fresh_exec=bool(argv and len(argv) > 2 and argv[1] == 'exec' and '--json' in argv
+                                    and not any(part in ('resume', 'review', 'fork', '--resume', '--fork') for part in argv[2:-1])),
+                    artifact_observed=sidecar_path is not None and sidecar_path.exists())
+                capacity_trip = launch_context.reject(receipt, process_started=True,
+                    returncode=exit_code, implementation_started=False) if receipt is not None else None
+                output_tail = capture.error_window('stdout')
+                stderr_tail = capture.error_window('stderr')
+                if exit_code != 0:
+                    failure_diagnostic = diagnostic('worker', 'nonzero', exit_code, 'process')
+            except CapacityBlocked as exc:
+                entry = _capacity_entry(paths, unit, admission_binding, exc.trip,
+                                        worktree_created=True, contract_digest=session_contract_digest)
+                if retry_decisions:
+                    entry['prior_attempts'] = retry_decisions
+                return entry
             except FileNotFoundError:
+                capture.finish_pending()
                 exit_code, output_tail = 127, f"{argv[0]} not found on PATH"
-            except subprocess.TimeoutExpired:
+                failure_diagnostic = diagnostic('launch', 'missing_binary', None, 'not_observed')
+            except subprocess.TimeoutExpired as exc:
+                if not binary_capture:
+                    capture.feed_legacy('stdout', exc.output, complete=False)
+                    capture.feed_legacy('stderr', exc.stderr, complete=False)
+                capture.finish_pending()
                 exit_code, output_tail = 124, f"unit timed out after {timeout}s"
-            except OSError as exc:
-                exit_code, output_tail = 1, f"spawn failed: {exc}"
+                stderr_tail = capture.error_window('stderr')
+                failure_diagnostic = diagnostic('timeout', 'deadline', None, 'not_observed')
+            except OSError:
+                capture.finish_pending()
+                exit_code, output_tail = 1, 'spawn failed'
+                failure_diagnostic = diagnostic('launch', 'spawn_error', None, 'not_observed')
+            except Exception:
+                capture.finish_pending()
+                failure_diagnostic = diagnostic('dispatcher', 'internal_error', None, 'not_observed')
+                append_journal_observation(paths, {
+                    'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
+                    'event': 'failed', 'status': 'failed', 'summary': 'Dispatcher observer failed',
+                    'worker_ref': unit_id, 'runtime_profile': owner, 'attempt_id': attempt_id,
+                    'failure_diagnostic': failure_diagnostic})
+                if decoder is not None and session_binding is not None:
+                    # A complete ID event remains historical even when a later
+                    # observer faults. No end revision means no resume instruction.
+                    append_journal_observation(paths, {
+                        'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
+                        'event': 'executor_session_observed', 'status': 'observed',
+                        'worker_ref': unit_id, 'runtime_profile': owner, 'attempt_id': attempt_id,
+                        'worktree_ref': str(worktree),
+                        'executor_session': decoder.receipt(session_binding).to_dict()})
+                raise
+            stdout_text = capture.take_final_text()
+            session_fields = {}
+            if decoder is not None and session_binding is not None:
+                # Only decoded stdout identity events can conflict with a UUID.
+                # Ordinary non-JSON stderr is not a session event. Shared budget
+                # loss is conservative because later candidate frames may be lost.
+                if any(issue in capture.issues for issue in ('event_limit', 'frame_limit', 'depth_limit')):
+                    decoder.invalidate_capture()
+                complete_capture = all(stream['original_bytes'] is not None for stream in capture.streams())
+                end_workspace = observe_session_workspace(str(worktree))
+                receipt = decoder.receipt(session_binding,
+                    end_head=end_workspace.head if end_workspace is not None and complete_capture else None)
+                session_fields = {'executor_session': receipt.to_dict()}
+                if end_workspace is not None and end_workspace.recovery_snapshot is not None:
+                    session_fields['session_recovery_snapshot'] = end_workspace.recovery_snapshot
+                append_journal_observation(paths, {
+                    'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
+                    'event': 'executor_session_observed', 'status': 'observed',
+                    'worker_ref': unit_id, 'runtime_profile': owner, 'attempt_id': attempt_id,
+                    'worktree_ref': str(worktree), **session_fields})
+            if failure_diagnostic is not None:
+                append_journal_observation(paths, {
+                    'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
+                    'event': 'worker_result', 'status': 'failed', 'summary': 'Worker attempt failed',
+                    'worker_ref': unit_id, 'runtime_profile': owner, 'attempt_id': attempt_id,
+                    'failure_diagnostic': failure_diagnostic})
             if health_events is not None:
                 health_events.finished(
                     unit_id,
                     terminal_status="succeeded" if exit_code == 0 else "failed",
                     retry=attempt - 1,
                 )
-            if exit_code == 0:
+            if exit_code == 0 or capacity_trip is not None:
                 break
             decision = _consider_unit_retry(
                 paths,
@@ -3809,6 +4205,7 @@ def _dispatch_unit(
                 max_retries=max_retries,
                 rng=rng,
             )
+            decision['attempt_id'] = attempt_id
             retry_decisions.append(decision)
             if not decision.get("retry"):
                 break
@@ -3837,6 +4234,7 @@ def _dispatch_unit(
             title=unit_title,
             owner=owner,
             stdout_text=stdout_text,
+            reported_telemetry=telemetry,
         )
     finished_at = utc_now()
     duration_seconds = round(time.monotonic() - started_clock, 3)
@@ -3865,45 +4263,11 @@ def _dispatch_unit(
         _clear_limit_signal(paths, owner)
         clear_auth_failure_signal(paths, owner)
     status = "observed" if exit_code == 0 else "failed"
-    # A second cap over an already-bounded tail. It goes through the shared
-    # contract too, so the journal line says which of the two it is: the whole
-    # tail, or a cut of it whose full text the evidence ref below resolves.
-    unit_output_spilled = output_truncation is not None and bool(output_truncation.get("truncated"))
-    summary_bound = truncate_output(
-        output_tail,
-        limit_bytes=_MAX_UNIT_SUMMARY_TAIL,
-        source=f"fanout unit {unit_id} journal summary",
-        keep="tail",
-        # Spilled only when the unit-level cap did not already spill this text.
-        # Otherwise the journal would point at a 2000-byte tail while a pointer
-        # to the whole output already exists.
-        spill_dir=None if unit_output_spilled else paths.runtime_output_spills_dir,
-    )
-    summary = (
-        f"unit {unit_id} exit {exit_code} after {duration_seconds}s: "
-        f"{redact_metadata_text(summary_bound.kept_text, limit=_MAX_UNIT_SUMMARY_TAIL)}"
-    )
-    # The unit-level record wins when it has one: it is the truncation that
-    # actually holds a spill pointer. The summary's own cap is reported only
-    # when the unit output fit and this second bound was what cut it.
-    journal_truncation = output_truncation if unit_output_spilled else summary_bound.record
-    journal_notice = truncation_notice(journal_truncation, compact=True)
-    if journal_notice:
-        summary = f"{summary} {journal_notice}"
+    summary = f"unit {unit_id} exit {exit_code} after {duration_seconds}s"
     if failure_kind == FAILURE_KIND_AUTH_SHAPED:
         summary = f"auth-shaped failure ({auth_label}); {summary}"
     elif limit_label:
         summary = f"limit-shaped failure ({limit_label}); {summary}"
-    # The compact notice above says "continuation=evidence_refs"; these are the
-    # refs it means. Uncapped by the journal, so the pointer arrives whole.
-    spill_refs = [
-        ref
-        for ref in (
-            spill_evidence_ref(journal_truncation or {}),
-            spill_evidence_ref(stderr_truncation or {}),
-        )
-        if ref
-    ]
     append_journal_observation(
         paths,
         {
@@ -3913,7 +4277,9 @@ def _dispatch_unit(
             "event": "worker_result",
             "status": status,
             "summary": summary,
-            "evidence_refs": spill_refs,
+            "evidence_refs": [],
+            "attempt_id": attempt_id,
+            **({'failure_diagnostic': failure_diagnostic} if failure_diagnostic is not None else {}),
             "worker_ref": unit_id,
             "worktree_ref": str(worktree),
             "runtime_profile": owner,
@@ -3930,7 +4296,16 @@ def _dispatch_unit(
         worktree=worktree,
         owner=owner,
         stdout_text=stdout_text,
+        known_secrets=known_secrets,
     )
+    if failure_diagnostic is None and not unit_result.get('result_schema_valid'):
+        failure_diagnostic = diagnostic('unit_result', 'malformed_result', exit_code, 'process')
+        append_journal_observation(paths, {
+            'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
+            'event': 'unit_result_invalid', 'status': 'failed',
+            'summary': 'Unit return contract unavailable or invalid',
+            'worker_ref': unit_id, 'runtime_profile': owner, 'attempt_id': attempt_id,
+            'failure_diagnostic': failure_diagnostic})
     # Both rungs below it must already hold: a unit whose process failed has
     # nothing to verify, and one whose sidecar did not validate has not yet
     # reported what it did. Runs before the ladder is built, so the journal
@@ -3948,6 +4323,21 @@ def _dispatch_unit(
                 revision=producer_revision,
             )
             health_events.started(verification_task, phase="verification")
+        def verification_failed(check_capture: FanoutOutput, reason: str,
+                                code: int | None, source: str) -> None:
+            nonlocal failure_diagnostic
+            failure_diagnostic = build_failure_diagnostic(
+                fanout_id=fanout_id, unit_id=unit_id, run_ref=run_ref, owner=owner,
+                attempt_id=attempt_id, worktree_ref=str(worktree), base_sha=base_sha,
+                observed_revision=producer_revision, phase='verification', reason=reason,
+                returncode=code, exit_code_source=source, streams=check_capture.streams())
+            append_journal_observation(paths, {
+                'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
+                'event': 'failed', 'phase': 'verification', 'status': 'failed',
+                'summary': 'Dispatcher verification failed', 'worker_ref': unit_id,
+                'runtime_profile': owner, 'attempt_id': attempt_id,
+                'failure_diagnostic': failure_diagnostic})
+
         verification = _run_unit_verification(
             paths,
             unit,
@@ -3962,6 +4352,7 @@ def _dispatch_unit(
             execution_gate=verification_execution_gate,
             confinement=confinement,
             environment_policy=environment_policy,
+            on_failure=verification_failed, known_secrets=known_secrets,
         )
         if health_events is not None:
             health_events.finished(
@@ -4014,22 +4405,30 @@ def _dispatch_unit(
         "finished_at": finished_at,
         "duration_seconds": duration_seconds,
     }
+    if capacity_trip is not None:
+        result['status'] = 'executor_capacity_rejected'
+        result['capacity'] = capacity_fields(admission_binding, capacity_trip,
+            status='executor_capacity_rejected', process_started=True)
+        result['capacity_lineage'] = _capacity_lineage(unit, admission_binding, session_contract_digest)
+        _record_capacity(paths, unit, result['capacity'])
+    result['worktree_created'] = bool(worktree_record.get('created'))
+    result['worktree_reused'] = bool(worktree_record.get('reused'))
     if owner_host:
         result["owner_host"] = owner_host
-    # Present whenever a spawn actually produced captured output, truncated or
-    # not, so the dispatch summary distinguishes "this is the whole tail" from
-    # "the tail of a longer output, spilled to <path>" without parsing prose.
-    if output_truncation is not None:
-        result["output_truncation"] = output_truncation
-    if stderr_truncation is not None:
-        result["stderr_truncation"] = stderr_truncation
+    result['attempt_id'] = attempt_id
+    result['invocation_id'] = invocation_id
+    result.update(session_fields)
+    if not session_fields:
+        result['executor_session_status'] = 'not_available'
+    if failure_diagnostic is not None:
+        result['failure_diagnostic'] = failure_diagnostic
     result["executor_capability_snapshot"] = capability_snapshot
     result["executor_capability"] = legacy_executor_capability_projection(capability_snapshot)
     # `tokens_total` and `session_ref` were READ by `omh coding fanout brief`
     # and had no write site anywhere, so both columns always printed "unknown".
     # Only keys the executor actually reported are copied: an absent count stays
     # absent rather than becoming a zero that would read as an observation.
-    for key, value in parse_unit_telemetry(owner, stdout_text).items():
+    for key, value in telemetry.items():
         if key in _TELEMETRY_RESULT_KEYS:
             result[key] = value
     if fingerprint_note is not None:
@@ -4037,7 +4436,7 @@ def _dispatch_unit(
     if limit_label:
         result["limit_shaped"] = True
         result["limit_pattern"] = limit_label
-    if failure_kind:
+    if failure_kind and capacity_trip is None:
         # Every failed envelope carries exactly one closed-enum kind, including
         # `crash` -- the fallback exists so a reader never has to infer "no kind
         # recorded" from an absent key.
@@ -4085,6 +4484,20 @@ def _dispatch_unit(
         )
         if recovery is not None:
             result["recovery"] = recovery
+        # The existing recovery capture may add intent-to-add entries; measure the
+        # final state independently after it, without trusting its old diff digest.
+        if session_fields:
+            snapshot = observe_session_workspace(str(worktree))
+            _ = result.pop('session_recovery_snapshot', None)
+            if snapshot is not None and snapshot.recovery_snapshot is not None:
+                result['session_recovery_snapshot'] = snapshot.recovery_snapshot
+            append_journal_observation(paths, {
+                'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
+                'event': 'executor_session_observed', 'status': 'observed',
+                'worker_ref': unit_id, 'runtime_profile': owner, 'attempt_id': attempt_id,
+                'worktree_ref': str(worktree), 'executor_session': result['executor_session'],
+                **({'session_recovery_snapshot': result['session_recovery_snapshot']}
+                   if 'session_recovery_snapshot' in result else {})})
     return result
 
 
@@ -4124,6 +4537,7 @@ def _intake_unit_result(
     worktree: Path,
     owner: str,
     stdout_text: str = "",
+    known_secrets: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Read one unit return after process exit and classify shape, never truth.
 
@@ -4134,7 +4548,7 @@ def _intake_unit_result(
     identity validation the sidecar gets. Only a missing sidecar with no
     fenced block at all stays `unit_result_missing`.
     """
-    if sidecar_path is None or not sidecar_path.is_file():
+    if sidecar_path is None or not os.path.lexists(sidecar_path):
         if sidecar_path is not None:
             fallback = _intake_stdout_unit_result(
                 paths,
@@ -4146,6 +4560,7 @@ def _intake_unit_result(
                 worktree=worktree,
                 owner=owner,
                 runner=runner,
+                known_secrets=known_secrets,
             )
             if fallback is not None:
                 return fallback
@@ -4164,7 +4579,7 @@ def _intake_unit_result(
             owner=owner,
         )
     try:
-        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        payload = read_unit_result_input(sidecar_path)
         validated = _validated_unit_result_payload(
             payload,
             unit_id=unit_id,
@@ -4177,7 +4592,7 @@ def _intake_unit_result(
             raise ValueError("dispatcher could not observe a clean committed producer HEAD")
         if validated["head_sha"] != producer_head_sha:
             raise ValueError("head_sha does not match dispatcher-observed producer HEAD")
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, RecursionError) as exc:
         return _unit_result_failure(
             paths,
             event="unit_result_invalid",
@@ -4201,7 +4616,7 @@ def _intake_unit_result(
             "worker_ref": unit_id,
             "worktree_ref": str(worktree),
             "runtime_profile": owner,
-            "evidence_refs": [str(sidecar_path)],
+            "evidence_refs": [],
         },
     )
     return {
@@ -4209,7 +4624,7 @@ def _intake_unit_result(
         "result_schema_valid": True,
         "unit_result_source": "sidecar",
         "producer_head_sha": producer_head_sha,
-        "unit_result": _bounded_unit_result(validated),
+        "unit_result": _bounded_unit_result(validated, known_secrets=known_secrets),
     }
 
 
@@ -4250,6 +4665,7 @@ def _intake_stdout_unit_result(
     base_sha: str,
     worktree: Path,
     owner: str,
+    known_secrets: tuple[str, ...] = (),
 ) -> dict[str, Any] | None:
     """Fallback intake from the fenced stdout block when the sidecar is absent.
 
@@ -4276,7 +4692,7 @@ def _intake_stdout_unit_result(
             raise ValueError("dispatcher could not observe a clean committed producer HEAD")
         if validated["head_sha"] != producer_head_sha:
             raise ValueError("head_sha does not match dispatcher-observed producer HEAD")
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, RecursionError) as exc:
         return _unit_result_failure(
             paths,
             event="unit_result_invalid",
@@ -4310,7 +4726,7 @@ def _intake_stdout_unit_result(
         "result_schema_valid": True,
         "unit_result_source": "stdout_fenced_block",
         "producer_head_sha": producer_head_sha,
-        "unit_result": _bounded_unit_result(validated),
+        "unit_result": _bounded_unit_result(validated, known_secrets=known_secrets),
     }
 
 
@@ -4356,12 +4772,7 @@ def _validate_unit_result_identity(
     for field, expected_value in expected.items():
         reported_value = validated.get(field)
         if reported_value != expected_value:
-            reported = redact_metadata_text(repr(reported_value), limit=100)
-            expected_text = redact_metadata_text(repr(expected_value), limit=100)
-            raise ValueError(
-                f"{field} does not match dispatch identity: reported {reported}, "
-                f"expected {expected_text}"
-            )
+            raise ValueError(f"{field} does not match dispatch identity")
 
 
 def _validate_executor_sidecar_checks(validated: Mapping[str, Any]) -> None:
@@ -4390,7 +4801,8 @@ def _unit_result_failure(
     worktree: Path,
     owner: str,
 ) -> dict[str, Any]:
-    bounded_reason = redact_metadata_text(reason, limit=_MAX_UNIT_RESULT_TEXT)
+    # Validator field paths are useful; offending untrusted values are not.
+    bounded_reason = redact_metadata_text(reason.split('; got ', 1)[0], limit=_MAX_UNIT_RESULT_TEXT)
     append_journal_observation(
         paths,
         {
@@ -4404,7 +4816,7 @@ def _unit_result_failure(
             "worker_ref": unit_id,
             "worktree_ref": str(worktree),
             "runtime_profile": owner,
-            "evidence_refs": [str(sidecar_path)] if sidecar_path is not None else [],
+            "evidence_refs": [],
         },
     )
     result: dict[str, Any] = {
@@ -4416,21 +4828,25 @@ def _unit_result_failure(
     return result
 
 
-def _bounded_unit_result(validated: Mapping[str, Any]) -> dict[str, Any]:
+def _bounded_unit_result(validated: Mapping[str, Any], *,
+                         known_secrets: tuple[str, ...] = ()) -> dict[str, Any]:
     """Allowlist and size-bound sidecar fields before summary persistence."""
-    bounded = {
+    bounded: dict[str, object] = {
         key: redact_metadata_text(str(validated.get(key, "")), limit=_MAX_UNIT_RESULT_TEXT)
-        for key in _UNIT_RESULT_TOP_LEVEL_KEYS
+        for key in _UNIT_RESULT_TOP_LEVEL_KEYS if key in validated
     }
-    bounded["changed_paths"] = [
-        redact_metadata_text(str(value), limit=_MAX_UNIT_RESULT_TEXT)
-        for value in list(validated.get("changed_paths", []))[:_MAX_UNIT_RESULT_PATHS]
+    # Executor-authored free text cannot be proven to be a path/command rather
+    # than a prompt or source body. Preserve report shape and provenance, not
+    # those bodies. Actual changed paths remain independently observed recovery.
+    bounded['changed_paths'] = [
+        'reported-path-withheld'
+        for _value in list(validated.get('changed_paths', []))[:_MAX_UNIT_RESULT_PATHS]
     ]
     bounded["checks"] = [
         {
             key: (
-                None
-                if row.get(key) is None
+                'executor-command-withheld' if key == 'command'
+                else None if key == 'evidence_ref' or row.get(key) is None
                 else redact_metadata_text(str(row.get(key)), limit=_MAX_UNIT_RESULT_TEXT)
             )
             for key in _UNIT_RESULT_CHECK_KEYS
@@ -4438,15 +4854,19 @@ def _bounded_unit_result(validated: Mapping[str, Any]) -> dict[str, Any]:
         for row in list(validated.get("checks", []))[:_MAX_UNIT_RESULT_CHECKS]
         if isinstance(row, Mapping)
     ]
-    bounded["findings"] = [
-        redact_metadata_text(str(value), limit=_MAX_UNIT_RESULT_TEXT)
-        for value in list(validated.get("findings", []))[:_MAX_UNIT_RESULT_FINDINGS]
+    bounded['findings'] = [
+        _safe_report_text(str(value), known_secrets)
+        for value in list(validated.get('findings', []))[:_MAX_UNIT_RESULT_FINDINGS]
     ]
-    if "schema_error" in validated:
-        bounded["schema_error"] = redact_metadata_text(
-            str(validated["schema_error"]), limit=_MAX_UNIT_RESULT_TEXT
-        )
-    return bounded
+    if 'schema_error' in validated:
+        bounded['schema_error'] = _safe_report_text(str(validated['schema_error']), known_secrets)
+    return validate_unit_result(bounded)
+
+
+def _safe_report_text(text: str, known_secrets: tuple[str, ...]) -> str:
+    capture = FanoutOutput(known_secrets=known_secrets)
+    capture.feed_legacy('stdout', text)
+    return capture.streams()[0]['text']
 
 
 # One unit's salvage report is a few dozen paths at most; past that the list
@@ -4729,6 +5149,7 @@ def _dependency_failed(result: dict[str, Any] | None) -> bool:
         # any other path, and naming it here is what lets the dependent say
         # WHICH unit it is waiting on rather than blocking on nothing.
         *CANCELLED_UNIT_STATUSES,
+        *CAPACITY_STATUSES,
         "executor_not_ready",
         "unsupported_for_local_dispatch",
         "worktree_failed",
@@ -4744,6 +5165,7 @@ def _dependency_failed(result: dict[str, Any] | None) -> bool:
 
 def _blocked(unit: Mapping[str, Any], results: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
     deps = [str(dep) for dep in unit.get("depends_on", []) or []]
+    capacity_deps = [dep for dep in deps if str((results.get(dep) or {}).get('status', '')) in CAPACITY_STATUSES]
     cancelled_deps = [
         dep
         for dep in deps
@@ -4755,6 +5177,7 @@ def _blocked(unit: Mapping[str, Any], results: Mapping[str, dict[str, Any]]) -> 
     # a decision to re-dispatch.
     entry = _skipped(
         unit,
+        'blocked_by_capacity_dependency' if capacity_deps else
         UNIT_STATUS_BLOCKED_BY_CANCELLED_DEPENDENCY if cancelled_deps else "blocked_by_dependency",
     )
     failed = [dep for dep in deps if _dependency_failed(results.get(dep))]
@@ -4764,6 +5187,8 @@ def _blocked(unit: Mapping[str, Any], results: Mapping[str, dict[str, Any]]) -> 
     entry["blocked_on"] = failed or [
         dep for dep in deps if not _dependency_satisfied(results.get(dep))
     ]
+    entry['blocked_reasons'] = {dep: ('capacity' if dep in capacity_deps else
+        'cancelled' if dep in cancelled_deps else 'failure') for dep in entry['blocked_on']}
     return entry
 
 
@@ -4831,6 +5256,19 @@ def _resume_hold(
     else:
         entry = _skipped(unit, "not_selected")
     entry["resume"] = _resume_note(decision)
+    carried = decision.get('carry_forward')
+    if isinstance(carried, Mapping):
+        capacity = read_capacity_fields(carried)
+        if capacity:
+            entry.update(capacity)
+            entry['status'] = carried['status']
+            entry['attempt_id'] = carried['attempt_id']
+            capacity_record = capacity['capacity']
+            assert isinstance(capacity_record, Mapping)
+            entry['invocation_id'] = capacity_record['invocation_id']
+            for key in ('blocked_on', 'blocked_reasons', 'planned_worktree_path', 'worktree_path', 'worktree_created', 'depends_on'):
+                if key in carried:
+                    entry[key] = carried[key]
     return entry
 
 

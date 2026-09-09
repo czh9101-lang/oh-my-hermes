@@ -154,13 +154,82 @@ are not proof that a provider delivered, displayed, measured, canceled, or
 caused an outcome. A prepared cancellation handoff in particular is not an
 external mutation, a provider request, or a stopped analysis.
 
+## Launch review (issue #1399)
+
+`omh.workflows.lifecycle_growth_launch` adds three pure launch-review builders
+that the CLI exposes as `audience`, `promote`, and `graduate`. Each returns its
+own versioned `prepared_not_observed` record; none of them touches the six
+artifact schemas above, so stored artifacts and `validate` behave exactly as
+before. Exact input keys, bounds, and CLI exit codes live in
+[`docs/WORKFLOW-ARTIFACTS.md`](WORKFLOW-ARTIFACTS.md).
+
+- `build_launch_audience_review` (`launch_audience_review/v1`) reads ordered
+  rules under `first_match` semantics. An unconditional rule at a 100 percent
+  share shadows every later rule that shares the same evaluation domain,
+  bucketing domain, and subject (`person`, `group`, or `device`); those rules
+  are reported `reachable: false` and listed in `unreachable_rule_refs`. A
+  partial share, a conditional rule, a different domain, or a different subject
+  never shadows. Unknown semantics or null domains produce `reachable: null`
+  and a `HOLD` verdict. Reachable means "not provably shadowed"; it is not
+  membership, targeting, or exposure, and the record carries no exposure count.
+  Variants, splits, partial shares, and the holdout exclusion share stay
+  configuration.
+- `build_launch_promotion_preflight` (`launch_promotion_preflight/v1`) compares
+  a source and a target environment without copying anything. The target is
+  always `disabled`. Dependencies already satisfied and dependencies a promotion
+  would create are kept in disjoint lists; carried dependencies and schedules are
+  empty unless the caller explicitly approves each carry. The existing
+  development-draft promotion gate still applies through the optional `safety`
+  block, and an approval is never an observed promotion result.
+- `build_launch_graduation_check` (`launch_graduation_check/v1`) proposes a
+  separate gate cleanup only when the caller supplies `complete` rollout, at
+  least one evidence reference, and `satisfied` rollback conditions. Anything
+  else is `not_proposed` with the naming reason. OMH never infers that a gate
+  was deleted.
+- `evaluate_lifecycle_growth(..., evaluation_context=...)` accepts an optional
+  context with `experiment_reference_state` and `baseline_exposure_state`. A
+  deleted reference is blocked and `insufficient_data`; an absent baseline and
+  zero displayed exposure carry their own reason codes; neither is reported as
+  a runtime outage. Omitting the context preserves the original output byte for
+  byte, and a resolved or observed context can never upgrade an existing hold.
+
+## Upstream review (issue #1399)
+
+The five community commits cited by the issue were reviewed by read against
+the PostHog default branch through `ae880d309f33eaf236cb4e46991f249a88e1c16e`.
+Only the PostHog row in [`docs/SKILL-SOURCES.md`](SKILL-SOURCES.md) advanced;
+the GrowthBook, Dittofeed, and Novu rows keep their earlier pins. No upstream
+code, tool name, parameter name, endpoint, UI, or enterprise (`ee/`) file was
+adopted, and no product module imports the upstream package.
+
+Adopted as provider-neutral concepts:
+
+- Ordered first-match rules with a same-scope catch-all making later rules
+  unreachable, person/group/device bucketing, and a holdout carried as an
+  exclusion share (audience review).
+- A read-only promotion preflight that copies nothing, lands disabled, keeps
+  satisfied and to-create dependencies distinct, and carries schedules or
+  dependencies only on explicit approval (promotion preflight).
+- Removing a gate after general availability as its own cleanup change rather
+  than a permanent check (graduation check). The rollout-evidence and
+  rollback-condition prerequisites are OMH's contract, not upstream evidence.
+- A stale or deleted experiment reference reported as a validation error, and a
+  zero-exposure baseline reported as no data rather than a server error
+  (evaluation context).
+
+Rejected or left out: card and result UI shapes, links to person or cohort
+records, copy tool and parameter names, target-count limits, write-scope rules,
+any device-level fallback assumption beyond the subject label, and the `ee/`
+diffs, which were not read. Upstream reachability is a display warning, so OMH
+labels it configuration analysis and never observed targeting.
+
 ## Integration boundary
 
-A serialized shared-registration owner must still add the catalog workflow,
-English/Korean routing and exclusions, harness/projection coverage, generated
-skill output, source attribution, and count updates. It should call these APIs,
-not duplicate their validation. It must not treat a local `READY` response as
-external execution evidence.
+The catalog workflow, routing, generated `skills/omh-lifecycle-growth/*`, and
+source attribution exist. Wrapper and integration callers should call these
+APIs, not duplicate their validation, and must not treat a local `READY`
+response or a `prepared_not_observed` launch-review record as external
+execution evidence.
 
 Copy remains with `content-operator`, supplied-data calculations with
 `data-analysis`, recurring scheduling with `automation-blueprint`, and external

@@ -196,6 +196,17 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
         "runs bounded local `hermes config` / `hermes auth` inspection and approved alias "
         "mutation, never a model or coding executor."
     ),
+    "src/coding/dispatch_failure_recovery.py": (
+        "`omh coding fanout dispatch` recovery adapter; imports subprocess only for the "
+        "typed exception classes it classifies and to forward the caller-supplied capacity "
+        "launch gate to the confirmed Hermes-child seam. It spawns nothing itself."
+    ),
+    "src/coding/fanout_executor_sessions.py": (
+        "`omh coding fanout dispatch`/`status`; runs only bounded (16 KiB per pipe, deadline, "
+        "process-group reaped) read-only probes - executor `--help`/`--version` negotiation and "
+        "in-worktree git identity reads - to validate an observed session receipt against the "
+        "current binary and workspace. It never launches a resume or any executor turn."
+    ),
     "src/coding/hermes_child_dispatch.py": (
         "operator-only, explicitly confirmed `ask_before_dispatch` seam for one bounded local "
         "`hermes --oneshot --model` child; suppresses recursion and cleans its process group."
@@ -700,6 +711,27 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
         "`git status --porcelain=v1 -z` inside `coding commit-plan`, the metadata the "
         "commit-split planner groups; read-only, names no remote, and the prepared plan "
         "it feeds is never a commit"
+    ),
+    ("src/coding/fanout_executor_sessions.py", ("core.fsmonitor=false", "status")): (
+        "`git -c core.fsmonitor=false status --porcelain=v1 -z --untracked-files=all` inside a "
+        "unit's own worktree, run by the read-only resume-selection check so a copy-only resume "
+        "command is offered only against a clean, current workspace; read-only, names no remote"
+    ),
+    ("src/coding/fanout_executor_sessions.py", ("core.fsmonitor=false", "diff", "HEAD")): (
+        "`git -c core.fsmonitor=false diff --no-ext-diff --no-textconv --binary HEAD` inside a "
+        "unit's own worktree, hashed and never retained, for the workspace-recovery observation a "
+        "copy-only resume is checked against; read-only, names no remote"
+    ),
+    ("src/coding/fanout_executor_sessions.py", ("ls-files",)): (
+        "`git ls-files --others --exclude-standard -z` inside a unit's own worktree, listing "
+        "untracked paths (hashed with the diff, never retained) for the same workspace-recovery "
+        "observation; read-only, names no remote"
+    ),
+    ("src/coding/fanout_executor_sessions.py", ("core.fsmonitor=false",)): (
+        "`git -c core.fsmonitor=false rev-parse --show-toplevel|--absolute-git-dir|"
+        "--git-common-dir`, `symbolic-ref HEAD` and `rev-parse HEAD` inside a unit's own "
+        "worktree: the read-only workspace-identity observation a copy-only resume is checked "
+        "against; names no remote"
     ),
     ("src/coding/fanout_dispatch.py", ("add", ".")): (
         "`git add -N -- .` inside a FAILED unit's own isolated worktree, so the recovery probe can "
