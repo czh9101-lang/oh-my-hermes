@@ -212,6 +212,62 @@ def build_launch_graduation_check(
     )
 
 
+def prepare_lifecycle_launch(operation: str, payload: Mapping[str, object]) -> dict[str, object]:
+    """Adapt closed public operation inputs into the pure launch contracts.
+
+    Unknown or missing keys are refused without echoing untrusted key names.
+    These operations return proposals only and never write or invoke a provider.
+    """
+    required = {
+        "audience": {"lifecycle_growth_id", "evaluation_semantics", "rules", "holdout_exclusion_share"},
+        "promote": {"lifecycle_growth_id", "source_environment_ref", "target_environment_ref",
+                    "dependency_refs_satisfied", "dependency_refs_to_create", "schedule_refs", "approvals"},
+        "graduate": {"lifecycle_growth_id", "rollout_observed_state", "evidence_refs", "rollback_conditions_state"},
+    }
+    if operation not in required:
+        raise ValueError("lifecycle launch operation is unsupported")
+    optional: set[str] = {"safety"} if operation == "promote" else set()
+    if not required[operation] <= payload.keys() or payload.keys() - required[operation] - optional:
+        raise ValueError("lifecycle launch input keys are invalid")
+    lifecycle_id = _ref(payload["lifecycle_growth_id"], "lifecycle_growth_id")
+    if operation == "audience":
+        return build_launch_audience_review(
+            lifecycle_growth_id=lifecycle_id,
+            evaluation_semantics=_state(payload["evaluation_semantics"], "evaluation_semantics", ("first_match", "unknown")),
+            rules=payload["rules"],
+            holdout_exclusion_share=_share(payload["holdout_exclusion_share"], "holdout_exclusion_share"),
+        )
+    if operation == "graduate":
+        return build_launch_graduation_check(
+            lifecycle_growth_id=lifecycle_id,
+            rollout_observed_state=_state(payload["rollout_observed_state"], "rollout_observed_state", ("complete", "partial", "unknown")),
+            evidence_refs=_refs(payload["evidence_refs"], "evidence_refs"),
+            rollback_conditions_state=_state(payload["rollback_conditions_state"], "rollback_conditions_state", ("satisfied", "unsatisfied", "unknown")),
+        )
+    supplied = _mapping(payload["approvals"], "approvals")
+    if set(supplied) != {"carry_dependencies", "carry_schedules"}:
+        raise ValueError("approvals must contain exactly two boolean carry approvals")
+    approvals: dict[str, bool] = {}
+    for field in ("carry_dependencies", "carry_schedules"):
+        value = supplied[field]
+        if not isinstance(value, bool):
+            raise ValueError("approvals must contain exactly two boolean carry approvals")
+        approvals[field] = value
+    safety = payload.get("safety")
+    policy: Mapping[object, object] = _mapping(safety, "safety") if safety is not None else {}
+    return build_launch_promotion_preflight(
+        lifecycle_growth_id=lifecycle_id,
+        source_environment_ref=_ref(payload["source_environment_ref"], "source_environment_ref"),
+        target_environment_ref=_ref(payload["target_environment_ref"], "target_environment_ref"),
+        dependency_refs_satisfied=_refs(payload["dependency_refs_satisfied"], "dependency_refs_satisfied"),
+        dependency_refs_to_create=_refs(payload["dependency_refs_to_create"], "dependency_refs_to_create"),
+        schedule_refs=_refs(payload["schedule_refs"], "schedule_refs"), approvals=approvals,
+        safety={field: policy.get(field) for field in (
+            "workflow_content_state", "mutation_route", "promotion_decision_state", "promotion_result_state",
+        )},
+    )
+
+
 def lifecycle_growth_evaluation_context(
     evaluation_context: object, *, displayed_count: int,
 ) -> dict[str, object]:

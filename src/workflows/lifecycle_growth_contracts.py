@@ -25,6 +25,7 @@ from .lifecycle_growth_artifacts import (
     validate_handoff,
     validate_safety,
 )
+from .lifecycle_growth_launch import lifecycle_growth_evaluation_context
 from .lifecycle_growth_readout import (
     build_growth_measurement_readout,
     derive_readout_disposition,
@@ -95,8 +96,14 @@ def prepare_lifecycle_growth(artifacts: Mapping[str, Mapping[str, Any]]) -> dict
     return _readiness(errors)
 
 
-def evaluate_lifecycle_growth(experiment: Mapping[str, Any], readout: Mapping[str, Any]) -> dict[str, object]:
-    """Evaluate an observed run without treating assignment or delivery as exposure."""
+def evaluate_lifecycle_growth(
+    experiment: Mapping[str, Any], readout: Mapping[str, Any], *, evaluation_context: object = None,
+) -> dict[str, object]:
+    """Evaluate supplied evidence; absent context preserves the original result.
+
+    Optional reference/baseline context can only hold interpretation, never turn
+    configuration, assignment, delivery or a launch proposal into exposure.
+    """
     errors = _expected_errors(experiment, "growth_experiment_plan/v1", "experiment")
     errors.extend(_expected_errors(readout, "growth_measurement_readout/v1", "readout"))
     if not errors and experiment.get("lifecycle_growth_id") != readout.get("lifecycle_growth_id"):
@@ -125,6 +132,9 @@ def evaluate_lifecycle_growth(experiment: Mapping[str, Any], readout: Mapping[st
         "analysis_delay_state": result["analysis_delay_state"],
         "artifact_errors": _errors(result.get("artifact_errors")) + errors,
         "claim_boundary": "Assignment is not exposure; evaluation is derived from bounded caller-supplied metadata only.",
+        **lifecycle_growth_evaluation_context(
+            evaluation_context, displayed_count=max(0, _count(readout, "displayed_count")),
+        ),
     }
 
 

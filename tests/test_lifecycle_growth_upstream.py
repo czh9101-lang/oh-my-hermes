@@ -1,14 +1,18 @@
-"""Foundation proofs only; public operations and registry adoption need integration."""
+"""Pure contracts and public lifecycle operations; no provider execution claims."""
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 import importlib
 import importlib.util
 from itertools import product
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Protocol, TypeGuard, runtime_checkable
 import unittest
 
+from _cli_harness import run_cli
 from _local_package import load_local_package
 
 load_local_package()
@@ -19,6 +23,8 @@ import test_lifecycle_growth_readiness as legacy_readiness
 
 
 MODULE = "omh.workflows.lifecycle_growth_launch"
+decode_json: Callable[[str], object] = json.loads
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @runtime_checkable
@@ -333,18 +339,248 @@ class LifecycleGrowthUpstreamTests(unittest.TestCase):
                 self.assertEqual(result["interpretation_state"], "HOLD")
                 self.assertEqual(base | overlay(None, displayed_count=6), base)
 
-    def test_l6_qa_foundation_never_claims_integrated_pass(self):
+    def test_l6_registry_qa_reports_local_surface_without_provider_execution(self):
+        # L7's producer checks machine-parsed registry fields and local gates only;
+        # it never runs a provider and owns no temporary resources.
         from five_issue_cases import lifecycle as qa
         assert isinstance(qa, FoundationQA)
-        for case in ("L1", "L2", "L3", "L4", "L5", "L6", "L7"):
+        for case in ("L7",):
             with self.subTest(case=case):
                 result = qa.run_case(case)
-                self.assertFalse(result["pass"])
                 self.assertEqual(result["case"], case)
-                self.assertEqual(record(result["provenance"])["scope"], "foundation")
-                self.assertTrue(result["blocked_reason"])
+                self.assertEqual(record(result["provenance"]), {"kind": "local", "scope": "surface",
+                                                                "native_required": False, "native_available": False})
+                self.assertFalse(record(result["observations"])["provider_execution_observed"])
                 self.assertEqual(record(result["cleanup"])["owned_resources"], [])
                 self.assertTrue(record(result["cleanup"])["verified_absent"])
+                self.assertTrue(result["pass"], result["blocked_reason"])
+
+
+class LifecycleGrowthPublicTests(unittest.TestCase):
+    def cli(self, operation: str, payload: object, *, expected_exit: int = 0,
+            file_input: bool = False) -> dict[str, object]:
+        with TemporaryDirectory(prefix="lifecycle-cli-test-") as temporary:
+            home = Path(temporary)
+            text = json.dumps(payload)
+            source = "-"
+            if file_input:
+                source = str(home / "input.json")
+                _ = Path(source).write_text(text, encoding="utf-8")
+            try:
+                status, stdout, stderr = run_cli([
+                    "--omh-home", str(home / "omh"), "--hermes-home", str(home / "hermes"),
+                    "runtime", "workflow-artifact", "lifecycle-growth", operation, "--input", source,
+                ], stdin_text=text)
+            except SystemExit as error:
+                self.fail(f"registered lifecycle operation {operation} must reach its handler, parser exit={error.code}")
+            self.assertEqual(status, expected_exit, stderr)
+            self.assertFalse((home / "omh").exists())
+            self.assertFalse((home / "hermes").exists())
+            if expected_exit:
+                self.assertEqual(stdout, "")
+                self.assertNotIn("Traceback", stderr)
+                self.assertNotIn("PRIVATE_INPUT_SENTINEL", stderr)
+                return {}
+            self.assertEqual(stderr, "")
+            envelope = record(decode_json(stdout))
+            self.assertEqual(envelope["operation"], operation)
+            self.assertEqual(envelope["workflow"], "lifecycle-growth")
+            self.assertEqual(envelope["schema_version"], "workflow_artifact_operation_result/v1")
+            return record(envelope["result"])
+
+    def test_l1_public_audience_reachability_and_unknown_controls(self):
+        result = self.cli("audience", audience(), file_input=True)
+        self.assertEqual([r["reachable"] for r in audience_rules(result)], [True, False])
+        self.assertEqual(result["unreachable_rule_refs"], ["rule_second"])
+        for first in (rule(rollout_share=99), rule(condition_refs=["paid"])):
+            result = self.cli("audience", audience(rules=[first, rule(rule_ref="later")]))
+            self.assertTrue(audience_rules(result)[1]["reachable"])
+        result = self.cli("audience", audience(evaluation_semantics="unknown"))
+        self.assertEqual([r["reachable"] for r in audience_rules(result)], [None, None])
+        self.assertEqual(result["verdict"], "HOLD")
+
+    def test_l2_public_configuration_never_creates_exposure(self):
+        fixture = readiness_fixture()
+        for subject, kind in product(("person", "group", "device"), ("on", "variant", "split")):
+            with self.subTest(subject=subject, kind=kind):
+                item = rule(bucketing_subject=subject, rollout_share=50, result_kind=kind,
+                            variant_ref="treatment" if kind == "variant" else None)
+                result = self.cli("audience", audience(rules=[item]))
+                self.assertEqual(audience_rules(result)[0], dict(item, reachable=True))
+                self.assertEqual(result["holdout_exclusion_share"], 10)
+                self.assertEqual(result["status"], PREPARED_STATUS)
+                self.assertNotIn("actual_exposure_count", result)
+        result = self.cli("evaluate", {"experiment": fixture.experiment(), "readout": fixture.readout(
+            displayed_count=0, acted_count=0, outcome_count=0, actual_exposure_evidence_refs=[]),
+            "evaluation_context": {"experiment_reference_state": "resolved", "baseline_exposure_state": "observed"}})
+        self.assertEqual(result["actual_exposure_count"], 0)
+        self.assertEqual(result["delivery_count"], 7)
+        self.assertEqual(result["disposition"], "insufficient_data")
+        self.assertIn("evidence_reason_codes", result)
+        self.assertEqual(result["evidence_reason_codes"], ["exposure_absent"])
+
+    def test_l3_public_promotion_approval_and_result_are_separate(self):
+        for dependencies, schedules in product((False, True), repeat=2):
+            result = self.cli("promote", promotion(approvals={"carry_dependencies": dependencies, "carry_schedules": schedules}))
+            self.assertEqual(result["target_enabled_state"], "disabled")
+            self.assertEqual(result["dependency_refs_satisfied"], ["dep_a"])
+            self.assertEqual(result["dependency_refs_to_create"], ["dep_b"])
+            self.assertEqual(result["carried_dependency_refs"], ["dep_b"] if dependencies else [])
+            self.assertEqual(result["carried_schedule_refs"], ["schedule_a"] if schedules else [])
+            self.assertEqual(record(result["promotion_gate"])["promotion_result_state"], "not_observed")
+            self.assertEqual(result["status"], PREPARED_STATUS)
+        for safety in (None, {}, {"workflow_content_state": "production_read_only"}):
+            result = self.cli("promote", promotion(safety=safety, approvals={"carry_dependencies": True, "carry_schedules": True}))
+            self.assertEqual(result["verdict"], "HOLD")
+        source = promotion()
+        del source["safety"]
+        self.assertEqual(self.cli("promote", source)["verdict"], "HOLD")
+
+    def test_l4_public_graduation_is_only_a_separate_proposal(self):
+        for rollout, refs, rollback in product(("complete", "partial", "unknown"), ([], ["rollout_evidence"]), ("satisfied", "unsatisfied", "unknown")):
+            result = self.cli("graduate", {"lifecycle_growth_id": "launch_a", "rollout_observed_state": rollout,
+                                          "evidence_refs": refs, "rollback_conditions_state": rollback})
+            ready = rollout == "complete" and bool(refs) and rollback == "satisfied"
+            self.assertEqual(result["cleanup_action"], "proposed" if ready else "not_proposed")
+            self.assertEqual(result["verdict"], "READY" if ready else "HOLD")
+            self.assertEqual(result["status"], PREPARED_STATUS)
+            self.assertNotIn("gate_deleted", result)
+
+    def test_l5_public_evaluation_context_and_invalid_controls(self):
+        fixture = readiness_fixture()
+        source = {"experiment": fixture.experiment(), "readout": fixture.readout()}
+        for reference, baseline in product(("resolved", "deleted", "unknown"), ("observed", "absent", "unknown")):
+            context = {"experiment_reference_state": reference, "baseline_exposure_state": baseline}
+            result = self.cli("evaluate", dict(source, evaluation_context=context))
+            reasons = (["experiment_reference_" + reference] if reference != "resolved" else [])
+            reasons += ["baseline_exposure_" + baseline] if baseline != "observed" else []
+            self.assertIn("evidence_reason_codes", result)
+            self.assertEqual(result["evidence_reason_codes"], reasons)
+            self.assertEqual(result["blocked"], reference == "deleted")
+            self.assertEqual(result["disposition"], "insufficient_data" if reasons else "ship")
+            self.assertEqual(result["interpretation_state"], "HOLD" if reasons else "READY")
+        invalid_contexts: list[object] = [{}, [], False, {"experiment_reference_state": "resolved", "baseline_exposure_state": "multiple"},
+                        {"experiment_reference_state": "resolved", "baseline_exposure_state": "observed", "PRIVATE_INPUT_SENTINEL": "private"}]
+        for invalid_context in invalid_contexts:
+            _ = self.cli("evaluate", dict(source, evaluation_context=invalid_context), expected_exit=2)
+
+    def test_l6_public_legacy_equality_and_context_cannot_upgrade_holds(self):
+        fixture = readiness_fixture()
+        experiment = fixture.experiment()
+        context = {"experiment_reference_state": "resolved", "baseline_exposure_state": "observed"}
+        for changes in ({}, {"runtime_days_observed": 13}, {"instrumentation_state": "broken"}, {"guardrail_state": "failed"}):
+            readout = fixture.readout(**changes)
+            old = contracts.evaluate_lifecycle_growth(experiment, readout)
+            source = {"experiment": experiment, "readout": readout}
+            self.assertEqual(self.cli("evaluate", source), old)
+            self.assertEqual(self.cli("evaluate", dict(source, evaluation_context=None)), old)
+            with_context = self.cli("evaluate", dict(source, evaluation_context=context))
+            self.assertEqual(with_context, old | {"evidence_reason_codes": [], "blocked": False})
+        from five_issue_cases import lifecycle as qa
+        for case in ("L1", "L2", "L3", "L4", "L5", "L6"):
+            with self.subTest(case=case):
+                result = qa.run_case(case)
+                self.assertTrue(result["pass"], result["blocked_reason"])
+                self.assertEqual(result["provenance"]["scope"], "surface")
+                self.assertEqual(result["provenance"]["kind"], "local")
+                self.assertFalse(result["provenance"]["native_available"])
+                self.assertTrue(result["commands"])
+                self.assertTrue(result["cleanup"]["verified_absent"])
+                self.assertEqual(result["cleanup"]["errors"], [])
+                for path in result["cleanup"]["owned_resources"]:
+                    self.assertFalse(Path(path).exists())
+
+    def test_l6_public_new_operations_reject_missing_extra_and_malformed_keys(self):
+        samples = {"audience": audience(), "promote": promotion(), "graduate": {
+            "lifecycle_growth_id": "launch_a", "rollout_observed_state": "complete",
+            "evidence_refs": ["rollout_evidence"], "rollback_conditions_state": "satisfied"}}
+        for operation, source in samples.items():
+            for key in source:
+                if key == "safety":
+                    continue
+                malformed = dict(source)
+                del malformed[key]
+                with self.subTest(operation=operation, missing=key):
+                    _ = self.cli(operation, malformed, expected_exit=2)
+            _ = self.cli(operation, dict(source, PRIVATE_INPUT_SENTINEL="private"), expected_exit=2)
+        for payload in (audience(holdout_exclusion_share=True), audience(rules=[rule(rollout_share=float("nan"))]),
+                        audience(rules=[rule(condition_refs=["x"] * 9)])):
+            _ = self.cli("audience", payload, expected_exit=2)
+        invalid_promotions: list[dict[str, object]] = [{"approvals": {"carry_dependencies": 1, "carry_schedules": False}},
+                        {"dependency_refs_to_create": ["dep_a"]}, {"safety": []}]
+        for changes in invalid_promotions:
+            _ = self.cli("promote", promotion(**changes), expected_exit=2)
+
+    def test_l7_committed_launch_example_runs_through_the_real_cli(self):
+        # The committed audience example is a complete synthetic input; the
+        # deciding machine fields are the derived reachability values.
+        example = ROOT / "examples" / "workflow-artifacts" / "lifecycle-growth-launch.json"
+        self.assertTrue(example.is_file(), "missing committed lifecycle launch example")
+        payload = decode_json(example.read_text(encoding="utf-8"))
+        result = self.cli("audience", payload, file_input=True)
+        self.assertEqual(result["schema_version"], "launch_audience_review/v1")
+        self.assertEqual(result["status"], PREPARED_STATUS)
+        self.assertEqual([r["reachable"] for r in audience_rules(result)], [True, False])
+        self.assertEqual(result["unreachable_rule_refs"], ["rule_paid_accounts"])
+        self.assertNotIn("displayed_count", result)
+
+
+REGISTRY = ROOT / "docs" / "SKILL-SOURCES.md"
+POSTHOG_REPO = "https://github.com/PostHog/posthog"
+# Issue #1399 review: the five cited community commits through PostHog
+# default-branch HEAD ae880d30, completed on the resolving PR date.
+POSTHOG_REVIEWED_REF = "ae880d309f33eaf236cb4e46991f249a88e1c16e"
+POSTHOG_REVIEWED_ON = "2026-09-09"
+# Sibling lifecycle-growth rows must not move with the PostHog review.
+UNCHANGED_LIFECYCLE_ROWS = {
+    "https://github.com/growthbook/growthbook": ("2026-09-07", "82b82d08f864af40e07974612803ba18fa8b69cf"),
+    "https://github.com/dittofeed/dittofeed": ("2026-09-07", "52b2bee909744d07dd5d409fd3974d4b95c66766"),
+    "https://github.com/novuhq/novu": ("2026-09-08", "c7bc772fc0b7722909ef1bdb9bcf04991996fdd8"),
+}
+
+
+def registry_rows() -> list[dict[str, str]]:
+    """Parse the hand-written source registry table into machine rows."""
+    lines = REGISTRY.read_text(encoding="utf-8").splitlines()
+    header = next(line for line in lines if line.startswith("| OMH skill |"))
+    columns = [cell.strip() for cell in header.strip().strip("|").split("|")]
+    rows: list[dict[str, str]] = []
+    for line in lines:
+        if not line.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) == len(columns):
+            rows.append(dict(zip(columns, cells, strict=True)))
+    return rows
+
+
+class LifecycleGrowthSourceReviewTests(unittest.TestCase):
+    """L7 pins parsed registry fields only; adoption rationale is reviewed by read."""
+
+    def lifecycle_rows(self) -> dict[str, dict[str, str]]:
+        rows = [row for row in registry_rows() if row["OMH skill"].startswith("`lifecycle-growth`")]
+        by_repo = {row["Upstream repo"]: row for row in rows}
+        self.assertEqual(len(by_repo), len(rows), "one lifecycle-growth row per upstream repo")
+        return by_repo
+
+    def test_l7_registry_pin_advances_only_the_reviewed_posthog_row(self):
+        rows = self.lifecycle_rows()
+        self.assertEqual(set(rows), {POSTHOG_REPO, *UNCHANGED_LIFECYCLE_ROWS})
+        posthog = rows[POSTHOG_REPO]
+        self.assertEqual((posthog["reviewed_on"], posthog["reviewed_ref"]), (POSTHOG_REVIEWED_ON, POSTHOG_REVIEWED_REF))
+        for repo, expected in UNCHANGED_LIFECYCLE_ROWS.items():
+            with self.subTest(repo=repo):
+                self.assertEqual((rows[repo]["reviewed_on"], rows[repo]["reviewed_ref"]), expected)
+
+    def test_l7_excluded_upstream_implementation_is_not_imported(self):
+        # Concepts only: no product module imports the reviewed vendor package.
+        offenders = [
+            f"{path.relative_to(ROOT)}:{number}"
+            for path in sorted((ROOT / "src").rglob("*.py"))
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+            if line.lstrip().startswith(("import posthog", "from posthog"))
+        ]
+        self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":
