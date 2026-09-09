@@ -4,3 +4,10 @@
 # install.ps1 to CRLF on checkout and the encoding gate fails on windows-latest.
 install.sh  text eol=lf
 install.ps1 text eol=lf
+
+# Generated skill bodies and references are compared byte-for-byte against their
+# producers (tests/test_agent_board_kanban.py K7, docs --check gates), so their
+# line endings must be identical on every checkout.
+skills/**/*.md text eol=lf
+docs/WORKFLOWS.md text eol=lf
+docs/ROLES.md text eol=lf

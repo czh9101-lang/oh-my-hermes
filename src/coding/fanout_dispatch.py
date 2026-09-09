@@ -3898,7 +3898,16 @@ def _dispatch_unit(
         # stays explainable from the journal alone: the observation schema
         # carries only fixed fields, so the note rides in free-text summary.
         dispatch_summary = f"{dispatch_summary} (shared_artifacts: {', '.join(shared_artifacts['linked'])})"
+    dispatch_recorded: set[str] = set()
+
     def dispatch_observed() -> None:
+        # Idempotent PER ATTEMPT: the pre-spawn recovery below must not
+        # double-record a dispatch the launch callback already observed, and a
+        # retry must still record its own, so the live view switches to the
+        # fresh attempt instead of holding the previous failure.
+        if attempt_id in dispatch_recorded:
+            return
+        dispatch_recorded.add(attempt_id)
         append_journal_observation(paths, {
             'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
             'event': 'worker_dispatch', 'attempt_id': attempt_id, 'status': 'observed',
@@ -4126,6 +4135,9 @@ def _dispatch_unit(
                 return entry
             except FileNotFoundError:
                 capture.finish_pending()
+                # No spawn callback ran, so a launch-gated runner has not
+                # recorded this attempt's dispatch yet; the result below needs it.
+                dispatch_observed()
                 exit_code, output_tail = 127, f"{argv[0]} not found on PATH"
                 failure_diagnostic = diagnostic('launch', 'missing_binary', None, 'not_observed')
             except subprocess.TimeoutExpired as exc:
@@ -4138,10 +4150,12 @@ def _dispatch_unit(
                 failure_diagnostic = diagnostic('timeout', 'deadline', None, 'not_observed')
             except OSError:
                 capture.finish_pending()
+                dispatch_observed()  # Spawn faulted before the launch callback.
                 exit_code, output_tail = 1, 'spawn failed'
                 failure_diagnostic = diagnostic('launch', 'spawn_error', None, 'not_observed')
             except Exception:
                 capture.finish_pending()
+                dispatch_observed()  # A pre-spawn dispatcher fault owns this attempt too.
                 failure_diagnostic = diagnostic('dispatcher', 'internal_error', None, 'not_observed')
                 append_journal_observation(paths, {
                     'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
