@@ -3479,6 +3479,23 @@ class WrapperContractTests(unittest.TestCase):
                 self.assertEqual(payload["chat_response"]["state"]["selected_workflow"], "img-summary")
                 self.assertEqual(payload["chat_response"]["state"]["artifact_schema"], "visual_prompt_card/v1")
                 self.assertEqual(payload["chat_response"]["state"]["observation_schema"], "visual_observation/v1")
+                state = payload["chat_response"]["state"]
+                self.assertEqual(state["generation_receipt_schema"], "visual_generation_receipt/v1")
+                self.assertEqual(state["route_evidence_schema"], "visual_generation_route_evidence/v1")
+                self.assertIn("requested route and the observed route separately", state["route_claim_rule"])
+                self.assertIn("a returned file", state["route_claim_rule"])
+                self.assertEqual(
+                    state["route_warning_kinds"],
+                    [
+                        "route_mismatch",
+                        "unknown_observed_route",
+                        "stale_card_identity",
+                        "artifact_digest_drift",
+                        "provider_response_reuse",
+                    ],
+                )
+                # Schema strings stay out of what a person reads.
+                self.assertNotIn("visual_generation_receipt/v1", payload["chat_response"]["body"])
                 self.assertEqual(payload["chat_response"]["state"]["image_generation_capability"], "unknown")
                 setup = payload["chat_response"]["state"]["image_generation_setup"]
                 self.assertEqual(setup["schema_version"], "image_generation_setup/v1")

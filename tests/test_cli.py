@@ -6167,6 +6167,243 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(status, 2)
             self.assertIn("exactly three colon-separated fields", stderr)
 
+    def test_visual_cli_reports_requested_route_apart_from_observed_route(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = ["--omh-home", str(root / ".omh"), "img-summary"]
+            digest = "a" * 64
+
+            status, stdout, stderr = run_cli(
+                base
+                + [
+                    "prompt-card",
+                    "--kind",
+                    "pr",
+                    "--section",
+                    "summary:What changed:Route evidence contract landed.",
+                    "--json",
+                ],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
+            card = json.loads(stdout)
+            card_id = card["card_id"]
+            card_digest = card["card_digest"]
+            self.assertRegex(card_digest, r"^[a-f0-9]{64}$")
+
+            receipt_args = base + [
+                "receipt",
+                "--card-id",
+                card_id,
+                "--card-digest",
+                card_digest,
+                "--action-id",
+                "act-1",
+                "--attempt-id",
+                "att-1",
+                "--producer",
+                "hermes-image-connector",
+                "--outcome",
+                "succeeded",
+                "--operation",
+                "generate",
+                "--requested-provider",
+                "gpt-image",
+                "--requested-model",
+                "gpt-image-1",
+                "--requested-quality",
+                "high",
+                "--observed-provider",
+                "gpt-image",
+                "--observed-model",
+                "gpt-image-1-mini",
+                "--observed-operation",
+                "generate",
+                "--artifact-ref",
+                "art-1",
+                "--content-sha256",
+                digest,
+                "--mime-type",
+                "image/png",
+                "--byte-size",
+                "4096",
+                "--usage",
+                "image_units=1:measured",
+                "--usage",
+                "cost_usd=0.04:estimated",
+                "--summary",
+                "connector reported one image",
+            ]
+
+            status, stdout, stderr = run_cli(receipt_args, output_json=False)
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(stderr, "")
+            self.assertIn("Visual generation receipt recorded.", stdout)
+            self.assertIn("Outcome: succeeded (stage none)", stdout)
+            self.assertIn("model=gpt-image-1 ", stdout)
+            self.assertIn("model=gpt-image-1-mini ", stdout)
+            self.assertIn("quality=unknown", stdout)
+            self.assertIn("- route_mismatch:model", stdout)
+            self.assertIn("- unknown_observed_route:quality", stdout)
+
+            status, stdout, stderr = run_cli(receipt_args + ["--json"], output_json=False)
+            self.assertEqual(status, 0, stderr)
+            payload = json.loads(stdout)
+            self.assertFalse(payload["minted"], "the same attempt report must not mint twice")
+            receipt = payload["receipt"]
+            receipt_id = receipt["receipt_id"]
+            self.assertEqual(receipt["schema_version"], "visual_generation_receipt/v1")
+            self.assertEqual(receipt["observed_route"]["quality"], "unknown")
+            self.assertEqual(receipt["attested_route_fields"], ["provider", "model", "operation"])
+            self.assertEqual(
+                payload["route_evidence"]["warnings"],
+                ["route_mismatch:model", "unknown_observed_route:quality"],
+            )
+
+            status, stdout, stderr = run_cli(
+                base
+                + [
+                    "observe",
+                    "--card-id",
+                    card_id,
+                    "--type",
+                    "generated-image",
+                    "--path",
+                    str(root / "card.png"),
+                    "--summary",
+                    "Wrapper reported generated PNG.",
+                    "--receipt-id",
+                    receipt_id,
+                    "--json",
+                ],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
+            observation = json.loads(stdout)
+            self.assertEqual(observation["generation_receipt"]["receipt_id"], receipt_id)
+            self.assertEqual(observation["artifact"]["content_sha256"], digest)
+            self.assertNotIn("generation_route_attested", observation["does_not_prove"])
+
+            status, stdout, stderr = run_cli(
+                base + ["status", "--card-id", card_id, "--card-digest", card_digest],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
+            self.assertIn("Visual generation route evidence.", stdout)
+            self.assertIn("Attempts recorded: 1", stdout)
+            self.assertIn("Observations recorded: 1", stdout)
+            self.assertIn("Not evidence: visual QA, attachment, posting, sharing, delivery.", stdout)
+
+            # A failed attempt keeps its stage and refuses to become image evidence.
+            status, stdout, stderr = run_cli(
+                base
+                + [
+                    "receipt",
+                    "--card-id",
+                    card_id,
+                    "--card-digest",
+                    card_digest,
+                    "--action-id",
+                    "act-2",
+                    "--attempt-id",
+                    "att-2",
+                    "--producer",
+                    "hermes-image-connector",
+                    "--outcome",
+                    "failed",
+                    "--failure-stage",
+                    "authorization",
+                    "--operation",
+                    "generate",
+                    "--summary",
+                    "producer reported no authorized path",
+                    "--json",
+                ],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
+            failed_id = json.loads(stdout)["receipt"]["receipt_id"]
+
+            status, _stdout, stderr = run_cli(
+                base
+                + [
+                    "observe",
+                    "--card-id",
+                    card_id,
+                    "--type",
+                    "generated-image",
+                    "--path",
+                    str(root / "card2.png"),
+                    "--summary",
+                    "should not become evidence",
+                    "--receipt-id",
+                    failed_id,
+                ],
+                output_json=False,
+            )
+            self.assertEqual(status, 2)
+            self.assertIn("is not generated-image evidence", stderr)
+
+            # A later report retracts the earlier one, so the earlier receipt id
+            # can no longer mint image evidence for that attempt.
+            status, stdout, stderr = run_cli(
+                base
+                + [
+                    "receipt",
+                    "--card-id",
+                    card_id,
+                    "--card-digest",
+                    card_digest,
+                    "--action-id",
+                    "act-1",
+                    "--attempt-id",
+                    "att-1",
+                    "--producer",
+                    "hermes-image-connector",
+                    "--outcome",
+                    "failed",
+                    "--failure-stage",
+                    "validation",
+                    "--operation",
+                    "generate",
+                    "--summary",
+                    "producer retracted the earlier report",
+                    "--json",
+                ],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(json.loads(stdout)["receipt"]["supersedes_receipt_ref"], receipt_id)
+
+            status, _stdout, stderr = run_cli(
+                base
+                + [
+                    "observe",
+                    "--card-id",
+                    card_id,
+                    "--type",
+                    "generated-image",
+                    "--path",
+                    str(root / "card3.png"),
+                    "--summary",
+                    "retracted attempt",
+                    "--receipt-id",
+                    receipt_id,
+                ],
+                output_json=False,
+            )
+            self.assertEqual(status, 2)
+            self.assertIn("names a superseded receipt", stderr)
+            self.assertIn("now reports failed", stderr)
+
+            status, stdout, stderr = run_cli(
+                base + ["status", "--card-id", card_id, "--card-digest", card_digest],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
+            self.assertIn(f"({receipt_id}) [superseded]", stdout)
+            self.assertIn("Attempts recorded: 3", stdout)
+
     def test_web_qa_cli_records_package_capture_and_verdict_metadata(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

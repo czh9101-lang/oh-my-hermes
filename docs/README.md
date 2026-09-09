@@ -117,6 +117,7 @@ Use [Capabilities](CAPABILITIES.md) for the manifest contract and
 | Record, approve, and replay offline browser workflow traces | [Browser Workflow Traces](BROWSER-WORKFLOW-TRACES.md) |
 | Promote an approved browser trace into a project-local skill with exact-diff approval | [Browser Skill Promotion](BROWSER-SKILL-PROMOTION.md) |
 | Host-supplied session activity receipts for cross-workflow learning | [Session Activity Receipts](SESSION-ACTIVITY-RECEIPTS.md) |
+| Bind an image result to the route a producer attested, apart from the route requested | [Visual Generation Receipts](VISUAL-GENERATION-RECEIPTS.md) |
 | Common oh-my capability axes and gaps | [Parity Matrix](PARITY.md) |
 | Implemented application surfaces | [Application Cases](APPLICATION_CASES.md) |
 | Public roadmap | [Roadmap](ROADMAP.md) |

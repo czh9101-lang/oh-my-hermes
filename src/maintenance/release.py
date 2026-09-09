@@ -214,7 +214,12 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # evidence contract reaching the one lane that decides voice adoption, plus
 # the two non-promotion lines on the lanes a reader would otherwise mistake
 # for it, not per-section padding; warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 411497
+# 411497 -> 411497_PENDING: `img-summary` names `visual_generation_receipt/v1` in
+# its expected outputs (#1425). The capability section renders skill names
+# rather than the rule text; the requested-versus-observed contract itself
+# lives in the profile body and in `docs/VISUAL-GENERATION-RECEIPTS.md`;
+# warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 411498
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -756,7 +761,17 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # integrity first. The field-level contract lives in
 # `docs/REALTIME-VOICE-TRIAL-RECEIPTS.md`, outside this budget; warranted
 # growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 922941
+# 922941 -> 922941_PENDING: `img-summary` binds image results to
+# `visual_generation_receipt/v1` (#1425): two outputs, one artifact
+# expectation, three safety rules, and one quality-bar line separating
+# requested route from observed route. These belong in the always-loaded body
+# because the overclaim happens at the moment the result is reported -- a
+# backend that accepts a requested model without attesting it makes a returned
+# file read as proof of that model, and a rule discovered afterwards arrives
+# after the claim. The field-level contract, the warning vocabulary, and the
+# legacy projection live in `docs/VISUAL-GENERATION-RECEIPTS.md`, outside this
+# budget; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 923796
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

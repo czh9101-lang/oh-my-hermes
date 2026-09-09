@@ -535,7 +535,7 @@ _HARNESSES = [
         "Prepare source-specific, premium domain-aware, and poster-archetype-aware visual prompt cards for meetings, reports, PRs, issue feedback, research briefings, and release announcements without claiming image generation.",
         "Use when Hermes should turn supplied source or structured card fields into a provider-neutral image-generation prompt card with an appropriate format profile, domain theme, poster archetype, premium background plate/texture/camera direction, and stable OMH generated mark.",
         ("source kind", "visual format", "poster archetype", "aspect ratio", "audience", "language mode", "headline or source text", "structured sections or extractive source excerpts"),
-        ("visual_prompt_card/v1", "source-specific visual format", "detected domain_key", "domain-aware visual theme", "poster_archetype/v1", "poster archetype visual grammar", "premium background plate/scene/texture/camera/lighting direction", "image-safe card copy", "generation prompt", "negative prompt", "quality checks", "available wrapper actions"),
+        ("visual_prompt_card/v1", "source-specific visual format", "detected domain_key", "domain-aware visual theme", "poster_archetype/v1", "poster archetype visual grammar", "premium background plate/scene/texture/camera/lighting direction", "image-safe card copy", "generation prompt", "negative prompt", "quality checks", "available wrapper actions", "visual_generation_receipt/v1 when a producer reports an image attempt", "requested route separate from observed route"),
         ("prompt card is prepared", "copy mode is explicit", "format profile is source-specific", "visual theme is domain-aware", "poster archetype is explicit", "image generation, visual QA, and delivery remain observed-only"),
         (
             "validate visual_prompt_card/v1",
@@ -547,6 +547,8 @@ _HARNESSES = [
             "check scene_quality/background_plate/material_texture/depth_lighting/camera_treatment guidance",
             "ensure raw source uses extractive_draft copy mode",
             "record visual_observation/v1 only for supplied generated image, QA, or delivery evidence",
+            "record visual_generation_receipt/v1 only from a producer report, keeping unattested route fields unknown",
+            "check requested route against observed route and surface mismatch, unknown route, stale card, and digest drift warnings",
         ),
         "If image capability is unavailable, show choose/setup image tool fallback actions plus copy/revise/status actions, and keep generation prompt-only until capability is connected.",
         ("visual_card_prepared", "generation_action_available_when_connected", "visual_observation_recorded_when_available"),

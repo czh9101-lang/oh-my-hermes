@@ -1822,6 +1822,28 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("Do not call image providers", templates["img-summary"].content)
         self.assertIn("image_generation_setup/v1", templates["img-summary"].content)
         self.assertIn("Preferred harness for this skill: `img-summary`", templates["img-summary"].content)
+        # Route evidence rides the same surfaces as the prompt card, so the
+        # receipt contract and the requested-versus-observed rule cannot be
+        # present on one and missing from another.
+        self.assertIn(
+            "visual_generation_receipt/v1 when a producer reports an image attempt",
+            definitions["img-summary"].expected_outputs,
+        )
+        self.assertIn(
+            "requested route separate from observed route",
+            definitions["img-summary"].expected_outputs,
+        )
+        self.assertIn(
+            "visual_generation_receipt/v1 when a producer reports an image attempt",
+            harnesses["img-summary"].expected_outputs,
+        )
+        safety = " ".join(definitions["img-summary"].safety_rules)
+        self.assertIn("visual_generation_receipt/v1", safety)
+        self.assertIn("Report requested route apart from observed route", safety)
+        self.assertIn("Do not infer an observed provider, model, or quality", safety)
+        self.assertIn("is not generated-image evidence", safety)
+        self.assertIn("visual_generation_receipt/v1", templates["img-summary"].content)
+        self.assertIn("requested route apart from observed route", templates["img-summary"].content)
 
     def test_design_quality_gate_contract_surfaces_stay_in_sync(self) -> None:
         definitions = {definition.name: definition for definition in builtin_definitions()}

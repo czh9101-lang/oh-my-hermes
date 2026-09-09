@@ -59,6 +59,23 @@ CAPABILITY_STATES = ("unknown", "prompt_only", "connected")
 OBSERVATION_TYPES = ("generated_image_observed", "visual_qa_observed", "delivery_observed")
 SUPPORTED_IMAGE_MIME_TYPES = ("image/png", "image/jpeg", "image/webp")
 
+# What a generated-image observation carries when a `visual_generation_receipt/v1`
+# backs it. Deliberately a reference plus the two facts a reader needs in order
+# not to overclaim from the observation alone -- which attempt produced it, and
+# the digest of the bytes it is about. The route is not among them: it lives on
+# the receipt, where the attested set travels with it, so an observation can
+# never carry a provider or model without the attestation that qualifies it.
+VISUAL_GENERATION_BINDING_KEYS = (
+    "action_id",
+    "attempt_id",
+    "byte_size",
+    "card_digest",
+    "content_sha256",
+    "effect_id",
+    "producer",
+    "receipt_id",
+)
+
 SAFE_VISUAL_ACTIONS = (
     "show_visual_prompt_card",
     "copy_visual_prompt",
@@ -595,6 +612,7 @@ _MIME_BY_SUFFIX = {
 }
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _VISUAL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,180}$")
+_SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 
 
 def new_visual_card_id(
@@ -606,6 +624,28 @@ def new_visual_card_id(
     basis = payload or {"source_kind": normalize_source_kind(kind), "created_at": _stamp(now) if now else "deterministic"}
     digest = sha256_text(_stable_json(basis))[:12]
     return f"{_slugify(normalize_source_kind(kind))}-{digest}"
+
+
+def visual_card_identity_digest(card: dict[str, Any]) -> str:
+    """The sha256 digest of one prompt card's identity payload.
+
+    Exactly the fields `new_visual_card_id` already hashes, over the full digest
+    rather than its first twelve characters. A receipt binds this rather than
+    the card id because ids are short and revisions are what a stale-card warning
+    is about: revise the copy, the language, the archetype, or the aspect ratio
+    and the digest moves even when a caller reuses the id.
+    """
+    return sha256_text(_stable_json(_visual_card_identity_payload(card)))
+
+
+def valid_visual_id(value: str) -> bool:
+    """Whether a card or observation identifier is safe to put in a path.
+
+    Public because the receipt contract binds card ids too, and a second
+    spelling of this rule is how one surface starts accepting an id the other
+    refuses.
+    """
+    return _valid_visual_id(str(value))
 
 
 def normalize_source_kind(kind: str) -> str:
@@ -770,6 +810,11 @@ def build_visual_prompt_card(
     if created_at is not None:
         record["created_at"] = created_at
     record["card_id"] = card_id or new_visual_card_id(source_kind, payload=_visual_card_identity_payload(record))
+    # Published on the card because a receipt binds the revision, not the id, and
+    # a caller that has to recompute a digest to file one will eventually file it
+    # against the wrong revision. Derived from the identity payload alone, so
+    # carrying it here cannot change it.
+    record["card_digest"] = visual_card_identity_digest(record)
     errors = validate_visual_prompt_card(record)
     if errors:
         raise ValueError("; ".join(errors))
@@ -816,6 +861,8 @@ def validate_visual_prompt_card(record: dict[str, Any]) -> list[str]:
         errors.append("schema_version must be visual_prompt_card/v1")
     if not _valid_visual_id(str(record.get("card_id", ""))):
         errors.append("card_id must contain only letters, digits, and hyphens, and must not contain path separators")
+    if "card_digest" in record and not _SHA256_RE.match(str(record.get("card_digest", ""))):
+        errors.append("card_digest must be the sha256 hex digest of the card identity payload")
     if record.get("status") != "prepared":
         errors.append("status must be prepared")
     if record.get("copy_mode") not in {"structured", "extractive_draft"}:
@@ -1002,9 +1049,16 @@ def build_visual_observation(
             "kind": "image",
             "path_or_uri": str(path_or_uri).strip(),
             "mime_type": _mime_type(path_or_uri, mime_type),
+            "content_sha256": "",
+            "byte_size": None,
         },
+        # Always empty here. An observation is built from what a wrapper or user
+        # reported about a file; binding it to an attempt and a route is a
+        # separate step that requires a succeeded `visual_generation_receipt/v1`,
+        # so this record starts out saying it proves no route at all.
+        "generation_receipt": {},
         "evidence_summary": str(evidence_summary).strip(),
-        "does_not_prove": _does_not_prove(canonical_type),
+        "does_not_prove": _does_not_prove(canonical_type, receipt_bound=False),
     }
     errors = validate_visual_observation(record)
     if errors:
@@ -1045,8 +1099,81 @@ def validate_visual_observation(record: dict[str, Any]) -> list[str]:
             errors.append("artifact.kind must be image")
         if artifact.get("mime_type") not in SUPPORTED_IMAGE_MIME_TYPES:
             errors.append(f"artifact.mime_type must be one of {', '.join(SUPPORTED_IMAGE_MIME_TYPES)}")
+        errors.extend(_artifact_digest_errors(artifact))
     if not isinstance(record.get("does_not_prove"), list):
         errors.append("does_not_prove must be a list")
+    errors.extend(_generation_binding_errors(record))
+    return errors
+
+
+def _artifact_digest_errors(artifact: dict[str, Any]) -> list[str]:
+    """The two artifact fields a receipt binding fills in, when they are present.
+
+    Both are absent on a record written before receipts existed, and both stay
+    empty on an unbound observation. Neither is ever derived from the file: a
+    digest on this record means a producer reported those bytes.
+    """
+    errors: list[str] = []
+    if "content_sha256" in artifact:
+        digest = artifact.get("content_sha256")
+        if not isinstance(digest, str) or (digest and not _SHA256_RE.match(digest)):
+            errors.append("artifact.content_sha256 must be empty or a sha256 hex digest")
+    if "byte_size" in artifact:
+        size = artifact.get("byte_size")
+        if size is not None and (not isinstance(size, int) or isinstance(size, bool) or size < 1):
+            errors.append("artifact.byte_size must be null or a positive integer")
+    return errors
+
+
+def _generation_binding_errors(record: dict[str, Any]) -> list[str]:
+    """Whether the receipt binding on an observation is the shape it must be.
+
+    The key is absent on legacy records, which is why absence is not a fault:
+    those records are read through the explicit projection in
+    `workflows/visual_generation_receipts.py`, where every route field is
+    unknown. When the key is present it is either empty or a complete binding,
+    and a generated-image observation must say `generation_route_attested` in
+    `does_not_prove` exactly when it carries no binding -- so a reader can never
+    find a record that is silent about a route it also cannot name.
+    """
+    if "generation_receipt" not in record:
+        return []
+    binding = record.get("generation_receipt")
+    if not isinstance(binding, dict):
+        return ["generation_receipt must be an object"]
+    errors: list[str] = []
+    if binding and record.get("observation_type") != "generated_image_observed":
+        errors.append(
+            "generation_receipt binds a generated_image_observed observation only; "
+            "visual QA and delivery are separate evidence states"
+        )
+    if binding:
+        missing = sorted(set(VISUAL_GENERATION_BINDING_KEYS) - set(binding))
+        if missing:
+            errors.append(f"generation_receipt is missing keys: {missing}")
+        extra = sorted(set(binding) - set(VISUAL_GENERATION_BINDING_KEYS))
+        if extra:
+            errors.append(f"generation_receipt has unsupported keys: {extra}")
+        digest = binding.get("content_sha256")
+        if not isinstance(digest, str) or not _SHA256_RE.match(digest):
+            errors.append("generation_receipt.content_sha256 must be a sha256 hex digest")
+        card_digest = binding.get("card_digest")
+        if not isinstance(card_digest, str) or not _SHA256_RE.match(card_digest):
+            errors.append("generation_receipt.card_digest must be a sha256 hex digest")
+        artifact = record.get("artifact")
+        if isinstance(artifact, dict) and isinstance(digest, str) and str(artifact.get("content_sha256", "")) != digest:
+            errors.append("artifact.content_sha256 must match generation_receipt.content_sha256")
+    claims = record.get("does_not_prove")
+    if record.get("observation_type") == "generated_image_observed" and isinstance(claims, list):
+        route_claimed = "generation_route_attested" in claims
+        if binding and route_claimed:
+            errors.append(
+                "does_not_prove must drop generation_route_attested once a receipt binds the observation"
+            )
+        if not binding and not route_claimed:
+            errors.append(
+                "does_not_prove must include generation_route_attested when no receipt binds the observation"
+            )
     return errors
 
 
@@ -1080,6 +1207,7 @@ def list_visual_observations(paths: OmhPaths, *, card_id: str | None = None) -> 
 
 def summarize_visual_observation(record: dict[str, Any]) -> dict[str, str]:
     artifact = record.get("artifact", {}) if isinstance(record.get("artifact"), dict) else {}
+    binding = record.get("generation_receipt", {}) if isinstance(record.get("generation_receipt"), dict) else {}
     return {
         "observation_id": str(record.get("observation_id", "")),
         "visual_card_id": str(record.get("visual_card_id", "")),
@@ -1088,6 +1216,11 @@ def summarize_visual_observation(record: dict[str, Any]) -> dict[str, str]:
         "observed_at": str(record.get("observed_at", "")),
         "artifact": str(artifact.get("path_or_uri", "")),
         "mime_type": str(artifact.get("mime_type", "")),
+        # Empty on a legacy or unbound record, which is the index saying the
+        # route behind these bytes was never observed rather than that it
+        # matched whatever was configured.
+        "generation_receipt_id": str(binding.get("receipt_id", "")),
+        "content_sha256": str(artifact.get("content_sha256", "")),
     }
 
 
@@ -1392,9 +1525,17 @@ def _mime_type(path_or_uri: str, mime_type: str) -> str:
     return _MIME_BY_SUFFIX.get(suffix, "")
 
 
-def _does_not_prove(observation_type: str) -> list[str]:
+def _does_not_prove(observation_type: str, *, receipt_bound: bool) -> list[str]:
     if observation_type == "generated_image_observed":
-        return ["visual_qa_passed", "delivered"]
+        # An unbound generated-image observation says a file was reported and
+        # nothing more. It cannot name the provider, model, quality, operation,
+        # or attempt behind those bytes, so it says so on the record rather than
+        # letting a reader infer one from configuration or the file existing.
+        return ["visual_qa_passed", "delivered"] if receipt_bound else [
+            "visual_qa_passed",
+            "delivered",
+            "generation_route_attested",
+        ]
     if observation_type == "visual_qa_observed":
         return ["delivered"]
     return ["visual_qa_passed"] if observation_type == "delivery_observed" else []

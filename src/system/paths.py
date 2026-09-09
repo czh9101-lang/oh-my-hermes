@@ -259,6 +259,10 @@ class OmhPaths:
         return self.visual_observations_dir / "index.json"
 
     @property
+    def visual_generation_receipts_path(self) -> Path:
+        return self.visual_dir / "generation_receipts.jsonl"
+
+    @property
     def web_visual_qa_dir(self) -> Path:
         return self.omh_home / "web-visual-qa"
 
