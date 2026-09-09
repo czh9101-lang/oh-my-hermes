@@ -45,6 +45,7 @@ from .policy import (
     MEMORY_CURATION_INTENT_PHRASES,
     MEMORY_NEW_CAPTURE_PHRASES,
     MEMORY_NEW_SCOPE_PHRASES,
+    MEMORY_PROVIDER_LIFECYCLE_READINESS_PHRASES,
     OMH_INVOCATION_MARKERS,
     POINT_IN_TIME_WEB_GUARD,
     SKILL_INVOCATION_MARKERS,
@@ -207,6 +208,7 @@ _GUARDED_OPERATOR_FAST_PATH_IDS = frozenset(
         "harness_session_inventory_before_toolbelt_or_observability",
         "img_summary_before_materials_or_delivery",
         "memory_curation_before_generic_clarification",
+        "memory_provider_lifecycle_before_toggle_or_file_operation",
         "media_input_operator_before_generic_content_or_direct",
         "ops_observability_before_generic_loop",
         "provider_profile_posture_before_toolbelt_readiness",
@@ -222,6 +224,7 @@ _GUARDED_OPERATOR_FAST_PATH_PRIORITY = (
     "coding_progress_status_before_clarify",
     "ops_observability_before_generic_loop",
     "doctor_health_before_skill_catalog",
+    "memory_provider_lifecycle_before_toggle_or_file_operation",
     "provider_profile_posture_before_toolbelt_readiness",
     "toolbelt_readiness_before_generic_or_visual_fallback",
     "workspace_file_operator_before_materials_or_coding",
@@ -3593,6 +3596,25 @@ _OPERATOR_SURFACE_FAST_PATH_RULES: tuple[tuple[str, tuple[str, ...], str, str], 
         "Clear local run-efficiency request; prepare a supplied-metadata report with provider and host gaps explicit.",
     ),
     (
+        "external-connector-readiness",
+        (
+            "memory provider readiness",
+            "memory provider posture",
+            "memory provider lifecycle",
+            "memory provider adoption",
+            "memory provider retention",
+            "memory provider portability",
+            "memory provider sync failure",
+            "switch memory provider",
+            "switching memory providers",
+            "disable memory provider",
+            "delete provider memory",
+            "export memory provider data",
+        ),
+        "operator_surface_fast_path:memory_provider_lifecycle",
+        "Clear memory-provider lifecycle request; assess isolation, hooks, retention, deletion, export, and switching before the provider is enabled or removed.",
+    ),
+    (
         "provider-profile-posture",
         (
             "prepare provider profile posture",
@@ -4585,6 +4607,11 @@ def _operator_surface_extra_markers(skill: str, phrase: str) -> tuple[str, ...]:
         return ("guard:memory_new", "guard_fast_path:memory_new_before_existing_memory_curation")
     if skill == "memory-sync":
         return ("guard:memory_curation", "guard_fast_path:memory_curation_before_generic_clarification")
+    if skill == "external-connector-readiness":
+        return (
+            "guard:memory_provider_lifecycle",
+            "guard_fast_path:memory_provider_lifecycle_before_toggle_or_file_operation",
+        )
     if skill == "executor-runtime-readiness":
         return ("guard:executor_runtime_readiness",)
     if skill == "harness-session-inventory":
@@ -5390,6 +5417,11 @@ _CAPABILITY_TOGGLE_ON_CUES = (
 # A toggle in the USER'S OWN product is not an OMH capability change. Without
 # these, "add a dark mode toggle to my app" would read as (target + off/on).
 _CAPABILITY_TOGGLE_BLOCKERS = (
+    # An optional memory provider is an external backend, not an OMH
+    # capability family. "disable memory provider" reads as a family toggle on
+    # its verb and its `memory` cue, and toggling the family off would answer a
+    # question about the provider's reversibility by editing the install.
+    *MEMORY_PROVIDER_LIFECYCLE_READINESS_PHRASES,
     "dark mode",
     "feature flag",
     "in my app",

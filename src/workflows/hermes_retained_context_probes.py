@@ -101,13 +101,29 @@ def _state_db_channel(path: Path) -> RetainedContextChannel:
     )
 
 
+# A plugin marker says a provider can load. It says nothing about what
+# disabling it, deleting its records, exporting them, restoring them, or a
+# failed synchronization actually does, and those are the facts that decide
+# whether selecting the provider is reversible.
+_UNESTABLISHED_PROVIDER_LIFECYCLE_OPERATIONS = (
+    "disable",
+    "local_cache_removal",
+    "provider_side_deletion",
+    "export",
+    "restore",
+    "synchronization_failure",
+)
+
+
 def _memory_provider_channel(paths: OmhPaths, provider: ProviderSelection) -> RetainedContextChannel:
     memory_plugin_root = paths.hermes_plugins_dir / "memory"
     source_plugin_root = paths.hermes_home / "hermes-agent" / "plugins" / "memory"
-    metrics = {
+    metrics: dict[str, int | str | bool] = {
         "provider_configured": provider.configured,
         "provider_id_safe": provider.safe,
         "plugin_marker_exists": False,
+        "lifecycle_semantics_established": False,
+        "unestablished_lifecycle_operations": ", ".join(_UNESTABLISHED_PROVIDER_LIFECYCLE_OPERATIONS),
     }
     if not provider.configured:
         return {
@@ -147,7 +163,9 @@ def _memory_provider_channel(paths: OmhPaths, provider: ProviderSelection) -> Re
         "metrics": metrics,
         "improves": ["durable user/project memory", "provider-specific recall"],
         "message": (
-            "A configured Hermes memory provider has a plugin marker."
+            "A configured Hermes memory provider has a plugin marker. Disable, local cache removal, "
+            "provider-side deletion, export, restore, and failed-synchronization behaviour stay "
+            "unestablished until a memory provider posture records them."
             if available
             else "Hermes config selects a safe memory provider id, but no plugin marker was found."
         ),

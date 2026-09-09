@@ -180,6 +180,10 @@ class OmhPaths:
         return self.operations_dir / "provider-profile-postures"
 
     @property
+    def memory_provider_postures_dir(self) -> Path:
+        return self.operations_dir / "memory-provider-postures"
+
+    @property
     def operations_index_path(self) -> Path:
         return self.operations_dir / "index.json"
 

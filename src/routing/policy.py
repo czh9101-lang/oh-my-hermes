@@ -2980,8 +2980,28 @@ _OPS_OBSERVABILITY_CONNECTOR_READINESS_BLOCKERS = (
     "멀티모달 커넥터",
     "멀티모달 라우팅",
 )
-_PUBLIC_PLUGIN_CONNECTOR_READINESS_PHRASES = (
+# Enabling, switching, pausing, or removing an optional memory provider is a
+# lifecycle and portability question about an external backend, not a review of
+# what Hermes already remembers. These phrases carry that intent, and naming
+# them here is what holds the memory-curation guard back from claiming them.
+MEMORY_PROVIDER_LIFECYCLE_READINESS_PHRASES = (
     "memory provider readiness",
+    "memory provider posture",
+    "memory provider lifecycle",
+    "memory provider adoption",
+    "memory provider retention",
+    "memory provider portability",
+    "memory provider sync failure",
+    "switch memory provider",
+    "switching memory providers",
+    "disable memory provider",
+    "delete provider memory",
+    "export memory provider data",
+)
+# One list, read by both the policy guard and the recommendation scorer, so a
+# phrase can never be creditable in one place and invisible in the other.
+PUBLIC_PLUGIN_CONNECTOR_READINESS_EXACT_PHRASES = (
+    *MEMORY_PROVIDER_LIFECYCLE_READINESS_PHRASES,
     "search provider connector readiness",
     "social automation connector readiness",
     "twitter automation connector readiness",
@@ -4935,6 +4955,21 @@ PROVIDER_PROFILE_POSTURE_GUARD = RoutingGuardRule(
     why="Matched provider/profile posture language; prepare capability and secret-presence metadata without credential validation or provider calls.",
     activation_status="active",
 )
+MEMORY_PROVIDER_LIFECYCLE_GUARD = RoutingGuardRule(
+    id="memory_provider_lifecycle_before_toggle_or_file_operation",
+    rule=(
+        "Enabling, switching, pausing, deleting, or exporting an optional memory provider should route to "
+        "external-connector-readiness before a capability toggle, a file operation, or native-memory curation."
+    ),
+    matched_label="guard:memory_provider_lifecycle",
+    preferred_skills=("external-connector-readiness",),
+    score_boost=60,
+    why=(
+        "Matched memory-provider lifecycle language; reversibility, isolation, retention, deletion, export, and "
+        "switching must be assessed before the provider is enabled or removed."
+    ),
+    activation_status="active",
+)
 HARNESS_SESSION_INVENTORY_GUARD = RoutingGuardRule(
     id="harness_session_inventory_before_toolbelt_or_observability",
     rule="Cross-harness session, MCP inventory, connector drift, or worktree inventory requests should route to harness-session-inventory before setup readiness.",
@@ -5682,6 +5717,8 @@ def _active_routing_guard_rules_cached(
         rules.append(EXECUTOR_RUNTIME_READINESS_GUARD)
     if _harness_session_inventory_guard_applies(normalized_query, query_tokens):
         rules.append(HARNESS_SESSION_INVENTORY_GUARD)
+    if _memory_provider_lifecycle_guard_applies(normalized_query):
+        rules.append(MEMORY_PROVIDER_LIFECYCLE_GUARD)
     if _provider_profile_posture_guard_applies(normalized_query):
         rules.append(PROVIDER_PROFILE_POSTURE_GUARD)
     if _toolbelt_readiness_guard_applies(normalized_query, query_tokens):
@@ -8166,6 +8203,10 @@ def _executor_readiness_check_requested(normalized_query: str, query_tokens: set
     return named_executor and readiness
 
 
+def _memory_provider_lifecycle_guard_applies(normalized_query: str) -> bool:
+    return _contains_phrase(normalized_query, MEMORY_PROVIDER_LIFECYCLE_READINESS_PHRASES)
+
+
 def _provider_profile_posture_guard_applies(normalized_query: str) -> bool:
     return _contains_phrase(
         normalized_query,
@@ -8245,7 +8286,7 @@ def _toolbelt_readiness_guard_applies(normalized_query: str, query_tokens: set[s
 
 
 def _public_plugin_connector_readiness_requested(normalized_query: str) -> bool:
-    if _contains_phrase(normalized_query, _PUBLIC_PLUGIN_CONNECTOR_READINESS_PHRASES):
+    if _contains_phrase(normalized_query, PUBLIC_PLUGIN_CONNECTOR_READINESS_EXACT_PHRASES):
         return True
     return _contains_phrase(normalized_query, PUBLIC_PLUGIN_CONNECTOR_ALIAS_PHRASES) and _contains_phrase(
         normalized_query,
@@ -8317,6 +8358,8 @@ def _browser_operator_guard_applies(normalized_query: str, query_tokens: set[str
 
 
 def _workspace_file_operator_guard_applies(normalized_query: str, query_tokens: set[str]) -> bool:
+    if _memory_provider_lifecycle_guard_applies(normalized_query):
+        return False
     if _contains_phrase(normalized_query, _WORKSPACE_FILE_OPERATOR_BLOCKERS):
         return False
     if _contains_phrase(normalized_query, _WORKSPACE_FILE_OPERATOR_MATERIALS_BLOCKERS):
