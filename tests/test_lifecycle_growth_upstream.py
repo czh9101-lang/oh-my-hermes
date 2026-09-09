@@ -322,7 +322,9 @@ class LifecycleGrowthUpstreamTests(unittest.TestCase):
             self.assertEqual(contracts.validate_lifecycle_growth_artifact(record), [])
             self.assertTrue(contracts.validate_lifecycle_growth_artifact(dict(record, evaluation_context={})))
         result = contracts.evaluate_lifecycle_growth(fixture.experiment(), fixture.readout())
-        self.assertEqual(set(result), {"schema_version", "interpretation_state", "disposition", "assignment_unit", "exposure_unit", "actual_exposure_count", "delivery_count", "runtime_days_observed", "artifact_errors", "claim_boundary"})
+        self.assertEqual(set(result), {"schema_version", "interpretation_state", "disposition", "assignment_unit", "exposure_unit",
+                                       "actual_exposure_count", "delivery_count", "runtime_days_observed", "artifact_errors",
+                                       "analysis_run_state", "analysis_delay_state", "analysis_observed_at", "claim_boundary"})
         self.assertEqual(result["disposition"], "ship")
         self.assertEqual((result["delivery_count"], result["actual_exposure_count"]), (7, 6))
         self.assertEqual((result["assignment_unit"], result["exposure_unit"]), ("account", "account"))
@@ -533,7 +535,7 @@ POSTHOG_REVIEWED_REF = "ae880d309f33eaf236cb4e46991f249a88e1c16e"
 POSTHOG_REVIEWED_ON = "2026-09-09"
 # Sibling lifecycle-growth rows must not move with the PostHog review.
 UNCHANGED_LIFECYCLE_ROWS = {
-    "https://github.com/growthbook/growthbook": ("2026-09-07", "82b82d08f864af40e07974612803ba18fa8b69cf"),
+    "https://github.com/growthbook/growthbook": ("2026-09-09", "095f61643e148f03ce0b442c78e6030c045f6d7b"),
     "https://github.com/dittofeed/dittofeed": ("2026-09-07", "52b2bee909744d07dd5d409fd3974d4b95c66766"),
     "https://github.com/novuhq/novu": ("2026-09-08", "c7bc772fc0b7722909ef1bdb9bcf04991996fdd8"),
 }

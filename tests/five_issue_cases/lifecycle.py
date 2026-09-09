@@ -218,7 +218,7 @@ class _Scenario:
 POSTHOG_REPO = "https://github.com/PostHog/posthog"
 POSTHOG_REVIEWED_REF = "ae880d309f33eaf236cb4e46991f249a88e1c16e"
 UNCHANGED_LIFECYCLE_ROWS: dict[str, tuple[str, str]] = {
-    "https://github.com/growthbook/growthbook": ("2026-09-07", "82b82d08f864af40e07974612803ba18fa8b69cf"),
+    "https://github.com/growthbook/growthbook": ("2026-09-09", "095f61643e148f03ce0b442c78e6030c045f6d7b"),
     "https://github.com/dittofeed/dittofeed": ("2026-09-07", "52b2bee909744d07dd5d409fd3974d4b95c66766"),
     "https://github.com/novuhq/novu": ("2026-09-08", "c7bc772fc0b7722909ef1bdb9bcf04991996fdd8"),
 }
