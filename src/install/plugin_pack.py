@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.resources as resources
 import importlib.util
-import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,7 +9,7 @@ from typing import Any
 
 from ..version import __version__
 from ..hashutil import sha256_file, sha256_text
-from ..local_store import atomic_write_json, ensure_dir, read_json_object, utc_now
+from ..local_store import atomic_write_json, discard_path, ensure_dir, is_directory_link, read_json_object, utc_now
 from ..paths import OmhPaths
 from ..plugin_bundle.omh.metadata import PROVIDED_HOOKS, PROVIDED_TOOLS, REQUIRED_HOOKS
 
@@ -117,7 +116,11 @@ def install_plugin_bundle(paths: OmhPaths, *, force: bool = False, dry_run: bool
     source_records = bundled_plugin_records()
     existing_manifest = read_plugin_manifest(target)
     dirty = plugin_local_modifications(existing_manifest, target)
-    unmanaged = target.exists() and existing_manifest is None
+    # `is_directory_link` as well as `exists`: `Path.exists` follows the link,
+    # so a dangling plugin symlink or junction reads as absent and would slip
+    # past the ownership guard into the replacement path without --force. The
+    # guard asks whether anything occupies the path OMH cannot prove it wrote.
+    unmanaged = (target.exists() or is_directory_link(target)) and existing_manifest is None
     if unmanaged and not force:
         raise PluginPackError(f"{target} exists without an OMH plugin manifest; use --force to replace it")
     if dirty and not force:
@@ -335,17 +338,22 @@ def _copy_plugin_bundle(target: Path, file_records: list[dict[str, str]]) -> Non
     tmp = parent / f".{target.name}.installing"
     backup = parent / f".{target.name}.previous"
     ensure_dir(parent)
-    shutil.rmtree(tmp, ignore_errors=True)
-    shutil.rmtree(backup, ignore_errors=True)
+    # `discard_path`, not `shutil.rmtree`: an older OMH layout symlinked the
+    # plugin directory at a shared location, and rmtree cannot unlink a
+    # symlink. The renamed-aside `.omh.previous` link therefore survived every
+    # update, and the next update's `target.rename(backup)` hit ENOTDIR
+    # because rename(2) refuses to rename a directory over a non-directory.
+    discard_path(tmp, ignore_errors=True)
+    discard_path(backup, ignore_errors=True)
     try:
         _copy_resource_tree(root, tmp)
         atomic_write_json(tmp / PLUGIN_MANAGED_MANIFEST, _new_plugin_manifest(target, file_records))
         if target.exists():
             target.rename(backup)
         tmp.rename(target)
-        shutil.rmtree(backup, ignore_errors=True)
+        discard_path(backup, ignore_errors=True)
     except OSError:
-        shutil.rmtree(tmp, ignore_errors=True)
+        discard_path(tmp, ignore_errors=True)
         if backup.exists() and not target.exists():
             backup.rename(target)
         raise
