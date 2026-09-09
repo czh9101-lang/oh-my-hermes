@@ -18,11 +18,11 @@ from .product_discovery_artifacts import (
 
 _COMMON_KEYS = frozenset({"schema_version", "artifact_id", "discovery_id", "status", "claim_boundary"})
 _SCHEMA_KEYS = {
-    "discovery_decision_frame/v1": _COMMON_KEYS | {"problem_ref", "segment_ref", "alternative_refs", "decision_owner_ref", "learning_budget_ref", "deadline_at", "kill_criteria_refs"},
+    "discovery_decision_frame/v1": _COMMON_KEYS | {"problem_ref", "segment_ref", "segment_definition_state", "alternative_refs", "decision_owner_ref", "learning_budget_ref", "deadline_at", "kill_criteria_refs"},
     "discovery_evidence_ledger/v1": _COMMON_KEYS | {"entries"},
     "customer_discovery_plan/v1": _COMMON_KEYS | {"participant_criteria_ref", "interview_focuses", "consent_privacy_ref", "bias_control_refs", "human_task_ref", "evidence_reentry_required"},
     "assumption_test_portfolio/v1": _COMMON_KEYS | {"assumptions"},
-    "discovery_decision_receipt/v1": _COMMON_KEYS | {"problem_ref", "segment_ref", "decision", "problem_gate", "precommitted_test_ids", "eligible_evidence_refs", "rejected_hypothesis_ids", "residual_risk_refs", "next_route"},
+    "discovery_decision_receipt/v1": _COMMON_KEYS | {"problem_ref", "segment_ref", "segment_definition_state", "decision", "problem_gate", "solution_work_permitted", "missing_audience_evidence_refs", "precommitted_test_ids", "eligible_evidence_refs", "rejected_hypothesis_ids", "residual_risk_refs", "next_route"},
     "initial_gtm_hypothesis/v1": _COMMON_KEYS | {"beachhead_segment_ref", "buyer_ref", "user_ref", "current_alternative_ref", "value_proposition_ref", "pricing_hypothesis_ref", "initial_channel_ref", "first_cohort_ref", "learning_metric_refs"},
 }
 
@@ -62,7 +62,10 @@ def validate_product_discovery_artifact(record: Any) -> list[str]:
         case "assumption_test_portfolio/v1":
             return _validated(record, lambda: build_assumption_test_portfolio(**_fields(record)))
         case "discovery_decision_receipt/v1":
-            return _validated(record, lambda: build_discovery_decision_receipt(**_fields(record)))
+            values = _fields(record)
+            values.pop("solution_work_permitted")
+            values.pop("missing_audience_evidence_refs")
+            return _validated(record, lambda: build_discovery_decision_receipt(**values))
         case "initial_gtm_hypothesis/v1":
             return _validated(record, lambda: build_initial_gtm_hypothesis(**_fields(record)))
         case _:

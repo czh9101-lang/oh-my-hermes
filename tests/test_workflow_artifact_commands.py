@@ -175,6 +175,30 @@ class WorkflowArtifactCommandTests(unittest.TestCase):
             stored = json.loads((home / ".omh" / "runtime" / "journal" / "product_discovery_artifacts.jsonl").read_text())
             self.assertEqual(stored["schema_version"], "discovery_decision_frame/v1")
 
+    def test_audience_gate_blocks_build_outputs_when_the_framed_segment_is_unknown(self) -> None:
+        # Given: the committed semantic example with its audience relabelled unknown.
+        with TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            semantic = self._semantic_example("product-discovery-validation-build-semantic.json")
+            semantic["frame"]["segment_definition_state"] = "unknown"
+            build_status, build_stdout, build_stderr = self._run(home, "product-discovery-validation", "build", semantic)
+            self.assertEqual((build_status, build_stderr), (0, ""))
+            built = json.loads(build_stdout)["result"]
+
+            # When: the frame is read through the closed audience-gate operation.
+            status, stdout, stderr = self._run(home, "product-discovery-validation", "audience-gate", built["frame"])
+
+            # Then: evidence work continues while every build output stays blocked and named.
+            self.assertEqual((status, stderr), (0, ""))
+            gate = json.loads(stdout)["result"]
+            self.assertEqual(gate["schema_version"], "discovery_audience_gate/v1")
+            self.assertEqual(gate["audience_gate"], "audience_undefined")
+            self.assertTrue(gate["evidence_work_permitted"])
+            self.assertFalse(gate["solution_work_permitted"])
+            self.assertEqual(gate["blocked_outputs"], ["product-brief", "decision-prototype", "coding-handoff"])
+            self.assertTrue(gate["missing_audience_evidence_refs"])
+            self.assertFalse((home / ".omh" / "runtime" / "journal" / "product_discovery_artifacts.jsonl").exists())
+
     def test_prepare_decision_prototype_when_read_from_stdin_returns_metadata_without_persisting(self) -> None:
         # Given: one bounded prototype declaration at the CLI stdin boundary.
         with TemporaryDirectory() as temporary:

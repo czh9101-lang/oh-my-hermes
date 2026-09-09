@@ -18,10 +18,12 @@ The command returns `workflow_artifact_operation_result/v1`. It does not echo th
 | --- | --- | --- |
 | `decision-prototype` | `prepare`, `validate`, `observe`, `receipt`, `handoff`, `persist` | `persist` writes the validated existing prototype artifact store. |
 | `lifecycle-growth` | `build`, `prepare`, `validate`, `evaluate`, `readout` | `build` derives the five prepared artifacts from semantic fields; returned JSON is the durable serializable artifact. |
-| `product-discovery-validation` | `build`, `prepare`, `validate`, `evaluate`, `handoff`, `append` | `build` derives the five pre-decision artifacts and their hashes; `append` uses the existing append-only discovery store. |
+| `product-discovery-validation` | `build`, `prepare`, `validate`, `audience-gate`, `evaluate`, `handoff`, `append` | `build` derives the five pre-decision artifacts and their hashes; `append` uses the existing append-only discovery store. |
 | `sales-pipeline-review` | `prepare`, `validate`, `evaluate`, `handoff` | None; returned JSON is the durable serializable artifact. |
 
 Unsupported workflow/operation pairs are parser errors. `validate` dispatches to the producer's schema-specific validator: lifecycle has its six artifact schemas, and sales has scope, health, forecast, outcome-learning, renewal-risk, and handoff validators.
+
+`product-discovery-validation audience-gate` reads one `discovery_decision_frame/v1` and returns `discovery_audience_gate/v1`. An unknown, synthetic-only, or non-recruitable segment keeps evidence work open and blocks `product-brief`, `decision-prototype`, and `coding-handoff`; the result names the missing audience evidence. It is a read, never a promotion.
 
 `decision-prototype handoff` always uses `build_decision_receipt_handoff(..., target_workflow="ralplan")`. `product-discovery-validation handoff` uses the same seam with `target_workflow="product-brief"`. A blocked or unresolved receipt remains blocked; neither handoff grants production authority.
 

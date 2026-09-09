@@ -29,12 +29,15 @@ DEADLINE = "2030-01-02T00:00:00+00:00"
 PRECOMMITTED_AT = "2030-01-01T00:00:00+00:00"
 
 
-def _prepared_artifacts(*, failure_decision: str = "pivot") -> dict[str, dict[str, object]]:
+def _prepared_artifacts(
+    *, failure_decision: str = "pivot", segment_definition_state: str = "recruitable"
+) -> dict[str, dict[str, object]]:
     # Given: the bounded decision frame and the precommitted customer test.
     frame = build_discovery_decision_frame(
         discovery_id=DISCOVERY_ID,
         problem_ref="problem-onboarding-dropoff",
         segment_ref="segment-new-teams",
+        segment_definition_state=segment_definition_state,
         alternative_refs=["alternative-spreadsheet"],
         decision_owner_ref="owner-product",
         learning_budget_ref="budget-discovery-1",

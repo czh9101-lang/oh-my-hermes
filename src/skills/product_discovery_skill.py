@@ -11,8 +11,10 @@ Concept-level sources, adapted with attribution and without copying code:
 - GitLab Product Development Flow, handbook revision ``4165803c`` (MIT):
   a validation track separated from build, with a problem gate before solution
   work.
-- Mycelium ``8d6d5315`` (MIT): evidence source classes, external-human gates,
-  falsification propagation, and precommitted assumption tests.
+- Mycelium ``8e958f82`` (MIT): evidence source classes, external-human gates,
+  falsification propagation, precommitted assumption tests, and the
+  audience-before-build invariant that an unknown audience may be investigated
+  but must not cross the build boundary.
 - Claude Code Discover ``a414fc7a`` (MIT): explicit hypothesis states, the
   smallest disconfirming test, hard budgets, and honest inconclusive results.
 - Product Pipeline Public ``a0997741`` (MIT): persistent hypotheses, evidence
@@ -102,8 +104,8 @@ DEFINITION = SkillDefinition(
         ),
         ExpertQuestion(
             _INPUT_SEGMENT,
-            "Which target segment, buyer versus user roles, and recruitable participant criteria define who must show the problem?",
-            "어떤 목표 세그먼트, 구매자와 사용자 구분, 모집 가능한 참여자 기준이 이 문제를 보여야 하는 대상을 정의하나요?",
+            "Which target segment, buyer versus user roles, and recruitable participant criteria define who must show the problem, or is that audience still unknown?",
+            "어떤 목표 세그먼트, 구매자와 사용자 구분, 모집 가능한 참여자 기준이 이 문제를 보여야 하는 대상을 정의하나요, 아니면 그 대상이 아직 미정인가요?",
         ),
         ExpertQuestion(
             _INPUT_EVIDENCE,
@@ -140,6 +142,7 @@ DEFINITION = SkillDefinition(
             (
                 "problem_hypothesis",
                 "segment",
+                "target_segment_definition",
                 "current_alternatives",
                 "decision",
                 "constraints",
@@ -148,7 +151,7 @@ DEFINITION = SkillDefinition(
                 "kill_criteria",
                 "disposition",
             ),
-            "PASS only when every frame field is supplied by the user or marked unknown; HOLD when the decision, owner, learning budget, or kill criteria are missing, and never infer them.",
+            "PASS only when every frame field is supplied by the user or marked unknown; HOLD when the decision, owner, learning budget, or kill criteria are missing, and never infer them. Record `target_segment_definition` as recruitable, behaviorally observed, unknown, synthetic-only, or non-recruitable; an unknown, synthetic-only, or non-recruitable audience keeps discovery framing and evidence planning open while it blocks solution work, and never invent a persona to close it.",
         ),
         ProcedureCheck(
             "discovery_evidence_class_check",
@@ -185,9 +188,11 @@ DEFINITION = SkillDefinition(
                 "supporting_refs",
                 "contradicting_refs",
                 "gate_reason",
+                "audience_gate",
+                "missing_audience_evidence",
                 "solution_work_permitted",
             ),
-            "Set `problem_gate_state` to validated, refuted, or inconclusive from external-human or behavioral-data entries only; `solution_work_permitted` is true only for validated, and refuted or inconclusive never advances to a solution or MVP recommendation.",
+            "Set `problem_gate_state` to validated, refuted, or inconclusive from external-human or behavioral-data entries only; the supporting entries must come from the same target segment the frame names. `solution_work_permitted` is true only when the gate is validated and `audience_gate` is defined, so refuted, inconclusive, or an unknown, synthetic-only, or non-recruitable audience never advances to a solution, PRD, prototype-as-validation, or coding handoff; name the missing audience evidence as the next task instead.",
         ),
         ProcedureCheck(
             "discovery_assumption_precommit_check",
@@ -220,7 +225,7 @@ DEFINITION = SkillDefinition(
                 "next_route",
                 "promotion_guard",
             ),
-            "Decision must be kill, pivot, persevere, or inconclusive; missing external evidence, a refuted problem, unresolved contradiction, an expired test, or an inconclusive result must not produce persevere or a `product-brief` route; rejected and falsified hypotheses are preserved, and no raw transcript is replayed.",
+            "Decision must be kill, pivot, persevere, or inconclusive; missing external evidence, a refuted problem, unresolved contradiction, an expired test, an inconclusive result, or an audience that is unknown, synthetic-only, or non-recruitable must not produce persevere or a `product-brief`, `decision-prototype`, or coding route; rejected and falsified hypotheses are preserved, and no raw transcript is replayed.",
         ),
         ProcedureCheck(
             "discovery_gtm_hypothesis_check",
@@ -269,7 +274,7 @@ DEFINITION = SkillDefinition(
             (_INPUT_PROBLEM, _INPUT_EVIDENCE, _INPUT_CRITERIA),
             (_ARTIFACT_FRAME,),
             ("discovery_evidence_class_check", "discovery_problem_gate_check"),
-            "Compare ledger entries against the precommitted criteria and record the problem gate as validated, refuted, or inconclusive; when it is not validated, stop solution and MVP work and name the customer evidence still missing.",
+            "Compare ledger entries against the precommitted criteria and record the problem gate as validated, refuted, or inconclusive, admitting only entries observed in the framed target segment; when it is not validated, or when the audience is unknown, synthetic-only, or non-recruitable, stop solution and MVP work and name the customer or audience evidence still missing.",
         ),
         ProcedureStep(
             "discovery_rank_assumptions",
@@ -312,6 +317,7 @@ DEFINITION = SkillDefinition(
         "Synthetic personas, model-generated interview answers, secondary summaries, prototypes without representative-user observation, and unsupported market-size figures cannot satisfy a customer-validation gate.",
         "Interview praise, stated purchase intent, a waitlist signup, a finished prototype, or one passed experiment is not product-market fit; state what each signal can and cannot establish.",
         "Founder-market fit and strategic preference may inform the decision but never substitute for target-customer evidence.",
+        "An unknown, synthetic-only, or non-recruitable target segment blocks a solution, PRD, prototype-as-validation, or coding handoff; discovery framing, the customer discovery plan, and evidence work continue while it does.",
     ),
     quality_tier="decision-gated",
     quality_bar=(
@@ -338,7 +344,8 @@ DEFINITION = SkillDefinition(
         why="Validated, accepted evidence with a PRD request belongs to the PRD owner, not to discovery.",
     ),
     final_checklist=(
-        "The problem gate state is recorded as validated, refuted, or inconclusive with the external-human or behavioral-data refs that decided it.",
+        "The problem gate state is recorded as validated, refuted, or inconclusive with the external-human or behavioral-data refs that decided it, all observed in the framed target segment.",
+        "The target segment is explicit enough to recruit or tied to observed behavioral data before any solution, PRD, prototype, or coding output leaves this workflow.",
         "Every assumption test in the portfolio carries its precommitted success, failure, inconclusive, segment, deadline, cost, owner, and evidence re-entry fields.",
         "The receipt names kill, pivot, persevere, or inconclusive, preserves rejected paths, and routes to `product-brief` only from an accepted persevere.",
         "Every artifact is reported as prepared; interviews, tests, and prototypes stay not_observed until re-entered evidence exists.",
@@ -346,6 +353,7 @@ DEFINITION = SkillDefinition(
     recovery_notes=(
         "If external-human or behavioral-data evidence is absent, hold the problem gate at inconclusive and hand the customer discovery plan to a human owner instead of filling the gap with personas.",
         "If a test passes its deadline or budget without meeting a precommitted condition, record inconclusive with the residual risk and let the decision owner choose a new budget or a kill.",
+        "If the target segment is unknown, synthetic-only, or non-recruitable, keep the discovery frame and customer discovery plan and report defining a recruitable or behaviorally observed audience as the next evidence task.",
         "If a pivot changes the problem or segment, open a new decision frame and carry the falsified hypotheses forward as rejected paths.",
     ),
     progressive_disclosure=True,

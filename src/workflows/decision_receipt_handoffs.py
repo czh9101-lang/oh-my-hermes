@@ -7,6 +7,7 @@ from typing import Final, TypeAlias
 
 from .decision_prototypes import compact_decision_prototype_receipt, validate_decision_prototype
 from .product_discovery_artifact_validation import validate_product_discovery_artifact
+from .product_discovery_artifacts import audience_is_defined
 from .product_discovery_validation import product_brief_consumption
 
 
@@ -114,6 +115,9 @@ def _product_brief_handoff(receipt: DecisionArtifact) -> DecisionReceiptHandoff:
             "discovery_id": receipt["discovery_id"],
             "decision": receipt["decision"],
             "problem_gate": receipt["problem_gate"],
+            "segment_definition_state": receipt["segment_definition_state"],
+            "solution_work_permitted": receipt["solution_work_permitted"],
+            "missing_audience_evidence_refs": receipt["missing_audience_evidence_refs"],
             "rejected_hypothesis_ids": receipt["rejected_hypothesis_ids"],
             "residual_risk_refs": receipt["residual_risk_refs"],
         },
@@ -126,4 +130,6 @@ def _product_brief_handoff(receipt: DecisionArtifact) -> DecisionReceiptHandoff:
 def _discovery_blocked_reason(receipt: DecisionArtifact) -> str:
     if receipt["problem_gate"] == "refuted":
         return "discovery_problem_refuted"
+    if not audience_is_defined(str(receipt["segment_definition_state"])):
+        return "discovery_audience_undefined"
     return "discovery_evidence_unresolved"

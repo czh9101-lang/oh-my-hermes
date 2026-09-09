@@ -30,6 +30,29 @@ ASSUMPTION_CATEGORIES: Final = ("value", "usability", "feasibility", "viability"
 DECISIONS: Final = ("kill", "pivot", "persevere", "inconclusive")
 PROBLEM_GATES: Final = ("validated", "refuted", "inconclusive")
 
+SEGMENT_DEFINITION_STATES: Final = (
+    "recruitable",
+    "behaviorally_observed",
+    "unknown",
+    "synthetic_only",
+    "non_recruitable",
+)
+AUDIENCE_DEFINED_STATES: Final = ("recruitable", "behaviorally_observed")
+BUILD_BOUNDARY_ROUTES: Final = ("product-brief", "decision-prototype", "coding-handoff")
+DISCOVERY_CONTINUATION_ROUTE: Final = "product-discovery-validation"
+MISSING_AUDIENCE_EVIDENCE_REFS: Final = {
+    "unknown": (
+        "audience-recruitable-segment-definition",
+        "audience-participant-recruitment-criteria",
+    ),
+    "synthetic_only": (
+        "audience-external-human-or-behavioral-evidence",
+    ),
+    "non_recruitable": (
+        "audience-recruitable-or-behaviorally-observed-segment",
+    ),
+}
+
 _CLAIM_BOUNDARY: Final = (
     "This metadata-only artifact preserves bounded references and declared or derived discovery state. "
     "It does not recruit, contact, inspect customers, replay transcripts, build a prototype or PRD, execute a test, "
@@ -63,6 +86,23 @@ def _stamp(value: str, field: str) -> str:
     return value
 
 
+def _segment_definition_state(value: Any) -> str:
+    if value not in SEGMENT_DEFINITION_STATES:
+        raise ValueError("segment_definition_state is unsupported")
+    return str(value)
+
+
+def audience_is_defined(segment_definition_state: str) -> bool:
+    """Report whether a framed segment is recruitable or behaviorally observed."""
+    return _segment_definition_state(segment_definition_state) in AUDIENCE_DEFINED_STATES
+
+
+def missing_audience_evidence_refs(segment_definition_state: str) -> list[str]:
+    """Name the audience evidence a segment definition still owes."""
+    state = _segment_definition_state(segment_definition_state)
+    return list(MISSING_AUDIENCE_EVIDENCE_REFS.get(state, ()))
+
+
 def _artifact(schema_version: str, discovery_id: str, fields: Mapping[str, Any], *, status: str) -> dict[str, Any]:
     safe_discovery_id = _ref(discovery_id, "discovery_id")
     digest = hashlib.sha256(
@@ -78,14 +118,20 @@ def _artifact(schema_version: str, discovery_id: str, fields: Mapping[str, Any],
     }
 
 
-def build_discovery_decision_frame(*, discovery_id: str, problem_ref: str, segment_ref: str, alternative_refs: Sequence[str], decision_owner_ref: str, learning_budget_ref: str, deadline_at: str, kill_criteria_refs: Sequence[str]) -> dict[str, Any]:
-    """Prepare the bounded problem decision before evidence is accepted."""
+def build_discovery_decision_frame(*, discovery_id: str, problem_ref: str, segment_ref: str, segment_definition_state: str, alternative_refs: Sequence[str], decision_owner_ref: str, learning_budget_ref: str, deadline_at: str, kill_criteria_refs: Sequence[str]) -> dict[str, Any]:
+    """Prepare the bounded problem decision before evidence is accepted.
+
+    ``segment_definition_state`` names the audience explicitly. An unknown,
+    synthetic-only, or non-recruitable segment stays framable so evidence work
+    can continue, and blocks solution work at the gate rather than here.
+    """
     return _artifact(
         DISCOVERY_DECISION_FRAME_SCHEMA_VERSION,
         discovery_id,
         {
             "problem_ref": _ref(problem_ref, "problem_ref"),
             "segment_ref": _ref(segment_ref, "segment_ref"),
+            "segment_definition_state": _segment_definition_state(segment_definition_state),
             "alternative_refs": _refs(alternative_refs, "alternative_refs"),
             "decision_owner_ref": _ref(decision_owner_ref, "decision_owner_ref"),
             "learning_budget_ref": _ref(learning_budget_ref, "learning_budget_ref"),
@@ -248,25 +294,40 @@ def build_initial_gtm_hypothesis(*, discovery_id: str, beachhead_segment_ref: st
     )
 
 
-def build_discovery_decision_receipt(*, discovery_id: str, problem_ref: str, segment_ref: str, decision: str, problem_gate: str, precommitted_test_ids: Sequence[str], eligible_evidence_refs: Sequence[str], rejected_hypothesis_ids: Sequence[str], residual_risk_refs: Sequence[str], next_route: str) -> dict[str, Any]:
-    """Record a bounded decision that can be consumed without transcript replay."""
+def build_discovery_decision_receipt(*, discovery_id: str, problem_ref: str, segment_ref: str, segment_definition_state: str, decision: str, problem_gate: str, precommitted_test_ids: Sequence[str], eligible_evidence_refs: Sequence[str], rejected_hypothesis_ids: Sequence[str], residual_risk_refs: Sequence[str], next_route: str) -> dict[str, Any]:
+    """Record a bounded decision that can be consumed without transcript replay.
+
+    ``solution_work_permitted`` and ``missing_audience_evidence_refs`` are
+    derived here, never supplied, so a receipt cannot claim permitted solution
+    work while its audience is unknown, synthetic-only, or non-recruitable.
+    """
     if decision not in DECISIONS or problem_gate not in PROBLEM_GATES:
         raise ValueError("decision or problem_gate is unsupported")
     if (problem_gate == "validated") != (decision == "persevere"):
         raise ValueError("only a validated problem may persevere")
+    audience_defined = audience_is_defined(segment_definition_state)
+    if decision == "persevere" and not audience_defined:
+        raise ValueError("only an explicit, recruitable or behaviorally observed segment may persevere")
+    solution_work_permitted = audience_defined and problem_gate == "validated"
+    safe_route = _ref(next_route, "next_route")
+    if not solution_work_permitted and safe_route != DISCOVERY_CONTINUATION_ROUTE:
+        raise ValueError("blocked solution work must route back to product-discovery-validation")
     return _artifact(
         DISCOVERY_DECISION_RECEIPT_SCHEMA_VERSION,
         discovery_id,
         {
             "problem_ref": _ref(problem_ref, "problem_ref"),
             "segment_ref": _ref(segment_ref, "segment_ref"),
+            "segment_definition_state": _segment_definition_state(segment_definition_state),
             "decision": decision,
             "problem_gate": problem_gate,
+            "solution_work_permitted": solution_work_permitted,
+            "missing_audience_evidence_refs": missing_audience_evidence_refs(segment_definition_state),
             "precommitted_test_ids": _refs(precommitted_test_ids, "precommitted_test_ids"),
             "eligible_evidence_refs": _refs(eligible_evidence_refs, "eligible_evidence_refs", minimum=0),
             "rejected_hypothesis_ids": _refs(rejected_hypothesis_ids, "rejected_hypothesis_ids", minimum=0),
             "residual_risk_refs": _refs(residual_risk_refs, "residual_risk_refs", minimum=0),
-            "next_route": _ref(next_route, "next_route"),
+            "next_route": safe_route,
         },
         status="derived_from_supplied_metadata",
     )

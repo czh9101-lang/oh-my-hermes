@@ -73,8 +73,8 @@ _LIFECYCLE_FIELDS: Final = {
 _DISCOVERY_FIELDS: Final = {
     "frame": frozenset(
         {
-            "problem_ref", "segment_ref", "alternative_refs", "decision_owner_ref", "learning_budget_ref",
-            "deadline_at", "kill_criteria_refs",
+            "problem_ref", "segment_ref", "segment_definition_state", "alternative_refs", "decision_owner_ref",
+            "learning_budget_ref", "deadline_at", "kill_criteria_refs",
         }
     ),
     "ledger": frozenset({"entries"}),

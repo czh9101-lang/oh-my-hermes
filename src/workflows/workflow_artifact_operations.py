@@ -23,6 +23,7 @@ from .lifecycle_growth_contracts import (
 )
 from .product_discovery_validation import (
     append_product_discovery_artifact,
+    discovery_audience_gate,
     evaluate_product_discovery,
     prepare_product_discovery,
     validate_product_discovery_artifact,
@@ -49,7 +50,7 @@ Operation = Callable[[OmhPaths, Mapping[str, Any]], dict[str, Any]]
 WORKFLOW_ARTIFACT_OPERATIONS: Final[dict[str, tuple[str, ...]]] = {
     "decision-prototype": ("prepare", "validate", "observe", "receipt", "handoff", "persist"),
     "lifecycle-growth": ("build", "prepare", "validate", "evaluate", "readout"),
-    "product-discovery-validation": ("build", "prepare", "validate", "evaluate", "handoff", "append"),
+    "product-discovery-validation": ("build", "prepare", "validate", "audience-gate", "evaluate", "handoff", "append"),
     "sales-pipeline-review": ("prepare", "validate", "evaluate", "handoff"),
 }
 
@@ -132,6 +133,10 @@ def _discovery_validate(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[st
     return {"valid": not errors, "errors": errors}
 
 
+def _discovery_audience_gate(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, Any]:
+    return discovery_audience_gate(payload)
+
+
 def _discovery_evaluate(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, Any]:
     return evaluate_product_discovery(_required_mapping(payload, "package"), now=_required_string(payload, "now"))
 
@@ -199,6 +204,7 @@ _DISPATCH: Final[dict[tuple[str, str], Operation]] = {
     ("product-discovery-validation", "build"): _discovery_build,
     ("product-discovery-validation", "prepare"): _discovery_prepare,
     ("product-discovery-validation", "validate"): _discovery_validate,
+    ("product-discovery-validation", "audience-gate"): _discovery_audience_gate,
     ("product-discovery-validation", "evaluate"): _discovery_evaluate,
     ("product-discovery-validation", "handoff"): _discovery_handoff,
     ("product-discovery-validation", "append"): _discovery_append,
