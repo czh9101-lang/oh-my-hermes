@@ -320,6 +320,14 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     evaluate.add_argument("--output", default=None, help="Write the exact JSON evidence object to this path.")
     evaluate.set_defaults(func=memory.cmd_memory_evaluate)
 
+    recall_suite = memory_sub.add_parser(
+        "recall-suite",
+        help="Run the retained retrieval-quality corpus through the production recall-pack builder; exits non-zero on a regression.",
+    )
+    recall_suite.add_argument("--revision", default="", help="Target revision this report is bound to; two reports compare only when it matches.")
+    recall_suite.add_argument("--output", default=None, help="Write the exact JSON regression report to this path.")
+    recall_suite.set_defaults(func=memory.cmd_memory_recall_suite)
+
     blocks = memory_sub.add_parser("blocks", help="List OMH memory blocks by label, without their values.")
     blocks.add_argument("--tier", choices=("system", "reference"), default=None, help="Limit the listing to one tier.")
     blocks.set_defaults(func=memory.cmd_memory_blocks)

@@ -60,7 +60,7 @@ from ..memory import (
     build_rejected_decision_recall,
 )
 from ..system.local_store import read_json_object_result
-from ..workflows.memory_evaluation import run_memory_evaluation
+from ..workflows.memory_evaluation import run_memory_evaluation, run_memory_retrieval_evaluation
 from ..workflows.memory_lifecycle import (
     apply_memory_correction,
     apply_memory_prune,
@@ -599,6 +599,25 @@ def cmd_memory_evaluate(args: argparse.Namespace) -> int:
         raise OmhError(str(exc)) from exc
     _print_json(payload)
     return 0
+
+
+def cmd_memory_recall_suite(args: argparse.Namespace) -> int:
+    """One offline command that decides whether recall still selects correctly.
+
+    The exit status is the gate: a retrieval regression makes this command
+    fail, so it can stand in CI ahead of a ranking, pin, decay, tier, lens,
+    budget, or staleness change without anyone having to read the report first.
+    """
+    try:
+        payload = run_memory_retrieval_evaluation(target_revision=str(args.revision or ""))
+        if args.output:
+            output = Path(args.output).expanduser()
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        raise OmhError(str(exc)) from exc
+    _print_json(payload)
+    return 0 if bool(payload.get("passed")) else 1
 
 
 def cmd_memory_blocks(args: argparse.Namespace) -> int:

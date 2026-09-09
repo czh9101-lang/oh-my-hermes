@@ -1221,6 +1221,34 @@ def reject_project_memory_candidate(
     }
 
 
+def effective_recall_configuration() -> dict[str, object]:
+    """Every constant the recall ladder ranks, decays, and cuts with.
+
+    A retrieval regression report is only comparable against another report
+    built under the same retrieval configuration, so the configuration has to
+    be readable rather than inferred from the sorted output. Reading the live
+    constants here -- not a copy of their values -- is the point: retuning a
+    weight changes this projection, which changes the report's configuration
+    digest, which is what makes two reports refuse to be compared.
+    """
+    return {
+        "recall_pack_schema_version": PROJECT_MEMORY_RECALL_PACK_SCHEMA_VERSION,
+        "rrf_k": _RECALL_RRF_K,
+        "rrf_weights": dict(sorted(_RECALL_RRF_WEIGHTS.items())),
+        "temporal_recency_weight": 2.0,
+        "age_tier_bounds_days": list(_AGE_TIER_BOUNDS_DAYS),
+        "age_tier_weights": list(_AGE_TIER_WEIGHTS),
+        "attention_rank": dict(sorted(_MEMORY_ATTENTION_RANK.items())),
+        "admission_veracity_weight_pct": dict(sorted(_ADMISSION_VERACITY_WEIGHT_PCT.items())),
+        "admission_veracity_default_pct": _ADMISSION_VERACITY_DEFAULT_PCT,
+        "pins_limit": _MEMORY_PINS_LIMIT,
+        "inspectable_stale_reasons": sorted(_INSPECTABLE_STALE_REASONS),
+        "expires_soon_days": _EXPIRES_SOON_DAYS,
+        "review_due_soon_days": _REVIEW_DUE_SOON_DAYS,
+        "cadence_defaults": dict(sorted(_MEMORY_CADENCE_DEFAULTS.items())),
+    }
+
+
 def build_project_memory_recall_pack(
     paths: OmhPaths,
     query: str = "",
