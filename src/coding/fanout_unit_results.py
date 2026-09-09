@@ -90,7 +90,8 @@ def read_unit_result_input(path: Path) -> object:
     expected = path.lstat()
     if not stat.S_ISREG(expected.st_mode):
         raise ValueError('unit result input is not a regular file')
-    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0))
+    # O_NONBLOCK and O_NOFOLLOW are POSIX-only; Windows defines neither.
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_NOFOLLOW', 0))
     with os.fdopen(descriptor, 'rb') as source:
         metadata = os.fstat(source.fileno())
         if ((metadata.st_dev, metadata.st_ino) != (expected.st_dev, expected.st_ino)

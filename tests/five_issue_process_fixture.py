@@ -62,7 +62,9 @@ def _line(stream: BinaryIO | socket.SocketIO, timeout: float) -> str:
 
 
 def _fifo(stack: ExitStack, path: Path) -> BinaryIO:
-    fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+    # Legacy FIFO CLI compatibility only; the default transport is the
+    # loopback socket above. O_NONBLOCK does not exist on Windows.
+    fd = os.open(path, os.O_RDWR | getattr(os, 'O_NONBLOCK', 0))
     stream = stack.enter_context(os.fdopen(fd, 'r+b', buffering=0))
     if not stat.S_ISFIFO(os.fstat(fd).st_mode):
         raise ValueError('fixture_requires_named_pipe')
