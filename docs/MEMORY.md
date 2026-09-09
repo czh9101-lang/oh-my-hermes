@@ -1024,6 +1024,74 @@ this surface is `prepared_not_observed` until that happens. The reverse move
 — promoting an approved OMH record up into L1 — remains the memory bridge's
 `promotable` surface (`omh memory status`).
 
+## Retrieval Regression Suite
+
+Record validity and retrieval quality are different questions. `omh memory
+evaluate` answers the first: admission, lifecycle, replay, and store
+compaction against a generated corpus. A change to relevance ranking, pins,
+age decay, attention tiers, the scope or perspective lens, budget cuts, or
+stale-record handling can leave every one of those verdicts green and still
+hand the executor the wrong context. `omh memory recall-suite` answers the
+second.
+
+```sh
+omh memory recall-suite --revision "$(git rev-parse HEAD)"
+```
+
+The command runs a retained fixture corpus through
+`build_project_memory_recall_pack` — the same builder handoff preparation
+uses — and exits non-zero when the pack it gets back disagrees with the
+corpus. It copies no ranking, eligibility, or budget logic: every verdict is a
+comparison of retained record ids and production reason codes against what the
+builder returned. Add `--output` to keep the JSON report.
+
+Each fixture declares its own records, pins, delivery counters, query, scope
+and perspective lens, record and character budgets, and the expected
+disposition of every record: included in this order, excluded for this named
+reason, or absent because a lens filtered it before the pack could name it.
+The corpus covers exact and partial relevance, no-match behavior, same-topic
+disagreement, correction and supersession, expiry, stale review and the
+`--include-stale` inspection path, scope and perspective isolation, pin and
+attention interactions, age ties, both archive directions, and record and
+character budget truncation.
+
+The clock is part of the fixture. Every timestamp is absolute and the corpus
+declares its own `now`, so a case that turns on expiry, review deadlines, or
+age tiers reads the same on any host on any day, and no fixture goes red
+because a day passed. Records are written straight into a per-case temporary
+store rather than captured and approved, because approval stamps the real
+clock and mints a random record id.
+
+The report separates what broke. Ordering failures, missing expected hits, and
+unexpected inclusions are counted apart from budget violations, so a pack that
+returns the right records but overruns its budget is never reported as a
+relevance miss. A record that a lens, a deadline, or a tier was supposed to
+keep out carries a contamination class, and an unexpected inclusion increments
+that class's own counter — `foreign_scope_contamination`,
+`foreign_perspective_contamination`, `stale_contamination`,
+`expired_contamination`, `archived_contamination` — so a leak is reported
+under its own name. Every finding names the fixture, the record id, the
+expected disposition, the observed disposition, and the production reason code
+when the pack carried one.
+
+Two reports are comparable only when their identities match. The report binds
+itself to the fixture digest, the evaluator version, the corpus version, a
+digest of the effective retrieval configuration
+(`effective_recall_configuration` reads the live ranking constants, so
+retuning a weight moves the digest), the fixture clock, and the target
+revision passed to `--revision`. `compare_retrieval_reports` refuses a
+comparison whose identities differ and names the mismatched fields, rather
+than attributing a corpus edit or a weight change to a retrieval regression.
+
+Reports carry `schema_version: omh_memory_retrieval_evaluation/v1`. This is a
+sibling of `omh_memory_evaluation/v1`, not a widening of it: existing
+evaluation reports parse exactly as before, and a reader dispatches on
+`schema_version`. Neither runner makes a model call, a provider call, a
+network request, or a credential read, and neither writes outside its own
+temporary store. A model-judge or external memory-provider result may enter
+only through a separate observed-evidence contract; this suite never produces
+one.
+
 ## Prepared Context Boundary
 
 A prepared recall or handoff pack is OMH-local context, not proof that an
