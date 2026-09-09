@@ -768,7 +768,9 @@ class StagedSelfUpdateTests(unittest.TestCase):
             second = self._run(root, args, plan, self._runner())
             self.assertTrue(first["ok"])
             self.assertTrue(second["ok"])
-            self.assertEqual(first["recovery"].get("selected"), second["recovery"].get("selected"))
+            assert "selected" in first["recovery"]
+            assert "selected" in second["recovery"]
+            self.assertEqual(first["recovery"]["selected"], second["recovery"]["selected"])
             self.assertEqual((root / "current").resolve(), Path(restored_path).resolve())
             import shutil
             shutil.rmtree(restored_path)
