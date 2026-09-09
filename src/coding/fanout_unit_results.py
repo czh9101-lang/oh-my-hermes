@@ -29,7 +29,11 @@ versioned-contract split exists to avoid.
 from __future__ import annotations
 
 import re
-from typing import Mapping, Sequence
+import json
+import os
+from pathlib import Path
+import stat
+from typing import Callable, Mapping, Sequence
 
 from .fanout_contracts import FANOUT_ID_PATTERN
 
@@ -76,6 +80,35 @@ _FANOUT_ID_RE = re.compile(FANOUT_ID_PATTERN)
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 
 _CHECK_KEYS = ("command", "status", "evidence_ref", "reported_by", "observed_by", "observation_source")
+
+
+UNIT_RESULT_INPUT_LIMIT_BYTES = 256 * 1024
+
+
+def read_unit_result_input(path: Path) -> object:
+    """Read a bounded regular ephemeral input; never follow executor symlinks."""
+    expected = path.lstat()
+    if not stat.S_ISREG(expected.st_mode):
+        raise ValueError('unit result input is not a regular file')
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0))
+    with os.fdopen(descriptor, 'rb') as source:
+        metadata = os.fstat(source.fileno())
+        if ((metadata.st_dev, metadata.st_ino) != (expected.st_dev, expected.st_ino)
+                or not stat.S_ISREG(metadata.st_mode) or metadata.st_size > UNIT_RESULT_INPUT_LIMIT_BYTES):
+            raise ValueError('unit result input is not a bounded regular file')
+        raw = source.read(UNIT_RESULT_INPUT_LIMIT_BYTES + 1)
+    if len(raw) > UNIT_RESULT_INPUT_LIMIT_BYTES:
+        raise ValueError('unit result input exceeds byte limit')
+    def unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        fields: dict[str, object] = {}
+        for key, value in pairs:
+            if key in fields:
+                raise ValueError('duplicate unit result field')
+            fields[key] = value
+        return fields
+
+    decode: Callable[..., object] = json.loads
+    return decode(raw, object_pairs_hook=unique_fields)
 
 
 def validate_unit_result(payload: Mapping[str, object]) -> dict[str, object]:

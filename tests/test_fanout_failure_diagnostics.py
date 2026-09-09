@@ -1,10 +1,16 @@
 """Foundation proofs only; dispatcher/status/native acceptance is separate."""
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import ExitStack
 import copy
 import hashlib
 import importlib.util
 import json
+import os
+import socket
+import subprocess
+import sys
 from pathlib import Path
 import tracemalloc
 import unittest
@@ -385,16 +391,186 @@ class FailureDiagnosticsFoundation(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, '^observer_failure$'):
             capture.feed('stdout', b'{"type":"thread.started"}\n')
 
-    def test_d7_qa_does_not_claim_surface_acceptance(self):
+    def test_d7_qa_is_tracked_and_fixture_attribution_is_explicit(self):
         spec = importlib.util.find_spec('five_issue_cases.diagnostics')
-        self.assertIsNotNone(spec, 'missing diagnostics foundation QA adapter')
+        self.assertIsNotNone(spec, 'missing diagnostics QA adapter')
+        assert spec is not None
+        self.assertEqual(Path(str(spec.origin)).resolve(),
+                         Path(__file__).parent / 'five_issue_cases' / 'diagnostics.py')
+
+
+class FailureDiagnosticsDispatch(unittest.TestCase):
+    def check_case(self, case: str) -> None:
         from five_issue_cases.diagnostics import run_case
-        for number in range(1, 8):
-            result = run_case('D' + str(number))
-            self.assertFalse(result['pass'])
-            self.assertEqual(result['provenance']['scope'], 'foundation')
-            self.assertTrue(result['blocked_reason'])
-            self.assertTrue(result['cleanup']['verified_absent'])
+        result = run_case(case)
+        self.assertTrue(result['pass'], result['observations'])
+        self.assertTrue(result['commands'])
+        self.assertEqual(result['provenance']['kind'], 'fixture')
+        self.assertFalse(result['provenance']['native_available'])
+        self.assertTrue(result['cleanup']['verified_absent'])
+
+    def test_d1_public_stderr_dispatch(self):
+        self.check_case('D1')
+
+    def test_d2_public_separate_streams(self):
+        self.check_case('D2')
+
+    def test_d3_public_multibyte_no_spill(self):
+        self.check_case('D3')
+
+    def test_d4_public_privacy(self):
+        self.check_case('D4')
+
+    def test_d5_public_verification_failure(self):
+        self.check_case('D5')
+
+    def test_d6_public_invalid_utf8(self):
+        self.check_case('D6')
+
+    def test_d7_public_fenced_success(self):
+        self.check_case('D7')
+
+    def test_s5_public_ephemeral_sidecar(self):
+        self.check_case('S5')
+
+    def test_d5_timeout_finalizes_partial_capture_and_reaps(self):
+        from omh.coding.fanout_dispatch import signal_safe_unit_runner
+        capture = output.FanoutOutput()
+        seen: list[subprocess.Popen[bytes] | subprocess.Popen[str]] = []
+        with ExitStack() as stack:
+            listener = stack.enter_context(socket.socket())
+            listener.bind(('127.0.0.1', 0))
+            listener.listen(1)
+            listener.settimeout(5)
+            address: Callable[[], tuple[str, int]] = listener.getsockname
+            script = (
+                'import os, socket, sys\n'
+                'with socket.create_connection(("127.0.0.1", int(sys.argv[1])), 30) as control:\n'
+                ' os.write(1, b"compiler failed\\n")\n'
+                ' control.sendall(b"R")\n'
+                ' assert control.recv(1) == b"F"\n'
+            )
+            def spawned(process: subprocess.Popen[bytes] | subprocess.Popen[str]) -> None:
+                seen.append(process)
+                control = stack.enter_context(listener.accept()[0])
+                control.settimeout(5)
+                self.assertEqual(control.recv(1), b'R')
+                # The child has written the complete small frame and is held
+                # at release; no pipe select or startup timing assumption.
+                assert process.stdout is not None
+                raw = os.read(process.stdout.fileno(), 16)
+                self.assertEqual(raw, b'compiler failed\n')
+                capture.feed('stdout', raw)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                _ = signal_safe_unit_runner(
+                    [sys.executable, '-c', script, str(address()[1])],
+                    capture_output=True, timeout=0.01, output_capture=capture, on_spawn=spawned)
+        self.assertEqual(len(seen), 1)
+        self.assertIsNotNone(seen[0].returncode)
+        self.assertEqual(seen[0].wait(timeout=5), seen[0].returncode)
+        self.assertTrue(seen[0].stdout is not None and seen[0].stdout.closed)
+        self.assertTrue(seen[0].stderr is not None and seen[0].stderr.closed)
+        if os.name != 'nt':
+            with self.assertRaises(ProcessLookupError):
+                os.killpg(seen[0].pid, 0)
+        self.assertEqual(capture.streams()[0]['reason'], 'incomplete_capture')
+        self.assertIsNone(capture.streams()[0]['original_bytes'])
+        self.assertIn('compiler failed', capture.error_window('stdout'))
+
+    def test_d5_observer_error_propagates_after_reaping(self):
+        from omh.coding.fanout_dispatch import signal_safe_unit_runner
+        seen: list[subprocess.Popen[bytes] | subprocess.Popen[str]] = []
+        def fail(stream: diag_api.StreamName, event: dict[str, object]) -> None:
+            self.assertEqual((stream, event['type']), ('stdout', 'thread.started'))
+            raise RuntimeError('observer_failure')
+        capture = output.FanoutOutput(protocol='codex', observer=fail)
+        with ExitStack() as stack:
+            listener = stack.enter_context(socket.socket())
+            listener.bind(('127.0.0.1', 0))
+            listener.listen(1)
+            listener.settimeout(5)
+            address: Callable[[], tuple[str, int]] = listener.getsockname
+            script = (
+                'import socket, sys\n'
+                'with socket.create_connection(("127.0.0.1", int(sys.argv[1])), 30) as control:\n'
+                ' control.sendall(b"R")\n'
+                ' assert control.recv(1) == b"G"\n'
+                ' print(\'{"type":"thread.started"}\', flush=True)\n'
+                ' assert control.recv(1) == b"F"\n'
+            )
+            def spawned(process: subprocess.Popen[bytes] | subprocess.Popen[str]) -> None:
+                seen.append(process)
+                control = stack.enter_context(listener.accept()[0])
+                control.settimeout(5)
+                self.assertEqual(control.recv(1), b'R')
+                control.sendall(b'G')
+            with self.assertRaisesRegex(RuntimeError, '^observer_failure$'):
+                _ = signal_safe_unit_runner(
+                    [sys.executable, '-c', script, str(address()[1])],
+                    capture_output=True, timeout=5, output_capture=capture, on_spawn=spawned)
+        self.assertEqual(len(seen), 1)
+        self.assertIsNotNone(seen[0].returncode)
+        self.assertEqual(seen[0].wait(timeout=5), seen[0].returncode)
+        self.assertTrue(seen[0].stdout is not None and seen[0].stdout.closed)
+        self.assertTrue(seen[0].stderr is not None and seen[0].stderr.closed)
+        if os.name != 'nt':
+            with self.assertRaises(ProcessLookupError):
+                os.killpg(seen[0].pid, 0)
+        self.assertIsNone(capture.streams()[0]['original_bytes'])
+
+    def test_d5_eof_observer_failure_finalizes_once(self):
+        calls: list[str] = []
+        def fail(stream: diag_api.StreamName, _event: dict[str, object]) -> None:
+            calls.append(stream)
+            raise RuntimeError('eof_observer_failure')
+        capture = output.FanoutOutput(protocol='codex', observer=fail)
+        capture.feed('stdout', b'{"type":"thread.started"}')
+        with self.assertRaisesRegex(RuntimeError, '^eof_observer_failure$'):
+            capture.finish('stdout')
+        capture.finish_pending()
+        self.assertEqual(calls, ['stdout'])
+        self.assertIsNone(capture.streams()[0]['original_bytes'])
+        with self.assertRaisesRegex(ValueError, 'already_finished'):
+            capture.feed('stdout', b'new')
+
+    def test_d6_missing_legacy_output_does_not_invent_empty_wire_stream(self):
+        capture = output.FanoutOutput()
+        capture.feed_legacy('stdout', None)
+        capture.feed_legacy('stderr', object())
+        for stream in capture.streams():
+            self.assertIsNone(stream['original_bytes'])
+            self.assertIsNone(stream['original_lines'])
+
+    def test_d6_sidecar_input_rejects_duplicates_symlinks_and_oversize(self):
+        from tempfile import TemporaryDirectory
+        from omh.coding.fanout_unit_results import read_unit_result_input, UNIT_RESULT_INPUT_LIMIT_BYTES
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'result.json'
+            _ = path.write_text('{"unit_id":"foreign","unit_id":"core"}')
+            with self.assertRaises(ValueError):
+                _ = read_unit_result_input(path)
+            _ = path.write_bytes(b'x' * (UNIT_RESULT_INPUT_LIMIT_BYTES + 1))
+            with self.assertRaises(ValueError):
+                _ = read_unit_result_input(path)
+            _ = path.write_text('{}')
+            link = root / 'link.json'
+            link.symlink_to(path)
+            with self.assertRaises((OSError, ValueError)):
+                _ = read_unit_result_input(link)
+            from unittest.mock import patch
+            with patch.object(os, 'O_NOFOLLOW', 0, create=True):
+                with self.assertRaises((OSError, ValueError)):
+                    _ = read_unit_result_input(link)
+        self.assertFalse(root.exists())
+
+    def test_d6_legacy_text_has_unknown_wire_counts(self):
+        capture = output.FanoutOutput()
+        capture.feed_legacy('stdout', 'compiler failed\n')
+        capture.feed_legacy('stderr', '\ud800')
+        self.assertIsNone(capture.streams()[0]['original_bytes'])
+        self.assertEqual(capture.streams()[0]['text'], 'compiler failed\n')
+        self.assertEqual(capture.streams()[1]['reason'], 'invalid_utf8')
 
 
 if __name__ == '__main__':

@@ -37,9 +37,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Final, Mapping
 
-from ..local_store import read_json_object_result, utc_now
+from ..system.local_store import read_json_object_result, utc_now
 from ..evidence import PHASE_CODE, status_label
-from ..paths import OmhPaths
+from ..system.paths import OmhPaths
+from ..workflows.observation_journal import (
+    failure_diagnostic_text, project_bound_failure_diagnostic,
+    project_run_failure_diagnostic, read_observation_events_result,
+)
+from .fanout_failure_diagnostics import FailureDiagnostic, is_object_list, is_string_map
 from .context_safety import sanitize_user_facing_progress_text
 from .executor_progress import project_active_executor_status
 from .inflight import read_inflight_markers
@@ -348,20 +353,32 @@ def _dispatch_summary_units(paths: OmhPaths) -> list[dict[str, Any]]:
     root = paths.fanout_contracts_dir
     if not root.is_dir():
         return units
+    journal_events, _ = read_observation_events_result(paths)
     for fanout_dir in sorted(root.iterdir()):
         if not fanout_dir.is_dir() or fanout_dir.is_symlink():
             continue
         summary, error = read_json_object_result(fanout_dir / "dispatch_summary.json")
-        if error or not isinstance(summary, dict):
+        if error or not is_string_map(summary):
             continue
         fanout_id = str(summary.get("fanout_id", "") or fanout_dir.name)
         contract_units = _contract_units(fanout_dir)
-        for entry in summary.get("units", []):
-            if not isinstance(entry, dict):
+        entries = summary.get("units", [])
+        if not is_object_list(entries):
+            continue
+        for entry in entries:
+            if not is_string_map(entry):
                 continue
             unit_id = str(entry.get("unit_id", "") or "")
             if not unit_id:
                 continue
+            run_ref = str(entry.get("run_ref", ""))
+            diagnostic = project_bound_failure_diagnostic(
+                entry, fanout_id=fanout_dir.name, unit_id=unit_id, run_ref=run_ref,
+            ) if fanout_id == fanout_dir.name else None
+            events = [event for event in journal_events if event.get("run_id") == run_ref]
+            current = project_run_failure_diagnostic(events, run_id=run_ref)
+            if events and current.get("attempt_id") != entry.get("attempt_id"):
+                diagnostic = None
             contract_unit = contract_units.get(unit_id, {})
             handoff = contract_unit.get("handoff") if isinstance(contract_unit.get("handoff"), Mapping) else {}
             route = handoff.get("model_route") if isinstance(handoff.get("model_route"), Mapping) else {}
@@ -395,6 +412,7 @@ def _dispatch_summary_units(paths: OmhPaths) -> list[dict[str, Any]]:
                     session_ref=str(entry.get("session_ref", "") or ""),
                     summary=str(entry.get("reason", "") or ""),
                     routing_observation=observation,
+                    failure_diagnostic=diagnostic,
                 )
             )
     return units
@@ -461,8 +479,9 @@ def _unit_row(
     summary: str,
     unmapped_source_status: str = "",
     routing_observation: Mapping[str, object] | None = None,
+    failure_diagnostic: FailureDiagnostic | None = None,
 ) -> dict[str, Any]:
-    row = {
+    row: dict[str, object] = {
         "fanout_id": fanout_id,
         "label": label or unit_id or UNKNOWN,
         "unit_id": unit_id,
@@ -480,6 +499,9 @@ def _unit_row(
         "session_ref": session_ref or UNKNOWN,
         "summary": sanitize_user_facing_progress_text(summary, max_chars=_SUMMARY_LIMIT),
     }
+    if failure_diagnostic is not None:
+        row["failure_diagnostic"] = failure_diagnostic
+        row["summary"] = failure_diagnostic_text(failure_diagnostic)[:_SUMMARY_LIMIT]
     # Absent unless a word was actually discarded, so an absent key means the
     # status was accepted verbatim -- never that nothing was checked.
     if unmapped_source_status:

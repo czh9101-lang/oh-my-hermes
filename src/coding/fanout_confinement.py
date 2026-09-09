@@ -222,11 +222,14 @@ def prepare_fanout_filesystem_confinement(
     commands: Sequence[Sequence[str]],
     *,
     owner: str = "",
+    intake_root: Path | None = None,
 ) -> FanoutFilesystemConfinement:
     """Probe one unit's backend before allowing its owner or checks to use it."""
     worktree = worktree.resolve()
     owner_state_roots = owner_state_directories(owner, environment)
-    write_roots = unique_roots((worktree, *owner_state_roots))
+    # This exact invocation-owned directory is removed by the dispatcher.
+    intake_roots = () if intake_root is None else (intake_root.resolve(),)
+    write_roots = unique_roots((worktree, *owner_state_roots, *intake_roots))
     write_literals = owner_state_files(owner, environment)
     selected = backend("auto")
     if selected == "unsupported":

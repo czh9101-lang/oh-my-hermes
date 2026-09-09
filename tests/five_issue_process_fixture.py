@@ -182,6 +182,9 @@ class Arguments(argparse.Namespace):
     mode: str = 'plain'
     stdout_file: Path | None = None
     stderr_file: Path | None = None
+    result_file: Path | None = None
+    result_path: Path | None = None
+    fenced_result: bool = False
     exit_code: int = 0
     session_id: str = ''
     control: Path | None = None
@@ -198,6 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     _ = parser.add_argument('--mode', choices=('plain', 'stdout', 'stderr', 'codex', 'claude'), default='plain')
     _ = parser.add_argument('--stdout-file', type=Path)
     _ = parser.add_argument('--stderr-file', type=Path)
+    _ = parser.add_argument('--result-file', type=Path)
+    _ = parser.add_argument('--result-path', type=Path)
+    _ = parser.add_argument('--fenced-result', action='store_true')
     _ = parser.add_argument('--exit-code', type=int, choices=range(256), default=0)
     _ = parser.add_argument('--session-id')
     _ = parser.add_argument('--control', type=Path)
@@ -265,6 +271,13 @@ def main(argv: list[str] | None = None) -> int:
                         'is_error': bool(args.exit_code)}
                     result['errors' if args.exit_code else 'result'] = [text] if args.exit_code else text
                     _emit(result)
+            if args.result_file is not None:
+                if args.result_path is not None:
+                    _ = shutil.copyfile(args.result_file, args.result_path)
+                if args.fenced_result:
+                    print('```json', flush=True)
+                    _copy(args.result_file, sys.stdout.buffer)
+                    print('\n```', flush=True)
             if events is not None:
                 _ = events.write(b'finished\n')
         return args.exit_code
@@ -274,6 +287,60 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, EOFError) as error:
         print('fixture_error:' + type(error).__name__, file=sys.stderr)
         return 2
+
+
+def executor_main(executor: str, argv: list[str]) -> int:
+    """Native-shaped argv adapter used only by local public-dispatch scenarios."""
+    if '--version' in argv:
+        print('five-issue-process-fixture 1.0')
+        return 0
+    if '--help' in argv:
+        if '--fixture-unsupported-help' in argv:
+            print('exec')
+            return 0
+        print('exec --json resume' if executor == 'codex' else
+              '--output-format stream-json --verbose --resume')
+        return 0
+    if 'resume' in argv or any(arg.startswith('--resume') for arg in argv):
+        raise AssertionError('fixture_resume_must_never_launch')
+    import re
+    prompt = argv[-1] if executor == 'codex' else argv[argv.index('-p') + 1]
+    match = re.search(r'JSON sidecar to exactly (.+)\.', prompt)
+    if match is None:
+        raise ValueError('fixture_return_contract_missing')
+    # The temporary sidecar path carries no unit identity; the frozen prompt does.
+    fanout, unit = os.environ['OMH_FANOUT_LINEAGE'].rsplit('/', 1)[-1].split(':')
+    head = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True,
+                          text=True, check=True).stdout.strip()
+    sid = str(uuid.uuid5(uuid.NAMESPACE_URL, match[1]))
+    if 'fixture-duplicate' in prompt:
+        sid = '12345678-1234-4234-8234-123456789abc'
+    if 'Work unit: Malformed' in prompt:
+        sid = '--latest'
+    payload: dict[str, object] = {'schema_version': 'fanout_unit_result/v1', 'unit_id': unit,
+               'run_id': fanout + '-' + unit, 'fanout_id': fanout,
+               'base_sha': head, 'head_sha': head, 'process_status': 'process_succeeded',
+               'changed_paths': [], 'checks': [], 'findings': []}
+    text = 'fixture failed' if '--fixture-fail' in argv else '```json\n' + json.dumps(payload) + '\n```'
+    structured = '--json' in argv or '--output-format' in argv
+    if not structured:
+        print(text)
+        return 0
+    if executor == 'codex':
+        _emit({'type': 'thread.started', 'thread_id': sid})
+        _emit({'type': 'item.completed', 'item': {'type': 'reasoning', 'text': 'REASONING_PRIVATE_SENTINEL'}})
+        _emit({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': text}})
+        print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 12, 'output_tokens': 7}}))
+    else:
+        _emit({'type': 'system', 'subtype': 'init', 'session_id': sid, 'body': 'EVENT_PRIVATE_SENTINEL'})
+        _emit({'type': 'result', 'session_id': sid, 'result': text,
+               'usage': {'input_tokens': 'ignored'}})
+        print(json.dumps({'type': 'result', 'session_id': sid, 'result': text,
+                          'usage': {'input_tokens': 12, 'output_tokens': 7}, 'total_cost_usd': 0.02}))
+    print(json.dumps({'type': 'thread.started', 'thread_id': 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+                      'body': 'PROMPT_PRIVATE_SENTINEL'}), file=sys.stderr)
+    print('STDERR_PRIVATE_SENTINEL', file=sys.stderr)
+    return 3 if '--fixture-fail' in argv else 0
 
 
 if __name__ == '__main__':

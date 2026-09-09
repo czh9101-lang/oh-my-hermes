@@ -99,6 +99,27 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "the terminal close still parses the full stdout independently of every snapshot.",
     ),
     ClassifiedSite(
+        'src/coding/fanout_dispatch.py',
+        'dispatch_fanout',
+        INTENTIONAL,
+        'Reaps owned children, preserves completed siblings and bounded failure metadata, '
+        + 'writes the batch summary, and re-raises the original dispatcher exception.',
+    ),
+    ClassifiedSite(
+        'src/coding/fanout_dispatch.py',
+        'drain',
+        INTENTIONAL,
+        'A binary stream observer fault terminates the invocation-owned process group, '
+        + 'then the waiting caller re-raises the same exception after joining both readers.',
+    ),
+    ClassifiedSite(
+        'src/coding/fanout_dispatch.py',
+        '_dispatch_unit',
+        INTENTIONAL,
+        'A runner observer error is recorded as a bounded dispatcher failure, never '
+        + 'worker success, and the original exception is re-raised after cleanup.',
+    ),
+    ClassifiedSite(
         "src/coding/diagnostic_execution_engine.py",
         "_observe",
         INTENTIONAL,
@@ -318,8 +339,8 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # function. `_write_candidate_batch`, `_is_catalog_question`, `pre_llm_call`,
 # `_resume_unlocked`, and `_execute_cell` each hold two handlers, so the handler
 # count is five above the anchor count.
-EXPECTED_HANDLER_COUNT = 33
-EXPECTED_ANCHOR_COUNT = 28
+EXPECTED_HANDLER_COUNT = 36
+EXPECTED_ANCHOR_COUNT = 31
 
 
 class DerivedSite(NamedTuple):

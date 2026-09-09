@@ -101,6 +101,7 @@ class FanoutOutput:
         self._fence_overrun = False
         self._has_root_result = False
         self._usage: dict[str, int] = {}
+        self._legacy_streams: set[str] = set()
 
     @property
     def issues(self) -> tuple[str, ...]:
@@ -298,9 +299,35 @@ class FanoutOutput:
             if stream == 'stdout':
                 self._fence = None
 
+    def feed_legacy(self, stream: str, data: object, *, complete: bool = True) -> None:
+        """Adapt an injected runner without claiming re-encoded text is wire bytes."""
+        if isinstance(data, bytes):
+            self.feed(stream, data)
+        elif isinstance(data, str):
+            self._legacy_streams.add(stream)
+            for start in range(0, len(data), _CHUNK_BYTES):
+                self.feed(stream, data[start:start + _CHUNK_BYTES].encode('utf-8', errors='surrogatepass'))
+        else:
+            complete = False
+        self.finish(stream, complete=complete)
+
+    def finish_pending(self, *, complete: bool = False) -> None:
+        """Finalize only unfinished pipes after launch, drain or observer failure."""
+        with self._lock:
+            for name in ('stdout', 'stderr'):
+                if not self._streams[name].closed:
+                    self.finish(name, complete=complete)
+
     def streams(self) -> list[StreamDiagnostic]:
         with self._lock:
-            return [self._streams[name].snapshot() for name in ('stdout', 'stderr')]
+            snapshots = [self._streams[name].snapshot() for name in ('stdout', 'stderr')]
+            for stream in snapshots:
+                if stream['stream'] in self._legacy_streams:
+                    stream['original_bytes'] = stream['original_lines'] = None
+                    if stream['state'] == 'empty':
+                        stream['state'] = 'not_captured'
+                        stream['reason'] = 'not_captured'
+            return snapshots
 
     def error_window(self, stream: str) -> str:
         """Ephemeral bounded legacy retry/auth classifier input; NEVER persist."""

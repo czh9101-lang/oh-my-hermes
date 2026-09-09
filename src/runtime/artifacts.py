@@ -45,6 +45,7 @@ from ..external_effect_receipts import (
     success_claim_citation,
     validate_external_effect_receipt_store,
 )
+from ..workflows.observation_journal import observation_failure_diagnostic
 from ..workflows.approval_receipts import validate_approval_receipt_store
 from ..workflows.blocked_work_records import decision_history, validate_blocked_work_record_store
 from ..workflows.decision_gates import validate_decision_gate_store
@@ -495,6 +496,16 @@ def write_merge_record(run_dir: Path, merge: dict[str, Any]) -> dict[str, Any]:
 
 def write_runtime_observation(target_dir: Path, observation: dict[str, Any]) -> dict[str, Any]:
     record = build_runtime_observation_record(observation)
+    # runtime_observation/v1 has a closed key set. Optional fanout metadata
+    # belongs to its canonical journal event, not an implicit schema extension.
+    journal_record = dict(record)
+    for key in ("fanout_id", "attempt_id", "base_sha", "observed_revision"):
+        value: object = observation.get(key)
+        if isinstance(value, str) and 0 < len(value) <= 2048 and value.isprintable():
+            journal_record[key] = value
+    diagnostic = observation_failure_diagnostic({**observation, **record})
+    if diagnostic is not None and record["target_type"] == "run" and record["target_id"] == target_dir.name:
+        journal_record["failure_diagnostic"] = diagnostic
     ensure_dir(target_dir, private=True)
     path = target_dir / "runtime_observations.jsonl"
     ensure_file(path, private=True)
@@ -516,7 +527,7 @@ def write_runtime_observation(target_dir: Path, observation: dict[str, Any]) -> 
             },
         },
     )
-    _append_runtime_observation_to_journal(target_dir, record)
+    _append_runtime_observation_to_journal(target_dir, journal_record)
     return record
 
 
@@ -541,6 +552,7 @@ def _append_runtime_observation_to_journal(target_dir: Path, record: dict[str, A
                 "evidence_refs": record.get("evidence_refs", []),
                 "summary": record.get("summary", ""),
                 "source": "runtime_observation",
+                **{key: record[key] for key in ("fanout_id", "attempt_id", "base_sha", "observed_revision", "failure_diagnostic") if key in record},
                 "worktree_ref": record.get("worktree_ref", ""),
                 "worker_ref": record.get("worker_ref", ""),
             },
