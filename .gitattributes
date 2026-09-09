@@ -11,3 +11,5 @@ install.ps1 text eol=lf
 skills/**/*.md text eol=lf
 docs/WORKFLOWS.md text eol=lf
 docs/ROLES.md text eol=lf
+src/plugin_bundle/omh/tools/capability_families.json text eol=lf
+examples/**/*.json text eol=lf

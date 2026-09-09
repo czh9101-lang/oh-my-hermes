@@ -4,12 +4,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 import json
 import re
+from five_issue_process_fixture import write_fixture_executable
 import os
 from uuid import NAMESPACE_URL, uuid5
 from pathlib import Path
 import shlex
 import subprocess
-import sys
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
@@ -74,14 +74,12 @@ def run_case(case_id: str) -> CaseResult:
             Path(environment[key]).mkdir()
         executables: dict[str, str] = {}
         for owner in ('codex', 'claude-code', 'unsupported'):
-            executable = root / owner
-            _ = executable.write_text('#!' + sys.executable + '\nimport sys\nsys.path.insert(0, ' +
+            executables[owner] = write_fixture_executable(root / owner,
+                'import sys\nsys.path.insert(0, ' +
                 repr(str(Path(__file__).resolve().parents[1])) + ')\n' +
                 'from five_issue_process_fixture import executor_main\n' +
                 'raise SystemExit(executor_main(' + repr('codex' if owner == 'unsupported' else owner) + ', ' +
                 ("['--fixture-unsupported-help', *sys.argv[1:]]" if owner == 'unsupported' else 'sys.argv[1:]') + '))\n')
-            executable.chmod(0o700)
-            executables[owner] = str(executable)
         fail_b = case_id == 'S3'
         expected_ids: dict[str, str] = {}
         intake_paths: list[Path] = []

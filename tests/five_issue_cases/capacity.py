@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from five_issue_process_fixture import write_fixture_executable
 import re
 import socket
 from contextlib import ExitStack
@@ -152,8 +153,7 @@ def run_case(case_id: str) -> CaseResult:
         port = address()[1]
         control_token = uuid4().hex
         child_control: socket.socket | None = None
-        executable = root / 'executor'
-        _ = executable.write_text('#!' + sys.executable + '\n' +
+        executable_path = write_fixture_executable(root / 'executor',
             'import sys,json,re,socket\nfrom pathlib import Path\n' +
             "if '--version' in sys.argv: print('codex 0.0.0'); raise SystemExit(0)\n" +
             "if '--help' in sys.argv: print('--json resume --output-format stream-json --verbose --resume'); raise SystemExit(0)\n" +
@@ -171,12 +171,11 @@ def run_case(case_id: str) -> CaseResult:
             'sys.path.insert(0, ' + repr(str(Path(__file__).resolve().parents[1])) + ')\n' +
             'from five_issue_process_fixture import executor_main\n' +
             "raise SystemExit(executor_main('codex', sys.argv[1:]))\n")
-        executable.chmod(0o700)
         rejecting = True
         def argv_for(owner: str, prompt: str, route: Mapping[str, object] | None = None) -> list[str]:
             argv = build_dispatch_argv(owner, prompt, route)
             assert argv is not None
-            argv[0] = str(executable)
+            argv[0] = executable_path
             match = re.search(r'schema_version=fanout_unit_result/v1, unit_id=([a-z0-9-]+),', prompt)
             assert match is not None
             if match[1] == 'a' and case_id != 'C6':
@@ -210,7 +209,7 @@ def run_case(case_id: str) -> CaseResult:
                 release.set()
             return outcome
         def runner(argv: Sequence[str], **kwargs: Unpack[RunnerOptions]) -> subprocess.CompletedProcess[bytes] | subprocess.CompletedProcess[str]:
-            if str(argv[0]) != str(executable):
+            if str(argv[0]) != executable_path:
                 return signal_safe_unit_runner(argv, **kwargs)
             prompt = next((part for part in argv if 'schema_version=fanout_unit_result/v1, unit_id=' in part), '')
             match = re.search(r'schema_version=fanout_unit_result/v1, unit_id=([a-z0-9-]+),', prompt)
@@ -275,6 +274,7 @@ def run_case(case_id: str) -> CaseResult:
             'independence': 'Each fixture has its own isolated file scope.',
             'expected_evidence_shape': 'Observed process exits and bound capacity receipts.'}))
         from hashlib import sha256
+        executable = Path(executable_path)
         sources = (capacity.CodexAdmissionSource(str(executable.resolve()), sha256(executable.read_bytes()).hexdigest(),
                                                  '0.0.0', SOURCE_REVISION, 'fixture'),)
         try:

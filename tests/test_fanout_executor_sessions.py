@@ -355,7 +355,9 @@ class SessionsFoundation(unittest.TestCase):
         import sys
         from omh.coding.fanout_executor_sessions import bounded_session_probe
         data, reason = bounded_session_probe([sys.executable, '-c', 'print("1.0")'])
-        self.assertEqual((data, reason), (b'1.0\n', 'observed'))
+        # The probe returns raw pipe bytes; the child's own line ending is
+        # platform-native (CRLF on Windows), so compare the payload, not it.
+        self.assertEqual((data.splitlines() if data is not None else None, reason), ([b'1.0'], 'observed'))
         for program, expected in [('print("x" * 20000)', 'probe_output_limited'),
                                   ('raise SystemExit(7)', 'probe_nonzero')]:
             data, reason = bounded_session_probe([sys.executable, '-c', program])

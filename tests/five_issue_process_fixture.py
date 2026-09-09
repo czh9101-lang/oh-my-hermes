@@ -44,6 +44,24 @@ class Cleanup(TypedDict):
     errors: list[str]
 
 
+def write_fixture_executable(path: Path, body: str) -> str:
+    """Write a python fixture CLI and return the path a dispatcher can spawn.
+
+    A shebang script is not executable on Windows, so there the script is
+    written beside a .cmd launcher and the launcher's path is returned.
+    """
+    script = path.with_suffix('.py')
+    _ = script.write_text('#!' + sys.executable + '\n' + body, encoding='utf-8')
+    if os.name != 'nt':
+        _ = path.write_text('#!' + sys.executable + '\n' + body, encoding='utf-8')
+        path.chmod(0o700)
+        return str(path)
+    launcher = path.with_suffix('.cmd')
+    _ = launcher.write_text('@echo off\r\n"' + sys.executable + '" "' + str(script) + '" %*\r\n',
+                            encoding='utf-8')
+    return str(launcher)
+
+
 def _line(stream: BinaryIO | socket.SocketIO, timeout: float) -> str:
     """Await one bounded control/event frame; no polling or fixed delays."""
     deadline = time.monotonic() + timeout
@@ -56,7 +74,8 @@ def _line(stream: BinaryIO | socket.SocketIO, timeout: float) -> str:
         if not byte:
             raise EOFError('fixture_control_closed')
         if byte == b'\n':
-            return data.decode('ascii')
+            # A child that wrote its frame in text mode emits CRLF on Windows.
+            return data.decode('ascii').rstrip('\r')
         data.extend(byte)
     raise ValueError('fixture_control_frame_too_long')
 
