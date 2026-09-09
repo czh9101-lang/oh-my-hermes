@@ -5990,6 +5990,8 @@ def build_chat_response_from_route(
                     "policy_next_action": policy_next_action,
                     "artifact_schema": "visual_prompt_card/v1",
                     "observation_schema": "visual_observation/v1",
+                    "generation_receipt_schema": "visual_generation_receipt/v1",
+                    "route_evidence_schema": "visual_generation_route_evidence/v1",
                     "image_generation_capability": "unknown",
                     "image_generation_setup": image_generation_setup_fallback("unknown"),
                     "evidence_not_observed": [
@@ -6004,6 +6006,19 @@ def build_chat_response_from_route(
                         "Show generate_visual_image only when wrapper context reports image_generation_capability/v1 "
                         "with state connected; that action is still not generation evidence."
                     ),
+                    "route_claim_rule": (
+                        "Report the requested route and the observed route separately. Leave provider, model, "
+                        "quality, operation, dimensions, and credential class unknown unless a "
+                        "visual_generation_receipt/v1 attests them; a returned file, a connected capability, and a "
+                        "configured selection are none of them evidence of the route that ran."
+                    ),
+                    "route_warning_kinds": [
+                        "route_mismatch",
+                        "unknown_observed_route",
+                        "stale_card_identity",
+                        "artifact_digest_drift",
+                        "provider_response_reuse",
+                    ],
                 },
             )
         if selected == "paper-learning" or policy_next_action == "prepare_paper_learning":

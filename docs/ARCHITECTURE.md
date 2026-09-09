@@ -107,6 +107,7 @@ src/
     paper_learning.py
     research_department.py
     source_finder.py
+    visual_generation_receipts.py
     visual_summary.py
     workflow_learning.py
 
