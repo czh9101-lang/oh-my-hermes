@@ -125,10 +125,10 @@ DOMAIN_REVIEW_CONTRACTS = {
         "outputs": ("discovery_decision_frame/v1", "discovery_evidence_ledger/v1", "customer_discovery_plan/v1", "assumption_test_portfolio/v1", "discovery_decision_receipt/v1", "initial_gtm_hypothesis/v1"),
         "steps": ("discovery_frame_decision", "discovery_classify_evidence", "discovery_plan_customer_reentry", "discovery_gate_problem", "discovery_rank_assumptions", "discovery_draft_gtm_hypothesis", "discovery_validate_decision_receipt"),
         "checks": {
-            "discovery_decision_frame_check": {"owner", "current_alternatives", "problem_hypothesis", "decision", "kill_criteria", "disposition", "constraints", "learning_budget", "segment"},
+            "discovery_decision_frame_check": {"owner", "current_alternatives", "problem_hypothesis", "decision", "kill_criteria", "disposition", "constraints", "learning_budget", "segment", "target_segment_definition"},
             "discovery_evidence_class_check": {"unresolved_inconsistency", "pointer_status", "direction", "safe_reference", "source_class", "confidence_limits", "observation", "segment", "observation_date"},
             "discovery_customer_reentry_check": {"interview_guide_focus", "human_task_handoff", "transcript_exclusion", "participant_criteria", "consent_privacy_constraints", "evidence_reentry_contract", "bias_controls"},
-            "discovery_problem_gate_check": {"gate_reason", "problem_gate_state", "solution_work_permitted", "supporting_refs", "contradicting_refs"},
+            "discovery_problem_gate_check": {"gate_reason", "problem_gate_state", "solution_work_permitted", "supporting_refs", "contradicting_refs", "audience_gate", "missing_audience_evidence"},
             "discovery_assumption_precommit_check": {"evidence_gap", "smallest_disconfirming_test", "segment_sample", "success_condition", "cost", "owner", "assumption_category", "evidence_reentry", "deadline", "inconclusive_condition", "failure_condition", "decision_impact", "rank"},
             "discovery_decision_receipt_check": {"promotion_guard", "next_route", "rejected_paths", "decision", "residual_risks", "confidence_limits", "observed_evidence", "precommitted_criteria"},
             "discovery_gtm_hypothesis_check": {"pricing_wtp_hypothesis", "current_alternative", "value_proposition", "first_cohort", "buyer_user_distinction", "beachhead_segment", "learning_metrics", "initial_channel", "evidence_basis"},

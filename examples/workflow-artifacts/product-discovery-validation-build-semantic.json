@@ -11,6 +11,7 @@
     ],
     "learning_budget_ref": "budget-discovery-1",
     "problem_ref": "problem-onboarding-dropoff",
+    "segment_definition_state": "recruitable",
     "segment_ref": "segment-new-teams"
   },
   "gtm": {

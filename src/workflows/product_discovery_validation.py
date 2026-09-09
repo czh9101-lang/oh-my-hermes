@@ -12,23 +12,33 @@ from ..system.local_store import file_lock, read_jsonl_objects
 from ..system.paths import OmhPaths
 from .product_discovery_artifacts import (
     ASSUMPTION_TEST_PORTFOLIO_SCHEMA_VERSION,
+    BUILD_BOUNDARY_ROUTES,
     CUSTOMER_DISCOVERY_PLAN_SCHEMA_VERSION,
+    DISCOVERY_CONTINUATION_ROUTE,
     DISCOVERY_DECISION_FRAME_SCHEMA_VERSION,
     DISCOVERY_DECISION_RECEIPT_SCHEMA_VERSION,
     DISCOVERY_EVIDENCE_LEDGER_SCHEMA_VERSION,
     INITIAL_GTM_HYPOTHESIS_SCHEMA_VERSION,
+    audience_is_defined,
     build_assumption_test_portfolio,
     build_customer_discovery_plan,
     build_discovery_decision_frame,
     build_discovery_decision_receipt,
     build_discovery_evidence_ledger,
     build_initial_gtm_hypothesis,
+    missing_audience_evidence_refs,
 )
 from .product_discovery_artifact_validation import validate_product_discovery_artifact
 
 
 PRODUCT_DISCOVERY_STORE_NAME: Final = "product_discovery_artifacts.jsonl"
+DISCOVERY_AUDIENCE_GATE_SCHEMA_VERSION: Final = "discovery_audience_gate/v1"
 _EXTERNAL_EVIDENCE_CLASSES: Final = ("external_human", "behavioral_data")
+_AUDIENCE_GATE_CLAIM_BOUNDARY: Final = (
+    "The audience gate reads one prepared decision frame. Evidence gathering may continue while the audience "
+    "is undefined; solution work is permitted only by a validated decision receipt. This is not recruitment, "
+    "customer research, a PRD, a prototype, code, execution, review, CI, or merge evidence."
+)
 
 __all__ = (
     "append_product_discovery_artifact",
@@ -37,6 +47,7 @@ __all__ = (
     "build_discovery_decision_frame",
     "build_discovery_evidence_ledger",
     "build_initial_gtm_hypothesis",
+    "discovery_audience_gate",
     "evaluate_product_discovery",
     "prepare_product_discovery",
     "product_brief_consumption",
@@ -98,26 +109,31 @@ def evaluate_product_discovery(package: Mapping[str, Mapping[str, Any]], *, now:
         raise ValueError("prepared discovery artifacts have invalid rows")
     _stamp(now, "now")
     evaluated_at = _time(now)
+    segment_state = str(frame["segment_definition_state"])
+    audience_defined = audience_is_defined(segment_state)
     outcomes = [_assumption_outcome(assumption, entries, evaluated_at=evaluated_at) for assumption in assumptions]
     failed = [outcome for outcome in outcomes if outcome["contradicted"]]
     rejected = [outcome["assumption_id"] for outcome in failed]
     if failed:
         decision = "kill" if any(outcome["failure_decision"] == "kill" for outcome in failed) else "pivot"
-        problem_gate, route = "refuted", "product-discovery-validation"
-    elif outcomes and all(outcome["validated"] for outcome in outcomes):
+        problem_gate, route = "refuted", DISCOVERY_CONTINUATION_ROUTE
+    elif outcomes and all(outcome["validated"] for outcome in outcomes) and audience_defined:
         decision, problem_gate, route = "persevere", "validated", "product-brief"
     else:
-        decision, problem_gate, route = "inconclusive", "inconclusive", "product-discovery-validation"
+        decision, problem_gate, route = "inconclusive", "inconclusive", DISCOVERY_CONTINUATION_ROUTE
     eligible_refs = [reference for outcome in outcomes for reference in outcome["eligible_refs"]]
     residual = ["risk-evidence-limits"]
     if any(outcome["timed_out"] for outcome in outcomes):
         residual.append("risk-test-deadline-expired")
     if decision == "inconclusive":
         residual.append("risk-unresolved-assumptions")
+    if not audience_defined:
+        residual.append("risk-audience-undefined")
     return build_discovery_decision_receipt(
         discovery_id=str(frame["discovery_id"]),
         problem_ref=str(frame["problem_ref"]),
         segment_ref=str(frame["segment_ref"]),
+        segment_definition_state=segment_state,
         decision=decision,
         problem_gate=problem_gate,
         precommitted_test_ids=[str(assumption["test_id"]) for assumption in assumptions],
@@ -183,6 +199,35 @@ def _eligible(entry: Mapping[str, Any], assumption: Mapping[str, Any], *, evalua
     return precommitted_at <= observed_at <= deadline_at and observed_at <= evaluated_at
 
 
+def discovery_audience_gate(frame: Mapping[str, Any]) -> dict[str, Any]:
+    """Report the audience-before-build gate for one prepared decision frame.
+
+    Evidence work always continues. A frame alone never permits solution work;
+    only a validated decision receipt can. When the audience is undefined the
+    gate names the missing audience evidence and the outputs it blocks.
+    """
+    errors = validate_product_discovery_artifact(frame)
+    if errors:
+        raise ValueError(errors[0])
+    if frame.get("schema_version") != DISCOVERY_DECISION_FRAME_SCHEMA_VERSION:
+        raise ValueError("the audience gate reads a discovery decision frame")
+    state = str(frame["segment_definition_state"])
+    defined = audience_is_defined(state)
+    return {
+        "schema_version": DISCOVERY_AUDIENCE_GATE_SCHEMA_VERSION,
+        "discovery_id": frame["discovery_id"],
+        "segment_ref": frame["segment_ref"],
+        "segment_definition_state": state,
+        "audience_gate": "audience_defined" if defined else "audience_undefined",
+        "evidence_work_permitted": True,
+        "solution_work_permitted": False,
+        "blocked_outputs": [] if defined else list(BUILD_BOUNDARY_ROUTES),
+        "missing_audience_evidence_refs": missing_audience_evidence_refs(state),
+        "next_route": DISCOVERY_CONTINUATION_ROUTE,
+        "claim_boundary": _AUDIENCE_GATE_CLAIM_BOUNDARY,
+    }
+
+
 def product_brief_consumption(receipt: Mapping[str, Any]) -> dict[str, Any]:
     """Expose only a validated receipt's compact, transcript-free handoff."""
     if validate_product_discovery_artifact(receipt):
@@ -190,6 +235,8 @@ def product_brief_consumption(receipt: Mapping[str, Any]) -> dict[str, Any]:
     if receipt.get("schema_version") != DISCOVERY_DECISION_RECEIPT_SCHEMA_VERSION:
         return {}
     if receipt.get("decision") != "persevere" or receipt.get("problem_gate") != "validated":
+        return {}
+    if receipt.get("solution_work_permitted") is not True:
         return {}
     return {
         "problem_ref": receipt["problem_ref"],
