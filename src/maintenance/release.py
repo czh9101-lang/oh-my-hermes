@@ -208,7 +208,13 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # `memory_provider_posture/v1` in its expected outputs (#1428). Eight chars for
 # the one artifact that answers whether enabling an optional memory provider is
 # reversible; warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 411288
+# 411288 -> 411497: `external-connector-readiness` binds realtime voice
+# adoption to `realtime_voice_trial_receipt/v1` (#1426), and `voice-input` and
+# `media-input` each state that their own record is never that receipt. One
+# evidence contract reaching the one lane that decides voice adoption, plus
+# the two non-promotion lines on the lanes a reader would otherwise mistake
+# for it, not per-section padding; warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 411497
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -738,7 +744,19 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # irreversible adoption too late. The field-level contract lives in
 # `src/workflows/memory_provider_posture.py`, outside this budget; warranted
 # growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 919894
+# 919894 -> 922941: `external-connector-readiness` binds realtime voice
+# adoption to `realtime_voice_trial_receipt/v1` (#1426) - the receipt and
+# verdict outputs, three safety rules, one checklist line, one recovery note,
+# and the English voice triggers - while `voice-input` and
+# `media-input` each state that their own record is never realtime voice
+# readiness. These belong in the always-loaded body because the mistake they
+# prevent is made at routing time: a supplied recording or a terse spoken
+# request reads as voice evidence unless the lane says it is not, and a
+# connector that authenticated reads as ready unless the lane asks for turn
+# integrity first. The field-level contract lives in
+# `docs/REALTIME-VOICE-TRIAL-RECEIPTS.md`, outside this budget; warranted
+# growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 922941
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

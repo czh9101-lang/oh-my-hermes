@@ -2648,6 +2648,8 @@ _FEATURE_SURFACE_HARNESSES = (
             "multimodal_routing_policy/v1 when screenshots, audio, video, or files are involved",
             "fallback_route_policy/v1",
             "connector_trial_manifest/v1 when observed",
+            "realtime_voice_trial_receipt/v1 when a supplied realtime voice trial is observed",
+            "realtime_voice_readiness/v1 verdict per voice dimension when a receipt is supplied",
         ),
         quality_tier="connector-readiness-gated",
         evidence_ladder=(
@@ -2658,6 +2660,7 @@ _FEATURE_SURFACE_HARNESSES = (
             "freshness_and_modality_policy_recorded",
             "fallback_route_recorded",
             "connector_trial_recorded_when_observed",
+            "realtime_voice_trial_receipt_supplied_when_the_connector_is_voice",
         ),
         wrapper_actions=(
             "prepare_external_connector_readiness",

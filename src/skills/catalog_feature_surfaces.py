@@ -299,6 +299,9 @@ _FEATURE_SURFACE_SKILLS = (
         boundary="A voice operator card is not speech recognition, mobile notification delivery, platform action, or accepted execution evidence.",
         good_prompt="voice-operator 'release before lunch, check risky parts' from mobile.",
         bad_prompt="voice-operator assume the user approved a destructive action from a vague voice note.",
+        extra_safety_rules=(
+            "This card is not realtime voice connector readiness. It may read the tool-safety verdict of a supplied realtime_voice_trial_receipt/v1 when one exists, and it never creates, infers, or upgrades one; route realtime voice adoption to external-connector-readiness.",
+        ),
     ),
     _feature_surface_skill(
         "browser-operator",
@@ -729,6 +732,28 @@ _FEATURE_SURFACE_SKILLS = (
             "disable memory provider",
             "delete provider memory",
             "export memory provider data",
+            "realtime voice connector",
+            "real-time voice connector",
+            "realtime voice readiness",
+            "realtime voice trial",
+            "realtime voice stack",
+            "voice connector readiness",
+            "voice connector trial",
+            "voice gateway readiness",
+            "voice gateway trial",
+            "voice agent connector readiness",
+            "voice trial receipt",
+            "voice turn integrity",
+            "voice turn receipt",
+            "barge-in behavior",
+            "barge-in handling",
+            "voice tool safety",
+            "spoken tool safety",
+            # Korean reaches this lane through the realtime-voice carve-out in
+            # `src/routing/policy.py`, not through this table: the per-skill
+            # Hangul freeze in `tests/test_routing_language_policy.py` exists so
+            # an existing skill's Korean table is never padded, and a new
+            # capability inside an existing skill is not a reason to raise it.
         ),
         "Use before adopting, enabling, or routing an external plugin/connector/API when Hermes must compare capability, auth, cost, modality, freshness, safety, fallback, and observable trial evidence. Use it for an optional memory provider too, where enabling, switching, pausing, or removing it also needs identity scope, automatic hooks, retention, deletion, export, and switching answered before adoption.",
         category="connector",
@@ -746,6 +771,8 @@ _FEATURE_SURFACE_SKILLS = (
             "fallback_route_policy/v1",
             "connector_trial_manifest/v1 when observed",
             "memory_provider_posture/v1 when the candidate is an optional memory provider",
+            "realtime_voice_trial_receipt/v1 when a supplied realtime voice trial is observed",
+            "realtime_voice_readiness/v1 verdict per voice dimension when a receipt is supplied",
             "next action",
             "prepared-vs-observed boundary",
         ),
@@ -757,6 +784,8 @@ _FEATURE_SURFACE_SKILLS = (
             "multimodal_routing_policy/v1 for screenshot, audio, video, file, OCR, or visual QA evidence routes when needed",
             "connector_trial_manifest/v1 only when a provider response, capture id, query transcript, message id, or tool-call observation is recorded",
             "memory_provider_posture/v1 for an optional memory provider, covering identity scope, automatic hooks, storage boundary, synchronization, failure, retention, deletion, export/import, backup/restore, and portability, each marked ready, missing, risky, not_observed, or unknown",
+            "realtime_voice_trial_receipt/v1 only when an authorized host, connector, or operator supplies the observed trial: connector build identity, requested versus observed stack, per-turn milestones on one declared timing reference, turn-integrity states, fallback path, interruption behavior, and spoken tool decisions",
+            "realtime_voice_readiness/v1 with a pass, hold, or block state and reasons for turn integrity, latency, fallback, interruption, and tool safety, plus the separated connector-configured, synthetic-trial, actual-environment-trial, voice-turn, tool-action, and session-completed states",
         ),
         final_checklist=(
             "Candidate connector, target domain, read/write scope, modality needs, provider owner, fallback workflow, and stop condition are explicit.",
@@ -765,17 +794,22 @@ _FEATURE_SURFACE_SKILLS = (
             "Provider responses, screenshots, audio/video/file captures, query outputs, message ids, and external mutations are reported only from observed trial evidence.",
             "For a memory provider, disabling it, removing its local cache, deleting its remote memory, deleting the account, and switching away are reported as distinct operations with distinct postconditions.",
             "Unknown deletion, isolation, or write semantics block automatic writes and irreversible adoption instead of resolving to an OMH or Hermes default.",
+            "For a realtime voice connector, keep turn integrity, latency, fallback, interruption, and spoken tool safety separate; report unsupported or unobserved dimensions as hold or block rather than as a pass.",
         ),
         recovery_notes=(
             "If the candidate list is unknown, route to skill-scout or source-finder before readiness scoring.",
             "If credentials, cost authority, or connector installation is missing, keep readiness blocked and route setup to toolbelt-readiness.",
             "If a specific provider action is already selected, route read-only live data to live-info-operator or write/mutation tasks to connector-operator.",
             "If a memory-provider lifecycle field is unknown, ask the operator to declare it or supply an observed trial receipt; hand the result to memory-sync as not_omh_reviewed context rather than importing it into OMH review.",
+            "If a realtime voice connector has no supplied realtime_voice_trial_receipt/v1, route the setup and the trial run to the host, connector, or operator that owns the microphone, call, or room, then consume only the returned receipt.",
         ),
         extra_safety_rules=(
             "A hook registration or lifecycle callback is an observation point only; it never grants write or synchronization authority.",
             "Documentation and open package code declare a contract; neither establishes a hosted service's storage, retention, cost, or deletion postcondition.",
             "A memory provider stays optional: an unknown or unavailable provider never becomes a required default and never makes OMH memory unusable.",
+            "A realtime voice verdict comes only from a supplied realtime_voice_trial_receipt/v1. OMH opens no microphone, call, room, socket, or provider session, installs no connector, downloads no voice model, and authorizes no tool from a receipt.",
+            "A synthetic voice fixture never proves the intended room, microphone, network, or telephony path, and a fallback path succeeding is never success for the requested voice stack, provider, or model.",
+            "Generic connector, voice-input, and media-input records are not realtime voice readiness; a turn that lost its onset, split, merged, dispatched twice, truncated, or replayed after audible output blocks the verdict rather than reporting latency.",
         ),
     ),
     _feature_surface_skill(
@@ -1062,6 +1096,10 @@ _FEATURE_SURFACE_SKILLS = (
             "If the media or transcript is missing, ask for the smallest source, file, transcript, or provider result needed.",
             "If the request is broad current-source research about a video topic, route to research or source-finder before summary.",
             "If the user wants a PPT/PDF/report generated from the media summary, route to materials-package after media input evidence is clear.",
+            "If the request is about whether a live duplex voice connector keeps whole spoken turns, route to external-connector-readiness for a realtime_voice_trial_receipt/v1 rather than treating a supplied recording as that evidence.",
+        ),
+        extra_safety_rules=(
+            "A media_result_manifest/v1 describes a supplied recording or transcript. It is never a live duplex session, one-input-to-one-dispatch integrity, audible response behavior, or realtime voice readiness, and it cannot be promoted into one.",
         ),
     ),
     _feature_surface_skill(

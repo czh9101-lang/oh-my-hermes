@@ -3008,6 +3008,40 @@ PUBLIC_PLUGIN_CONNECTOR_READINESS_EXACT_PHRASES = (
     "x/twitter automation connector readiness",
     "x twitter automation connector readiness",
 )
+# Realtime voice adoption questions are connector-readiness questions, not
+# missing-tool questions: the connector is installed and answering, and what
+# is in doubt is whether it keeps whole spoken turns. Each phrase names the
+# voice surface plus what is being judged, so a plain "set up a voice tool"
+# request still reaches toolbelt-readiness.
+REALTIME_VOICE_CONNECTOR_READINESS_PHRASES = (
+    "realtime voice connector",
+    "real-time voice connector",
+    "realtime voice readiness",
+    "real-time voice readiness",
+    "realtime voice trial",
+    "real-time voice trial",
+    "realtime voice stack",
+    "voice connector readiness",
+    "voice connector trial",
+    "voice gateway readiness",
+    "voice gateway trial",
+    "voice agent connector readiness",
+    "voice trial receipt",
+    "voice turn integrity",
+    "voice turn receipt",
+    "barge-in behavior",
+    "barge-in behaviour",
+    "barge-in handling",
+    "voice tool safety",
+    "spoken tool safety",
+    "실시간 음성 커넥터",
+    "실시간 음성 준비",
+    "음성 커넥터 준비",
+    "음성 커넥터 시험",
+    "음성 게이트웨이 준비",
+    "음성 턴 무결성",
+    "음성 시험 영수증",
+)
 PUBLIC_PLUGIN_CONNECTOR_ALIAS_PHRASES = (
     "home assistant",
     "홈 어시스턴트",
@@ -8228,6 +8262,8 @@ def _toolbelt_readiness_guard_applies(normalized_query: str, query_tokens: set[s
         return False
     if _public_plugin_connector_readiness_requested(normalized_query):
         return False
+    if _realtime_voice_connector_readiness_requested(normalized_query):
+        return False
     if _harness_session_inventory_guard_applies(normalized_query, query_tokens):
         return False
     if _executor_readiness_check_requested(normalized_query, query_tokens):
@@ -8283,6 +8319,10 @@ def _toolbelt_readiness_guard_applies(normalized_query: str, query_tokens: set[s
         ),
     )
     return tool_context and missing_or_setup
+
+
+def _realtime_voice_connector_readiness_requested(normalized_query: str) -> bool:
+    return _contains_phrase(normalized_query, REALTIME_VOICE_CONNECTOR_READINESS_PHRASES)
 
 
 def _public_plugin_connector_readiness_requested(normalized_query: str) -> bool:

@@ -31,6 +31,7 @@ from ..routing.chat import public_chat_route_payload, route_explanation_payload
 from ..routing.coding_route_actions import coding_route_decision_payload, resolve_coding_route_decision
 from ..routing.localization import normalized_phrase
 from ..routing.policy import POINT_IN_TIME_WEB_GUARD
+from ..workflows.realtime_voice_trial_receipts import build_prepared_realtime_voice_chat_state
 from ..workflows.temporal_source_receipts import (
     TEMPORAL_EVIDENCE_SURFACES_SCHEMA_VERSION,
     TEMPORAL_RETRIEVAL_GAP_SCHEMA_VERSION,
@@ -5194,6 +5195,21 @@ _POINT_IN_TIME_RESEARCH_STATE: dict[str, object] = {
 }
 
 
+def _route_is_realtime_voice_connector_request(route_payload: dict[str, object]) -> bool:
+    """Whether the connector question is about a realtime voice stack.
+
+    The router marks these with one direct label, so the card reads the
+    decision rather than re-matching the message and drifting from routing.
+    """
+    for recommendation in route_payload.get("recommendations", []):
+        if not isinstance(recommendation, dict):
+            continue
+        matched = {str(item) for item in recommendation.get("matched", []) if str(item)}
+        if "direct:realtime_voice_connector_readiness" in matched:
+            return True
+    return False
+
+
 def _route_is_point_in_time_web_request(route_payload: dict[str, object]) -> bool:
     for recommendation in route_payload.get("recommendations", []):
         if not isinstance(recommendation, dict):
@@ -5499,6 +5515,14 @@ def _workflow_operations_chat_response(
     }
     if selected == "visual-qa":
         extra_state.update(build_prepared_web_visual_qa_chat_state())
+    if selected == "external-connector-readiness" and _route_is_realtime_voice_connector_request(decision):
+        extra_state["realtime_voice_trial"] = build_prepared_realtime_voice_chat_state()
+        extra_state["evidence_not_observed"] = [
+            "realtime voice trial execution",
+            "spoken turn observation",
+            "spoken tool action",
+            *extra_state["evidence_not_observed"],
+        ]
     return _chat_response(
         kind=str(config["kind"]),
         headline=str(config["headline"]),
