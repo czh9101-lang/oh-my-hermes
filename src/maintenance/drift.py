@@ -236,9 +236,13 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # scroll-motion lane adds three negatives for the frontend scroll
             # triggers: two parallax (astronomy, camera optics) and the
             # terminal-emulator scroll bug that pins the `scroll` hold-back.
+            # The realtime voice lane adds four negatives that mention voice or
+            # a receipt without asking about connector adoption: a translation
+            # input, a definition question, a voice-memo file lookup, and a
+            # billing receipt.
             # Protected-reference controls remain alongside the upstream corpus;
             # merged totals are re-derived from build_routing_precision_demo().
-            expected=198,
+            expected=202,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -253,9 +257,11 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # The public-board contract adds two LLM-build interventions and the
             # agent-board cross-lane guard. The scroll-motion lane adds three
             # more: smooth scroll, a parallax hero, and the Korean phrasing.
+            # The realtime voice lane adds four: adoption, a supplied trial
+            # receipt, turn integrity with barge-in, and the Korean phrasing.
             # Direct and mixed-reference interventions remain alongside the
             # upstream corpus; the merged producer determines the exact total.
-            expected=341,
+            expected=345,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",

@@ -31,6 +31,7 @@ from .policy import (
     PUBLIC_PLUGIN_CONNECTOR_ALIAS_PHRASES,
     PUBLIC_PLUGIN_CONNECTOR_READINESS_CONTEXT_PHRASES,
     PUBLIC_PLUGIN_CONNECTOR_READINESS_EXACT_PHRASES,
+    REALTIME_VOICE_CONNECTOR_READINESS_PHRASES,
     RoutingGuardRule,
     SKILL_SCOUT_CANDIDATE_ALIAS_PHRASES,
     SKILL_SCOUT_CANDIDATE_BLOCKER_PHRASES,
@@ -1261,7 +1262,8 @@ _SKILL_POLICIES.update(
             wrapper_guidance=(
                 "Prepare external_connector_readiness_card/v1 with connector_capability_matrix/v1, "
                 "auth_cost_boundary/v1, freshness and multimodal routing policies, fallback routes, "
-                "connector_trial_manifest/v1 slots, and a stop condition before adoption or provider results are claimed."
+                "connector_trial_manifest/v1 slots, realtime_voice_trial_receipt/v1 slots when the candidate is a "
+                "realtime voice connector, and a stop condition before adoption or provider results are claimed."
             ),
         ),
         "prompt-import-readiness": RecommendationPolicy(
@@ -1883,6 +1885,7 @@ def _scored_field(
         if (
             ecosystem_identity_connector_match
             or public_plugin_connector_match
+            or _realtime_voice_connector_readiness_match(normalized_query)
             or _has_strong_named_catalog_owner(matches)
         ):
             guards = tuple(guard for guard in guards if guard.id != _TOOLBELT_READINESS_GUARD_ID)
@@ -2393,6 +2396,9 @@ def _score_definition(
     if definition.name == "external-connector-readiness" and _public_plugin_connector_readiness_match(normalized_query):
         score += 36
         matched.add("direct:public_plugin_connector_readiness")
+    if definition.name == "external-connector-readiness" and _realtime_voice_connector_readiness_match(normalized_query):
+        score += 36
+        matched.add("direct:realtime_voice_connector_readiness")
     if definition.name == "skill-scout" and _skill_scout_candidate_alias_intent_match(normalized_query):
         score += 36
         matched.add("direct:skill_scout_candidate_alias")
@@ -2446,6 +2452,8 @@ def _codegraph_refresh_token_context(normalized_query: str, query_tokens: set[st
 
 def _external_connector_readiness_recommendation_applies(normalized_query: str, query_tokens: set[str]) -> bool:
     if _public_plugin_connector_readiness_match(normalized_query):
+        return True
+    if _realtime_voice_connector_readiness_match(normalized_query):
         return True
 
     strong_anchor_tokens = {
@@ -2547,6 +2555,19 @@ def _external_connector_readiness_recommendation_applies(normalized_query: str, 
             "crustocean platform",
             "smart home connector",
         )
+    )
+
+
+def _realtime_voice_connector_readiness_match(normalized_query: str) -> bool:
+    """A realtime voice adoption question, judged as a whole phrase.
+
+    Each phrase names both the voice surface and what is in doubt about it, so
+    a bare "voice" or "connector" token never reaches here and a missing-tool
+    request still belongs to toolbelt-readiness.
+    """
+    return any(
+        _phrase_match(normalized_query, normalized_phrase(phrase))
+        for phrase in REALTIME_VOICE_CONNECTOR_READINESS_PHRASES
     )
 
 

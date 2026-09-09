@@ -7282,6 +7282,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Safety rules:
   - A voice operator card is not speech recognition, mobile notification delivery, platform action, or accepted execution evidence.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
+  - This card is not realtime voice connector readiness. It may read the tool-safety verdict of a supplied realtime_voice_trial_receipt/v1 when one exists, and it never creates, infers, or upgrades one; route realtime voice adoption to external-connector-readiness.
 
 ### browser-operator
 
@@ -7637,7 +7638,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - The request is already handled by a narrower explicit skill with stronger evidence.
   - The user asks OMH to secretly run external platforms, connectors, schedulers, file exports, or runtime agents.
   - The only safe answer is to ask for missing authority, credentials, target, or observed evidence first.
-- Strong routing signals: `external-connector-readiness`, `external connector readiness`, `connector readiness matrix`, `plugin readiness matrix`, `provider readiness`, `api readiness`, `connector adoption`, `external plugin adoption`, `weather plugin readiness`, `weather connector readiness`, `wxtrain readiness`, `onequery read-only sql`, `read-only sql connector`, `sql connector readiness`, `nextcloud connector`, `microsoft workspace connector`, `microsoft graph connector`, `chainlink connector`, `solana connector`, `monero gateway`, `xmr gateway`, `private crypto transaction`, `private cryptocurrency connector`, `crypto transaction plugin`, `blockchain gateway`, `composio connector`, `composio universal cli`, `universal cli connector`, `universal cli skill adoption`, `skill connector adoption`, `connector auth risk`, `connector cost auth risk`, `agentchat connector`, `peer-to-peer agent messaging connector`, `websocket identity connector`, `websocket connector trial`, `clawsocial connector`, `social discovery connector`, `windy pairing`, `windymail mailbox connector`, `matrix chat identity`, `antigravity cli connector`, `agy cli bridge`, `agy bridge connector`, `macos keychain oauth connector`, `oracle oci connector`, `oracle genai connector`, `miniverse bridge`, `crustocean platform connector`, `cost-aware connector`, `multimodal connector`, `multimodal routing`, `screenshot connector`, `audio connector`, `video connector`, `video generation`, `generate a video`, `product demo video`, `text to video`, `home assistant connector`, `home assistant integration`, `home assistant device control`, `home assistant smart home`, `smart home connector`, `device control connector`, `plugin auto-routing`, `connector auto-routing`, `external tool trial`, `memory provider readiness`, `memory provider posture`, `memory provider lifecycle`, `memory provider adoption`, `memory provider retention`, `memory provider portability`, `memory provider sync failure`, `switch memory provider`, `switching memory providers`, `disable memory provider`, `delete provider memory`, `export memory provider data`, `커넥터 준비도`, `외부 커넥터 준비`, `외부 플러그인 채택`, `플러그인 준비도`, `커넥터 도입`, `플러그인 도입`, `비용 인증 리스크`, `인증 리스크`, `도입 비용`, `비용 기준 커넥터`, `자동 라우팅`, `멀티모달 커넥터`, `멀티모달 라우팅`, `영상 생성`, `제품 데모 영상`, `홈 어시스턴트 커넥터`, `홈 어시스턴트 연동`, `홈 어시스턴트 기기 제어`, `홈 어시스턴트 스마트홈`, `홈어시스턴트 커넥터`, `홈어시스턴트 연동`, `홈어시스턴트 기기 제어`, `홈어시스턴트 스마트홈`, `스마트홈 커넥터`
+- Strong routing signals: `external-connector-readiness`, `external connector readiness`, `connector readiness matrix`, `plugin readiness matrix`, `provider readiness`, `api readiness`, `connector adoption`, `external plugin adoption`, `weather plugin readiness`, `weather connector readiness`, `wxtrain readiness`, `onequery read-only sql`, `read-only sql connector`, `sql connector readiness`, `nextcloud connector`, `microsoft workspace connector`, `microsoft graph connector`, `chainlink connector`, `solana connector`, `monero gateway`, `xmr gateway`, `private crypto transaction`, `private cryptocurrency connector`, `crypto transaction plugin`, `blockchain gateway`, `composio connector`, `composio universal cli`, `universal cli connector`, `universal cli skill adoption`, `skill connector adoption`, `connector auth risk`, `connector cost auth risk`, `agentchat connector`, `peer-to-peer agent messaging connector`, `websocket identity connector`, `websocket connector trial`, `clawsocial connector`, `social discovery connector`, `windy pairing`, `windymail mailbox connector`, `matrix chat identity`, `antigravity cli connector`, `agy cli bridge`, `agy bridge connector`, `macos keychain oauth connector`, `oracle oci connector`, `oracle genai connector`, `miniverse bridge`, `crustocean platform connector`, `cost-aware connector`, `multimodal connector`, `multimodal routing`, `screenshot connector`, `audio connector`, `video connector`, `video generation`, `generate a video`, `product demo video`, `text to video`, `home assistant connector`, `home assistant integration`, `home assistant device control`, `home assistant smart home`, `smart home connector`, `device control connector`, `plugin auto-routing`, `connector auto-routing`, `external tool trial`, `memory provider readiness`, `memory provider posture`, `memory provider lifecycle`, `memory provider adoption`, `memory provider retention`, `memory provider portability`, `memory provider sync failure`, `switch memory provider`, `switching memory providers`, `disable memory provider`, `delete provider memory`, `export memory provider data`, `realtime voice connector`, `real-time voice connector`, `realtime voice readiness`, `realtime voice trial`, `realtime voice stack`, `voice connector readiness`, `voice connector trial`, `voice gateway readiness`, `voice gateway trial`, `voice agent connector readiness`, `voice trial receipt`, `voice turn integrity`, `voice turn receipt`, `barge-in behavior`, `barge-in handling`, `voice tool safety`, `spoken tool safety`, `실시간 음성 커넥터`, `실시간 음성 준비`, `음성 커넥터 준비`, `음성 커넥터 시험`, `음성 게이트웨이 준비`, `음성 턴 무결성`, `음성 시험 영수증`, `커넥터 준비도`, `외부 커넥터 준비`, `외부 플러그인 채택`, `플러그인 준비도`, `커넥터 도입`, `플러그인 도입`, `비용 인증 리스크`, `인증 리스크`, `도입 비용`, `비용 기준 커넥터`, `자동 라우팅`, `멀티모달 커넥터`, `멀티모달 라우팅`, `영상 생성`, `제품 데모 영상`, `홈 어시스턴트 커넥터`, `홈 어시스턴트 연동`, `홈 어시스턴트 기기 제어`, `홈 어시스턴트 스마트홈`, `홈어시스턴트 커넥터`, `홈어시스턴트 연동`, `홈어시스턴트 기기 제어`, `홈어시스턴트 스마트홈`, `스마트홈 커넥터`
 - Good example:
   - Prompt: external-connector-readiness compare weather plugin and wxtrain candidates with cost, freshness, multimodal evidence, and fallback routes before adoption.
   - Expected behavior: Produce `prepare_external_connector_readiness` with required context, wrapper actions, and not-evidence boundaries.
@@ -7657,11 +7658,13 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Provider responses, screenshots, audio/video/file captures, query outputs, message ids, and external mutations are reported only from observed trial evidence.
   - For a memory provider, disabling it, removing its local cache, deleting its remote memory, deleting the account, and switching away are reported as distinct operations with distinct postconditions.
   - Unknown deletion, isolation, or write semantics block automatic writes and irreversible adoption instead of resolving to an OMH or Hermes default.
+  - For a realtime voice connector, keep turn integrity, latency, fallback, interruption, and spoken tool safety separate; report unsupported or unobserved dimensions as hold or block rather than as a pass.
 - Recovery notes:
   - If the candidate list is unknown, route to skill-scout or source-finder before readiness scoring.
   - If credentials, cost authority, or connector installation is missing, keep readiness blocked and route setup to toolbelt-readiness.
   - If a specific provider action is already selected, route read-only live data to live-info-operator or write/mutation tasks to connector-operator.
   - If a memory-provider lifecycle field is unknown, ask the operator to declare it or supply an observed trial receipt; hand the result to memory-sync as not_omh_reviewed context rather than importing it into OMH review.
+  - If a realtime voice connector has no supplied realtime_voice_trial_receipt/v1, route the setup and the trial run to the host, connector, or operator that owns the microphone, call, or room, then consume only the returned receipt.
 - Required inputs:
   - user request
   - target context
@@ -7676,6 +7679,8 @@ These surfaces are generated command references, not installed Hermes workflow s
   - fallback_route_policy/v1
   - connector_trial_manifest/v1 when observed
   - memory_provider_posture/v1 when the candidate is an optional memory provider
+  - realtime_voice_trial_receipt/v1 when a supplied realtime voice trial is observed
+  - realtime_voice_readiness/v1 verdict per voice dimension when a receipt is supplied
   - next action
   - prepared-vs-observed boundary
 - Artifact expectations:
@@ -7686,12 +7691,17 @@ These surfaces are generated command references, not installed Hermes workflow s
   - multimodal_routing_policy/v1 for screenshot, audio, video, file, OCR, or visual QA evidence routes when needed
   - connector_trial_manifest/v1 only when a provider response, capture id, query transcript, message id, or tool-call observation is recorded
   - memory_provider_posture/v1 for an optional memory provider, covering identity scope, automatic hooks, storage boundary, synchronization, failure, retention, deletion, export/import, backup/restore, and portability, each marked ready, missing, risky, not_observed, or unknown
+  - realtime_voice_trial_receipt/v1 only when an authorized host, connector, or operator supplies the observed trial: connector build identity, requested versus observed stack, per-turn milestones on one declared timing reference, turn-integrity states, fallback path, interruption behavior, and spoken tool decisions
+  - realtime_voice_readiness/v1 with a pass, hold, or block state and reasons for turn integrity, latency, fallback, interruption, and tool safety, plus the separated connector-configured, synthetic-trial, actual-environment-trial, voice-turn, tool-action, and session-completed states
 - Safety rules:
   - An external connector readiness card is not connector installation, credential validation, provider access, API invocation, multimodal capture, live-data retrieval, external mutation, cost authorization, or successful trial evidence unless observed connector-trial evidence records it.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
   - A hook registration or lifecycle callback is an observation point only; it never grants write or synchronization authority.
   - Documentation and open package code declare a contract; neither establishes a hosted service's storage, retention, cost, or deletion postcondition.
   - A memory provider stays optional: an unknown or unavailable provider never becomes a required default and never makes OMH memory unusable.
+  - A realtime voice verdict comes only from a supplied realtime_voice_trial_receipt/v1. OMH opens no microphone, call, room, socket, or provider session, installs no connector, downloads no voice model, and authorizes no tool from a receipt.
+  - A synthetic voice fixture never proves the intended room, microphone, network, or telephony path, and a fallback path succeeding is never success for the requested voice stack, provider, or model.
+  - Generic connector, voice-input, and media-input records are not realtime voice readiness; a turn that lost its onset, split, merged, dispatched twice, truncated, or replayed after audible output blocks the verdict rather than reporting latency.
 
 ### prompt-import-readiness
 
@@ -7949,6 +7959,7 @@ These surfaces are generated command references, not installed Hermes workflow s
   - If the media or transcript is missing, ask for the smallest source, file, transcript, or provider result needed.
   - If the request is broad current-source research about a video topic, route to research or source-finder before summary.
   - If the user wants a PPT/PDF/report generated from the media summary, route to materials-package after media input evidence is clear.
+  - If the request is about whether a live duplex voice connector keeps whole spoken turns, route to external-connector-readiness for a realtime_voice_trial_receipt/v1 rather than treating a supplied recording as that evidence.
 - Required inputs:
   - user request
   - target context
@@ -7971,6 +7982,7 @@ These surfaces are generated command references, not installed Hermes workflow s
 - Safety rules:
   - A media input card is not media access, file upload, download, transcript extraction, OCR output, screenshot text extraction, receipt fields, speech-to-text output, timestamp accuracy, copyright clearance, source retrieval, or summary correctness evidence unless observed media-result evidence records it.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.
+  - A media_result_manifest/v1 describes a supplied recording or transcript. It is never a live duplex session, one-input-to-one-dispatch integrity, audible response behavior, or realtime voice readiness, and it cannot be promoted into one.
 
 ### data-analysis
 
@@ -12287,6 +12299,8 @@ Score external plugin, connector, API, live-data, data, and multimodal candidate
   - multimodal_routing_policy/v1 when screenshots, audio, video, or files are involved
   - fallback_route_policy/v1
   - connector_trial_manifest/v1 when observed
+  - realtime_voice_trial_receipt/v1 when a supplied realtime voice trial is observed
+  - realtime_voice_readiness/v1 verdict per voice dimension when a receipt is supplied
 - Stop conditions:
   - card is prepared or a missing decision is surfaced
   - observed evidence is separated from prepared guidance
@@ -12302,6 +12316,7 @@ Score external plugin, connector, API, live-data, data, and multimodal candidate
   - `freshness_and_modality_policy_recorded`
   - `fallback_route_recorded`
   - `connector_trial_recorded_when_observed`
+  - `realtime_voice_trial_receipt_supplied_when_the_connector_is_voice`
 - Wrapper actions:
   - `prepare_external_connector_readiness`
   - `show_external_connector_readiness_card`
