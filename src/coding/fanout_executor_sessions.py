@@ -2,8 +2,9 @@
 
 The shared bounded binary intake calls observe() with individual decoded frames.
 The dispatcher supplies capability probes bound to the resolved binary, immutable
-attempt lineage, and freshly observed workspace/recovery state. This module does
-no I/O, capability probing, stream parsing, session-store lookup or execution.
+attempt lineage, and freshly observed workspace/recovery state. Decoding and
+projection are pure; explicit local probe helpers observe bounded metadata only.
+No helper scans native session stores or launches continuation.
 An observed ID proves neither successful work nor durable native session storage.
 """
 from __future__ import annotations
@@ -11,7 +12,12 @@ from __future__ import annotations
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 import os
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from hashlib import sha256
+import stat
+import signal
+import subprocess
+from uuid import NAMESPACE_URL, uuid5
 import re
 import shlex
 from typing import Literal, TypeGuard, TypedDict
@@ -179,6 +185,11 @@ class SessionDecoder:
     def _invalidate(self, reason: str) -> None:
         self._reference, self._event_ref, self._reason = None, None, reason
 
+    def invalidate_capture(self) -> None:
+        """A missing/partial native frame cannot leave a reusable earlier ID."""
+        if _supported(self.capability):
+            self._invalidate('incomplete_capture')
+
     def receipt(self, binding: SessionBinding, *, end_head: str | None = None) -> SessionReceipt:
         state: State = ('not_available' if not _supported(self.capability) else
                         'observed' if self._reference is not None else 'not_observed')
@@ -292,7 +303,7 @@ def read_session_receipt(value: object) -> SessionRead:
                 state = 'not_observed'
                 if not _supported(capability) or reason not in (
                     'event_missing', 'invalid_reference', 'conflicting_reference',
-                    'event_limit', 'invalid_event_ref',
+                    'event_limit', 'invalid_event_ref', 'incomplete_capture',
                 ):
                     raise ValueError('invalid_not_observed')
             else:
@@ -302,6 +313,137 @@ def read_session_receipt(value: object) -> SessionRead:
     except ValueError:
         # Malformed optional metadata disables this capability, not the unit result.
         return SessionRead(None, 'invalid_receipt')
+
+
+def bound_session_fields(record: Mapping[str, object], *, fanout_id: str,
+                         unit_id: str, run_ref: str) -> dict[str, object]:
+    """Admit an optional receipt against outer dispatcher identity, never itself."""
+    receipt = read_session_receipt(record.get('executor_session')).receipt
+    if receipt is None:
+        return {}
+    binding = receipt.binding
+    if (binding.fanout_id != fanout_id or binding.unit_id != unit_id or binding.run_ref != run_ref
+            or record.get('attempt_id') != binding.attempt_id
+            or record.get('owner', record.get('runtime_profile')) != receipt.capability.executor):
+        return {}
+    for key, expected in (('unit_id', unit_id), ('worker_ref', unit_id), ('run_ref', run_ref),
+                          ('run_id', run_ref), ('target_id', run_ref), ('fanout_id', fanout_id),
+                          ('worktree_path', binding.worktree_path), ('worktree_ref', binding.worktree_path),
+                          ('contract_digest', binding.contract_digest), ('base_sha', binding.base_sha)):
+        if key in record and record[key] != expected:
+            return {}
+    result: dict[str, object] = {'executor_session': receipt.to_dict()}
+    recovery = record.get('session_recovery_snapshot')
+    if isinstance(recovery, str) and _DIGEST.fullmatch(recovery):
+        result['session_recovery_snapshot'] = recovery
+    return result
+
+
+def bounded_session_probe(argv: list[str], *, cwd: str | None = None,
+                          env: Mapping[str, str] | None = None) -> tuple[bytes | None, str]:
+    """Read at most 16 KiB per pipe; a failed/partial probe authorizes nothing."""
+    from ._hermes_child_process import start_pipe_drainers, terminate_process_group
+
+    try:
+        process = subprocess.Popen(argv, cwd=cwd, env=dict(env) if env is not None else None,
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, start_new_session=os.name != 'nt')
+    except OSError:
+        return None, 'probe_launch_failed'
+    with process:
+        drainers = start_pipe_drainers(process)
+        reason = 'observed'
+        try:
+            if process.wait(timeout=3) != 0:
+                reason = 'probe_nonzero'
+        except subprocess.TimeoutExpired:
+            reason = 'probe_timeout'
+        finally:
+            _ = terminate_process_group(process, 0.2, signal.SIGTERM)
+            for drainer in drainers:
+                drainer.thread.join(timeout=1)
+                if drainer.thread.is_alive():
+                    drainer.close()
+                    drainer.thread.join(timeout=1)
+                    if drainer.thread.is_alive():
+                        raise RuntimeError('session_probe_reader_not_reaped')
+        captures = [drainer.capture() for drainer in drainers]
+        if any(capture.truncated for capture in captures):
+            reason = 'probe_output_limited'
+        return (captures[0].data if reason == 'observed' else None), reason
+
+
+def observe_session_workspace(path: str) -> WorkspaceSnapshot | None:
+    """Read-only current Git/filesystem identity and bounded dirty-state digest.
+
+    No git add, checkout, native-history lookup, marker writes or inherited receipt
+    identity. Large/unreadable recovery state disables copy rather than guessing.
+    """
+    root = Path(path)
+    environment = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+    environment.update(GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0')
+    try:
+        root = root.resolve(strict=True)
+        link = root / '.git'
+        if not link.is_file() or link.is_symlink():
+            return None
+        link_stat = link.stat()
+        values: list[str] = []
+        for args in (['rev-parse', '--show-toplevel'], ['rev-parse', '--absolute-git-dir'],
+                     ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+                     ['symbolic-ref', 'HEAD'], ['rev-parse', 'HEAD']):
+            raw, _reason = bounded_session_probe(['git', '-c', 'core.fsmonitor=false', *args], cwd=str(root), env=environment)
+            if raw is None:
+                return None
+            values.append(raw.decode('utf-8').strip())
+        top, git_dir, common, branch, head = values
+        if Path(top).resolve() != root or not _SHA.fullmatch(head):
+            return None
+        directory_stat = Path(git_dir).stat()
+        root_stat = root.stat()
+        incarnation_id = str(uuid5(NAMESPACE_URL, repr((str(root), link_stat.st_dev,
+            link_stat.st_ino, link_stat.st_ctime_ns, directory_stat.st_dev, directory_stat.st_ino))))
+        incarnation = WorktreeIncarnation(incarnation_id, str(Path(common).resolve()), branch,
+                                         root_stat.st_dev, root_stat.st_ino)
+        status, _reason = bounded_session_probe(['git', '-c', 'core.fsmonitor=false', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd=str(root), env=environment)
+        if status is None:
+            return None
+        recovery: str | None = None
+        if status:
+            diff, _reason = bounded_session_probe(['git', '-c', 'core.fsmonitor=false', 'diff', '--no-ext-diff', '--no-textconv', '--binary', 'HEAD'], cwd=str(root), env=environment)
+            untracked, _reason = bounded_session_probe(['git', 'ls-files', '--others', '--exclude-standard', '-z'], cwd=str(root), env=environment)
+            if diff is None or untracked is None:
+                return None
+            digest = sha256(status + b'\x00' + diff)
+            budget = 16 * 1024 * 1024
+            for name in untracked.split(b'\x00'):
+                if not name:
+                    continue
+                file = root / os.fsdecode(name)
+                if file.is_symlink() or not file.resolve().is_relative_to(root):
+                    return None
+                with file.open('rb') as stream:
+                    info = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > budget:
+                        return None
+                    digest.update(name + b'\x00')
+                    while chunk := stream.read(65536):
+                        budget -= len(chunk)
+                        if budget < 0:
+                            return None
+                        digest.update(chunk)
+                    after = os.fstat(stream.fileno())
+                    if (after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
+                            info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns):
+                        return None
+            recovery = digest.hexdigest()
+        after_link = link.stat()
+        if (after_link.st_ino, after_link.st_size, after_link.st_mtime_ns, after_link.st_ctime_ns) != (
+                link_stat.st_ino, link_stat.st_size, link_stat.st_mtime_ns, link_stat.st_ctime_ns):
+            return None
+        return WorkspaceSnapshot(str(root), incarnation, head, bool(status), recovery)
+    except (OSError, UnicodeError, ValueError):
+        return None
 
 
 def duplicate_session_references(values: Iterable[object]) -> frozenset[str]:

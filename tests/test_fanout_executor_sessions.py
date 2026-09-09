@@ -348,12 +348,124 @@ class SessionsFoundation(unittest.TestCase):
         self.assertTrue(path.is_file(), 'missing sessions QA case producer')
         assert producer.__file__ is not None
         self.assertEqual(Path(producer.__file__).resolve(), path)
-        for case in ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7']:
-            result = producer.run_case(case)
-            self.assertFalse(result['pass'])
-            self.assertEqual(result['provenance']['scope'], 'foundation')
-            self.assertEqual(result['blocked_reason'], 'sessions_integration_pending')
-            self.assertTrue(result['cleanup']['verified_absent'])
+        # Public integration replaces the foundation producer, never its native boundary.
+        self.assertTrue(callable(producer.run_case))
+
+    def test_s4_bounded_local_probe_rejects_nonzero_and_oversized_output(self):
+        import sys
+        from omh.coding.fanout_executor_sessions import bounded_session_probe
+        data, reason = bounded_session_probe([sys.executable, '-c', 'print("1.0")'])
+        self.assertEqual((data, reason), (b'1.0\n', 'observed'))
+        for program, expected in [('print("x" * 20000)', 'probe_output_limited'),
+                                  ('raise SystemExit(7)', 'probe_nonzero')]:
+            data, reason = bounded_session_probe([sys.executable, '-c', program])
+            self.assertIsNone(data)
+            self.assertEqual(reason, expected)
+
+    def test_s5_native_telemetry_never_recurses_or_borrows_identity(self):
+        from omh.coding.unit_telemetry import native_unit_telemetry
+        event = {'type': 'turn.completed', 'usage': {'input_tokens': 4,
+            'output_tokens': 8, 'nested': {'total_tokens': 999}, 'session_id': SID},
+            'thread_id': SID, 'body': {'usage': {'total_tokens': 999}}}
+        telemetry = native_unit_telemetry('codex', event)
+        self.assertEqual(telemetry['input_tokens'], 4)
+        self.assertEqual(telemetry['output_tokens'], 8)
+        self.assertNotIn('tokens_total', telemetry)
+        self.assertNotIn('session_ref', telemetry)
+        self.assertEqual(native_unit_telemetry('codex', dict(event, parent_tool_use_id='tool')), {})
+
+    def test_s3_stale_attempt_events_cannot_replace_fresh_missing_receipt(self):
+        from omh.workflows.observation_journal import project_run_executor_session
+        old = replace(self.receipt(), binding=replace(self.binding(),
+            fanout_id='fanout-123456789abc', run_ref='fanout-123456789abc-unit-a'))
+        fresh_binding = replace(old.binding, attempt_id=OTHER, predecessor_attempt_id=ATTEMPT)
+        fresh = self.api().SessionDecoder(self.capability()).receipt(fresh_binding, end_head=SHA)
+        def event(receipt: SessionReceipt) -> dict[str, object]:
+            return {'run_id': receipt.binding.run_ref, 'event': 'executor_session_observed',
+                    'attempt_id': receipt.binding.attempt_id, 'runtime_profile': 'codex',
+                    'executor_session': receipt.to_dict()}
+        projected = project_run_executor_session([event(old), event(fresh), event(old)], run_id=old.binding.run_ref)
+        self.assertEqual(projected['executor_session'], fresh.to_dict())
+        self.assertIsNone(fresh.reference)
+
+    def test_s6_optional_receipt_reader_drops_foreign_and_private_fields(self):
+        from tempfile import TemporaryDirectory
+        from omh.system.paths import OmhPaths
+        from omh.workflows.observation_journal import read_observation_events_result
+        receipt = replace(self.receipt(), binding=replace(self.binding(),
+            fanout_id='fanout-123456789abc', run_ref='fanout-123456789abc-unit-a'))
+        event = {'run_id': receipt.binding.run_ref, 'event': 'executor_session_observed',
+                 'attempt_id': ATTEMPT, 'runtime_profile': 'codex', 'executor_session': receipt.to_dict()}
+        for bad in [dict(receipt.to_dict(), body='PRIVATE_SENTINEL'),
+                    dict(receipt.to_dict(), unit_id='foreign')]:
+            with TemporaryDirectory() as directory:
+                paths = OmhPaths(omh_home=Path(directory), hermes_home=Path(directory) / 'hermes')
+                paths.runtime_journal_events_path.parent.mkdir(parents=True)
+                original = json.dumps(dict(event, executor_session=bad)) + '\n'
+                _ = paths.runtime_journal_events_path.write_text(original)
+                events, errors = read_observation_events_result(paths)
+                self.assertEqual(errors, [])
+                self.assertNotIn('executor_session', events[0])
+                self.assertEqual(paths.runtime_journal_events_path.read_text(), original)
+
+
+class SessionsIntegration(unittest.TestCase):
+    def check_case(self, case: str) -> None:
+        result = producer.run_case(case)
+        self.assertTrue(result['pass'], result['blocked_reason'])
+        self.assertEqual(result['provenance']['scope'], 'surface')
+        self.assertEqual(result['provenance']['kind'], 'fixture')
+        self.assertFalse(result['provenance']['native_available'])
+        self.assertTrue(result['commands'])
+        self.assertTrue(result['cleanup']['verified_absent'])
+        self.assertEqual(result['cleanup']['errors'], [])
+
+    def test_s1_observer_failure_preserves_historical_id_without_resume(self):
+        from omh.coding.fanout_executor_sessions import SessionDecoder, read_session_receipt
+        from omh.runtime.artifacts import append_journal_observation
+        from omh.system.paths import OmhPaths
+        captured: list[object] = []
+        original = SessionDecoder.observe
+        def fail(decoder: SessionDecoder, event: Mapping[str, object], *, event_ref: str) -> None:
+            original(decoder, event, event_ref=event_ref)
+            raise RuntimeError('observer_fixture')
+        def observe(paths: OmhPaths, event: dict[str, object]) -> dict[str, object]:
+            observed: Mapping[str, object] = append_journal_observation(paths, event)
+            if 'executor_session' in observed:
+                captured.append(event['executor_session'])
+            return dict(observed)
+        with patch.object(SessionDecoder, 'observe', fail), patch(
+                'omh.coding.fanout_dispatch.append_journal_observation', observe):
+            with self.assertRaisesRegex(RuntimeError, 'observer_fixture'):
+                _ = producer.run_case('S1')
+        self.assertTrue(captured, 'observed session ID lost on observer failure')
+        for value in captured:
+            receipt = read_session_receipt(value).receipt
+            assert receipt is not None
+            self.assertEqual(receipt.state, 'observed')
+            self.assertIsNone(receipt.end_head)
+            self.assertFalse(Path(receipt.binding.worktree_path).parent.exists())
+
+    def test_s1_public_dispatch_receipt(self):
+        self.check_case('S1')
+
+    def test_s2_selected_copy_only_resume(self):
+        self.check_case('S2')
+
+    def test_s3_held_and_fresh_attempt_lineage(self):
+        self.check_case('S3')
+
+    def test_s4_adversarial_associations(self):
+        self.check_case('S4')
+
+    def test_s5_native_stream_privacy_and_telemetry(self):
+        self.check_case('S5')
+
+    def test_s6_legacy_read_only_compatibility(self):
+        self.check_case('S6')
+
+    def test_s7_final_fence_and_wrapper_compatibility(self):
+        self.check_case('S7')
 
 
 if __name__ == '__main__':

@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import json
 import math
+from .fanout_failure_diagnostics import is_string_map
 from typing import Any, Final, Mapping
 
 UNIT_TELEMETRY_SCHEMA_VERSION: Final[str] = "omh_unit_telemetry/v1"
@@ -204,6 +205,25 @@ def parse_unit_telemetry(owner: str, stdout_text: str) -> dict[str, object]:
         if key in observed:
             payload[key] = observed[key]
     return payload
+
+
+def native_unit_telemetry(owner: str, event: Mapping[str, object]) -> dict[str, object]:
+    """Project only root terminal accounting; session identity has a separate decoder."""
+    if event.get('parent_tool_use_id') is not None or event.get('type') != (
+            'turn.completed' if owner == 'codex' else 'result'):
+        return {}
+    usage = event.get('usage')
+    allowed = {name for _key, names in _TOKEN_FIELDS for name in names}
+    safe_usage = ({key: value for key, value in usage.items()
+                   if key in allowed and type(value) is int and 0 <= value <= 2**63 - 1}
+                  if is_string_map(usage) else {})
+    safe: dict[str, object] = {'usage': safe_usage}
+    cost = event.get('total_cost_usd')
+    if owner == 'claude-code' and type(cost) in (int, float):
+        safe['total_cost_usd'] = cost
+    result = parse_unit_telemetry(owner, json.dumps(safe))
+    _ = result.pop('session_ref', None)
+    return result
 
 
 def _structured_source(owner: str) -> str:

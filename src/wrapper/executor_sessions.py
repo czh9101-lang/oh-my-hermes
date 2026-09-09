@@ -166,12 +166,25 @@ def _status_evidence_refs(status: Mapping[str, object]) -> list[str]:
     return [str(item) for item in refs] if isinstance(refs, list) else []
 
 
+def build_fanout_session_followup(paths: OmhPaths, *, fanout_id: str, unit_id: str) -> dict[str, object]:
+    """Explicit selected-unit continuation projection; never launch or borrow wrapper refs."""
+    from ..coding.fanout_status import project_fanout_status
+
+    roster = project_fanout_status(paths, fanout_id, unit_id=unit_id)
+    unit = roster['units'][0]
+    return {'fanout_id': fanout_id, 'unit_id': unit_id,
+            'executor_session': unit.get('executor_session'), 'resume': unit['resume'],
+            'execution_policy': 'copy_only'}
+
+
 def build_executor_session_status(
     paths: OmhPaths,
     session: dict[str, Any],
     *,
     linked_status: dict[str, Any] | None = None,
     runtime_status: dict[str, Any] | None = None,
+    fanout_id: str | None = None,
+    unit_id: str | None = None,
 ) -> dict[str, object]:
     session_id = str(session.get("session_id", ""))
     record, record_error = read_executor_session_result(_session_dir(paths, session_id))
@@ -243,6 +256,10 @@ def build_executor_session_status(
             "result, verification, review, CI, or merge unless the matching observed evidence is recorded."
         ),
     }
+    if fanout_id is not None or unit_id is not None:
+        if not fanout_id or not unit_id:
+            raise ExecutorSessionError('fanout follow-up requires explicit fanout_id and unit_id')
+        status['fanout_followup'] = build_fanout_session_followup(paths, fanout_id=fanout_id, unit_id=unit_id)
     capability_snapshot = _executor_capability_snapshot(paths, session)
     if capability_snapshot:
         status["executor_capability_snapshot"] = capability_snapshot

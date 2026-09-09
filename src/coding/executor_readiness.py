@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import stat
+from hashlib import sha256
 import subprocess
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from .fanout_executor_sessions import BinaryIdentity, SessionCapability, bounded_session_probe
 
 from ..executors import EXECUTOR_PROFILES, executor_label
 from ..local_store import atomic_write_json, read_json_object_result, utc_now
@@ -16,6 +21,65 @@ from .pre_handoff_readiness import (
     evaluate_pre_handoff_readiness,
     readiness_binding,
 )
+
+
+def observe_session_binary(binary: str, *, env: Mapping[str, str] | None = None) -> BinaryIdentity | None:
+    """Hash the actual resolved regular executable, not an executor's self-report."""
+    resolved = shutil.which(binary, path=None if env is None else env.get('PATH', ''))
+    if resolved is None:
+        return None
+    try:
+        path = Path(resolved).resolve(strict=True)
+        if not stat.S_ISREG(path.stat().st_mode):
+            return None
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_NOFOLLOW', 0))
+        with os.fdopen(fd, 'rb') as stream:
+            before = os.fstat(stream.fileno())
+            budget = 512 * 1024 * 1024
+            if not stat.S_ISREG(before.st_mode) or before.st_size > budget:
+                return None
+            digest = sha256()
+            while chunk := stream.read(65536):
+                budget -= len(chunk)
+                if budget < 0:
+                    return None
+                digest.update(chunk)
+            after = os.fstat(stream.fileno())
+            if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
+                    before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns):
+                return None
+        return BinaryIdentity(str(path), digest.hexdigest())
+    except OSError:
+        return None
+
+
+def negotiate_session_capability(owner: str, binary: str, *, env: Mapping[str, str]) -> SessionCapability | None:
+    """Help/version negotiation only; never a provider request or release-floor guess."""
+    identity = observe_session_binary(binary, env=env)
+    if identity is None:
+        return None
+    capability = SessionCapability(owner, None, identity, None)
+    if owner not in ('codex', 'claude-code'):
+        return capability
+    version_bytes, _reason = bounded_session_probe([identity.resolved_path, '--version'], env=env)
+    help_args = ['exec', '--help'] if owner == 'codex' else ['--help']
+    help_bytes, _reason = bounded_session_probe([identity.resolved_path, *help_args], env=env)
+    if version_bytes is None or help_bytes is None:
+        return capability
+    try:
+        version, help_text = version_bytes.decode('utf-8').strip(), help_bytes.decode('utf-8')
+    except UnicodeError:
+        return capability
+    # Retain only the version token, never arbitrary help/version output.
+    match = re.fullmatch(r'(?:[A-Za-z][A-Za-z0-9_. -]{0,64}\s+)?([0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)(?: \(Claude Code\))?', version, re.IGNORECASE)
+    if match is None:
+        return capability
+    flags = ('--json', 'resume') if owner == 'codex' else ('--output-format', 'stream-json', '--verbose', '--resume')
+    supported = all(re.search(r'(?<![\w-])' + re.escape(flag) + r'(?![\w-])', help_text) for flag in flags)
+    if observe_session_binary(identity.resolved_path) != identity:
+        return capability
+    return SessionCapability(owner, ('codex_exec_json' if owner == 'codex' else 'claude_stream_json')
+                             if supported else None, identity, match[1])
 
 
 EXECUTOR_READINESS_SCHEMA_VERSION = "executor_readiness/v1"
