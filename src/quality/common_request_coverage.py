@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, TypedDict
 
 from ..ingress import CHAT_SOURCES
 from ..routing.action_copy import next_action_label
@@ -15,7 +15,37 @@ COMMON_REQUEST_COVERAGE_SCHEMA_VERSION = "common_request_coverage/v1"
 COMMON_REQUEST_TARGET_PERCENT = 95.0
 
 
-def build_common_request_coverage_demo(*, source: str = "discord") -> dict[str, object]:
+class CommonRequestCoverageSummary(TypedDict):
+    case_count: int
+    passing_count: int
+    failing_count: int
+    coverage_percent: float | None
+    coverage_rate: dict[str, object]
+    target_met: bool
+    family_count: int
+    workflow_count: int
+    dispatch_count: int
+    fallback_count: int
+    generic_ack_count: int
+    popular_plugin_family_count: object
+    popular_plugin_covered_family_count: object
+    popular_plugin_weighted_coverage_percent: object
+    popular_plugin_target_percent: object
+
+
+class CommonRequestCoveragePayload(TypedDict):
+    schema_version: str
+    source: str
+    summary: CommonRequestCoverageSummary
+    check_basis: list[str]
+    cases: list[dict[str, object]]
+    target_percent: float
+    families: list[dict[str, object]]
+    popular_plugin_coverage: dict[str, object]
+    claim_boundary: str
+
+
+def build_common_request_coverage_demo(*, source: str = "discord") -> CommonRequestCoveragePayload:
     if source not in CHAT_SOURCES:
         raise ValueError(f"unsupported demo source: {source}")
     rows = [_evaluate_case(case, source=source) for case in COMMON_REQUEST_COVERAGE_CASES]

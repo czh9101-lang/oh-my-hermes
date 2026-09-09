@@ -35,6 +35,9 @@ Repository = "https://github.com/rlaope/oh-my-hermes"
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]
 
+[tool.uv]
+config-settings = { editable_mode = "strict" }
+
 [tool.setuptools]
 packages = [
   "omh",

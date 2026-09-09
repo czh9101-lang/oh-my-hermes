@@ -5,11 +5,29 @@ Thanks for helping improve oh-my-hermes.
 ## Development Setup
 
 ```sh
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install -e .
-PYTHONPATH=src python -m unittest discover -s tests
+uv sync --group lint
+PYTHONPATH=tests uv run python -m unittest discover -s tests
 ```
+
+The development install uses setuptools' strict editable mode. Its auxiliary
+`build/__editable__.*` tree links to the implementation files through the same
+`omh` package layout as a wheel. This makes the package's inline types and
+definitions readable by basedpyright without evaluating runtime import hooks.
+Select the project's `.venv` interpreter in your editor; `pyrightconfig.json`
+gives tests their documented `PYTHONPATH=tests` import root.
+
+After adding, renaming, or replacing source files, refresh the linked layout:
+
+```sh
+uv sync --group lint --reinstall-package oh-my-hermes
+```
+
+Keep the auxiliary editable tree while using that environment. This matters
+especially on filesystems where setuptools uses hard links instead of symbolic
+links. Contributors using pip can select the same layout with
+`python -m pip install -e . --config-settings editable_mode=strict`.
+The `py.typed` marker exposes the existing annotations; it is not a claim that
+every repository file has passed a project-wide strict type check.
 
 Run the static-analysis gate the same way CI does, using the pinned Ruff
 version declared under `[dependency-groups] lint` in `pyproject.toml` (no
@@ -125,7 +143,7 @@ platform/version plus a serial quarantine, planned by
 `tools/test_sharding/plan.py` and reconciled fail-closed by
 `tools/test_sharding/aggregate.py`. This changes nothing for local
 development: the full-suite command above
-(`PYTHONPATH=src python -m unittest discover -s tests`) still runs
+(`PYTHONPATH=tests uv run python -m unittest discover -s tests`) still runs
 everything and remains the documented path.
 
 To reproduce one CI shard locally:

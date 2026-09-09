@@ -132,7 +132,12 @@ def working_tree_content_fingerprint(
             temporary_index = temporary_root / "index"
             temporary_objects = temporary_root / "objects"
             _ = temporary_objects.mkdir()
+            # Git's racy-clean check needs the index's original timestamp, not
+            # the copy time. Observe it first so a concurrent index replacement
+            # cannot lend a newer timestamp to older copied stat-cache entries.
+            index_metadata = index_path.stat()
             _ = shutil.copyfile(index_path, temporary_index)
+            os.utime(temporary_index, ns=(index_metadata.st_atime_ns, index_metadata.st_mtime_ns))
             environment = _isolated_environment(
                 index=temporary_index,
                 objects=temporary_objects,

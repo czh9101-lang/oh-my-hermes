@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import os
 from pathlib import Path
 import shutil
-from typing import Any
+from typing import Any, TypedDict
 
 try:
     from ..core.errors import OmhError
@@ -26,6 +26,21 @@ except ImportError:  # pragma: no cover - direct-source installer smoke.
 STATE_SCHEMA_VERSION = "self_update_state/v1"
 
 
+class GenerationEntry(TypedDict):
+    id: str
+    path: str
+    kind: str
+    version: str
+
+
+class CleanupResult(TypedDict):
+    collected: list[str]
+
+
+class GarbageCollectionResult(TypedDict):
+    cleanup: CleanupResult
+
+
 def now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -34,7 +49,7 @@ def state_path(root: Path) -> Path:
     return root / "self-update.json"
 
 
-def generation_entry(path: Path, kind: str = "generation", version: str = "") -> dict[str, str]:
+def generation_entry(path: Path, kind: str = "generation", version: str = "") -> GenerationEntry:
     return {"id": path.name, "path": str(path), "kind": kind, "version": version}
 
 
@@ -160,7 +175,7 @@ def recovery_target(root: Path, state: dict[str, Any]) -> Path:
 def collect_garbage(
     root: Path,
     state: dict[str, Any],
-    result: dict[str, Any],
+    result: GarbageCollectionResult,
     *,
     running_generation: Path | None,
 ) -> None:

@@ -26,10 +26,58 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Literal, NotRequired, TypedDict
 
 
 DRIFT_REPORT_SCHEMA_VERSION = "omh_drift_report/v1"
+
+
+class DriftFindingBase(TypedDict):
+    name: str
+    describe: str
+    sites: list[str]
+    fix: str
+
+
+class CountDriftFinding(DriftFindingBase):
+    kind: Literal["count"]
+    expected: int
+    live: int
+
+
+class BudgetDriftFinding(DriftFindingBase):
+    kind: Literal["budget"]
+    limit: int
+    live: int
+    over_by: int
+    reviewed_exception: NotRequired[int]
+    exception_reason: NotRequired[str]
+
+
+class GeneratedDriftFinding(DriftFindingBase):
+    kind: Literal["generated"]
+    state: Literal["missing", "stale", "unreadable"]
+    error: NotRequired[str]
+
+
+class TapSkillsDriftFinding(GeneratedDriftFinding):
+    missing: list[str]
+    stale: list[str]
+    extra: list[str]
+
+
+DriftFinding = CountDriftFinding | BudgetDriftFinding | GeneratedDriftFinding
+
+
+class DriftReport(TypedDict):
+    schema_version: str
+    ok: bool
+    checked_count: int
+    drift_count: int
+    checked: list[str]
+    drift: list[DriftFinding]
+    next_action: str
+    claim_boundary: str
 
 
 @dataclass(frozen=True)
@@ -94,11 +142,8 @@ def _routing_precision_case_count() -> int:
 def _routing_precision_intervention_case_count() -> int:
     from ..quality.routing_precision import build_routing_precision_demo
 
-    summary = build_routing_precision_demo().get("summary")
-    if not isinstance(summary, dict):
-        return 0
-    count = summary.get("intervention_case_count")
-    return count if isinstance(count, int) and not isinstance(count, bool) else 0
+    count = build_routing_precision_demo()["summary"]["intervention_case_count"]
+    return count if not isinstance(count, bool) else 0
 
 
 def _installable_skill_count() -> int:
@@ -361,7 +406,7 @@ def generated_artifacts() -> tuple[GeneratedArtifact, ...]:
     )
 
 
-def _count_drift(metric: CountMetric) -> dict[str, Any] | None:
+def _count_drift(metric: CountMetric) -> CountDriftFinding | None:
     live = metric.live()
     if live == metric.expected:
         return None
@@ -379,12 +424,12 @@ def _count_drift(metric: CountMetric) -> dict[str, Any] | None:
     }
 
 
-def _budget_drift(metric: BudgetMetric) -> dict[str, Any] | None:
+def _budget_drift(metric: BudgetMetric) -> BudgetDriftFinding | None:
     live = metric.live()
     ceiling = metric.limit + metric.reviewed_exception
     if live <= ceiling:
         return None
-    finding: dict[str, Any] = {
+    finding: BudgetDriftFinding = {
         "name": metric.name,
         "kind": "budget",
         "describe": metric.describe,
@@ -403,7 +448,7 @@ def _budget_drift(metric: BudgetMetric) -> dict[str, Any] | None:
     return finding
 
 
-def _tap_skills_drift(repo_root: Path) -> dict[str, Any] | None:
+def _tap_skills_drift(repo_root: Path) -> TapSkillsDriftFinding | None:
     """Generated `skills/*/SKILL.md` and `skills/*/references/*.md`.
 
     These do not fit the one-file-per-artifact shape above -- there are dozens,
@@ -411,9 +456,9 @@ def _tap_skills_drift(repo_root: Path) -> dict[str, Any] | None:
     Reusing the same check `docs workflows --check` runs keeps one definition of
     stale.
     """
-    from ..commands.docs import _tap_skills_check_payload
+    from ..commands.docs import tap_skills_check_payload
 
-    payload = _tap_skills_check_payload(repo_root / "skills")
+    payload = tap_skills_check_payload(repo_root / "skills")
     if payload["ok"]:
         return None
     affected = list(payload["missing"]) + list(payload["stale"]) + list(payload["extra"])
@@ -433,7 +478,7 @@ def _tap_skills_drift(repo_root: Path) -> dict[str, Any] | None:
     }
 
 
-def _generated_drift(artifact: GeneratedArtifact, repo_root: Path) -> dict[str, Any] | None:
+def _generated_drift(artifact: GeneratedArtifact, repo_root: Path) -> GeneratedDriftFinding | None:
     target = repo_root / artifact.path
     expected = artifact.render()
     try:
@@ -475,7 +520,7 @@ def drift_report(
     budgets: tuple[BudgetMetric, ...] | None = None,
     artifacts: tuple[GeneratedArtifact, ...] | None = None,
     include_tap_skills: bool = True,
-) -> dict[str, Any]:
+) -> DriftReport:
     """Check every metric and report all findings; never stop at the first.
 
     Stopping early is the behaviour this command exists to replace.
@@ -485,11 +530,11 @@ def drift_report(
     budgets = budget_metrics() if budgets is None else budgets
     artifacts = generated_artifacts() if artifacts is None else artifacts
 
-    drift: list[dict[str, Any]] = []
+    drift: list[DriftFinding] = []
     checked: list[str] = []
     for metric in counts:
         checked.append(metric.name)
-        found = _count_drift(metric)
+        found: DriftFinding | None = _count_drift(metric)
         if found:
             drift.append(found)
     for metric in budgets:
@@ -527,7 +572,7 @@ def drift_report(
     }
 
 
-def format_drift_report(payload: dict[str, Any]) -> str:
+def format_drift_report(payload: DriftReport) -> str:
     drift = payload.get("drift") or []
     lines: list[str] = []
     if not drift:
@@ -536,10 +581,9 @@ def format_drift_report(payload: dict[str, Any]) -> str:
     lines.append(f"DRIFT ({len(drift)} of {payload.get('checked_count', 0)} checks)")
     lines.append("")
     for item in drift:
-        kind = item.get("kind")
-        if kind == "count":
+        if item["kind"] == "count":
             headline = f"  {item['name']}: {item['expected']} -> {item['live']}"
-        elif kind == "budget":
+        elif item["kind"] == "budget":
             headline = f"  {item['name']}: {item['live']} (over budget {item['limit']} by {item['over_by']})"
         else:
             headline = f"  {item['name']}: {item.get('state', 'stale')}"

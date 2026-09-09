@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from typing import Mapping, TypedDict
 
 from ..ingress import CHAT_SOURCES
 from ..routing.action_copy import next_action_label
@@ -742,7 +743,24 @@ CHAT_CARD_COVERAGE_CASES: tuple[ChatCardCoverageCase, ...] = (
 )
 
 
-def build_chat_card_coverage_demo(*, source: str = "discord") -> dict[str, object]:
+class ChatCardCoverageSummary(TypedDict):
+    case_count: int
+    passing_count: int
+    dedicated_card_count: int
+    generic_ack_count: int
+    all_passing: bool
+
+
+class ChatCardCoveragePayload(TypedDict):
+    schema_version: str
+    source: str
+    summary: ChatCardCoverageSummary
+    check_basis: list[str]
+    cases: list[dict[str, object]]
+    claim_boundary: str
+
+
+def build_chat_card_coverage_demo(*, source: str = "discord") -> ChatCardCoveragePayload:
     if source not in CHAT_SOURCES:
         raise ValueError(f"unsupported demo source: {source}")
     rows = [_evaluate_chat_card_case(case, source=source) for case in CHAT_CARD_COVERAGE_CASES]
@@ -774,7 +792,7 @@ def build_chat_card_coverage_demo(*, source: str = "discord") -> dict[str, objec
     }
 
 
-def format_chat_card_coverage_summary(payload: dict[str, object]) -> str:
+def format_chat_card_coverage_summary(payload: Mapping[str, object]) -> str:
     summary = _nested(payload, "summary")
     rows = _dict_rows(payload.get("cases", []))
     total = int(summary.get("case_count", len(rows)) or 0)
@@ -869,7 +887,7 @@ def _evaluate_chat_card_case(case: ChatCardCoverageCase, *, source: str) -> dict
     }
 
 
-def _nested(payload: dict[str, object], key: str) -> dict[str, object]:
+def _nested(payload: Mapping[str, object], key: str) -> dict[str, object]:
     value = payload.get(key)
     return value if isinstance(value, dict) else {}
 

@@ -21,6 +21,7 @@ from ..harness_quality import (
 
 from copy import copy
 from functools import lru_cache
+from typing import TypedDict
 
 from ..routing.trigger_language_packs import (
     merged_trigger_phrases,
@@ -773,7 +774,49 @@ _ULW_ENGINE_ORDER = (
 # prose stays hand-maintained by decision -- these are the English projections
 # only. Data, not derivation: catalog descriptions are contract prose, and the
 # marketing surfaces deliberately say less.
-_ULW_ENGINE_PRESENTATIONS: dict[str, dict[str, object]] = {
+class UlwEnginePresentation(TypedDict):
+    summary: str
+    site_tag: str
+    site_title: str
+    site_body: str
+    site_cues: tuple[str, ...]
+
+
+class UlwEngineSite(TypedDict):
+    i18n_stem: str
+    tag: str
+    title: str
+    body: str
+    cues: list[str]
+
+
+class UlwEnginePayload(TypedDict):
+    canonical: str
+    display_name: str
+    historical_display_names: list[str]
+    lifecycle_stage: str
+    target_home: str | None
+    migration_release: str | None
+    summary: str
+    site: UlwEngineSite
+
+
+class UlwInventoryCounts(TypedDict):
+    canonical: int
+    alias: int
+    retired: int
+    total: int
+
+
+class UlwInventoryPayload(TypedDict):
+    schema_version: str
+    canonical_engines: list[UlwEnginePayload]
+    alias_engines: list[UlwEnginePayload]
+    retired_engines: list[UlwEnginePayload]
+    counts: UlwInventoryCounts
+
+
+_ULW_ENGINE_PRESENTATIONS: dict[str, UlwEnginePresentation] = {
     "context": {
         "summary": (
             "Aligns reviewed project terms, captures confirmed candidates, and interviews the next "
@@ -874,7 +917,7 @@ _ULW_ENGINE_PRESENTATIONS: dict[str, dict[str, object]] = {
 }
 
 
-def ulw_inventory_payload() -> dict[str, object]:
+def ulw_inventory_payload() -> UlwInventoryPayload:
     """Single producer for the ULW engine inventory and per-engine lifecycle state.
 
     Every downstream ULW surface derives from this payload: the release-drift
@@ -890,7 +933,7 @@ def ulw_inventory_payload() -> dict[str, object]:
             "ULW inventory order drifted from ULW_ENGINE_SKILL_NAMES; "
             "update _ULW_ENGINE_ORDER in src/skills/catalog.py"
         )
-    engines: list[dict[str, object]] = []
+    engines: list[UlwEnginePayload] = []
     for name in _ULW_ENGINE_ORDER:
         exposure = surface_exposure_for_skill(name)
         if exposure.lifecycle_stage not in SURFACE_LIFECYCLE_STAGES:

@@ -21,6 +21,7 @@ from omh.browser_workflow_learning import (
     trace_digest,
     validate_browser_workflow_trace,
 )
+from omh.workflows.browser_workflow_learning import JsonObject, JsonValue
 from omh.workflows.browser_workflow_learning_store import approve_browser_workflow_trace, read_browser_workflow_trace, replay_stored_browser_workflow_trace, resolved_browser_workflow_promotion_reference, resolved_browser_workflow_trace_reference, write_browser_workflow_trace
 from omh.system.paths import OmhPaths
 from omh.workflows.web_visual_qa import build_web_visual_qa_package, save_web_visual_qa_package
@@ -74,13 +75,29 @@ class BrowserWorkflowLearningTests(unittest.TestCase):
 
     def test_parser_trace_when_bounds_or_source_proof_are_invalid_fails_closed(self) -> None:
         oversized_steps = _trace("click")
-        oversized_steps["steps"] = oversized_steps["steps"] * 65
+        steps = oversized_steps["steps"]
+        assert isinstance(steps, list)
+        oversized_steps["steps"] = steps * 65
         oversized_locators = _trace("click")
-        oversized_locators["steps"][0]["locators"] *= 9
+        locator_steps = oversized_locators["steps"]
+        assert isinstance(locator_steps, list)
+        step = locator_steps[0]
+        assert isinstance(step, dict)
+        locators = step["locators"]
+        assert isinstance(locators, list)
+        locators *= 9
         missing_success = _trace("click")
-        missing_success["source"]["success"]["state"] = "failed"
+        source = missing_success["source"]
+        assert isinstance(source, dict)
+        success = source["success"]
+        assert isinstance(success, dict)
+        success["state"] = "failed"
         wrong_project_binding = _trace("click")
-        wrong_project_binding["source"]["binding"]["project_identity"] = "0" * 64
+        source = wrong_project_binding["source"]
+        assert isinstance(source, dict)
+        binding = source["binding"]
+        assert isinstance(binding, dict)
+        binding["project_identity"] = "0" * 64
 
         for candidate in (oversized_steps, oversized_locators, missing_success, wrong_project_binding):
             with self.assertRaises(Exception) as raised:
@@ -197,15 +214,18 @@ class BrowserWorkflowLearningTests(unittest.TestCase):
 
     def test_click_ambiguity_quarantines_and_missing_submission_is_stale(self) -> None:
         raw = _trace("click")
-        fixture = {
+        nodes: list[JsonValue] = [{"role": "button", "name": "Continue"}]
+        fixture: JsonObject = {
             "fixture_id": "ambiguous",
             "kind": "negative",
             "origin": "https://xn--bcher-kva.example",
-            "nodes": [{"role": "button", "name": "Continue"}] * 2,
+            "nodes": nodes * 2,
             "output_fields": ["confirmation"],
         }
         fixture["digest"] = fixture_digest(fixture)
-        raw["fixtures"].insert(0, fixture)
+        fixtures = raw["fixtures"]
+        assert isinstance(fixtures, list)
+        fixtures.insert(0, fixture)
         click = parse_browser_workflow_trace(raw)
         submit = parse_browser_workflow_trace(_trace("submit"))
 
@@ -215,9 +235,21 @@ class BrowserWorkflowLearningTests(unittest.TestCase):
 
     def test_missing_primary_locator_cannot_fall_back_to_another_target(self) -> None:
         raw = _trace("read")
-        raw["steps"][0]["locators"].append({"kind": "test_id", "name": "stable-target"})
-        for fixture in raw["fixtures"]:
-            for node in fixture["nodes"]:
+        steps = raw["steps"]
+        assert isinstance(steps, list)
+        step = steps[0]
+        assert isinstance(step, dict)
+        locators = step["locators"]
+        assert isinstance(locators, list)
+        locators.append({"kind": "test_id", "name": "stable-target"})
+        fixtures = raw["fixtures"]
+        assert isinstance(fixtures, list)
+        for fixture in fixtures:
+            assert isinstance(fixture, dict)
+            nodes = fixture["nodes"]
+            assert isinstance(nodes, list)
+            for node in nodes:
+                assert isinstance(node, dict)
                 node["test_id"] = "stable-target"
             fixture["digest"] = fixture_digest(fixture)
 
@@ -306,7 +338,7 @@ class BrowserWorkflowLearningTests(unittest.TestCase):
             self.assertEqual(len(current["lifecycle"]["mismatch_fixture_digests"]), 2)
 
 
-def _trace(action: str, metadata: dict[str, object] | None = None) -> dict[str, object]:
+def _trace(action: str, metadata: JsonObject | None = None) -> JsonObject:
     return {
         "schema_version": "browser_workflow_trace/v1",
         "project": {"identity": hashlib.sha256(b"/workspace/project").hexdigest()},
@@ -332,22 +364,27 @@ def _trace(action: str, metadata: dict[str, object] | None = None) -> dict[str, 
     }
 
 
+# Public cross-test fixture export; retain the original callable and aliases.
+browser_workflow_trace = _trace
+
+
 def _git(root: Path) -> Path:
     subprocess.run(["git", "init", "--quiet", str(root)], check=True, capture_output=True, text=True)
     return root
 
 
-def _fixtures(action: str) -> list[dict[str, object]]:
-    nodes = [{"role": "button", "name": "Continue"}]
-    negative_nodes: list[dict[str, str]] = [] if action != "submit" else [*nodes, *nodes]
-    result: list[dict[str, object]] = []
+def _fixtures(action: str) -> list[JsonValue]:
+    nodes: list[JsonValue] = [{"role": "button", "name": "Continue"}]
+    negative_nodes: list[JsonValue] = [] if action != "submit" else [*nodes, *nodes]
+    negative_fresh_nodes: list[JsonValue] = [{"role": "button", "name": "Different target"}]
+    result: list[JsonValue] = []
     for fixture_id, kind, fixture_nodes in (
         ("negative", "negative", negative_nodes),
-        ("negative_fresh", "negative", [{"role": "button", "name": "Different target"}]),
+        ("negative_fresh", "negative", negative_fresh_nodes),
         ("positive", "positive", nodes),
         ("transient", "transient", nodes),
     ):
-        fixture: dict[str, object] = {"fixture_id": fixture_id, "kind": kind, "origin": "https://xn--bcher-kva.example", "nodes": fixture_nodes, "output_fields": ["confirmation"]}
+        fixture: JsonObject = {"fixture_id": fixture_id, "kind": kind, "origin": "https://xn--bcher-kva.example", "nodes": fixture_nodes, "output_fields": ["confirmation"]}
         fixture["digest"] = fixture_digest(fixture)
         result.append(fixture)
     return result
