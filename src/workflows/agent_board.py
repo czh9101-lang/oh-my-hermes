@@ -1,0 +1,684 @@
+"""Pure Kanban preparation and correlated, bounded observation contracts.
+
+No executor, database, grant or filesystem access lives here. The host bridge
+must enforce native exposure/worker guards and serialize durable board/request
+metadata across processes. This object's lock only serializes its local callers.
+Persist snapshot(), never the prepare response (which contains ephemeral text).
+A pre callback reserves an action; it does not prove invocation or success.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+import copy
+from dataclasses import dataclass, field
+import hashlib
+import json
+import math
+import re
+from threading import RLock
+from typing import Final, Protocol, TypeGuard, TypedDict
+
+MAX_INTAKE_BYTES = 256 * 1024
+MAX_TASK_IDS = 200
+MAX_OPERATION_FACTS = 32
+MAX_ATTACHMENT_REFS = 32
+MAX_REQUESTS = 200
+_NO_HOOKS: Final[frozenset[str]] = frozenset()
+CLAIM_BOUNDARY = "Prepared actions are not invocations; receipts prove only the correlated operation, not review approval, CI or merge."
+_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
+_MIME = re.compile(r"[A-Za-z0-9!#$&^_.+-]{1,64}/[A-Za-z0-9!#$&^_.+-]{1,64}\Z")
+_STATUSES = frozenset({"triage", "todo", "ready", "running", "review", "blocked", "done", "archived"})
+# Required arguments, selected optional arguments, required native success keys.
+_OPERATIONS = {
+    "create": ("title assignee", "parents idempotency_key initial_status model provider completion_contract", "ok task_id status"),
+    "link": ("parent_id child_id", "", "ok parent_id child_id"),
+    "comment": ("task_id body", "", "ok task_id comment_id"),
+    "heartbeat": ("", "task_id note", "ok task_id"),
+    "request_review": ("summary", "task_id reviewer metadata", "ok task_id run_id status"),
+    "request_changes": ("reason", "task_id", "ok task_id run_id status implementer"),
+    "block": ("reason", "task_id kind", "ok task_id run_id status block_kind"),
+    "unblock": ("task_id", "", "ok task_id status"),
+    "complete": ("", "task_id summary result metadata created_cards", "ok task_id run_id"),
+    "show": ("", "task_id", "task parents children comments events runs worker_context"),
+    "list": ("", "assignee status tenant include_archived limit", "tasks count limit truncated next_limit promoted"),
+    "attachments": ("", "task_id", "ok task_id attachments"),
+}
+_TYPES = {"parents": "array", "created_cards": "array", "tasks": "array", "metadata": "object",
+          "limit": "integer", "include_archived": "boolean"}
+
+
+class NativeAction(TypedDict):
+    tool_name: str
+    arguments: dict[str, object]
+
+
+class AgentBoardRequest(TypedDict):
+    schema_version: str
+    request_id: str
+    request_ref: str
+    board_ref: str
+    route: str
+    operation: str
+    argument_digest: str
+    state: str
+    reason: str | None
+    observation_ref: str
+    expected_observation_ref: str | None
+    required_capabilities: list[str]
+    missing_capabilities: list[str]
+    native_action: NativeAction | None
+    observed_receipts: list[dict[str, object]]
+    requires_reconciliation: bool
+    task_refs: list[str]
+    host_scope_ref: str
+    host_call_ref: str | None
+    in_flight: bool
+    reconciled_by: str | None
+    claim_boundary: str
+
+
+class AgentBoardSnapshot(TypedDict):
+    schema_version: str
+    board_ref: str
+    observation_ref: str
+    requests: list[AgentBoardRequest]
+    operation_facts: list[dict[str, object]]
+    truncated: bool
+    claim_boundary: str
+
+
+@dataclass(frozen=True)
+class HostIdentity:
+    """Identity supplied only by handler/hook kwargs, not model JSON authority."""
+
+    session_id: str
+    task_id: str
+    tool_call_id: str
+
+    def __post_init__(self) -> None:
+        for value in (self.session_id, self.task_id, self.tool_call_id):
+            _ = _reference(value)
+
+    @property
+    def scope_ref(self) -> str:
+        return _digest([self.session_id, self.task_id])
+
+    @property
+    def call_ref(self) -> str:
+        return _digest([self.session_id, self.task_id, self.tool_call_id])
+
+
+def _reference(value: object) -> str:
+    if not isinstance(value, str) or not _REFERENCE.fullmatch(value):
+        raise ValueError("invalid_reference")
+    return value
+
+
+def _is_dict(value: object) -> TypeGuard[dict[object, object]]:
+    return isinstance(value, dict)
+
+
+def _is_object(value: object) -> TypeGuard[dict[str, object]]:
+    return _is_dict(value) and all(isinstance(key, str) for key in value)
+
+
+def _is_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
+def _json_check(value: object, depth: int = 0) -> None:
+    if depth > 16:
+        raise ValueError("json_depth_exceeded")
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float) and math.isfinite(value):
+        return
+    if _is_list(value):
+        for item in value:
+            _json_check(item, depth + 1)
+        return
+    if _is_object(value):
+        for item in value.values():
+            _json_check(item, depth + 1)
+        return
+    raise ValueError("invalid_json_value")
+
+
+def _encoded(value: object) -> bytes:
+    _json_check(value)
+    try:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                             allow_nan=False).encode("utf-8")
+    except (UnicodeError, ValueError) as error:
+        raise ValueError("invalid_json_encoding") from error
+    if len(encoded) > MAX_INTAKE_BYTES:
+        raise ValueError("intake_limit_exceeded")
+    return encoded
+
+
+def _digest(value: object) -> str:
+    return "sha256:" + hashlib.sha256(_encoded(value)).hexdigest()
+
+
+def board_reference(root_identity: str, board: str) -> str:
+    """Opaque same-root/same-slug identity, deliberately independent of profile.
+
+    Caller obtains root identity from safely attributable host resolution, not
+    model input. Hashing an unknown root does not make it safely attributable.
+    """
+    _ = _reference(board)
+    if not root_identity or len(root_identity) > 4096:
+        raise ValueError("invalid_root_identity")
+    return _digest(["agent_board_binding/v1", root_identity, board])
+
+
+def _object(value: object) -> dict[str, object]:
+    if not _is_object(value):
+        raise ValueError("expected_object")
+    return dict(value)
+
+
+def _array(value: object) -> list[object]:
+    if not _is_list(value):
+        raise ValueError("expected_array")
+    return list(value)
+
+
+def _integer(value: object, minimum: int = 0, maximum: int = 2**63 - 1) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or not minimum <= value <= maximum:
+        raise ValueError("invalid_integer")
+    return value
+
+
+def _text(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("invalid_text")
+    return value
+
+
+def _arguments(operation: str, payload: dict[str, object], request_id: str, board: str) -> NativeAction:
+    args = copy.deepcopy(_object(payload["arguments"]))
+    if payload["coordination"] == "bounded_research":
+        if operation != "research" or set(args) != {"tasks"} or "task_id" in payload:
+            raise ValueError("invalid_bounded_research")
+        tasks = _array(args["tasks"])
+        if not 1 <= len(tasks) <= MAX_TASK_IDS:
+            raise ValueError("invalid_task_count")
+        for task in tasks:
+            row = _object(task)
+            if set(row) != {"goal", "context"}:
+                raise ValueError("invalid_research_task")
+            _ = _text(row["goal"])
+            if not isinstance(row["context"], str):
+                raise ValueError("invalid_research_context")
+        return {"tool_name": "delegate_task", "arguments": args}
+    required, optional, _ = _OPERATIONS[operation]
+    allowed = set((required + " " + optional + " board").split())
+    if set(args) - allowed:
+        raise ValueError("unsupported_argument")
+    if "board" in args and args["board"] != board:
+        raise ValueError("foreign_board")
+    args["board"] = board
+    if operation not in ("create", "link", "list"):
+        task_id = _reference(payload.get("task_id"))
+        if "task_id" in args and args["task_id"] != task_id:
+            raise ValueError("foreign_task")
+        args["task_id"] = task_id
+    elif "task_id" in payload:
+        raise ValueError("unexpected_task_id")
+    if operation == "create":
+        if args.get("idempotency_key", request_id) != request_id:
+            raise ValueError("idempotency_key_mismatch")
+        args["idempotency_key"] = request_id
+    if set(required.split()) - set(args):
+        raise ValueError("missing_argument")
+    for name, value in args.items():
+        expected = _TYPES.get(name, "string")
+        if expected == "array":
+            rows = _array(value)
+            if len(rows) > MAX_TASK_IDS:
+                raise ValueError("too_many_task_ids")
+            for item in rows:
+                _ = _reference(item)
+        elif expected == "object":
+            _ = _object(value)
+        elif expected == "integer":
+            _ = _integer(value, 1, 200)
+        elif expected == "boolean":
+            if type(value) is not bool:
+                raise ValueError("invalid_boolean")
+        else:
+            _ = _text(value)
+        if name in ("task_id", "parent_id", "child_id", "assignee", "reviewer", "idempotency_key"):
+            _ = _reference(value)
+    if operation == "link" and args["parent_id"] == args["child_id"]:
+        raise ValueError("self_link")
+    if operation == "complete" and not (args.get("summary") or args.get("result")):
+        raise ValueError("completion_text_required")
+    if operation == "list" and "status" in args and args["status"] not in _STATUSES - {"review"}:
+        raise ValueError("invalid_list_status")
+    if "initial_status" in args and args["initial_status"] not in {"todo", "running", "blocked", "triage"}:
+        raise ValueError("invalid_initial_status")
+    if "kind" in args and args["kind"] not in {"dependency", "needs_input", "capability", "transient"}:
+        raise ValueError("invalid_block_kind")
+    return {"tool_name": "kanban_" + operation, "arguments": args}
+
+
+def _schema_supported(schema: object, action: NativeAction) -> bool:
+    if not _is_dict(schema):
+        return False
+    # Accept parameters, native name/parameters schema, or exposed function schema.
+    schema = schema.get("function", schema)
+    if not _is_dict(schema):
+        return False
+    schema = schema.get("parameters", schema)
+    if not _is_dict(schema) or schema.get("type") != "object":
+        return False
+    properties, required = schema.get("properties"), schema.get("required", [])
+    if not _is_dict(properties) or not _is_list(required):
+        return False
+    if any(not isinstance(key, str) or key not in action["arguments"] for key in required):
+        return False
+    for key, value in action["arguments"].items():
+        prop = properties.get(key)
+        if not _is_dict(prop) or prop.get("type") != _TYPES.get(key, "string"):
+            return False
+        if "enum" in prop and (not _is_list(prop["enum"]) or value not in prop["enum"]):
+            return False
+    return True
+
+
+@dataclass
+class _Request:
+    request_id: str
+    request_ref: str
+    route: str
+    operation: str
+    argument_digest: str
+    scope_ref: str
+    action: NativeAction | None
+    expected: str | None
+    required: list[str]
+    state: str = "prepared"
+    reason: str | None = None
+    missing: list[str] = field(default_factory=list)
+    call_ref: str | None = None
+    receipt: dict[str, object] | None = None
+    requires_reconciliation: bool = False
+    task_refs: tuple[str, ...] = ()
+    reconciled_by: str | None = None
+
+
+class AgentBoard:
+    """A bounded local state machine. Host authorization is strictly external.
+
+    begin/observe are integration methods, never public JSON operations. Keep
+    the same instance for local pairing. A durable bridge must atomically store
+    frozen metadata and an in-flight marker before allowing the native call;
+    after restart, an interrupted marker requires show, not automatic retry.
+    """
+
+    def __init__(self, board: str, board_ref: str) -> None:
+        self.board: str = _reference(board)
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", board_ref):
+            raise ValueError("invalid_board_ref")
+        self.board_ref: str = board_ref
+        self._requests: dict[str, _Request] = {}
+        self._facts: list[dict[str, object]] = []
+        self._sequence: int = 0
+        self._lock: RLock = RLock()
+
+    @property
+    def observation_ref(self) -> str:
+        return f"observation:{self._sequence}"
+
+    def _projection(self, entry: _Request, *, include_action: bool = False) -> AgentBoardRequest:
+        projection: AgentBoardRequest = {
+            "schema_version": "agent_board_request/v1", "request_id": entry.request_id,
+            "request_ref": entry.request_ref, "board_ref": self.board_ref, "route": entry.route,
+            "operation": entry.operation, "argument_digest": entry.argument_digest,
+            "state": entry.state, "reason": entry.reason,
+            "observation_ref": self.observation_ref,
+            "expected_observation_ref": entry.expected,
+            "required_capabilities": entry.required, "missing_capabilities": entry.missing,
+            "native_action": entry.action if include_action and entry.state == "prepared" and entry.call_ref is None else None,
+            "observed_receipts": [entry.receipt] if entry.receipt is not None else [],
+            "requires_reconciliation": entry.requires_reconciliation,
+            "task_refs": list(entry.task_refs), "host_scope_ref": entry.scope_ref,
+            "host_call_ref": entry.call_ref,
+            "in_flight": entry.call_ref is not None and entry.receipt is None,
+            "reconciled_by": entry.reconciled_by,
+            "claim_boundary": CLAIM_BOUNDARY,
+        }
+        return copy.deepcopy(projection)
+
+    def prepare(self, payload: Mapping[str, object], *, host: HostIdentity | None = None,
+                schemas: Mapping[str, object] | None = None, hooks: frozenset[str] = _NO_HOOKS,
+                board_is_safe: bool = False) -> AgentBoardRequest:
+        """Validate closed JSON and return a next action, never invoke it.
+
+        schemas contains actual exposed native schemas, not a grant. Unknown
+        hooks/identity/board resolution produce unavailable even with schemas.
+        board_is_safe must be false with a DB override or unattributable root.
+        """
+        data = dict(payload)
+        _ = _encoded(data)
+        request_id = _reference(data.get("request_id"))
+        if data.get("action") == "status":
+            if set(data) != {"action", "request_id"}:
+                raise ValueError("closed_status_input")
+            return self.status(request_id)
+        required = {"action", "request_id", "coordination", "operation", "board", "profile", "arguments"}
+        if (required - set(data) or set(data) - required - {"task_id", "expected_observation_ref"}
+                or data.get("action") != "prepare"):
+            raise ValueError("closed_prepare_input")
+        if data["board"] != self.board:
+            raise ValueError("foreign_board")
+        _ = _reference(data["profile"])
+        operation = _reference(data["operation"])
+        coordination = data["coordination"]
+        if coordination not in ("durable", "bounded_research"):
+            raise ValueError("invalid_coordination")
+        expected = data.get("expected_observation_ref")
+        if expected is not None and (not isinstance(expected, str) or not re.fullmatch(r"observation:(0|[1-9][0-9]{0,18})", expected)):
+            raise ValueError("invalid_observation_ref")
+        args = _object(data["arguments"])
+        route = "delegation" if coordination == "bounded_research" else "kanban"
+        missing: list[str] = []
+        action = None
+        if {"expected_revision", "expected_run_id"} & set(args):
+            missing.append("native_compare_and_swap")
+        elif route == "kanban" and operation not in _OPERATIONS:
+            missing.append("operation:" + operation)
+        else:
+            action = _arguments(operation, data, request_id, self.board)
+        tool = action["tool_name"] if action else ("delegate_task" if route == "delegation" else "kanban_" + operation)
+        required_caps = [tool, "pre_tool_call", "post_tool_call", "host_identity"]
+        if route == "kanban":
+            required_caps.extend(["board_binding", "native_read_guard" if operation in {"show", "attachments"} else "native_mutation_guard"])
+        if action is not None:
+            if schemas is None or tool not in schemas:
+                missing.append(tool)
+            elif not _schema_supported(schemas[tool], action):
+                missing.append("schema:" + tool)
+        missing.extend(name for name in ("pre_tool_call", "post_tool_call") if name not in hooks)
+        if host is None:
+            missing.append("host_identity")
+        if route == "kanban" and not board_is_safe:
+            missing.append("board_binding")
+        # The request reference and argument digest deliberately exclude profile
+        # and expected local observation: neither changes the native action.
+        digest = _digest(["agent_board_action/v1", self.board_ref, action if action else data])
+        entry = _Request(request_id, _digest(["agent_board_request/v1", self.board_ref, request_id]),
+                         route, operation, digest, host.scope_ref if host else "", action, expected,
+                         required_caps, missing=missing)
+        if action is not None:
+            entry.task_refs = tuple(_reference(action["arguments"][key]) for key in
+                                    ("task_id", "parent_id", "child_id") if key in action["arguments"])
+        with self._lock:
+            previous = self._requests.get(request_id)
+            if previous is not None:
+                if previous.argument_digest != digest:
+                    entry.state, entry.reason = "denied", "request_digest_changed"
+                    return self._projection(entry)
+                if host is not None and previous.scope_ref and previous.scope_ref != host.scope_ref:
+                    entry.state, entry.reason = "denied", "foreign_host_scope"
+                    return self._projection(entry)
+                if previous.call_ref is not None or previous.state in {"observed", "failed"}:
+                    return self._projection(previous)
+            if expected is not None and expected != self.observation_ref:
+                entry.state, entry.reason = "denied", "stale_observation"
+            elif missing:
+                entry.state, entry.reason = "unavailable", "missing_capability"
+            elif self._needs_reconciliation(entry):
+                entry.state, entry.reason = "denied", "reconciliation_required"
+            if previous is None and len(self._requests) >= MAX_REQUESTS:
+                entry.state, entry.reason = "unavailable", "request_capacity"
+                return self._projection(entry)
+            self._requests[request_id] = entry
+            return self._projection(entry, include_action=True)
+
+    def status(self, request_id: str) -> AgentBoardRequest:
+        """Read a bounded projection, with no raw action/body or authority."""
+        _ = _reference(request_id)
+        with self._lock:
+            entry = self._requests.get(request_id)
+            if entry is None:
+                entry = _Request(request_id, _digest(["agent_board_request/v1", self.board_ref, request_id]),
+                                 "kanban", "unknown", "", "", None, None, [],
+                                 state="unavailable", reason="request_not_found")
+            return self._projection(entry)
+
+    def begin(self, request_id: str, *, host: HostIdentity, tool_name: str,
+              arguments: Mapping[str, object]) -> bool:
+        """Reserve the exact next host call after native/user vetoes, not execute."""
+        with self._lock:
+            entry = self._requests.get(request_id)
+            if (entry is None or entry.state != "prepared" or entry.call_ref is not None
+                    or entry.scope_ref != host.scope_ref or entry.action is None):
+                return False
+            if entry.expected is not None and entry.expected != self.observation_ref:
+                entry.state, entry.reason = "denied", "stale_observation"
+                return False
+            if self._needs_reconciliation(entry):
+                entry.state, entry.reason = "denied", "reconciliation_required"
+                return False
+            if not self._matches(entry, tool_name, arguments):
+                return False
+            # A call ID cannot arm a second request, including after completion.
+            if any(other.call_ref == host.call_ref for other in self._requests.values()):
+                return False
+            entry.call_ref = host.call_ref
+            entry.requires_reconciliation = True
+            entry.reason = "awaiting_correlated_result"
+            return True
+
+    def _needs_reconciliation(self, entry: _Request) -> bool:
+        if entry.operation in {"show", "attachments", "research"}:
+            return False
+        targets = set(entry.task_refs)
+        return any(other.requires_reconciliation and other.reconciled_by is None
+                   and targets.intersection(other.task_refs) for other in self._requests.values())
+
+    def _matches(self, entry: _Request, tool_name: str, arguments: Mapping[str, object]) -> bool:
+        try:
+            return entry.argument_digest == _digest(["agent_board_action/v1", self.board_ref,
+                                                     {"tool_name": tool_name, "arguments": dict(arguments)}])
+        except ValueError:
+            return False
+
+    def observe(self, request_id: str, *, host: HostIdentity, tool_name: str,
+                arguments: Mapping[str, object], result: object) -> dict[str, object] | None:
+        """Accept only the paired post callback; retain no raw native response.
+
+        Unpaired/foreign/replayed callbacks return None without changing state.
+        A paired malformed/failing result records failed/ambiguous, never a
+        landed task fact. Failure may still have native effects (e.g. TTL).
+        """
+        with self._lock:
+            entry = self._requests.get(request_id)
+            if entry is None or entry.call_ref != host.call_ref or entry.receipt is not None:
+                return None
+            reason = None
+            facts: dict[str, object] = {}
+            if not self._matches(entry, tool_name, arguments):
+                reason = "arguments_changed"
+            elif entry.route == "delegation":
+                # Native delegation has its own normal parent loop and receipts.
+                # Never classify a model's child summary as Kanban execution.
+                reason = "delegation_result_not_projected"
+            else:
+                try:
+                    parsed = _parse_result(result)
+                    if entry.action is None:
+                        raise ValueError("missing_action")
+                    facts = _result_facts(entry.operation, entry.action["arguments"], parsed, self.board, self.board_ref)
+                except ValueError as error:
+                    # Every error here is a closed, module-authored reason code.
+                    reason = str(error)
+            self._sequence += 1
+            receipt: dict[str, object] = {
+                "schema_version": "agent_board_receipt/v1", "request_ref": entry.request_ref,
+                "argument_digest": entry.argument_digest, "observation_ref": self.observation_ref,
+                "board_ref": self.board_ref, "operation": entry.operation, "host_call_ref": entry.call_ref,
+                "state": "failed" if reason else "observed", "reason": reason,
+                "requires_reconciliation": reason is not None, "truncated": False,
+                "claim_boundary": CLAIM_BOUNDARY, **facts,
+            }
+            entry.receipt = receipt
+            entry.state = "failed" if reason else "observed"
+            entry.reason = reason
+            entry.requires_reconciliation = reason is not None
+            if reason is None and entry.operation == "show":
+                for previous in self._requests.values():
+                    if (previous.state == "failed" and previous.receipt is not None
+                            and previous.task_refs == entry.task_refs):
+                        previous.reconciled_by = self.observation_ref
+            entry.action = None  # discard all ephemeral text after the paired callback
+            self._facts.append(receipt)
+            self._facts = self._facts[-MAX_OPERATION_FACTS:]
+            return copy.deepcopy(receipt)
+
+    def snapshot(self) -> AgentBoardSnapshot:
+        """Metadata-only local projection; not an auto-resumable execution store."""
+        with self._lock:
+            return {"schema_version": "agent_board_state/v1", "board_ref": self.board_ref,
+                    "observation_ref": self.observation_ref,
+                    "requests": [self._projection(entry) for entry in self._requests.values()],
+                    "operation_facts": copy.deepcopy(self._facts),
+                    "truncated": self._sequence > MAX_OPERATION_FACTS,
+                    "claim_boundary": CLAIM_BOUNDARY}
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_result_key")
+        result[key] = value
+    return result
+
+
+class _JsonModule(Protocol):
+    def loads(self, s: str, *,
+              object_pairs_hook: Callable[[list[tuple[str, object]]], dict[str, object]]) -> object: ...
+
+
+# Decoding yields unvalidated boundary data, not a trusted JSON object.
+_json: _JsonModule = json
+
+
+def _parse_result(raw: object) -> dict[str, object]:
+    if not isinstance(raw, str) or len(raw) > MAX_INTAKE_BYTES:
+        raise ValueError("result_intake_exceeded")
+    try:
+        if len(raw.encode("utf-8")) > MAX_INTAKE_BYTES:
+            raise ValueError("result_intake_exceeded")
+        value = _json.loads(raw, object_pairs_hook=_unique_object)
+        _json_check(value)
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as error:
+        raise ValueError("malformed_result") from error
+    return _object(value)
+
+
+def _binding(row: dict[str, object], board: str, task_id: object = None) -> None:
+    if "board" in row and row["board"] != board:
+        raise ValueError("foreign_result_board")
+    if task_id is not None and "task_id" in row and row["task_id"] != task_id:
+        raise ValueError("foreign_result_task")
+
+
+def _task_rows(value: object, board: str) -> list[str]:
+    result: list[str] = []
+    for item in _array(value):
+        row = _object(item)
+        _binding(row, board)
+        result.append(_reference(row.get("id")))
+    if len(set(result)) != len(result):
+        raise ValueError("duplicate_task_id")
+    return result
+
+
+def _result_facts(operation: str, args: dict[str, object], result: dict[str, object],
+                  board: str, board_ref: str) -> dict[str, object]:
+    if "error" in result or (operation not in {"show", "list"} and result.get("ok") is not True):
+        raise ValueError("native_failure")
+    if set(_OPERATIONS[operation][2].split()) - set(result):
+        raise ValueError("missing_result_field")
+    task_id = args.get("task_id")
+    _binding(result, board, task_id)
+    facts: dict[str, object] = {"fact": {"request_review": "review_requested", "request_changes": "changes_requested"}.get(operation, operation)}
+    if operation == "link":
+        for key in ("parent_id", "child_id"):
+            if result[key] != args[key]:
+                raise ValueError("foreign_result_edge")
+            facts[key] = _reference(result[key])
+    elif operation == "list":
+        ids = _task_rows(result["tasks"], board)
+        count = _integer(result["count"])
+        limit = _integer(result["limit"], 1, 200)
+        if count < len(ids) or type(result["truncated"]) is not bool:
+            raise ValueError("invalid_list_counts")
+        if result["next_limit"] is not None:
+            _ = _integer(result["next_limit"], 1, 200)
+        _ = _integer(result["promoted"])
+        facts.update(task_ids=ids[:MAX_TASK_IDS], count=count, limit=limit,
+                     truncated=result["truncated"] or len(ids) > MAX_TASK_IDS,
+                     next_limit=result["next_limit"], promoted=result["promoted"])
+    elif operation == "show":
+        task = _object(result["task"])
+        if task.get("id") != task_id:
+            raise ValueError("foreign_result_task")
+        _binding(task, board, task_id)
+        facts["task_id"] = _reference(task_id)
+        status = task.get("status")
+        if not isinstance(status, str) or status not in _STATUSES:
+            raise ValueError("invalid_landed_status")
+        facts["landed_status"] = status
+        if task.get("current_run_id") is not None:
+            facts["run_id"] = _integer(task["current_run_id"], 1)
+        parents = [_reference(item) for item in _array(result["parents"])]
+        children = [_reference(item) for item in _array(result["children"])]
+        facts.update(parent_ids=parents[:MAX_TASK_IDS], child_ids=children[:MAX_TASK_IDS],
+                     truncated=len(parents) > MAX_TASK_IDS or len(children) > MAX_TASK_IDS)
+        for key in ("comments", "events", "runs"):
+            _ = _array(result[key])
+        if not isinstance(result["worker_context"], str):
+            raise ValueError("invalid_worker_context")
+    else:
+        facts["task_id"] = _reference(result["task_id"])
+    success_keys = _OPERATIONS[operation][2].split()
+    if "status" in success_keys:
+        status = result["status"]
+        if not isinstance(status, str) or status not in _STATUSES:
+            raise ValueError("invalid_landed_status")
+        facts["landed_status"] = status
+    if "run_id" in success_keys:
+        facts["run_id"] = None if result["run_id"] is None else _integer(result["run_id"], 1)
+    if "comment_id" in success_keys:
+        facts["comment_id"] = _integer(result["comment_id"], 1)
+    if operation == "request_changes":
+        facts["implementer"] = _reference(result["implementer"])
+    if operation == "block":
+        if result["block_kind"] not in ("dependency", "needs_input", "capability", "transient"):
+            raise ValueError("invalid_block_kind")
+        facts["block_kind"] = result["block_kind"]
+    if operation == "attachments":
+        refs: list[dict[str, object]] = []
+        seen: set[int] = set()
+        for item in _array(result["attachments"]):
+            attachment = _object(item)
+            _binding(attachment, board, task_id)
+            attachment_id = _integer(attachment.get("id"), 1)
+            size = _integer(attachment.get("size"), 0, 25 * 1024 * 1024)
+            content_type = attachment.get("content_type")
+            if not isinstance(content_type, str) or not _MIME.fullmatch(content_type):
+                raise ValueError("invalid_attachment_type")
+            if attachment_id in seen:
+                raise ValueError("duplicate_attachment_id")
+            seen.add(attachment_id)
+            if len(refs) < MAX_ATTACHMENT_REFS:
+                refs.append({"board_ref": board_ref, "task_id": task_id,
+                             "attachment_id": attachment_id, "size": size, "content_type": content_type})
+        facts.update(attachment_refs=refs, truncated=len(seen) > MAX_ATTACHMENT_REFS)
+    return facts
