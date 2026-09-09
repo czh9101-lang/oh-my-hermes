@@ -67,6 +67,7 @@ _LIFECYCLE_FIELDS: Final = {
         {
             "proposed_action_refs", "proposed_action_kinds", "action_owner", "approver",
             "connector_evidence_state", "connector_evidence_refs", "timing_state", "stop_condition_refs",
+            "analysis_cancellation",
         }
     ),
 }

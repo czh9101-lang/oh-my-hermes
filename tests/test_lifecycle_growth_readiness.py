@@ -70,6 +70,14 @@ class LifecycleGrowthReadinessTests(unittest.TestCase):
                 {"step_ref": "step_reminder_email", "outcome": "skipped", "reason_code": "reason_condition_false"},
             ),
             "step_trace_state": "recorded",
+            "analysis_status": {
+                "run_state": "completed",
+                "run_ref": "analysis_run_activation_q3_01",
+                "observed_at": "2026-09-08T09:00:00Z",
+                "elapsed_minutes": 42,
+                "service_expectation_minutes": 120,
+                "evidence_refs": ("evidence_analysis_run_completed",),
+            },
         }
         values.update(overrides)
         return build_growth_measurement_readout(**values)

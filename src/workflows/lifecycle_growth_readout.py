@@ -3,6 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .lifecycle_growth_analysis import (
+    IN_FLIGHT_ANALYSIS_STATES,
+    analysis_run_state,
+    analysis_status_errors,
+    analysis_status_record,
+)
 from .lifecycle_growth_safety import STEP_TRACE_STATES, step_outcome_records, step_outcomes_errors
 from .lifecycle_growth_values import (
     CLAIM_BOUNDARY,
@@ -28,7 +34,7 @@ _COUNT_FIELDS = (
 )
 
 
-def build_growth_measurement_readout(*, lifecycle_growth_id: str, eligible_count: int, attempted_count: int, delivered_count: int, displayed_count: int, acted_count: int, outcome_count: int, runtime_days_observed: int, denominator_state: str, data_freshness_state: str, instrumentation_state: str, sample_ratio_state: str, cross_exposure_state: str, overlap_state: str, primary_metric_state: str, guardrail_state: str, causal_claim_status: str, rollback_state: str, provider_evidence_refs: Sequence[str], actual_exposure_evidence_refs: Sequence[str], data_evidence_refs: Sequence[str], runtime_evidence_refs: Sequence[str], causal_evidence_refs: Sequence[str], step_outcomes: Sequence[Mapping[str, str]], step_trace_state: str) -> dict[str, object]:
+def build_growth_measurement_readout(*, lifecycle_growth_id: str, eligible_count: int, attempted_count: int, delivered_count: int, displayed_count: int, acted_count: int, outcome_count: int, runtime_days_observed: int, denominator_state: str, data_freshness_state: str, instrumentation_state: str, sample_ratio_state: str, cross_exposure_state: str, overlap_state: str, primary_metric_state: str, guardrail_state: str, causal_claim_status: str, rollback_state: str, provider_evidence_refs: Sequence[str], actual_exposure_evidence_refs: Sequence[str], data_evidence_refs: Sequence[str], runtime_evidence_refs: Sequence[str], causal_evidence_refs: Sequence[str], step_outcomes: Sequence[Mapping[str, str]], step_trace_state: str, analysis_status: Mapping[str, Any]) -> dict[str, object]:
     counts = {
         "eligible_count": require_nonnegative_count(eligible_count, field="eligible_count"),
         "attempted_count": require_nonnegative_count(attempted_count, field="attempted_count"),
@@ -61,6 +67,7 @@ def build_growth_measurement_readout(*, lifecycle_growth_id: str, eligible_count
         "causal_evidence_refs": metadata_refs(causal_evidence_refs, field="causal_evidence_refs", required=causal_claim_status == "established"),
         "step_outcomes": step_outcome_records(step_outcomes),
         "step_trace_state": require_state(step_trace_state, field="step_trace_state", allowed=STEP_TRACE_STATES),
+        "analysis_status": analysis_status_record(analysis_status),
         "disposition": "",
         "claim_boundary": CLAIM_BOUNDARY,
     }
@@ -69,8 +76,22 @@ def build_growth_measurement_readout(*, lifecycle_growth_id: str, eligible_count
 
 
 def derive_readout_disposition(record: Mapping[str, Any]) -> str:
+    """The four-word disposition, gated first on safety and then on the analysis run.
+
+    A rollback signal is an observed guardrail breach and outranks everything:
+    holding it because an analysis is queued would keep a harmful treatment
+    live. Below that, an in-flight run means the numbers are not final, so the
+    readout is `review` no matter how good they look, and any run state other
+    than `completed` leaves the numbers unbacked. Elapsed time never enters
+    here: a delayed run is still a queued or running one.
+    """
     if record.get("rollback_state") == "triggered" or record.get("guardrail_state") == "failed":
         return "rollback"
+    run_state = analysis_run_state(record)
+    if run_state in IN_FLIGHT_ANALYSIS_STATES:
+        return "review"
+    if run_state != "completed":
+        return "insufficient_data"
     if not positive_count(record.get("eligible_count")) or not positive_count(record.get("displayed_count")) or not positive_count(record.get("outcome_count")):
         return "insufficient_data"
     if record.get("denominator_state") != "known" or record.get("data_freshness_state") != "fresh":
@@ -106,6 +127,7 @@ def validate_readout(record: Mapping[str, Any]) -> list[str]:
     errors.extend(refs_errors(record.get("causal_evidence_refs"), field="causal_evidence_refs", required=record.get("causal_claim_status") == "established"))
     errors.extend(step_outcomes_errors(record.get("step_outcomes")))
     errors.extend(state_errors(record.get("step_trace_state"), field="step_trace_state", allowed=STEP_TRACE_STATES))
+    errors.extend(analysis_status_errors(record.get("analysis_status")))
     if record.get("disposition") != derive_readout_disposition(record):
         errors.append("readout disposition must match derived disposition")
     return errors

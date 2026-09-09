@@ -3,6 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .lifecycle_growth_analysis import (
+    analysis_cancellation_errors,
+    analysis_cancellation_record,
+)
 from .lifecycle_growth_safety import (
     MUTATION_ROUTES,
     PROMOTION_DECISION_STATES,
@@ -126,7 +130,7 @@ def build_growth_experiment_plan(*, lifecycle_growth_id: str, treatment_ref: str
     )
 
 
-def build_growth_handoff_disposition(*, lifecycle_growth_id: str, proposed_action_refs: Sequence[str], proposed_action_kinds: Sequence[str], action_owner: str, approver: str, connector_evidence_state: str, connector_evidence_refs: Sequence[str], timing_state: str, stop_condition_refs: Sequence[str]) -> dict[str, object]:
+def build_growth_handoff_disposition(*, lifecycle_growth_id: str, proposed_action_refs: Sequence[str], proposed_action_kinds: Sequence[str], action_owner: str, approver: str, connector_evidence_state: str, connector_evidence_refs: Sequence[str], timing_state: str, stop_condition_refs: Sequence[str], analysis_cancellation: Mapping[str, Any]) -> dict[str, object]:
     actions = metadata_refs(proposed_action_refs, field="proposed_action_refs", required=True)
     if len(actions) != len(proposed_action_kinds):
         raise ValueError("proposed_action_kinds must match proposed_action_refs")
@@ -141,6 +145,7 @@ def build_growth_handoff_disposition(*, lifecycle_growth_id: str, proposed_actio
         connector_evidence_refs=metadata_refs(connector_evidence_refs, field="connector_evidence_refs", required=connector_evidence_state == "observed_available"),
         timing_state=require_state(timing_state, field="timing_state", allowed=("not_scheduled", "scheduled_by_external_owner")),
         stop_condition_refs=metadata_refs(stop_condition_refs, field="stop_condition_refs", required=True),
+        analysis_cancellation=analysis_cancellation_record(analysis_cancellation),
     )
 
 
@@ -217,6 +222,7 @@ def validate_handoff(record: Mapping[str, Any]) -> list[str]:
     errors.extend(refs_errors(record.get("connector_evidence_refs"), field="connector_evidence_refs", required=record.get("connector_evidence_state") == "observed_available"))
     errors.extend(state_errors(record.get("timing_state"), field="timing_state", allowed=("not_scheduled", "scheduled_by_external_owner")))
     errors.extend(refs_errors(record.get("stop_condition_refs"), field="stop_condition_refs", required=True))
+    errors.extend(analysis_cancellation_errors(record.get("analysis_cancellation")))
     return errors
 
 

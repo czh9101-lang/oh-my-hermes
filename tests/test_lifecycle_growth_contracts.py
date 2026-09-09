@@ -106,6 +106,14 @@ class LifecycleGrowthContractTests(unittest.TestCase):
                 connector_evidence_refs=("evidence_connector_observed",),
                 timing_state="not_scheduled",
                 stop_condition_refs=("stop_consent_changed",),
+                analysis_cancellation={
+                    "request_state": "not_requested",
+                    "run_ref": "",
+                    "cancel_scope": "",
+                    "acknowledgement_state": "not_observed",
+                    "result_state": "not_observed",
+                    "evidence_refs": (),
+                },
             ),
         }
 
@@ -139,6 +147,14 @@ class LifecycleGrowthContractTests(unittest.TestCase):
                 {"step_ref": "step_reminder_email", "outcome": "skipped", "reason_code": "reason_condition_false"},
             ),
             "step_trace_state": "recorded",
+            "analysis_status": {
+                "run_state": "completed",
+                "run_ref": "analysis_run_activation_q3_01",
+                "observed_at": "2026-09-08T09:00:00Z",
+                "elapsed_minutes": 42,
+                "service_expectation_minutes": 120,
+                "evidence_refs": ("evidence_analysis_run_completed",),
+            },
         }
         values.update(overrides)
         return build_growth_measurement_readout(**values)
