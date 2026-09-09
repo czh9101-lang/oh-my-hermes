@@ -9,8 +9,8 @@ import sys
 import time
 import unittest
 from abc import ABC
-from collections.abc import Callable, Mapping
-from contextlib import closing
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from functools import cached_property, partial
 from pathlib import Path
@@ -100,6 +100,50 @@ class AttemptRequest(TypedDict):
     payload_bytes: int
     idempotency_key: str | None
     approval_ref: str | None
+
+
+BUSY_BUDGET_MILLISECONDS = 10
+BUSY_BUDGET_SECONDS = BUSY_BUDGET_MILLISECONDS / 1000
+
+
+@contextmanager
+def _bounded_by_configured_budget(
+    test: unittest.TestCase,
+    *,
+    connections: int,
+    factory: type[sqlite3.Connection] | None = None,
+) -> Iterator[None]:
+    """Bound a failure path by its mechanism rather than by a measured duration.
+
+    These paths must return without waiting: no retry loop, no backoff sleep,
+    no wait longer than the configured contention budget. Those are properties
+    of the code, so this asserts them directly: the exact number of SQLite
+    connections the path opens, the busy budget each one carries (the same
+    budget ``test_connections_use_ten_millisecond_busy_budget`` pins as a
+    ``PRAGMA``), and that nothing slept. Reading a clock instead would assert
+    the same properties only on an idle machine, so a loaded shared runner
+    reports a false failure.
+    """
+    connect = sqlite3.connect
+    budgets: list[float] = []
+
+    def recording_connect(
+        database: Path, *, timeout: float, isolation_level: None
+    ) -> sqlite3.Connection:
+        budgets.append(timeout)
+        if factory is None:
+            return connect(database, timeout=timeout, isolation_level=isolation_level)
+        return connect(
+            database, timeout=timeout, isolation_level=isolation_level, factory=factory
+        )
+
+    with (
+        patch.object(sqlite3, "connect", side_effect=recording_connect),
+        patch.object(time, "sleep") as sleeper,
+    ):
+        yield
+    sleeper.assert_not_called()
+    test.assertEqual(budgets, [BUSY_BUDGET_SECONDS] * connections)
 
 
 def _digest(value: str) -> str:
@@ -213,15 +257,13 @@ class EgressAttemptStoreTests(unittest.TestCase):
         _ = self.store.open_attempt(**_request("seed"))
         with closing(sqlite3.connect(self.store.database_path)) as holder:
             _ = holder.execute("BEGIN IMMEDIATE")
-            started = time.monotonic()
-            with self.assertRaises(receipt_module.AttemptStoreError):
-                _ = self.store.open_attempt(**_request("blocked"))
-            elapsed = time.monotonic() - started
+            with _bounded_by_configured_budget(self, connections=1):
+                with self.assertRaises(receipt_module.AttemptStoreError):
+                    _ = self.store.open_attempt(**_request("blocked"))
             holder.rollback()
 
         with self.assertRaises(sqlite3.ProgrammingError):
             _ = holder.execute("SELECT 1")
-        self.assertLess(elapsed, 0.1)
         self.assertEqual(len(self.store.public_rows()), 1)
 
     def test_connections_use_ten_millisecond_busy_budget(self) -> None:
@@ -230,7 +272,10 @@ class EgressAttemptStoreTests(unittest.TestCase):
                 connection, created = SchemaProbe.connect(self.store)
                 with closing(connection):
                     self.assertEqual(created, cold)
-                    self.assertEqual(connection.execute("PRAGMA busy_timeout").fetchone(), (10,))
+                    self.assertEqual(
+                        connection.execute("PRAGMA busy_timeout").fetchone(),
+                        (BUSY_BUDGET_MILLISECONDS,),
+                    )
                     self.assertEqual(connection.execute("PRAGMA synchronous").fetchone(), (2,))
                     self.assertEqual(connection.execute("PRAGMA journal_mode").fetchone(), ("delete",))
                     self.assertEqual(connection.execute("PRAGMA foreign_keys").fetchone(), (1,))
@@ -528,25 +573,20 @@ class EgressAttemptStoreTests(unittest.TestCase):
 
         handler = Mock()
         wrapper, args, _, _ = self._registered_handler(handler)
-        connect = sqlite3.connect
         platform_os = Mock(wraps=os)
         platform_os.name = "nt"
         with (
             patch.object(receipt_module, "os", platform_os),
-            patch.object(sqlite3, "connect", side_effect=partial(connect, factory=FailedCommit)),
+            _bounded_by_configured_budget(self, connections=1, factory=FailedCommit),
         ):
             self.assertFalse(self.store.database_path.exists())
-            started = time.monotonic()
             result = wrapper(args, session_id="session-1")
-            elapsed = time.monotonic() - started
         self.assertIn("error", _response(result))
         handler.assert_not_called()
-        self.assertLess(elapsed, 0.1)
         self.assertEqual(commits, ["schema", "attempt"])
         self.assertEqual(self.store.public_rows(), [])
 
     def test_posix_directory_failures_block_handler_after_commit(self) -> None:
-        native_posix = os.name == "posix"
         for operation in ("open", "fsync"):
             with self.subTest(operation=operation):
                 self.home = Path(self.temporary.name) / operation
@@ -563,20 +603,16 @@ class EgressAttemptStoreTests(unittest.TestCase):
                 platform_os.name = "posix"
                 failed_operation = {"open": directory_open, "fsync": directory_fsync}[operation]
                 failed_operation.side_effect = OSError("injected directory failure")
-                with patch.object(receipt_module, "os", platform_os):
-                    started = time.monotonic()
+                with (
+                    patch.object(receipt_module, "os", platform_os),
+                    _bounded_by_configured_budget(self, connections=1),
+                ):
                     result = wrapper(args, session_id="session-1")
-                    elapsed = time.monotonic() - started
                     failed_operation.assert_called_once()
                     if operation == "fsync":
                         directory_close.assert_called_once_with(123)
                 self.assertIn("error", _response(result))
                 handler.assert_not_called()
-                # Semantic faults run everywhere; this POSIX-only operation's
-                # physical latency is measured only on its native platform.
-                # The native Windows cold-failure deadline remains separate.
-                if native_posix:
-                    self.assertLess(elapsed, 0.1)
                 rows = self.store.public_rows()
                 self.assertEqual([row["row_type"] for row in rows], ["attempt"])
                 # A committed-but-unconfirmed attempt remains unresolved, never replayable.
