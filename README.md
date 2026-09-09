@@ -525,6 +525,21 @@ and coding ownership are separate decisions, and nothing prepared is ever
 reported as executed. The generated catalog, triggers, and evidence rules
 live in [Workflow Reference](docs/WORKFLOWS.md).
 
+### The workflow
+
+**Understand → Research → Decide → Plan → Execute → Verify → Operate → Learn**
+
+| Stage | What happens |
+| --- | --- |
+| Understand | Confirm the intent, constraints, project terms, and stop conditions. |
+| Research | Replace assumptions with source-backed product, code, or operational context. |
+| Decide | Make the options, tradeoffs, and decision owner explicit. |
+| Plan | Turn accepted scope, coding ownership, tests, and done criteria into an executable plan. |
+| Execute | Dispatch bounded work to the selected owner and track what actually runs; a prepared handoff is not execution evidence. |
+| Verify | Base the verdict on observed test results, review findings, CI status, and runtime evidence. |
+| Operate | Keep release health, incidents, rollback state, and follow-up work visible. |
+| Learn | Promote reviewed, scoped lessons into project memory or workflow improvements. |
+
 **Highlights**
 
 | Intelligence | What OMH adds |

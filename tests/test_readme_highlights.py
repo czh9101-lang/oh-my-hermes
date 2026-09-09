@@ -35,8 +35,39 @@ def _highlights_table(text: str) -> list[str]:
 
 class ReadmeHighlightsTests(unittest.TestCase):
     def test_highlights_are_two_column_capability_tables(self) -> None:
+        lifecycle_contracts = {
+            "README.md": (
+                "### The workflow",
+                "Understand → Research → Decide → Plan → Execute → Verify → Operate → Learn",
+                "**Highlights**",
+            ),
+            "README.ko.md": (
+                "### 작업 흐름",
+                "이해 → 조사 → 결정 → 계획 → 실행 → 검증 → 운영 → 학습",
+                "**하이라이트**",
+            ),
+            "README.ja.md": (
+                "### 作業の流れ",
+                "理解 → 調査 → 判断 → 計画 → 実行 → 検証 → 運用 → 学習",
+                "**ハイライト**",
+            ),
+            "README.zh.md": (
+                "### 工作流",
+                "理解 → 调研 → 决策 → 计划 → 执行 → 验证 → 运维 → 学习",
+                "**亮点**",
+            ),
+        }
+
         for rel in READMES:
-            table = _highlights_table(Path(rel).read_text(encoding="utf-8"))
+            text = Path(rel).read_text(encoding="utf-8")
+            heading, sequence, highlights = lifecycle_contracts[rel]
+            with self.subTest(readme=rel, contract="workflow"):
+                self.assertIn(sequence, text)
+                self.assertLess(text.index(heading), text.index(highlights))
+                for stage in sequence.split(" → "):
+                    self.assertIn(f"| {stage} |", text)
+
+            table = _highlights_table(text)
             self.assertGreaterEqual(len(table), 3, f"{rel}: no Highlights table found")
             for line in table:
                 with self.subTest(readme=rel, line=line):
