@@ -4235,6 +4235,10 @@ def _stdout_fenced_json_blocks(stdout_text: str) -> list[str]:
     return blocks
 
 
+# Shared parsing contract; retain the original internal callable identity.
+stdout_fenced_json_blocks = _stdout_fenced_json_blocks
+
+
 def _intake_stdout_unit_result(
     paths: OmhPaths,
     *,
