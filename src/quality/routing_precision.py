@@ -1411,6 +1411,25 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "frontend-refactor",
     ),
     RoutingPrecisionCase(
+        # `memory`, `provider`, `retention`, and `deletion` are the memory
+        # provider lifecycle vocabulary. Asked as a concept question they are
+        # an answer, not a readiness assessment of any named provider.
+        "memory-retention-concept-not-connector-readiness",
+        "A concept question about memory retention stays direct",
+        "what does memory retention usually mean",
+        "answer_directly",
+        "direct_answer",
+        "external-connector-readiness",
+    ),
+    RoutingPrecisionCase(
+        "provider-deletion-concept-not-connector-readiness",
+        "A concept question about provider deletion does not name the connector workflow",
+        "how is provider deletion different from account deletion",
+        "answer_clarification",
+        "",
+        "external-connector-readiness",
+    ),
+    RoutingPrecisionCase(
         "memories-concept-question-not-memory-sync",
         "A concept question about memories stays direct, not a memory review",
         "how do computers store memories",
@@ -2774,6 +2793,85 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
     # `project memory` names where a fact lives, not what to do with it, so pairing it
     # with curation intent must stay curation. These are the overroute guards for the
     # split: without them a scope word silently flips a cleanup request into capture.
+    # Memory-provider lifecycle vs native-memory curation. A memory provider is
+    # an external backend whose reversibility is unknown until its identity,
+    # hooks, retention, deletion, export, and switching are named; a memory
+    # review is about claims Hermes already holds. Adoption, switching,
+    # deletion, portability, and failure are the five question shapes that were
+    # falling to curation, a capability toggle, or a file operation, and the
+    # two curation cases below are the overroute guards for the split.
+    RoutingInterventionCase(
+        "memory-provider-adoption-readiness",
+        "Memory-provider adoption reaches connector readiness",
+        "memory provider adoption for yantrikdb",
+        "dispatch",
+        "external-connector-readiness",
+        "prepare_external_connector_readiness",
+        "external_connector_readiness",
+    ),
+    RoutingInterventionCase(
+        "memory-provider-switch-readiness",
+        "Switching memory providers reaches connector readiness",
+        "Is it safe to switch memory provider from mem9 to remnic?",
+        "dispatch",
+        "external-connector-readiness",
+        "prepare_external_connector_readiness",
+        "external_connector_readiness",
+    ),
+    RoutingInterventionCase(
+        "memory-provider-deletion-readiness",
+        "Provider-side memory deletion reaches connector readiness, not a file operation",
+        "delete provider memory for this workspace",
+        "dispatch",
+        "external-connector-readiness",
+        "prepare_external_connector_readiness",
+        "external_connector_readiness",
+    ),
+    RoutingInterventionCase(
+        "memory-provider-portability-readiness",
+        "Memory-provider portability reaches connector readiness",
+        "check memory provider portability before adoption",
+        "dispatch",
+        "external-connector-readiness",
+        "prepare_external_connector_readiness",
+        "external_connector_readiness",
+    ),
+    RoutingInterventionCase(
+        "memory-provider-sync-failure-readiness",
+        "A failed provider synchronization reaches connector readiness",
+        "memory provider sync failure keeps queueing",
+        "dispatch",
+        "external-connector-readiness",
+        "prepare_external_connector_readiness",
+        "external_connector_readiness",
+    ),
+    RoutingInterventionCase(
+        "memory-provider-disable-not-capability-toggle",
+        "Disabling a memory provider is a readiness question, not an OMH capability toggle",
+        "disable memory provider without losing anything",
+        "dispatch",
+        "external-connector-readiness",
+        "prepare_external_connector_readiness",
+        "external_connector_readiness",
+    ),
+    RoutingInterventionCase(
+        "memory-md-cleanup-stays-curation",
+        "An ordinary MEMORY.md cleanup is not memory-provider readiness",
+        "memory-sync inspect stale MEMORY.md claims",
+        "dispatch",
+        "memory-sync",
+        "prepare_memory_sync",
+        "memory_curation",
+    ),
+    RoutingInterventionCase(
+        "remembered-context-review-stays-curation",
+        "Reviewing remembered context is not memory-provider readiness",
+        "review what you remember about me",
+        "dispatch",
+        "memory-sync",
+        "prepare_memory_sync",
+        "memory_curation",
+    ),
     RoutingInterventionCase(
         "scoped-project-memory-cleanup",
         "Scoped project-memory cleanup stays memory curation",

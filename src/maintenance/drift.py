@@ -238,7 +238,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # terminal-emulator scroll bug that pins the `scroll` hold-back.
             # Protected-reference controls remain alongside the upstream corpus;
             # merged totals are re-derived from build_routing_precision_demo().
-            expected=196,
+            expected=198,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -255,7 +255,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # more: smooth scroll, a parallax hero, and the Korean phrasing.
             # Direct and mixed-reference interventions remain alongside the
             # upstream corpus; the merged producer determines the exact total.
-            expected=333,
+            expected=341,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",

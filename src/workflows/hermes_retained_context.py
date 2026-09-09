@@ -91,6 +91,20 @@ def _next_actions(channels: list[RetainedContextChannel]) -> list[RetainedContex
             )
         case unreachable:
             assert_never(unreachable)
+    # Reversibility is unestablished in every provider state: an absent provider
+    # is the "before enabling" case, a present one the "before switching,
+    # pausing, or removing" case. Neither is answered by a marker.
+    actions.append(
+        {
+            "id": "prepare_memory_provider_posture",
+            "command": "omh ops memory-provider-posture --input <memory_provider_posture_input/v1>",
+            "reason": (
+                "Enabling, switching, pausing, or removing an optional memory provider needs its identity "
+                "scope, automatic hooks, retention, deletion, export, and switching postconditions named "
+                "before the change; a plugin marker establishes none of them."
+            ),
+        }
+    )
     if by_id["hermes_sessions_index"]["status"] != "available" and by_id["hermes_state_db"]["status"] != "available":
         actions.append(
             {

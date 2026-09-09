@@ -204,7 +204,11 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # time, one required input, one expected output, and one recovery note on
 # each lane. One evidence contract reaching the two lanes that answer
 # point-in-time questions, not per-section padding; warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 411280
+# 411280 -> 411288: `external-connector-readiness` names
+# `memory_provider_posture/v1` in its expected outputs (#1428). Eight chars for
+# the one artifact that answers whether enabling an optional memory provider is
+# reversible; warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 411288
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -723,7 +727,18 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # source record, the integration obligations, and the documented
 # limitations live in `references/scroll-motion-libraries.md`, outside this
 # budget; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 917583
+# 917583 -> 919894: `external-connector-readiness` gains the memory-provider
+# lifecycle lane - twelve English lifecycle triggers, the
+# `memory_provider_posture/v1` output and artifact expectation, two completion
+# checklist lines, one recovery note, and three safety rules - and `memory-sync`
+# gains the two lines that keep provider posture `not_omh_reviewed` and send
+# lifecycle questions to readiness. These belong in the always-loaded body
+# because the decision they guard is made BEFORE the provider is enabled: a
+# reversibility rule discovered after automatic writes have run arrives one
+# irreversible adoption too late. The field-level contract lives in
+# `src/workflows/memory_provider_posture.py`, outside this budget; warranted
+# growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 919894
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

@@ -30,6 +30,7 @@ from .trigger_language_packs import (
 from .policy import (
     PUBLIC_PLUGIN_CONNECTOR_ALIAS_PHRASES,
     PUBLIC_PLUGIN_CONNECTOR_READINESS_CONTEXT_PHRASES,
+    PUBLIC_PLUGIN_CONNECTOR_READINESS_EXACT_PHRASES,
     RoutingGuardRule,
     SKILL_SCOUT_CANDIDATE_ALIAS_PHRASES,
     SKILL_SCOUT_CANDIDATE_BLOCKER_PHRASES,
@@ -2057,6 +2058,32 @@ _WHOLE_PHRASE_ONLY_TRIGGER_TOKENS = {
     # stays creditable because it was already trigger vocabulary before
     # these phrases landed.
     "memory-sync": frozenset({"interview", "memories", "still", "true"}),
+    # `external-connector-readiness` gained the memory-provider lifecycle
+    # phrases ("switch memory provider", "delete provider memory", "export
+    # memory provider data"). Their loose tokens are the vocabulary of every
+    # memory-review and every file request: crediting `memory` alone made
+    # ordinary MEMORY.md curation name this connector workflow, and `delete`,
+    # `export`, or `switch` alone claimed unrelated local work. The intent
+    # lives only in the complete phrases, which the phrase match already
+    # covers. `provider`, `readiness`, `adoption`, and `connector` stay
+    # creditable because they were this skill's trigger vocabulary before
+    # these phrases landed.
+    "external-connector-readiness": frozenset(
+        {
+            "delete",
+            "disable",
+            "export",
+            "failure",
+            "lifecycle",
+            "memory",
+            "portability",
+            "posture",
+            "retention",
+            "switch",
+            "switching",
+            "sync",
+        }
+    ),
     # `adversarial-consensus` names its mechanic with ordinary planning words --
     # "red team this plan", "attack this proposal", "poke holes in this". Split
     # into tokens they are the vocabulary of every planning request: crediting
@@ -2528,14 +2555,7 @@ def _public_plugin_connector_readiness_match(normalized_query: str) -> bool:
         return False
     exact_readiness = any(
         _phrase_match(normalized_query, normalized_phrase(phrase))
-        for phrase in (
-            "memory provider readiness",
-            "search provider connector readiness",
-            "social automation connector readiness",
-            "twitter automation connector readiness",
-            "x/twitter automation connector readiness",
-            "x twitter automation connector readiness",
-        )
+        for phrase in PUBLIC_PLUGIN_CONNECTOR_READINESS_EXACT_PHRASES
     )
     candidate = any(
         _phrase_match(normalized_query, normalized_phrase(phrase))
