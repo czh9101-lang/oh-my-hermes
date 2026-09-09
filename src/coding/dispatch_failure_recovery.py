@@ -45,6 +45,7 @@ it renders choices. Acting on a choice is the dispatcher's job.
 
 from __future__ import annotations
 
+import subprocess
 from typing import Any, Callable, Mapping, Sequence
 
 from ..executors import executor_label
@@ -651,6 +652,7 @@ def dispatch_unit_via_hermes_child(
     run_id: str,
     cwd: Any,
     timeout_seconds: float,
+    launch: Callable[[Callable[[], subprocess.Popen[bytes]]], subprocess.Popen[bytes]] | None = None,
 ) -> dict[str, Any]:
     """Run one recovery unit through the sanctioned Hermes child boundary.
 
@@ -681,6 +683,7 @@ def dispatch_unit_via_hermes_child(
             ),
             dispatch_policy="ask_before_dispatch",
             confirmed=True,
+            launch=launch,
         )
     except (HermesChildDispatchError, ValueError, OSError) as exc:
         return {"status": "hermes_child_refused", "reason": str(exc)[:_MAX_CARD_TEXT]}

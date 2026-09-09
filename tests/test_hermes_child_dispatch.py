@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
+from collections.abc import Callable
 import os
 from pathlib import Path
 import signal
@@ -166,6 +168,46 @@ class HermesChildDispatchTests(unittest.TestCase):
                 with self.assertRaises(DispatchConfirmationError):
                     dispatch_hermes_child(self.request(), dispatch_policy=policy, confirmed=confirmed)
                 self.assertFalse((self.root / "started").exists())
+
+    def test_capacity_launch_callable_refuses_before_actual_popen(self) -> None:
+        def refuse(_spawn: Callable[[], subprocess.Popen[bytes]]) -> subprocess.Popen[bytes]:
+            raise RuntimeError('test_capacity_blocked')
+        with self.assertRaisesRegex(RuntimeError, '^test_capacity_blocked$'):
+            _ = dispatch_hermes_child(self.request(), dispatch_policy='ask_before_dispatch',
+                                      confirmed=True, launch=refuse)
+        self.assertFalse((self.root / 'started').exists(), 'Hermes launched despite the supplied gate')
+
+    def test_capacity_recovery_path_reaches_the_same_actual_popen_gate(self) -> None:
+        from omh.coding.fanout_capacity import AdmissionBinding, AdmissionSupport, AdmissionReceipt, OwnerLaunchGate
+        from omh.coding.fanout_dispatch import _hermes_recovery_dispatch
+        repo = self.root / 'repo'
+        repo.mkdir()
+        worktree = self.root / 'repo-fanout-a'
+        worktree.mkdir()
+        run_ref = 'fanout-123456789abc-a'
+        gate = OwnerLaunchGate()
+        binding = AdmissionBinding('hermes', 'fanout-123456789abc', 'prior', run_ref, 1,
+                                   'a' * 40, str(worktree), 'invocation', 'prior-attempt')
+        support = AdmissionSupport('fixture', 'fixture/v1', 'process_local')
+        receipt = AdmissionReceipt('fixture', 'fixture/v1', binding, True, 1)
+        self.assertIsNotNone(gate.context(binding, support=support).reject(receipt,
+            process_started=True, returncode=1, implementation_started=False))
+        request = self.request(parent_run_id=run_ref, run_id=run_ref + '-hermes-recovery',
+                               cwd=worktree, model='m', provider='p', reasoning='low')
+        with patch('omh.coding.hermes_child_dispatch.HermesChildRequest', return_value=request):
+            attempt = _hermes_recovery_dispatch(unit={'unit_id': 'a', 'run_ref': run_ref},
+                goal_text='fixture', repo_root=repo, timeout=2,
+                routing={'model': 'm', 'provider': 'p', 'reasoning': 'low'}, hermes_child=None,
+                launch_gate=gate, fanout_id='fanout-123456789abc', invocation_id='invocation', base_sha='a' * 40)
+        self.assertEqual(attempt['status'], 'not_started_capacity_blocked')
+        self.assertFalse((worktree / 'started').exists())
+        with patch('omh.coding.hermes_child_dispatch.HermesChildRequest', return_value=request):
+            observed = _hermes_recovery_dispatch(unit={'unit_id': 'a', 'run_ref': run_ref},
+                goal_text='fixture', repo_root=repo, timeout=2,
+                routing={'model': 'm', 'provider': 'p', 'reasoning': 'low'}, hermes_child=None,
+                launch_gate=OwnerLaunchGate(), fanout_id='fanout-123456789abc', invocation_id='fresh', base_sha='a' * 40)
+        self.assertEqual((observed['status'], observed['exit_code']), ('completed', 0))
+        self.assertTrue((worktree / 'started').exists())
 
     def test_depth_one_child_cannot_recursively_dispatch(self) -> None:
         with self.assertRaises(DispatchRecursionError):

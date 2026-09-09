@@ -354,7 +354,7 @@ class CapacityFoundationTests(unittest.TestCase):
 
 
 class CapacityQAContractTests(unittest.TestCase):
-    def test_c5_qa_component_never_claims_integrated_acceptance(self):
+    def test_c5_qa_component_never_claims_native_acceptance(self):
         qa = Path(__file__).resolve().parent / 'five_issue_cases/capacity.py'
         self.assertTrue(qa.is_file(), 'missing capacity QA foundation boundary')
         self.assertEqual(Path(capacity_cases.__file__).resolve(), qa)
@@ -362,12 +362,14 @@ class CapacityQAContractTests(unittest.TestCase):
             with self.subTest(case=case_id):
                 result = capacity_cases.run_case(case_id)
                 self.assertEqual(result['case'], case_id)
-                self.assertFalse(result['pass'])
-                self.assertEqual(result['provenance']['scope'], 'foundation')
+                self.assertTrue(result['pass'])
+                self.assertEqual(result['provenance']['scope'], 'surface')
+                self.assertEqual(result['provenance']['kind'], 'fixture')
                 self.assertFalse(result['provenance']['native_available'])
+                self.assertFalse(result['observations']['native_positive_admission_executed'])
                 self.assertTrue(result['cleanup']['verified_absent'])
-                self.assertEqual(result['cleanup']['owned_resources'], [])
-                self.assertEqual(result['blocked_reason'], 'capacity_integration_pending')
+                self.assertTrue(result['cleanup']['owned_resources'])
+                self.assertIsNone(result['blocked_reason'])
 
 
 class CapacityCompatibilityTests(unittest.TestCase):
@@ -408,6 +410,72 @@ class CapacityCompatibilityTests(unittest.TestCase):
             changed['recovery'] = recovery
             self.assertFalse(evaluate_unit_retry(attempt=1, **changed)['retry'])
         self.assertFalse(evaluate_unit_retry(attempt=1, artifact_observed=True, **options)['retry'])
+
+
+class CapacityPublicIntegrationTests(unittest.TestCase):
+    def test_c1_real_process_trip_preserves_inflight_and_blocks_queue(self):
+        self.assertTrue(capacity_cases.run_case('C1')['pass'])
+
+    def test_c2_explicit_bounded_clean_owned_reselection(self):
+        self.assertTrue(capacity_cases.run_case('C2')['pass'])
+
+    def test_c3_mixed_dependency_reasons_and_failure_evidence(self):
+        self.assertTrue(capacity_cases.run_case('C3')['pass'])
+
+    def test_c4_real_process_negative_admission_matrix(self):
+        result = capacity_cases.run_case('C4')
+        self.assertTrue(result['pass'])
+        count = result['observations']['negative_case_count']
+        assert isinstance(count, int)
+        self.assertGreater(count, 0)
+
+    def test_c4_optional_capacity_reader_is_total_and_bound(self):
+        binding = fanout_capacity.AdmissionBinding('codex', 'fanout-a', 'a', 'run-a', 1,
+                                                   'a' * 40, '/owned', 'invocation', 'attempt')
+        receipt = fanout_capacity.AdmissionReceipt('fixture', 'fixture/v1', binding, True, 1)
+        value = fanout_capacity.capacity_fields(binding, fanout_capacity.CapacityTrip(receipt, 2),
+                                               status='executor_capacity_rejected', process_started=True)
+        self.assertEqual(fanout_capacity.read_capacity_fields({'capacity': value}), {'capacity': value})
+        malformed: tuple[object, ...] = ([], {}, None, '', True)
+        for key in value:
+            for bad in malformed:
+                if bad == value[key] and type(bad) is type(value[key]):
+                    continue
+                with self.subTest(key=key, value=bad):
+                    try:
+                        result = fanout_capacity.read_capacity_fields({'capacity': {**value, key: bad}})
+                    except (TypeError, ValueError) as exc:
+                        self.fail(f'optional capacity reader raised {type(exc).__name__}')
+                    self.assertEqual(result, {})
+        self.assertEqual(fanout_capacity.read_capacity_fields({'capacity': value, 'attempt_id': 'foreign'}), {})
+        self.assertEqual(fanout_capacity.read_capacity_fields({'capacity': value, 'invocation_id': 'foreign'}), {})
+
+    def test_c6_retry_backoff_rechecks_actual_launch_gate(self):
+        self.assertTrue(capacity_cases.run_case('C6')['pass'])
+
+    def test_c7_retarget_and_adaptive_compatibility(self):
+        self.assertTrue(capacity_cases.run_case('C7')['pass'])
+
+    def test_c5_public_capacity_status_and_privacy(self):
+        result = capacity_cases.run_case('C5')
+        self.assertTrue(result['pass'])
+        self.assertFalse(result['provenance']['native_available'])
+        self.assertTrue(result['cleanup']['verified_absent'])
+
+
+class CapacityLaunchIntegrationTests(unittest.TestCase):
+    def test_c6_actual_runner_cannot_cross_closed_gate(self):
+        from omh.coding.fanout_dispatch import signal_safe_unit_runner
+        binding = fanout_capacity.AdmissionBinding('codex', 'fanout-a', 'a', 'run-a', 1, 'a' * 40, '/owned')
+        support = fanout_capacity.AdmissionSupport('test', 'fixture/v1', 'process_local')
+        context = fanout_capacity.OwnerLaunchGate().context(binding, support=support)
+        receipt = fanout_capacity.AdmissionReceipt('test', 'fixture/v1', binding, True, 1)
+        self.assertIsNotNone(context.reject(receipt, process_started=True, returncode=1, implementation_started=False))
+        calls: list[str] = []
+        with self.assertRaises(fanout_capacity.CapacityBlocked):
+            _ = signal_safe_unit_runner([sys.executable, '-c', 'pass'], capture_output=True,
+                on_spawn=lambda _process: calls.append('observed'), launch=context.launch)
+        self.assertEqual(calls, [], 'closed gate still launched a real process')
 
 
 if __name__ == '__main__':
