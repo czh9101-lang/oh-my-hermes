@@ -343,7 +343,8 @@ class CapacityFoundationTests(unittest.TestCase):
             out, err = other.process.communicate(timeout=5)
             self.assertEqual((other.process.returncode, out, err), (3, b'', b''))
             out, err = result.process.communicate(timeout=5)
-            self.assertEqual((result.process.returncode, out, err), (0, b'ready\n', b''))
+            # The child writes its frame in text mode; Windows emits CRLF.
+            self.assertEqual((result.process.returncode, out.splitlines(), err), (0, [b'ready'], b''))
         finally:
             for process in processes:
                 if process.poll() is None:

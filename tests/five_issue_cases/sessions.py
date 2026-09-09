@@ -72,7 +72,7 @@ def run_case(case_id: str) -> CaseResult:
                        'CODEX_HOME': str(root / 'codex-state'), 'CLAUDE_CONFIG_DIR': str(root / 'claude-state')}
         for key in ('HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR'):
             Path(environment[key]).mkdir()
-        executables: dict[str, str] = {}
+        executables: dict[str, list[str]] = {}
         for owner in ('codex', 'claude-code', 'unsupported'):
             executables[owner] = write_fixture_executable(root / owner,
                 'import sys\nsys.path.insert(0, ' +
@@ -93,7 +93,7 @@ def run_case(case_id: str) -> CaseResult:
                 if case_id == 'S4' else str(uuid5(NAMESPACE_URL, sidecar[1])))
             argv = build_dispatch_argv(owner, prompt, route)
             assert argv is not None
-            argv[0] = executables['unsupported' if 'Work unit: Unsupported' in prompt else owner]
+            argv[0:1] = executables['unsupported' if 'Work unit: Unsupported' in prompt else owner]
             if fail_b and owner == 'claude-code':
                 argv.append('--fixture-fail')
             # Record only safe argv metadata, never the actual prompt.
@@ -211,7 +211,7 @@ def run_case(case_id: str) -> CaseResult:
             assert rows_of(project_fanout_status(paths, fanout_id, unit_id='b'))[0]['executor_session'] == new_b
             observations['fresh_receipt'] = decode(json.dumps(new_b))
         if case_id == 'S4':
-            binary = Path(executables['codex'])
+            binary = Path(executables['codex'][-1])
             _ = binary.write_text(binary.read_text() + '# changed executable\n')
             changed = rows_of(project_fanout_status(paths, fanout_id, unit_id='a'))[0]
             resume = record(changed['resume'])

@@ -44,22 +44,20 @@ class Cleanup(TypedDict):
     errors: list[str]
 
 
-def write_fixture_executable(path: Path, body: str) -> str:
-    """Write a python fixture CLI and return the path a dispatcher can spawn.
+def write_fixture_executable(path: Path, body: str) -> list[str]:
+    """Write a python fixture CLI and return the argv prefix that runs it.
 
-    A shebang script is not executable on Windows, so there the script is
-    written beside a .cmd launcher and the launcher's path is returned.
+    A shebang script is only executable on POSIX, and a Windows .cmd shim would
+    put cmd.exe between the dispatcher and the child it reaps. Returning an
+    explicit interpreter argv keeps one real process on every platform.
     """
     script = path.with_suffix('.py')
-    _ = script.write_text('#!' + sys.executable + '\n' + body, encoding='utf-8')
+    _ = script.write_text(body, encoding='utf-8')
     if os.name != 'nt':
-        _ = path.write_text('#!' + sys.executable + '\n' + body, encoding='utf-8')
+        path.write_text('#!' + sys.executable + '\n' + body, encoding='utf-8')
         path.chmod(0o700)
-        return str(path)
-    launcher = path.with_suffix('.cmd')
-    _ = launcher.write_text('@echo off\r\n"' + sys.executable + '" "' + str(script) + '" %*\r\n',
-                            encoding='utf-8')
-    return str(launcher)
+        return [str(path)]
+    return [sys.executable, str(script)]
 
 
 def _line(stream: BinaryIO | socket.SocketIO, timeout: float) -> str:
