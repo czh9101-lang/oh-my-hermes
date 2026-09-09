@@ -554,6 +554,51 @@ class WorkingTreeFingerprintTests(unittest.TestCase):
         self.assertEqual(intent_to_add.state, WorkingTreeFingerprintState.DIRTY)
         self.assertLessEqual(intent_to_add.git_calls, MAX_GIT_CALLS)
 
+    def test_racy_index_copy_preserves_staging_identity_without_repository_writes(self) -> None:
+        # Given: real Git stat-cache equality despite changed same-size bytes.
+        # These settings model coarse stat comparisons on every test host;
+        # fixed timestamps make the entry racy without sleeps or clock luck.
+        _git(self.root, "config", "core.trustctime", "false")
+        _git(self.root, "config", "core.checkStat", "minimal")
+        tracked = self.root / "tracked.txt"
+        index = self.root / ".git" / "index"
+        timestamp = 1_700_000_000_000_000_000
+        os.utime(tracked, ns=(timestamp, timestamp))
+        _git(self.root, "add", "tracked.txt")
+        os.utime(index, ns=(timestamp, timestamp))
+        _ = tracked.write_bytes(b"final bytes")
+        os.utime(tracked, ns=(timestamp, timestamp))
+        real_status = subprocess.check_output(
+            ["git", "--no-optional-locks", "status", "--porcelain=v1", "-z"], cwd=self.root,
+        )
+        self.assertEqual(real_status, b" M tracked.txt\0")
+
+        # When: the public collector copies that index, then Git stages and
+        # unstages the same bytes. Each collection must leave real state alone.
+        before = _files(self.root)
+        index_before = index.stat()
+        unstaged = working_tree_content_fingerprint(self.root)
+        self.assertEqual(_files(self.root), before)
+        self.assertEqual(index.stat().st_mtime_ns, index_before.st_mtime_ns)
+        self.assertEqual(index.stat().st_ctime_ns, index_before.st_ctime_ns)
+        self.assertEqual(index.stat().st_mode, index_before.st_mode)
+        _git(self.root, "add", "tracked.txt")
+        before = _files(self.root)
+        staged = working_tree_content_fingerprint(self.root)
+        self.assertEqual(_files(self.root), before)
+        _git(self.root, "restore", "--staged", "tracked.txt")
+        before = _files(self.root)
+        unstaged_again = working_tree_content_fingerprint(self.root)
+        self.assertEqual(_files(self.root), before)
+
+        # Then: a racy entry is content-checked, never mistaken for HEAD.
+        self.assertEqual(unstaged.fingerprint, staged.fingerprint)
+        self.assertEqual(staged.fingerprint, unstaged_again.fingerprint)
+        for result in (unstaged, staged, unstaged_again):
+            self.assertEqual(result.state, WorkingTreeFingerprintState.DIRTY)
+            self.assertIsNotNone(result.fingerprint)
+            self.assertLessEqual(result.git_calls, MAX_GIT_CALLS)
+
     def test_collection_leaves_real_git_state_and_ignored_content_untouched(self) -> None:
         # Given: byte snapshots of the checkout and its real Git metadata.
         # When: ignored content is added and a fingerprint is collected.
