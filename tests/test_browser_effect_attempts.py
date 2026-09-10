@@ -20,6 +20,32 @@ from omh.workflows.browser_effect_attempts_contract import approval_scope, class
 from omh.workflows.external_effect_receipts import receipt_satisfies_success_claim
 
 
+def _outcome(call):
+    try:
+        return ('returned', call())
+    except BaseException as exc:  # Re-raised by the joining thread; see run_on_second_thread.
+        return ('raised', exc)
+
+
+def run_on_second_thread(call):
+    """Run `call` on another thread and hand its outcome back, joining without a deadline.
+
+    A deadline here would be a wall clock masquerading as a contract: the thread's
+    only work is one `execute`, whose sole blocking primitive is SQLite's own busy
+    budget, so it always terminates and `join()` cannot expire. A loaded shared
+    runner therefore delays this helper instead of failing it, and an exception is
+    re-raised in the caller rather than dying unread inside the thread.
+    """
+    outcome = []
+    thread = Thread(target=lambda: outcome.append(_outcome(call)))
+    thread.start()
+    thread.join()
+    disposition, payload = outcome[0]
+    if disposition == 'raised':
+        raise payload
+    return payload
+
+
 class EffectAdapter:
     """Stateful held-byte surface; real SQLite is checked at the send boundary."""
     adapter_id = Adapter.adapter_id
@@ -38,6 +64,7 @@ class EffectAdapter:
         self.confirmation = None
         self.resume_entered = Event()
         self.resume_proceed: Event | None = None
+        self.during_resume = None
 
     def preview(self, lease_id, handle, operation):
         self.calls['preview'] += 1
@@ -59,6 +86,11 @@ class EffectAdapter:
         self.resume_entered.set()
         if self.resume_proceed is not None and not self.resume_proceed.wait(5):
             raise TimeoutError('barrier')
+        # Mid-resume seam: the durable attempt and its unknown binding are committed,
+        # and this send has not yet been permitted. A caller hooking here reaches that
+        # window by construction rather than by winning a race against a barrier.
+        if self.during_resume is not None:
+            self.during_resume()
         self.send_count += 1
         if self.mode in {'timeout', 'disconnect', 'crash'}:
             raise {'timeout': TimeoutError, 'disconnect': ConnectionError, 'crash': RuntimeError}[self.mode]('PRIVATE ERROR')
@@ -408,21 +440,37 @@ class BrowserEffectAttemptsTests(unittest.TestCase):
             self.assertNotIn(raw, content)
 
     def test_concurrent_replay_returns_unknown_then_stable_result(self):
+        """A replay landing mid-resume is forced by the call graph, never raced on a clock.
+
+        The engine's guard is durable state, not thread identity: `execute` commits the
+        unknown binding row before `_resume` permits the adapter to send. So the second
+        `execute` is issued from inside `resume`, on its own thread, while the first is
+        suspended on that stack -- the same interleaving the old two-event barrier tried
+        to reach by timed rendezvous, now reached by construction. Nothing waits on a
+        deadline, so a loaded runner cannot report this contract as broken, and no worker
+        can outlive the test method holding the temporary directory's SQLite handle open.
+        """
         preview = self.prepare()
         self.approve(preview)
-        self.adapter.resume_proceed = Event()
-        results = []
-        thread = Thread(target=lambda: results.append(self.engine.execute('owner', preview['intent_digest'], 'event')))
-        thread.start()
-        try:
-            self.assertTrue(self.adapter.resume_entered.wait(5))
-            replay = self.engine.execute('owner', preview['intent_digest'], 'event')
-            self.assertEqual(replay['status'], 'unknown')
-        finally:
-            self.adapter.resume_proceed.set()
-            thread.join(5)
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(self.engine.execute('owner', preview['intent_digest'], 'event'), results[0])
+        replays = []
+
+        def replay_mid_resume():
+            self.adapter.during_resume = None  # One-shot: a second resume stays countable.
+            before = dict(self.adapter.calls)
+            replays.append(dict(sends_before=self.adapter.send_count, host_calls_before=before,
+                                result=run_on_second_thread(lambda: self.engine.execute(
+                                    'owner', preview['intent_digest'], 'event')),
+                                host_calls_after=dict(self.adapter.calls)))
+
+        self.adapter.during_resume = replay_mid_resume
+        result = self.engine.execute('owner', preview['intent_digest'], 'event')
+        self.assertEqual(len(replays), 1)
+        self.assertEqual(replays[0]['sends_before'], 0)
+        self.assertEqual(replays[0]['result']['status'], 'unknown')
+        self.assertEqual(replays[0]['result']['attempt_id'], result['attempt_id'])
+        # A replay never reobserves, reapproves or resends: it reads the durable row only.
+        self.assertEqual(replays[0]['host_calls_after'], replays[0]['host_calls_before'])
+        self.assertEqual(self.engine.execute('owner', preview['intent_digest'], 'event'), result)
         self.assertEqual(self.adapter.send_count, 1)
 
     def test_abort_cannot_be_executed(self):
