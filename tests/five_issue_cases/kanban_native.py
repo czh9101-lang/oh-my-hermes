@@ -3,6 +3,14 @@
 The normal host hook timeout configuration is deliberately preserved. A broken
 prepare/observation bridge blocks the scenario; calling callbacks directly or
 turning off host guards to obtain a receipt would invalidate this evidence.
+
+The host is discovered, never hardcoded: `HERMES_HOME` (default `~/.hermes`)
+names the Hermes home whose `hermes-agent` checkout is the host, `hermes` is
+resolved on `PATH`, and `OMH_QA_HERMES_AGENT` / `OMH_QA_HERMES_PYTHON` /
+`OMH_QA_HERMES_CLI` override each part for a non-default layout. Discovery is
+presence-only. When any part is missing the cases stay blocked with
+`native_normal_loop_and_review_dispatch_not_observed`; an unavailable host is
+never a pass.
 """
 from __future__ import annotations
 
@@ -25,9 +33,27 @@ from typing import Protocol, runtime_checkable
 from . import CaseResult, JsonValue, unavailable_case
 
 _ROOT = Path(__file__).resolve().parents[2]
-_HOST = Path('/Users/khope@sionic.ai/.hermes/hermes-agent')
-_PYTHON = _HOST / 'venv/bin/python'
-_CLI = Path('/Users/khope@sionic.ai/.local/bin/hermes')
+def _host_root() -> Path:
+    """The Hermes Agent checkout under the resolved Hermes home."""
+    override = os.environ.get('OMH_QA_HERMES_AGENT')
+    home = os.environ.get('HERMES_HOME')
+    return Path(override) if override else Path(home or Path.home() / '.hermes') / 'hermes-agent'
+
+
+def _host_python(host: Path) -> Path:
+    """The host checkout's own interpreter, not this suite's."""
+    override = os.environ.get('OMH_QA_HERMES_PYTHON')
+    if override:
+        return Path(override)
+    return host / 'venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+
+
+# A path that resolves to nothing keeps the blocked branch below: an
+# undiscoverable host is reported as unavailable, never as a pass.
+_HOST = _host_root()
+_PYTHON = _host_python(_HOST)
+_CLI = Path(os.environ.get('OMH_QA_HERMES_CLI') or shutil.which('hermes')
+            or _HOST.parent / 'bin/hermes')
 _PROOF = _ROOT / '.omc/artifacts/five-issues/phases/C/parent-kanban-native'
 _CASES = frozenset({'K1', 'K4', 'K6', 'K8'})
 _CONFIG = '''plugins:
