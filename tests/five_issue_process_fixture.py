@@ -31,8 +31,10 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
-from typing import BinaryIO, TypedDict
+from typing import BinaryIO, Concatenate, ParamSpec, TypeVar, TypedDict
+from unittest.mock import patch
 import uuid
 
 
@@ -44,25 +46,78 @@ class Cleanup(TypedDict):
     errors: list[str]
 
 
-# Windows CI starts a Python child several seconds slower than POSIX; these
-# are bounded rendezvous deadlines, not timing assumptions.
+# Existing bounded rendezvous contracts; no process-start latency is asserted.
 FIXTURE_DEADLINE = 60 if os.name == 'nt' else 5
 
 
-def write_fixture_executable(path: Path, body: str) -> list[str]:
-    """Write a python fixture CLI and return the argv prefix that runs it.
+def write_fixture_executable(path: Path, body: str, *,
+                             interpreter: bool = os.name == 'nt') -> list[str]:
+    """Keep one hashable fixture identity; adapt Python only at Popen.
 
-    A shebang script is only executable on POSIX, and a Windows .cmd shim would
-    put cmd.exe between the dispatcher and the child it reaps. Returning an
-    explicit interpreter argv keeps one real process on every platform.
+    The .exe suffix lets Windows' ordinary executable resolver find this test
+    script, including in read-only status subprocesses. It is not a PE binary:
+    fixture_executable_transport owns its explicit interpreter launch.
     """
-    script = path.with_suffix('.py')
-    _ = script.write_text(body, encoding='utf-8')
-    if os.name != 'nt':
-        path.write_text('#!' + sys.executable + '\n' + body, encoding='utf-8')
-        path.chmod(0o700)
-        return [str(path)]
-    return [sys.executable, str(script)]
+    script = (path.with_suffix('.exe') if interpreter else path).resolve()
+    _ = script.write_text('#!' + sys.executable + '\n' + body, encoding='utf-8')
+    script.chmod(0o700)
+    return [str(script)]
+
+
+_Command = str | bytes | os.PathLike[str] | os.PathLike[bytes] | Sequence[str | bytes | os.PathLike[str] | os.PathLike[bytes]]
+_P = ParamSpec('_P')
+_R = TypeVar('_R')
+_transport_lock = threading.Lock()
+_transport_paths: dict[str, int] = {}
+_transport_scope = ExitStack()
+
+
+def _interpreter_popen(popen: Callable[Concatenate[_Command, _P], _R]) -> Callable[Concatenate[_Command, _P], _R]:
+    """Delegate untouched calls; translate only a registered program position."""
+    def launch(args: _Command, *positional: _P.args, **kwargs: _P.kwargs) -> _R:
+        command = args
+        if isinstance(args, (list, tuple)) and args:
+            parts = list(args)
+            index = 0
+            if parts[0] == '/usr/bin/sandbox-exec' and len(parts) > 3 and parts[1] == '-p':
+                index = 3
+            elif isinstance(parts[0], str) and Path(parts[0]).name == 'bwrap' and '--' in parts:
+                index = parts.index('--') + 1
+            with _transport_lock:
+                registered = index < len(parts) and parts[index] in _transport_paths
+            if registered:
+                command = [*parts[:index], sys.executable, *parts[index:]]
+        return popen(command, *positional, **kwargs)
+    return launch
+
+
+@contextmanager
+def fixture_executable_transport(commands: Sequence[Sequence[str]]) -> Generator[None, None, None]:
+    """Own exact fixture registrations across dispatch threads and nested scopes.
+
+    One shared adapter delegates every unrelated command to the original Popen.
+    Reference counting keeps overlapping scopes from restoring another scope's
+    adapter. The lock never spans a spawn, callback or child-process wait.
+    """
+    paths = {command[0] for command in commands if Path(command[0]).suffix == '.exe'}
+    if not paths:
+        yield
+        return
+    with _transport_lock:
+        if not _transport_paths:
+            _ = _transport_scope.enter_context(patch.object(subprocess, 'Popen', _interpreter_popen(subprocess.Popen)))
+        for path in paths:
+            _transport_paths[path] = _transport_paths.get(path, 0) + 1
+    try:
+        yield
+    finally:
+        with _transport_lock:
+            for path in paths:
+                _transport_paths[path] -= 1
+                if not _transport_paths[path]:
+                    del _transport_paths[path]
+            if not _transport_paths:
+                _transport_scope.close()
 
 
 def _line(stream: BinaryIO | socket.SocketIO, timeout: float) -> str:

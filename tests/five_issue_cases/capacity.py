@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from five_issue_process_fixture import write_fixture_executable
+from five_issue_process_fixture import fixture_executable_transport, write_fixture_executable
 import re
 import socket
 from contextlib import ExitStack
@@ -53,8 +53,7 @@ def no_stagger(_self: object) -> None:
 def ready(*_args: object) -> dict[str, object]:
     return {'status': 'ready'}
 
-# Windows CI runners start a Python child several seconds slower than POSIX;
-# these are bounded rendezvous deadlines, not timing assumptions.
+# Existing bounded rendezvous contract; no process-start latency is asserted.
 FIXTURE_DEADLINE = 60 if os.name == 'nt' else 10
 
 ERROR_LINE = 'Error: turn/start: turn/start failed: in-process app-server request queue is full (code -32001)\n'
@@ -168,7 +167,7 @@ def run_case(case_id: str) -> CaseResult:
             "  with control.makefile('rb') as incoming: assert incoming.readline(64)==b'finish\\n'\n" +
             "if '--reject' in sys.argv:\n" +
             " print(json.dumps({'type':'thread.started','thread_id':'11111111-1111-4111-8111-111111111111'}))\n" +
-            ' sys.stderr.write(' + repr(ERROR_LINE) + "); raise SystemExit(1)\n" +
+            ' sys.stderr.buffer.write(' + repr(ERROR_LINE.encode('utf-8')) + "); raise SystemExit(1)\n" +
             "if '--ordinary' in sys.argv: sys.stderr.write('compiler failed\\n'); raise SystemExit(3)\n" +
             "if '--rate' in sys.argv: sys.stderr.write('HTTP 429\\n'); raise SystemExit(1)\n" +
             "if '--transport' in sys.argv: sys.stderr.write('HTTP 503\\n'); raise SystemExit(1)\n" +
@@ -176,6 +175,7 @@ def run_case(case_id: str) -> CaseResult:
             'from five_issue_process_fixture import executor_main\n' +
             "raise SystemExit(executor_main('codex', sys.argv[1:]))\n")
         rejecting = True
+        _ = resources.enter_context(fixture_executable_transport([executor_argv]))
         def argv_for(owner: str, prompt: str, route: Mapping[str, object] | None = None) -> list[str]:
             argv = build_dispatch_argv(owner, prompt, route)
             assert argv is not None

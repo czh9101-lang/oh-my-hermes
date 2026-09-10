@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 import json
 import re
-from five_issue_process_fixture import write_fixture_executable
+from five_issue_process_fixture import fixture_executable_transport, write_fixture_executable
 import os
 from uuid import NAMESPACE_URL, uuid5
 from pathlib import Path
@@ -52,7 +53,7 @@ def run_case(case_id: str) -> CaseResult:
     commands: list[list[str]] = []
     observations: dict[str, JsonValue] = {}
     passed = False
-    with TemporaryDirectory(prefix="five-session-'quoted-") as directory:
+    with TemporaryDirectory(prefix="five-session-'quoted-") as directory, ExitStack() as resources:
         root = Path(directory)
         repo = root / 'repo'
         repo.mkdir()
@@ -82,6 +83,7 @@ def run_case(case_id: str) -> CaseResult:
                 ("['--fixture-unsupported-help', *sys.argv[1:]]" if owner == 'unsupported' else 'sys.argv[1:]') + '))\n')
         fail_b = case_id == 'S3'
         expected_ids: dict[str, str] = {}
+        _ = resources.enter_context(fixture_executable_transport(list(executables.values())))
         intake_paths: list[Path] = []
         def fixture_argv(owner: str, prompt: str,
                          route: Mapping[str, object] | None = None) -> list[str]:
@@ -154,7 +156,18 @@ def run_case(case_id: str) -> CaseResult:
                 assert resume['available'], resume['reason']
                 argv = resume['argv']
                 assert isinstance(argv, list)
-                assert shlex.split(text(resume['shell_command'])) == ['cd', '--', row['worktree_path'], '&&', *argv]
+                assert resume['cwd'] == row['worktree_path']
+                if os.name == 'posix':
+                    assert shlex.split(text(resume['shell_command'])) == ['cd', '--', row['worktree_path'], '&&', *argv]
+                else:
+                    assert resume['shell_command'] is None
+                session = record(row['executor_session'])
+                binary = record(session['binary_identity'])['resolved_path']
+                reference = text(session['reference'])
+                expected = ([binary, 'exec', 'resume', reference, '-']
+                            if row['owner'] == 'codex' else [binary, '--resume=' + reference])
+                assert argv == expected
+
         assert all(row['input_tokens'] == 12 and row['output_tokens'] == 7 for row in rows[:2])
         persisted = b'\n'.join(before.values())
         assert all(marker not in persisted for marker in (
