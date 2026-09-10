@@ -131,11 +131,17 @@ def run_case(case_id: str) -> CaseResult:
         if any(receipt['state'] != 'observed' for receipt in receipts[:2]):
             probes = []
             for owner in ('codex', 'claude-code'):
-                probe = subprocess.run([*executables[owner], '--version'], env=environment,
-                    capture_output=True, timeout=5, check=False)
-                probes.append({'owner': owner, 'exit': probe.returncode,
-                               'stdout': probe.stdout[:256].decode('utf-8', 'replace'),
-                               'stderr': probe.stderr[:512].decode('utf-8', 'replace')})
+                for restore_system_environment in (False, True):
+                    probe_env = dict(environment)
+                    if restore_system_environment:
+                        probe_env.update({key: os.environ[key] for key in
+                            ('SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT') if key in os.environ})
+                    probe = subprocess.run([*executables[owner], '--version'], env=probe_env,
+                        capture_output=True, timeout=5, check=False)
+                    probes.append({'owner': owner, 'system_environment': restore_system_environment,
+                                   'exit': probe.returncode,
+                                   'stdout': probe.stdout[:256].decode('utf-8', 'replace'),
+                                   'stderr': probe.stderr[-768:].decode('utf-8', 'replace')})
             raise AssertionError({'receipts': receipts[:2], 'version_probes': probes})
         assert all(receipt['reference'] == expected_ids[text(receipt['unit_id'])] for receipt in receipts[:2])
         assert intake_paths and all(not path.exists() and not path.is_relative_to(paths.omh_home) for path in intake_paths)
