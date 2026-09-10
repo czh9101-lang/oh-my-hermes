@@ -3971,8 +3971,8 @@ class RouterContentTests(unittest.TestCase):
         # replacement that bypasses exact-once accounting.
         self.assertIn("python tools/test_sharding/plan.py --shards 2", ci)
         self.assertIn("--durations timings-history/timings.json", ci)
-        self.assertIn("actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684", ci)
-        self.assertIn("actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809", ci)
+        self.assertIn("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", ci)
+        self.assertIn("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", ci)
         self.assertIn("test-sharding-timings-${{ github.run_id }}", ci)
         self.assertIn("python tools/test_sharding/run.py --plan shard-plan/plan.json", ci)
         self.assertIn("--lane linux-${{ matrix.python-version }} --shard ${{ matrix.shard }}", ci)
