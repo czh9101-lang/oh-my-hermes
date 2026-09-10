@@ -40,6 +40,14 @@ class RoutingInterventionCase:
 # pickers, coding handoffs, or generic workflow acknowledgements.
 ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
     RoutingPrecisionCase(
+        'recall-apology-control', 'An apology is not a recall incident',
+        'Apologize for forgetting.', 'answer_clarification', '', 'memory-sync',
+    ),
+    RoutingPrecisionCase(
+        'recall-quoted-control', 'Quoted recall complaints remain translation input',
+        'Translate "memory was not used" into French.', 'answer_directly', 'direct_answer', 'memory-sync',
+    ),
+    RoutingPrecisionCase(
         'reference-inline-workflow-translation',
         'Inline workflow syntax is translation input',
         'Translate `$ulw-work` to Korean.',
@@ -1560,6 +1568,16 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
 # Positive-intervention corpus. These are real OMH-shaped turns where the router
 # should still step in after the direct-answer fallback was added.
 ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
+    RoutingInterventionCase(
+        'recall-saved-preference-incident', 'Expected saved memory enters evidence diagnosis',
+        'Why was my saved response preference not used?',
+        'dispatch', 'memory-sync', 'prepare_memory_sync', 'memory_curation',
+    ),
+    RoutingInterventionCase(
+        'recall-narrative-complaint', 'A failed recall report is actionable without a question mark',
+        'Memory was not used!',
+        'dispatch', 'memory-sync', 'prepare_memory_sync', 'memory_curation',
+    ),
     RoutingInterventionCase(
         'reference-direct-work-control',
         'Direct work invocation keeps its route',
