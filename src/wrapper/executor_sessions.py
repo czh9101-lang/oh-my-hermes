@@ -172,9 +172,15 @@ def build_fanout_session_followup(paths: OmhPaths, *, fanout_id: str, unit_id: s
 
     roster = project_fanout_status(paths, fanout_id, unit_id=unit_id)
     unit = roster['units'][0]
-    return {'fanout_id': fanout_id, 'unit_id': unit_id,
-            'executor_session': unit.get('executor_session'), 'resume': unit['resume'],
-            'execution_policy': 'copy_only'}
+    followup: dict[str, object] = {
+        'fanout_id': fanout_id, 'unit_id': unit_id,
+        'executor_session': unit.get('executor_session'), 'resume': unit['resume'],
+        'execution_policy': 'copy_only',
+    }
+    for key in ('clarification', 'clarification_state'):
+        if key in unit:
+            followup[key] = unit[key]
+    return followup
 
 
 def build_executor_session_status(
