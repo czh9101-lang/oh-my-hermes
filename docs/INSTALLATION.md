@@ -284,7 +284,9 @@ The shipped catalog is editorial policy, not benchmark output:
 
 Chain customization is a config edit, not a source edit — `omh model-chains
 show` prints the current per-category state, `omh model-chains interview`
-walks every category with numbered choices on a terminal, and
+walks every category with numbered choices on a terminal — the interactive
+`omh setup` offers that walk as its last question, default No, and a "no"
+leaves the seeded defaults in effect — and
 `omh model-chains set <category> "model[:effort], ..."` is the scriptable
 write (agents included). All of them edit the same document: `omh setup` seeds
 `~/.omh/routing/model-chains.json` (`mixture_chain_overrides/v1`) with an
