@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
@@ -168,7 +169,7 @@ class FanoutDiagnosticsHookTests(unittest.TestCase):
                     }],
                 ),
             )
-            sidecar = unit_result_path(paths, contract["fanout_id"], "core")
+            legacy_sidecar = unit_result_path(paths, contract["fanout_id"], "core")
 
             class Completed:
                 returncode = 0
@@ -178,6 +179,14 @@ class FanoutDiagnosticsHookTests(unittest.TestCase):
             def runner(argv: list[str], **kwargs: object) -> object:
                 if argv[0] == "git":
                     return subprocess.run(argv, **kwargs)
+                # The dispatcher names an invocation-owned intake path in the
+                # worker prompt; the durable per-unit path is no longer read.
+                match = re.search(r"JSON sidecar to exactly (.+)\.", " ".join(argv))
+                if match is None:
+                    # verification/probe commands carry no unit prompt; run them for real
+                    return subprocess.run(argv, **kwargs)
+                sidecar = Path(match[1])
+                self.assertNotEqual(sidecar, legacy_sidecar)
                 sidecar.parent.mkdir(parents=True, exist_ok=True)
                 sidecar.write_text(
                     json.dumps(

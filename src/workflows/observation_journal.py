@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 import hashlib
 import json
+import re
 import secrets
 from typing import Any
+import unicodedata
 
-from ..local_store import append_jsonl_locked, read_json_object, read_jsonl_objects, utc_now
-from ..paths import OmhPaths
+from ..coding.fanout_failure_diagnostics import FailureDiagnostic, read_failure_diagnostic
+from ..coding.fanout_executor_sessions import bound_session_fields
+from ..coding.fanout_capacity import read_capacity_fields
+
+from ..system.local_store import append_jsonl_locked, read_json_object, read_jsonl_objects, utc_now
+from ..system.paths import OmhPaths
 
 
 OBSERVATION_EVENT_SCHEMA_VERSION = "omh_observation_event/v1"
@@ -32,6 +39,8 @@ CANONICAL_OBSERVATION_EVENTS = (
     # A shape-validation receipt for an executor-reported unit sidecar. It is
     # not verification and therefore does not participate in PROJECTION_ORDER.
     "unit_result_validated",
+    "executor_session_observed",
+    "capacity_admission_observed",
     "unit_result_missing",
     "unit_result_invalid",
     # Per-unit dispatcher evidence. This is deliberately distinct from the
@@ -86,6 +95,146 @@ def canonical_observation_event(event: str) -> str:
     return OBSERVATION_EVENT_ALIASES.get(value, value)
 
 
+def _diagnostic_identity(value: object) -> str | None:
+    if (isinstance(value, str) and 0 < len(value) <= 2048
+            and not any(unicodedata.category(ch).startswith("C") for ch in value)):
+        return value
+    return None
+
+
+def project_bound_failure_diagnostic(
+    record: Mapping[str, object], *, fanout_id: str, unit_id: str | None, run_ref: str,
+) -> FailureDiagnostic | None:
+    """Read optional diagnostic data against OUTER identity, never its own claims.
+
+    Missing attempt identity on a unit is legacy/unavailable. Optional workspace
+    observations, when present, must agree too. This performs no artifact I/O.
+    """
+    attempt = _diagnostic_identity(record.get("attempt_id"))
+    if attempt is None and (unit_id is not None or "attempt_id" not in record or record["attempt_id"] is not None):
+        return None
+    for key, expected in (("fanout_id", fanout_id), ("unit_id", unit_id),
+                          ("worker_ref", unit_id), ("run_ref", run_ref),
+                          ("run_id", run_ref), ("target_id", run_ref)):
+        if key in record and record[key] != expected:
+            return None
+    diagnostic = read_failure_diagnostic(
+        record.get("failure_diagnostic"), fanout_id=fanout_id, unit_id=unit_id, attempt_id=attempt,
+    )
+    if diagnostic is None or diagnostic["run_ref"] != run_ref:
+        return None
+    owner = record.get("owner", record.get("runtime_profile"))
+    if diagnostic["owner"] != owner:
+        return None
+    for key in ("worktree_ref", "base_sha", "observed_revision"):
+        if key in record and record[key] != diagnostic[key]:
+            return None
+    if "worktree_path" in record and record["worktree_path"] != diagnostic["worktree_ref"]:
+        return None
+    if diagnostic["phase"] == "worker" and "exit_code" in record:
+        if type(record["exit_code"]) is not int or record["exit_code"] != diagnostic["returncode"]:
+            return None
+    name = record.get("event", record.get("event_type"))
+    if name is not None:
+        if record.get("status") not in ("failed", "blocked") and name not in (
+            "failed", "blocked", "unit_result_missing", "unit_result_invalid",
+        ):
+            return None
+    elif (record.get("process_succeeded") or record.get("status") in ("completed", "already_completed")):
+        if diagnostic["phase"] not in ("unit_result", "verification", "dispatcher"):
+            return None
+    return diagnostic
+
+
+def observation_failure_diagnostic(record: Mapping[str, object]) -> FailureDiagnostic | None:
+    """Validate a fanout observation using its canonical run/unit naming boundary."""
+    run_ref = record.get("run_id", record.get("target_id"))
+    if not isinstance(run_ref, str):
+        return None
+    match = re.fullmatch(r"(fanout-[0-9a-f]{12})(?:-(.+))?", run_ref)
+    if match is None:
+        return None
+    return project_bound_failure_diagnostic(
+        record, fanout_id=match[1], unit_id=match[2], run_ref=run_ref,
+    )
+
+
+def project_run_failure_diagnostic(
+    events: Sequence[Mapping[str, object]], *, run_id: str,
+) -> dict[str, object]:
+    """Select in journal append order; late old attempts cannot retake ownership.
+
+    Sidecar receipts without attempt metadata do not hide a worker failure.
+    A legacy dispatch boundary clears it; no old spill reference is resolved.
+    """
+    current: str | None = None
+    seen: set[str] = set()
+    selected: FailureDiagnostic | None = None
+    for event in events:
+        if event.get("run_id") != run_id:
+            continue
+        attempt = _diagnostic_identity(event.get("attempt_id"))
+        name = canonical_observation_event(str(event.get("event", "")))
+        if attempt is not None and attempt != current:
+            if attempt in seen:
+                continue
+            seen.add(attempt)
+            current, selected = attempt, None
+        elif attempt is None and name in ("executor_dispatch_observed", "runtime_start_observed", "worktree_creation_observed"):
+            current, selected = None, None
+        if attempt != current:
+            continue
+        diagnostic = observation_failure_diagnostic(event)
+        if diagnostic is not None:
+            # Intake follows worker exit; its secondary failure must not hide
+            # the more informative process failure from the same attempt.
+            if selected is None or diagnostic["phase"] != "unit_result":
+                selected = diagnostic
+    result: dict[str, object] = {}
+    if current is not None:
+        result["attempt_id"] = current
+    if selected is not None:
+        result["failure_diagnostic"] = selected
+    return result
+
+
+def project_run_executor_session(events: Sequence[Mapping[str, object]], *, run_id: str) -> dict[str, object]:
+    """Current-attempt receipts in append order; stale replay never retakes ownership."""
+    match = re.fullmatch(r'(fanout-[0-9a-f]{12})-(.+)', run_id)
+    if match is None:
+        return {}
+    current: object = None
+    seen: set[str] = set()
+    result: dict[str, object] = {}
+    for event in events:
+        if event.get('run_id') != run_id:
+            continue
+        attempt = event.get('attempt_id')
+        name = canonical_observation_event(str(event.get('event', '')))
+        if isinstance(attempt, str) and attempt != current:
+            if attempt in seen:
+                continue
+            seen.add(attempt)
+            current, result = attempt, {}
+        elif attempt is None and name in ('executor_dispatch_observed', 'worktree_creation_observed'):
+            current, result = None, {}
+        if attempt == current and name == 'executor_session_observed':
+            fields = bound_session_fields(event, fanout_id=match[1], unit_id=match[2], run_ref=run_id)
+            if fields:
+                result = {'attempt_id': current, **fields}
+    return result
+
+
+def failure_diagnostic_text(diagnostic: FailureDiagnostic) -> str:
+    """Render only closed diagnostic data, with explicit separate provenance."""
+    streams = "; ".join(
+        f"{stream['stream']}: {' '.join(stream['text'].splitlines())}"
+        for stream in diagnostic["streams"] if stream["text"]
+    )
+    label = f"{diagnostic['phase']}/{diagnostic['reason']} (exit {diagnostic['returncode']}, {diagnostic['exit_code_source']})"
+    return f"{label}; {streams}" if streams else label
+
+
 def build_observation_event(event: dict[str, Any]) -> dict[str, Any]:
     canonical = canonical_observation_event(str(event.get("event", "")))
     observed_at = str(event.get("observed_at") or event.get("updated_at") or utc_now())
@@ -112,6 +261,20 @@ def build_observation_event(event: dict[str, Any]) -> dict[str, Any]:
     for key in ("plan_artifact", "plan_status", "worktree_ref", "worker_ref"):
         if event.get(key):
             record[key] = str(event[key])
+    for key in ("fanout_id", "attempt_id", "invocation_id", "base_sha", "observed_revision"):
+        value = _diagnostic_identity(event.get(key))
+        if value is not None:
+            record[key] = value
+    diagnostic = observation_failure_diagnostic(event)
+    if diagnostic is not None:
+        record["attempt_id"] = diagnostic["attempt_id"]
+        record["failure_diagnostic"] = diagnostic
+    if canonical == 'executor_session_observed':
+        match = re.fullmatch(r'(fanout-[0-9a-f]{12})-(.+)', record['run_id'])
+        if match is not None:
+            record.update(bound_session_fields(event, fanout_id=match[1], unit_id=match[2], run_ref=record['run_id']))
+    if canonical == 'capacity_admission_observed':
+        record.update(read_capacity_fields(event))
     errors = validate_observation_event(record)
     if errors:
         raise ValueError(errors[0])
@@ -128,7 +291,25 @@ def append_observation_event(paths: OmhPaths, event: dict[str, Any]) -> dict[str
 
 
 def read_observation_events_result(paths: OmhPaths) -> tuple[list[dict[str, Any]], list[str]]:
-    return read_jsonl_objects(paths.runtime_journal_events_path)
+    events, errors = read_jsonl_objects(paths.runtime_journal_events_path)
+    for event in events:
+        capacity = read_capacity_fields(event)
+        event.pop('capacity', None)
+        event.pop('capacity_lineage', None)
+        event.update(capacity)
+        diagnostic = observation_failure_diagnostic(event)
+        if "failure_diagnostic" in event:
+            del event["failure_diagnostic"]
+        if diagnostic is not None:
+            event["failure_diagnostic"] = diagnostic
+        fields: dict[str, object] = {}
+        match = re.fullmatch(r'(fanout-[0-9a-f]{12})-(.+)', str(event.get('run_id', '')))
+        if match is not None and event.get('event') == 'executor_session_observed':
+            fields = bound_session_fields(event, fanout_id=match[1], unit_id=match[2], run_ref=str(event['run_id']))
+        event.pop('executor_session', None)
+        event.pop('session_recovery_snapshot', None)
+        event.update(fields)
+    return events, errors
 
 
 def read_observation_events(
@@ -381,6 +562,7 @@ def project_run_lifecycle(
         if run_id and event_run_id and event_run_id != run_id:
             continue
         _fold_event(projection, event)
+    projection.update(project_run_failure_diagnostic(events, run_id=run_id))
     if projection["journal_event_count"] == 0 and projection["prepared_handoff"]:
         projection["observation_status"] = "prepared_not_observed"
     return projection

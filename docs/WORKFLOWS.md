@@ -6509,8 +6509,8 @@ These surfaces are generated command references, not installed Hermes workflow s
     - Required result fields: `treatment_control`, `assignment_unit`, `assignment_stickiness`, `exposure_unit`, `exposure_definition`, `primary_metric`, `guardrail_metrics`, `holdout_rationale`, `minimum_runtime`, `data_health_checks`, `pause_rollback_conditions`, `approval_state`
     - Criterion: Require sticky assignment, exposure defined as actual treatment display or receipt rather than send or eligibility, exactly one primary metric, at least one guardrail, a holdout rationale, a minimum runtime, data-health checks, and pause/rollback conditions; approval_state stays unapproved until a named human approves.
   - `lifecycle_readout_evidence_check`
-    - Required result fields: `eligible_count`, `attempted_count`, `delivered_count`, `displayed_count`, `acted_count`, `outcome_count`, `denominator_status`, `freshness_status`, `sample_ratio_status`, `cross_exposure_status`, `instrumentation_status`, `overlap_status`, `step_outcomes`, `step_trace_status`, `analysis_run_state`, `analysis_observed_at`, `analysis_delay_status`, `evidence_refs`, `causal_claim_status`, `disposition`
-    - Criterion: Fill each funnel stage only from observed provider or data evidence and keep them separate; pause interpretation on sample-ratio mismatch, cross-exposure, stale data, broken instrumentation, or overlapping interventions; disposition must be exactly one of `ship`, `rollback`, `review`, or `insufficient_data`, and inconclusive data must not force `ship`. Record every conditional step as `matched` or `skipped` with its own reason and status, never its evaluated values; a missing or failed best-effort step trace is not delivery evidence and must not turn a send into a failure. Name the analysis run as exactly one of `not_started`, `queued`, `running`, `completed`, `failed`, `canceled`, or `unknown` with the time that state was observed; a queued or running analysis holds the disposition at `review` or `insufficient_data`, and elapsed time against a supplied service expectation is a delay warning that never rewrites the state.
+    - Required result fields: `eligible_count`, `assigned_count`, `attempted_count`, `delivered_count`, `displayed_count`, `acted_count`, `outcome_count`, `exposure_evidence`, `contact_pressure_state`, `repeated_contact_count`, `channels`, `denominator_status`, `freshness_status`, `sample_ratio_status`, `cross_exposure_status`, `instrumentation_status`, `overlap_status`, `step_outcomes`, `step_trace_status`, `analysis_run_state`, `analysis_observed_at`, `analysis_delay_status`, `evidence_refs`, `causal_claim_status`, `disposition`
+    - Criterion: Require a separate `lifecycle_growth_exposure_evidence/v1` companion with the bound audience/safety policies, eligibility/exclusion checks, assignment identity/count, reconciled populations, observed repeated-contact pressure and experiment-overlap checks, and per-channel reach/failure accounting. Missing evidence means HOLD, not zero or ship; configuration alone cannot supply it. Fill eligible, assigned, attempted, reached, and converted populations only from supplied observations, keeping delivery and action separate. Partial delivery requires review and channel failures retain their reasons; an independently justified rollback outranks missing launch evidence. Pause interpretation on sample-ratio mismatch, cross-exposure, stale data, broken instrumentation, or overlapping interventions; disposition must be exactly one of `ship`, `rollback`, `review`, or `insufficient_data`. Record every conditional step as `matched` or `skipped` with its own reason and status, never its evaluated values; a missing or failed best-effort step trace is not delivery evidence and must not turn a send into a failure. Name the analysis run as exactly one of `not_started`, `queued`, `running`, `completed`, `failed`, `canceled`, or `unknown` with the time that state was observed; elapsed time never rewrites the state.
   - `lifecycle_handoff_boundary_check`
     - Required result fields: `action_class`, `target_owner`, `approver`, `evidence_refs`, `timing`, `stop_conditions`, `analysis_cancellation`, `approval_state`, `readiness`, `disposition`
     - Criterion: Each proposed action must name its class (`connector`, `content`, `analytics`, `product`, `implementation`), owner, approver, evidence refs, timing, and stop conditions; readiness is HOLD while any prior check holds or approval is missing, and no delivery, display, action, outcome, or causal claim may appear without observed evidence. A cancellation or status-reconciliation handoff names the exact run and its scope, and keeps three states apart: the prepared request, which stays `prepared_not_observed`; an observed provider acknowledgement; and an observed terminal cancellation, which alone may back a `canceled` run state.
@@ -6539,7 +6539,7 @@ These surfaces are generated command references, not installed Hermes workflow s
     - Input refs: `event schema and baseline`, `experiment budget`, `decision owner`
     - Output refs: `growth_measurement_readout/v1`
     - Check IDs: `lifecycle_readout_evidence_check`
-    - Instruction: Lay out eligible, attempted, delivered, displayed, acted, and outcome stages with denominator and freshness checks; fill them only from observed evidence, keep causal-claim status separate, list each conditional step as matched or skipped with a redacted reason, record the analysis run's state and the time it was observed alongside any delay against a supplied service expectation, and record `ship`, `rollback`, `review`, or `insufficient_data` without forcing a decision on thin data.
+    - Instruction: Lay out eligible, assigned, attempted, delivered, displayed, acted, and outcome stages with denominator and freshness checks. Supply the separate exposure-evidence companion to evaluate or prepare; unknown audience, assignment, contact pressure, overlap, or channel accounting holds expansion. First-launch preparation needs observed audience/reachability/contact checks, not invented treatment counts. Keep causal-claim status separate, list each conditional step as matched or skipped with a redacted reason, and record the analysis run's state and observation time alongside any delay. Record `ship`, `rollback`, `review`, or `insufficient_data` without forcing a decision on thin data.
   - `lifecycle_validate_handoff` (`validation`)
     - Input refs: `lifecycle objective and stage`, `target segment`, `event schema and baseline`, `channels or product surfaces`, `consent and policy constraints`, `experiment budget`, `decision owner`
     - Output refs: `growth_handoff_disposition/v1`
@@ -6916,12 +6916,14 @@ These surfaces are generated command references, not installed Hermes workflow s
   - Separate prepared guidance from observed platform, runtime, connector, file, memory, or delivery evidence.
   - Expose missing tools, credentials, targets, or observations as user-visible gaps.
 - Completion checklist:
-  - Confirm the workflow target, evidence boundary, and stop condition are named.
-  - Report which outputs are prepared, observed, blocked, or missing.
-  - Name the smallest next verification or handoff instead of claiming completion from narration.
+  - Choose the coordination from the request: `durable` (restart survival, cross-profile pickup) prepares a `kanban_*` action on the named board; `bounded_research` prepares one `delegate_task` action. Never substitute one route for the other when its surface is missing.
+  - Call `omh_agent_board` `prepare`, then invoke the returned `native_action` through the normal Hermes tool loop; OMH never calls a native tool itself and grants no host permission.
+  - Report the request state exactly: `prepared`, `unavailable` (named `missing_capabilities`, zero native calls), `denied`, `observed`, or `failed`. A `complete` receipt implies no review approval, CI, or merge; a `running` readback is a claim, not dispatch proof.
+  - Agent/operator reference: docs/AGENT-BOARD.md; wrapper actions example: examples/agent-board/native-actions.json.
 - Recovery notes:
-  - If required context is missing, ask one blocking question or route back to the narrower workflow.
-  - If runtime or wrapper evidence is unavailable, keep the status as not_observed and expose the next observable action.
+  - If `prepare` returns `unavailable`, name the missing capability (tool, schema, hook, host identity, board binding, or native compare-and-swap) and keep the card prepared-only.
+  - If a receipt is `failed` or `requires_reconciliation`, run an observed `show` on the same task before the next mutation; never retry a `create` automatically. Repeating a `create` with the same `request_id` returns the already observed task.
+  - No native `kanban_dispatch` tool exists: dispatch stays `unavailable` and an operator claim is the observed path. A positive `request_changes` needs a review-claimed run from the host's own review dispatcher.
 - Required inputs:
   - user request
   - target context
@@ -6929,10 +6931,12 @@ These surfaces are generated command references, not installed Hermes workflow s
   - known missing evidence
 - Expected outputs:
   - agent-board/v1 card or guidance
+  - agent_board_request/v1 record from the `omh_agent_board` plugin tool
   - next action
   - prepared-vs-observed boundary
 - Artifact expectations:
   - agent-board/v1 metadata-only runtime or wrapper card when recorded
+  - agent_board_state/v1 bounded board snapshot under the OMH home: request digests, receipts, and task references only; never raw bodies, comments, attachments, or host identity
 - Safety rules:
   - An agent board card is not proof that another Hermes agent accepted, executed, heartbeat-ed, or completed work unless target-specific evidence exists.
   - Do not claim connector, gateway, runtime, file generation, memory mutation, or host automation evidence from prepared guidance.

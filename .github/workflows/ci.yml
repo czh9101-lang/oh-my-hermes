@@ -180,6 +180,11 @@ jobs:
         with:
           name: shard-plan
           path: shard-plan
+      - name: Native fanout fixture smoke
+        if: matrix.shard == 0
+        env:
+          PYTHONPATH: tests
+        run: python -c "from five_issue_cases import sessions, capacity, diagnostics; assert sessions.run_case('S1')['pass']; assert capacity.run_case('C2')['pass']; assert diagnostics.run_case('D5')['pass']"
       - name: Unit tests (shard ${{ matrix.shard }})
         env:
           PYTHONPATH: tests

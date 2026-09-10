@@ -99,6 +99,21 @@ def _spawn_descendant(*, inherit_stdio: bool) -> None:
         os.close(read_fd)
 
 
+def _abort() -> None:
+    if sys.platform.startswith("linux"):
+        import ctypes
+
+        # Piped core handlers ignore RLIMIT_CORE=0. Keep real SIGABRT without
+        # making this synthetic crash wait for the host's dump collector.
+        prctl = ctypes.CDLL(None, use_errno=True).prctl
+        prctl.argtypes = (ctypes.c_int, *([ctypes.c_ulong] * 4))
+        prctl.restype = ctypes.c_int
+        if prctl(4, 0, 0, 0, 0) != 0:  # PR_SET_DUMPABLE
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error))
+    os.abort()
+
+
 def main() -> int:
     scenario = sys.argv[1]
     if scenario == "--version":
@@ -124,11 +139,11 @@ def main() -> int:
         signal.pause()
     if scenario == "crash":
         _write_result(process_status="crash", exit_code=None)
-        os.abort()
+        _abort()
     if scenario == "crash-descendant":
         _write_result(process_status="crash", exit_code=None)
         _spawn_descendant(inherit_stdio=False)
-        os.abort()
+        _abort()
     if scenario == "descendant-exit-closed":
         _spawn_descendant(inherit_stdio=False)
     if scenario == "descendant-exit-inherited":

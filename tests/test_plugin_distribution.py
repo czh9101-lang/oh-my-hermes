@@ -625,6 +625,7 @@ print(json.dumps(observed, ensure_ascii=False))
             self.assertEqual(
                 plugin["registered_tools"],
                 [
+                    "omh_agent_board",
                     "omh_capabilities",
                     "omh_context",
                     "omh_decision_gate",
@@ -751,7 +752,7 @@ print(json.dumps(observed, ensure_ascii=False))
             init_py = plugin_dir / "__init__.py"
             text = init_py.read_text(encoding="utf-8")
             stale_text = text.replace(
-                '    ctx.register_tool(\n'
+                '    _ = ctx.register_tool(\n'
                 '        "omh_probe",\n'
                 "        _TOOLSET,\n"
                 "        OMH_PROBE_SCHEMA,\n"
@@ -760,7 +761,7 @@ print(json.dumps(observed, ensure_ascii=False))
                 "    )\n",
                 "",
             ).replace(
-                '    ctx.register_tool(\n'
+                '    _ = ctx.register_tool(\n'
                 '        "omh_recommend",\n'
                 "        _TOOLSET,\n"
                 "        OMH_RECOMMEND_SCHEMA,\n"

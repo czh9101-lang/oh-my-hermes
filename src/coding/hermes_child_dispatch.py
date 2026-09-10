@@ -254,6 +254,7 @@ def dispatch_hermes_child(
     confirmed: bool,
     cancellation: CancellationToken | None = None,
     observe: Callable[[HermesChildObservation], None] | None = None,
+    launch: Callable[[Callable[[], subprocess.Popen[bytes]]], subprocess.Popen[bytes]] | None = None,
 ) -> HermesChildResult:
     """Run one explicitly confirmed local Hermes child and observe its state."""
     require_hermes_child_dispatch_boundary(
@@ -273,7 +274,7 @@ def dispatch_hermes_child(
     if not request.allow_parallel:
         _enter_dispatch_guard()
     try:
-        return _dispatch_guarded(request, cancellation=cancellation, observe=observe)
+        return _dispatch_guarded(request, cancellation=cancellation, observe=observe, launch=launch)
     finally:
         if not request.allow_parallel:
             _leave_dispatch_guard()
@@ -284,6 +285,7 @@ def _dispatch_guarded(
     *,
     cancellation: CancellationToken | None,
     observe: Callable[[HermesChildObservation], None] | None,
+    launch: Callable[[Callable[[], subprocess.Popen[bytes]]], subprocess.Popen[bytes]] | None,
 ) -> HermesChildResult:
     depth = request.depth + 1
     notify = observe or (lambda _item: None)
@@ -372,11 +374,13 @@ def _dispatch_guarded(
                 if cancelled.is_set():
                     status = "cancelled"
                 else:
-                    process = subprocess.Popen(
-                        _argv(request, usage_path), cwd=request.cwd, env=child_env,
-                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                        text=False, close_fds=True, **_process_group_options(),
-                    )
+                    def spawn() -> subprocess.Popen[bytes]:
+                        return subprocess.Popen(
+                            _argv(request, usage_path), cwd=request.cwd, env=child_env,
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=False, close_fds=True, **_process_group_options(),
+                        )
+                    process = spawn() if launch is None else launch(spawn)
                     drainers = _start_pipe_drainers(process)
                     stdin_thread = _write_stdin_and_close(process, request.prompt)
             if process is None:

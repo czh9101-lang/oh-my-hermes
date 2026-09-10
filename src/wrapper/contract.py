@@ -61,7 +61,7 @@ from ..hermes_planning import build_hermes_plan_payload, is_coding_shaped_task
 from ..learning_candidate import build_learning_candidate_card
 from ..memory import memory_recall_pack_for_handoff, record_attached_recall_usage
 from ..operator_productivity import build_agent_operator_productivity_card
-from ..paths import OmhPaths, resolve_paths
+from ..system.paths import OmhPaths, resolve_paths
 from ..plugin_bundle.omh.awareness import workflow_context_card_for_workflow, workflow_context_cards
 from ..plugin_bundle.omh.degradation import degradation_chat_note
 from ..plugin_bundle.omh.memory_dreaming import read_latest_consolidation
@@ -106,6 +106,8 @@ from .localized_copy import (
 )
 from .orchestration_guidance import build_omh_orchestration_guidance
 from ..workflows.blocked_work_records import recovery_action_for
+from ..workflows.agent_board import AgentBoardRequest
+from ..workflows.workflow_artifact_operations import WORKFLOW_ARTIFACT_OPERATIONS
 
 
 CHAT_INTERACTION_SCHEMA_VERSION = "chat_interaction/v1"
@@ -145,6 +147,7 @@ VISIBLE_ACTIONS = (
     "reset_coding_owner_preference",
     "show_prompt_handoff",
     "copy_prompt_handoff",
+    "copy_fanout_resume",
     "show_runtime_handoff",
     "show_coding_team_path",
     "start_runtime",
@@ -5310,6 +5313,104 @@ def build_chat_status_interaction(
     return _finish_interaction(payload, None)
 
 
+def build_agent_board_status_interaction(
+    request: AgentBoardRequest, *, source: str = "generic",
+    source_metadata: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Render a validated prepare/status result from the native board bridge.
+
+    This is not a JSON observation intake or grant. Native action arguments stay
+    on the ephemeral tool result, never in wrapper metadata or status actions.
+    """
+    status = deepcopy(request)
+    status["native_action"] = None
+    request_id = status["request_id"]
+    activity = "in_flight" if status["in_flight"] else status["state"]
+    lines = [f"{status['operation']}: {activity}."]
+    if status["reason"]:
+        lines.append(f"Reason: {status['reason']}.")
+    if status["missing_capabilities"]:
+        lines.append("Missing capabilities: " + ", ".join(status["missing_capabilities"]) + ".")
+    for receipt in status["observed_receipts"]:
+        lines.append(f"{receipt['operation']}: {receipt['state']} | task {receipt.get('task_id') or 'not_observed'}.")
+    actions = [_action("refresh_status", "Refresh status", "primary", payload={
+        "tool_name": "omh_agent_board", "arguments": {"action": "status", "request_id": request_id},
+        "execution_policy": "read_only",
+    })]
+    return _work_status_interaction(
+        status=dict(status), source=source, source_metadata=source_metadata,
+        kind="agent_board", headline="Here is the agent board observation.", body="\n".join(lines),
+        state={"agent_board": dict(status), "execution_observed": False,
+               "review_status": "not_observed", "ci_status": "not_observed", "merge_status": "not_observed"},
+        steps=[_status_card_step(status["operation"], status["operation"], activity, request_id)],
+        actions=actions, claim_boundary=status["claim_boundary"],
+    )
+
+
+def build_fanout_status_interaction(
+    paths: OmhPaths, *, fanout_id: str, unit_id: str | None = None,
+    source: str = "generic", source_metadata: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Read current journal evidence; resume is copy-only for an explicit unit.
+
+    The canonical reader checks session/workspace/binary lineage and projects
+    current-attempt capacity and diagnostics. No wrapper receipt substitutes for
+    those checks, and a read never redispatches capacity-blocked work.
+    """
+    from ..coding.fanout_status import project_fanout_status, render_fanout_status_text
+
+    roster: dict[str, object] = project_fanout_status(paths, fanout_id, unit_id=unit_id)
+    argv = ["omh", "coding", "fanout", "status", "--fanout-id", fanout_id]
+    if unit_id is not None:
+        argv.extend(["--unit", unit_id])
+    argv.append("--json")
+    actions = [_action("refresh_status", "Refresh status", "primary", payload={
+        "argv": argv, "execution_policy": "read_only",
+    })]
+    steps: list[dict[str, object]] = []
+    for unit in _as_dict_list(roster["units"]):
+        steps.append(_status_card_step(str(unit["unit_id"]), str(unit["unit_id"]),
+                                       str(unit["lifecycle_state"]), str(unit["run_ref"])))
+        resume: dict[str, object] = _nested(unit, "resume")
+        if unit_id is not None and resume["available"]:
+            actions.append(_action("copy_fanout_resume", "Copy resume command", "secondary", payload={
+                "fanout_id": fanout_id, "unit_id": unit_id, **resume,
+            }))
+    return _work_status_interaction(
+        status=roster, source=source, source_metadata=source_metadata,
+        kind="fanout_status", headline="Here is the observed fanout status.",
+        body=render_fanout_status_text(roster), state={"fanout_status": roster},
+        steps=steps, actions=actions, claim_boundary=str(roster["claim_boundary"]),
+    )
+
+
+def _work_status_interaction(
+    *, status: dict[str, object], source: str, source_metadata: dict[str, str] | None,
+    kind: str, headline: str, body: str, state: dict[str, object],
+    steps: list[dict[str, object]], actions: list[dict[str, object]], claim_boundary: str,
+) -> dict[str, object]:
+    metadata = _source_metadata("", source_metadata)
+    thread_key = _thread_key(source, metadata)
+    card: dict[str, object] = {
+        "schema_version": STATUS_CARD_SCHEMA_VERSION, "run_id": "", "kind": kind,
+        "severity": "info", "headline": headline, "summary": body,
+        "next_action": "refresh_status", "primary_action": "refresh_status",
+        "steps": steps, "claim_boundary": claim_boundary,
+    }
+    response = _chat_response(
+        kind=kind, headline=headline, body=body, phase="status", next_action="refresh_status",
+        thread_key=thread_key, actions=actions, claim_boundary=claim_boundary,
+        extra_state=state, status_card=card,
+    )
+    return _finish_interaction({
+        "schema_version": CHAT_INTERACTION_SCHEMA_VERSION, "source": source,
+        "source_metadata": metadata, "message_sha256": "", "message_length": 0,
+        "thread_key": thread_key, "mode": "status", "next_action": "refresh_status",
+        "status": status, "status_card": card, "chat_response": response,
+        "redaction_policy": "metadata_only", "overclaim_guard": _default_overclaim_guard(),
+    }, None)
+
+
 def _operating_brief_chat_response(
     *,
     selected: str,
@@ -5499,6 +5600,37 @@ def _workflow_operations_chat_response(
     next_action = str(config["next_action"])
     action_specs = config.get("actions", [])
     actions = [_action_from_spec(spec) for spec in action_specs if isinstance(spec, dict)]
+    if selected == "agent-board":
+        for item in actions:
+            if item["id"] == "prepare_agent_board_card":
+                item["payload"] = {
+                    "tool_name": "omh_agent_board",
+                    "arguments": {"action": "prepare"},
+                    "required_input": ["request_id", "coordination", "operation", "board", "profile", "arguments"],
+                    "coordination_options": {"durable": "kanban", "bounded_research": "delegation"},
+                    "execution_policy": "prepare_only",
+                }
+            elif item["id"] == "refresh_status":
+                item["payload"] = {
+                    "tool_name": "omh_agent_board", "arguments": {"action": "status"},
+                    "required_input": ["request_id"], "execution_policy": "read_only",
+                }
+            elif item["id"] == "show_status":
+                item["payload"] = {
+                    "command_prefix": ["omh", "coding", "fanout", "status"],
+                    "required_input": ["fanout_id"], "optional_input": ["unit_id"],
+                    "wrapper_api": "omh.wrapper.contract.build_fanout_status_interaction",
+                    "execution_policy": "read_only",
+                }
+    if selected == "lifecycle-growth":
+        for item in actions:
+            if item["id"] == "prepare_lifecycle_growth":
+                item["payload"] = {
+                    "command_prefix": ["omh", "runtime", "workflow-artifact", "lifecycle-growth"],
+                    "operations": list(WORKFLOW_ARTIFACT_OPERATIONS["lifecycle-growth"]),
+                    "required_input": ["operation", "input"],
+                    "execution_policy": "metadata_only",
+                }
     evidence_boundary = str(policy.get("evidence_boundary", "")) or "This prepared workflow operations card is not observed work evidence."
     claim_boundary_suffix = str(config.get("claim_boundary_suffix", "")).strip()
     if claim_boundary_suffix and claim_boundary_suffix.lower() not in evidence_boundary.lower():

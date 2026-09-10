@@ -19,6 +19,17 @@ LIFECYCLE_ID = "lifecycle_activation_q3"
 
 
 class LifecycleGrowthReadinessTests(unittest.TestCase):
+    def test_missing_audience_assignment_contact_and_channel_evidence_holds_expansion(self) -> None:
+        # Given: healthy aggregate metrics, but no observed audience/exposure account.
+        experiment, readout = self._experiment(), self._readout()
+        # When: reference and baseline are both resolved through the public evaluator.
+        result = evaluate_lifecycle_growth(experiment, readout, evaluation_context={
+            "experiment_reference_state": "resolved", "baseline_exposure_state": "observed",
+        })
+        # Then: those two states cannot authorize expansion.
+        self.assertEqual(result["interpretation_state"], "HOLD")
+        self.assertEqual(result["disposition"], "insufficient_data")
+
     def _experiment(self) -> dict[str, object]:
         return build_growth_experiment_plan(
             lifecycle_growth_id=LIFECYCLE_ID,

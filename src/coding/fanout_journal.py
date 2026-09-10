@@ -59,12 +59,17 @@ is a much larger claim than deciding what is eligible to run.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from ..system.local_store import atomic_write_json, utc_now
+from ..workflows.observation_journal import project_bound_failure_diagnostic
+from .fanout_failure_diagnostics import is_object_list, is_string_map
+from .fanout_executor_sessions import bound_session_fields
+from .fanout_capacity import CAPACITY_STATUSES, read_capacity_fields
 from .fanout_environment import CHILD_ENVIRONMENT_POLICY_CLAIM_BOUNDARY
 from .fanout_retry import (
     REPLAY_SAFE,
@@ -161,6 +166,7 @@ _NEVER_SPAWNED_STATUSES = frozenset(
         # `interrupted` stays a member so a journal written before the
         # cancellation states existed still resumes the way it always did.
         "not_started_cancelled",
+        "not_started_capacity_blocked",
         "model_choice_required",
         "spawn_ceiling_reached",
         "review_dispatch_budget_exhausted",
@@ -198,7 +204,7 @@ class FanoutJournalError(ValueError):
         self.reason_code = reason_code
 
 
-def journal_unit_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
+def journal_unit_entry(entry: Mapping[str, Any], *, fanout_id: str = "") -> dict[str, Any]:
     """Project one dispatch-summary unit entry into its journal row.
 
     Carried-forward rows come back unchanged: a unit held by an earlier resume
@@ -209,6 +215,10 @@ def journal_unit_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
     """
     carried = _carried_forward(entry)
     if carried is not None:
+        fields = _journal_diagnostic_fields(carried, fanout_id=fanout_id)
+        for key in ('failure_diagnostic', 'executor_session', 'session_recovery_snapshot', 'capacity', 'capacity_lineage'):
+            carried.pop(key, None)
+        carried.update(fields)
         return carried
     state = _terminal_state(entry)
     row: dict[str, Any] = {
@@ -239,7 +249,47 @@ def journal_unit_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
     receipt = _child_environment_policy_receipt(entry.get("child_environment_policy"))
     if receipt is not None:
         row["child_environment_policy"] = receipt
+    row.update(_journal_diagnostic_fields(entry, fanout_id=fanout_id))
+    row.update(read_capacity_fields(entry))
+    for key in ('invocation_id', 'planned_worktree_path', 'worktree_path', 'worktree_created', 'depends_on', 'blocked_reasons'):
+        if key in entry and (read_capacity_fields(entry) or key == 'blocked_reasons'):
+            row[key] = entry[key]
     return row
+
+
+def _journal_fanout_id(journal: Mapping[str, object]) -> str:
+    return str(journal.get("fanout_id", ""))
+
+
+def _journal_diagnostic_fields(entry: Mapping[str, object], *, fanout_id: str) -> dict[str, object]:
+    result: dict[str, object] = read_capacity_fields(entry)
+    attempt = entry.get("attempt_id")
+    if isinstance(attempt, str) and 0 < len(attempt) <= 2048 and attempt.isprintable():
+        result["attempt_id"] = attempt
+    unit_id, run_ref = entry.get("unit_id"), entry.get("run_ref")
+    if isinstance(unit_id, str) and isinstance(run_ref, str):
+        diagnostic = project_bound_failure_diagnostic(
+            entry, fanout_id=fanout_id, unit_id=unit_id, run_ref=run_ref,
+        )
+        if diagnostic is not None:
+            result["failure_diagnostic"] = diagnostic
+        result.update(bound_session_fields(entry, fanout_id=fanout_id, unit_id=unit_id, run_ref=run_ref))
+    return result
+
+
+def _project_journal_diagnostics(journal: Mapping[str, object]) -> dict[str, object]:
+    projected = dict(journal)
+    units = journal.get("units")
+    if is_object_list(units):
+        rows: list[object] = []
+        for row in units:
+            if is_string_map(row):
+                fields = _journal_diagnostic_fields(row, fanout_id=str(journal.get("fanout_id", "")))
+                rows.append({**{key: value for key, value in row.items() if key not in ('failure_diagnostic', 'executor_session', 'session_recovery_snapshot', 'capacity', 'capacity_lineage')}, **fields})
+            else:
+                rows.append(row)
+        projected["units"] = rows
+    return projected
 
 
 def _child_environment_policy_receipt(value: object) -> dict[str, object] | None:
@@ -300,8 +350,9 @@ def _environment_policy_classifications(value: object) -> bool:
 def build_fanout_run_journal(summary: Mapping[str, Any]) -> dict[str, Any]:
     """The journal for one completed dispatch, built from its own summary."""
     order = [str(unit_id) for unit_id in summary.get("merge_order", []) or []]
+    fanout_id = _journal_fanout_id(summary)
     rows = {
-        str(entry.get("unit_id", "")): journal_unit_entry(entry)
+        str(entry.get("unit_id", "")): journal_unit_entry(entry, fanout_id=str(fanout_id))
         for entry in summary.get("units", []) or []
         if isinstance(entry, Mapping)
     }
@@ -329,7 +380,7 @@ def write_fanout_run_journal(path: Path, journal: Mapping[str, Any]) -> Path:
     target, so a write interrupted at any point leaves the previous journal
     byte-identical instead of a half-document a resume would misread.
     """
-    atomic_write_json(path, dict(journal), private=True)
+    atomic_write_json(path, _project_journal_diagnostics(journal), private=True)
     return path
 
 
@@ -342,10 +393,11 @@ def read_fanout_run_journal(path: Path, *, expected_fanout_id: str = "") -> dict
     except OSError as exc:
         raise FanoutJournalError(f"run journal unreadable: {exc}", reason_code=JOURNAL_CORRUPT) from exc
     try:
-        journal = json.loads(raw)
+        loads: Callable[..., object] = json.loads
+        journal = loads(raw)
     except (json.JSONDecodeError, RecursionError) as exc:
         raise FanoutJournalError(f"run journal is not valid JSON: {exc}", reason_code=JOURNAL_CORRUPT) from exc
-    if not isinstance(journal, dict):
+    if not is_string_map(journal):
         raise FanoutJournalError("run journal must be a JSON object", reason_code=JOURNAL_CORRUPT)
     if journal.get("schema_version") != FANOUT_RUN_JOURNAL_SCHEMA_VERSION:
         raise FanoutJournalError(
@@ -367,7 +419,7 @@ def read_fanout_run_journal(path: Path, *, expected_fanout_id: str = "") -> dict
             f"run journal is for fanout {journal.get('fanout_id') or '?'}, not {expected_fanout_id}",
             reason_code=JOURNAL_FANOUT_MISMATCH,
         )
-    return journal
+    return _project_journal_diagnostics(journal)
 
 
 def plan_fanout_resume(
@@ -382,7 +434,7 @@ def plan_fanout_resume(
     names every unit exactly once and which a prepared fanout emits in
     dependency order, so a unit's blockers are always decided before it is.
     """
-    rows = {str(row.get("unit_id", "")): row for row in journal.get("units", []) or [] if isinstance(row, Mapping)}
+    rows: dict[str, Mapping[str, object]] = {str(row.get("unit_id", "")): row for row in journal.get("units", []) or [] if isinstance(row, Mapping)}
     decisions: list[dict[str, Any]] = []
     selected: list[str] = []
     resumable: set[str] = set()
@@ -391,6 +443,10 @@ def plan_fanout_resume(
         blockers = [str(dep) for dep in depends_on.get(unit_id, []) or []]
         unresolved = [dep for dep in blockers if dep not in resumable]
         decision = _unit_resume_decision(unit_id, row, unresolved)
+        carry: object = decision.get("carry_forward")
+        fanout_id = _journal_fanout_id(journal)
+        if is_string_map(row) and is_string_map(carry):
+            carry.update(_journal_diagnostic_fields(row, fanout_id=str(fanout_id)))
         decisions.append(decision)
         if decision["action"] in RESUME_RERUN_ACTIONS:
             selected.append(unit_id)
@@ -568,9 +624,11 @@ def _carried_forward(entry: Mapping[str, Any]) -> dict[str, Any] | None:
     if not isinstance(resume, Mapping):
         return None
     carried = resume.get("carry_forward")
-    if not isinstance(carried, Mapping):
+    if not is_string_map(carried):
         return None
     if any(key not in carried for key in _JOURNAL_UNIT_KEYS):
+        return None
+    if any(carried.get(key) != entry.get(key) for key in ("unit_id", "run_ref", "owner")):
         return None
     return {key: value for key, value in carried.items()}
 
@@ -578,7 +636,7 @@ def _carried_forward(entry: Mapping[str, Any]) -> dict[str, Any] | None:
 def _terminal_state(entry: Mapping[str, Any]) -> str:
     if entry.get("status") in _SUCCEEDED_STATUSES or bool(entry.get("process_succeeded")):
         return TERMINAL_SUCCEEDED
-    if entry.get("status") in {"blocked_by_dependency", "blocked_by_cancelled_dependency"}:
+    if entry.get("status") in {"blocked_by_dependency", "blocked_by_cancelled_dependency", 'blocked_by_capacity_dependency'}:
         return TERMINAL_SKIPPED_BY_DEPENDENCY
     if entry.get("status") in {"cancelled", "cancelled_outcome_unknown"}:
         return TERMINAL_CANCELLED
@@ -631,6 +689,8 @@ def _failure_classification(entry: Mapping[str, Any], *, state: str = "") -> dic
     every non-transient failure and would erase the distinction this module
     exists to keep.
     """
+    if entry.get('status') in CAPACITY_STATUSES:
+        return {'failure_class': str(entry['status']), 'failure_label': ''}
     if state == TERMINAL_DECLINED:
         return {"failure_class": FAILURE_CLASS_DECLINED_CONCLUSIVE, "failure_label": ""}
     if state == TERMINAL_CANCELLED:

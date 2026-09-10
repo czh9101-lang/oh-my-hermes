@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 PROVIDED_TOOLS = (
+    "omh_agent_board",
     "omh_capabilities",
     "omh_context",
     "omh_decision_gate",
@@ -18,9 +19,9 @@ PROVIDED_TOOLS = (
     "omh_todo",
 )
 REQUIRED_HOOKS = ("on_session_end", "pre_llm_call", "pre_tool_call")
-# post_tool_call is optional (not every host offers it): it only closes the
-# in-flight ledger pre_tool_call opens for the HUD liveness signal, and a
-# host without it degrades silently to the pre-pairing burst-only behavior.
+# post_tool_call is optional for the plugin as a whole. Without it the HUD
+# retains burst-only behavior and agent-board preparation names the missing
+# capability; no native board action may be armed for receipt correlation.
 OPTIONAL_HOOKS = ("post_tool_call", "pre_verify", "transform_tool_result")
 # Sorted rather than concatenated: several downstream readers (the real
 # loader observation's alphabetized registration report, the plugin.yaml
@@ -30,6 +31,7 @@ OPTIONAL_HOOKS = ("post_tool_call", "pre_verify", "transform_tool_result")
 PROVIDED_HOOKS = tuple(sorted(REQUIRED_HOOKS + OPTIONAL_HOOKS))
 
 TOOL_FILE_STEMS = {
+    "omh_agent_board": "agent_board_tool",
     "omh_capabilities": "capability_tool",
     "omh_context": "context_tool",
     "omh_decision_gate": "decision_gate_tool",

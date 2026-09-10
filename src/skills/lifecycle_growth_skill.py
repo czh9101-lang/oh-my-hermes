@@ -9,10 +9,15 @@ progressive-disclosure procedure the existing renderer turns into
 `catalog_definitions.py` imports this module as the single installed definition
 source. Its artifacts guide human review and handoff; runtime operations are exposed through the
 canonical `omh runtime workflow-artifact lifecycle-growth <operation>` interface.
+The launch-review operations `audience`, `promote`, and `graduate` (issue #1399)
+return separate versioned records and do not change the six artifacts below.
 
 Concept-level prior art (pinned, MIT outside enterprise directories; no code
-copied, no integration adopted): PostHog `5f8bc937` for actual-display exposure
-and launch/pause/stop controls, GrowthBook `095f6164` for sticky assignment,
+copied, no integration adopted): PostHog `ae880d30` for actual-display exposure,
+launch/pause/stop controls, ordered audience reachability, read-only promotion
+preflight, separate post-rollout gate cleanup, and deleted-reference/no-data
+evaluation classes (issue #1399 review; `docs/SKILL-SOURCES.md` records the
+five community commits), GrowthBook `095f6164` for sticky assignment,
 guardrails, minimum runtime, the ship/rollback/review/insufficient-data
 vocabulary, and the analysis-run state distinction that keeps queued, running,
 failed, canceled, and never-started work apart from a missing result (issue
@@ -177,8 +182,8 @@ DEFINITION = SkillDefinition(
         ),
         ProcedureCheck(
             _CHECK_READOUT,
-            ("eligible_count", "attempted_count", "delivered_count", "displayed_count", "acted_count", "outcome_count", "denominator_status", "freshness_status", "sample_ratio_status", "cross_exposure_status", "instrumentation_status", "overlap_status", "step_outcomes", "step_trace_status", "analysis_run_state", "analysis_observed_at", "analysis_delay_status", "evidence_refs", "causal_claim_status", "disposition"),
-            "Fill each funnel stage only from observed provider or data evidence and keep them separate; pause interpretation on sample-ratio mismatch, cross-exposure, stale data, broken instrumentation, or overlapping interventions; disposition must be exactly one of `ship`, `rollback`, `review`, or `insufficient_data`, and inconclusive data must not force `ship`. Record every conditional step as `matched` or `skipped` with its own reason and status, never its evaluated values; a missing or failed best-effort step trace is not delivery evidence and must not turn a send into a failure. Name the analysis run as exactly one of `not_started`, `queued`, `running`, `completed`, `failed`, `canceled`, or `unknown` with the time that state was observed; a queued or running analysis holds the disposition at `review` or `insufficient_data`, and elapsed time against a supplied service expectation is a delay warning that never rewrites the state.",
+            ("eligible_count", "assigned_count", "attempted_count", "delivered_count", "displayed_count", "acted_count", "outcome_count", "exposure_evidence", "contact_pressure_state", "repeated_contact_count", "channels", "denominator_status", "freshness_status", "sample_ratio_status", "cross_exposure_status", "instrumentation_status", "overlap_status", "step_outcomes", "step_trace_status", "analysis_run_state", "analysis_observed_at", "analysis_delay_status", "evidence_refs", "causal_claim_status", "disposition"),
+            "Require a separate `lifecycle_growth_exposure_evidence/v1` companion with the bound audience/safety policies, eligibility/exclusion checks, assignment identity/count, reconciled populations, observed repeated-contact pressure and experiment-overlap checks, and per-channel reach/failure accounting. Missing evidence means HOLD, not zero or ship; configuration alone cannot supply it. Fill eligible, assigned, attempted, reached, and converted populations only from supplied observations, keeping delivery and action separate. Partial delivery requires review and channel failures retain their reasons; an independently justified rollback outranks missing launch evidence. Pause interpretation on sample-ratio mismatch, cross-exposure, stale data, broken instrumentation, or overlapping interventions; disposition must be exactly one of `ship`, `rollback`, `review`, or `insufficient_data`. Record every conditional step as `matched` or `skipped` with its own reason and status, never its evaluated values; a missing or failed best-effort step trace is not delivery evidence and must not turn a send into a failure. Name the analysis run as exactly one of `not_started`, `queued`, `running`, `completed`, `failed`, `canceled`, or `unknown` with the time that state was observed; elapsed time never rewrites the state.",
         ),
         ProcedureCheck(
             _CHECK_HANDOFF,
@@ -210,7 +215,7 @@ DEFINITION = SkillDefinition(
         ProcedureStep(
             "lifecycle_prepare_measurement_readout", "validation", (_INPUT_EVENTS, _INPUT_BUDGET, _INPUT_OWNER),
             (_READOUT,), (_CHECK_READOUT,),
-            "Lay out eligible, attempted, delivered, displayed, acted, and outcome stages with denominator and freshness checks; fill them only from observed evidence, keep causal-claim status separate, list each conditional step as matched or skipped with a redacted reason, record the analysis run's state and the time it was observed alongside any delay against a supplied service expectation, and record `ship`, `rollback`, `review`, or `insufficient_data` without forcing a decision on thin data.",
+            "Lay out eligible, assigned, attempted, delivered, displayed, acted, and outcome stages with denominator and freshness checks. Supply the separate exposure-evidence companion to evaluate or prepare; unknown audience, assignment, contact pressure, overlap, or channel accounting holds expansion. First-launch preparation needs observed audience/reachability/contact checks, not invented treatment counts. Keep causal-claim status separate, list each conditional step as matched or skipped with a redacted reason, and record the analysis run's state and observation time alongside any delay. Record `ship`, `rollback`, `review`, or `insufficient_data` without forcing a decision on thin data.",
         ),
         ProcedureStep(
             "lifecycle_validate_handoff", "validation", _ALL_INPUTS,

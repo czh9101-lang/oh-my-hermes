@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import json
+import re
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
@@ -135,7 +136,7 @@ class FanoutFinalReviewCallerTests(unittest.TestCase):
                     }],
                 ),
             )
-            sidecar = unit_result_path(paths, contract["fanout_id"], "core")
+            legacy_sidecar = unit_result_path(paths, contract["fanout_id"], "core")
 
             class Completed:
                 returncode = 0
@@ -147,6 +148,13 @@ class FanoutFinalReviewCallerTests(unittest.TestCase):
                     return subprocess.run(argv, **kwargs)
                 if argv[0] != "codex":
                     return subprocess.run(argv, **kwargs)
+                # The dispatcher names an invocation-owned intake path in the
+                # worker prompt; the durable per-unit path is no longer read.
+                match = re.search(r"JSON sidecar to exactly (.+)\.", " ".join(argv))
+                self.assertIsNotNone(match, "prompt names no sidecar path")
+                assert match is not None
+                sidecar = Path(match[1])
+                self.assertNotEqual(sidecar, legacy_sidecar)
                 sidecar.parent.mkdir(parents=True, exist_ok=True)
                 sidecar.write_text(
                     json.dumps(

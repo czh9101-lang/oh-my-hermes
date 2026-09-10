@@ -219,7 +219,12 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # rather than the rule text; the requested-versus-observed contract itself
 # lives in the profile body and in `docs/VISUAL-GENERATION-RECEIPTS.md`;
 # warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 411498
+# 411498 -> 411570: `agent-board` names its native Kanban outputs and the two
+# native boundaries in the capability section (#1417). The section renders the
+# skill's declared outputs, not the rule text; the operation table and the
+# native/fixture boundary live in `docs/AGENT-BOARD.md`, outside this budget;
+# warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 411570
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -771,7 +776,15 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # after the claim. The field-level contract, the warning vocabulary, and the
 # legacy projection live in `docs/VISUAL-GENERATION-RECEIPTS.md`, outside this
 # budget; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 923796
+# 923796 -> 925045: `agent-board` gains the integrated native Kanban guidance -
+# the durable-versus-bounded-research choice, prepare-then-normal-tool-loop
+# order, the five request states, idempotent create and the two native
+# boundaries (issue #1417). These belong in the always-loaded body because a
+# host that skips preparation or treats a prepared card as an observed native
+# result corrupts task evidence before any reference is opened; the operation
+# table and QA boundaries live in `docs/AGENT-BOARD.md`, outside this budget;
+# warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 925045
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

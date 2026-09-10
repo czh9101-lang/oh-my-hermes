@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import Protocol
+
+
+class _PluginContext(Protocol):
+    def register_tool(self, name: str, toolset: str, schema: object, handler: object, **kwargs: object) -> object: ...
+    def register_hook(self, name: str, handler: object) -> object: ...
+
 
 _TOOLSET = "omh"
 
@@ -18,7 +25,7 @@ def _host_supports_hook(hook_name: str) -> bool:
     return hook_name in valid_hooks
 
 
-def _register_optional_surface(ctx, method_name: str, *args: object) -> None:
+def _register_optional_surface(ctx: object, method_name: str, *args: object) -> None:
     """Call a host registration method when this host offers one.
 
     OMH must not assume a Hermes context shape: assuming one is what silently
@@ -29,21 +36,21 @@ def _register_optional_surface(ctx, method_name: str, *args: object) -> None:
     if not callable(method):
         return
     try:
-        method(*args)
+        _ = method(*args)
     except (TypeError, ValueError):
         return
 
 
-def _register_optional_hook(ctx, hook_name: str, callback: object) -> None:
+def _register_optional_hook(ctx: _PluginContext, hook_name: str, callback: object) -> None:
     if not _host_supports_hook(hook_name):
         return
     try:
-        ctx.register_hook(hook_name, callback)
+        _ = ctx.register_hook(hook_name, callback)
     except ValueError:
         return
 
 
-def register(ctx):
+def register(ctx: _PluginContext) -> None:
     """Register the OMH thin native bridge with Hermes.
 
     Two different loaders call this with two different contexts: the plugin
@@ -88,6 +95,7 @@ def register(ctx):
     from .hooks.session_hooks import on_session_end
     from .hooks.tool_hooks import post_tool_call, pre_tool_call
     from .hooks.verify_hooks import pre_verify
+    from .tools.agent_board_tool import OMH_AGENT_BOARD_SCHEMA, omh_agent_board_handler
     from .tools.capability_tool import OMH_CAPABILITIES_SCHEMA, omh_capabilities_handler
     from .tools.chat_tool import OMH_INTERACT_SCHEMA, omh_interact_handler
     from .tools.context_tool import OMH_CONTEXT_SCHEMA, omh_context_handler
@@ -104,114 +112,121 @@ def register(ctx):
     from .tools.status_tool import OMH_STATUS_SCHEMA, omh_status_handler
     from .tools.todo_tool import OMH_TODO_SCHEMA, omh_todo_handler
 
-    ctx.register_tool(
+    _ = ctx.register_tool(
+        "omh_agent_board",
+        _TOOLSET,
+        OMH_AGENT_BOARD_SCHEMA,
+        omh_agent_board_handler,
+        description=OMH_AGENT_BOARD_SCHEMA["description"],
+    )
+    _ = ctx.register_tool(
         "omh_capabilities",
         _TOOLSET,
         OMH_CAPABILITIES_SCHEMA,
         omh_capabilities_handler,
         description=OMH_CAPABILITIES_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_context",
         _TOOLSET,
         OMH_CONTEXT_SCHEMA,
         omh_context_handler,
         description=OMH_CONTEXT_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_delegate_route",
         _TOOLSET,
         OMH_DELEGATE_ROUTE_SCHEMA,
         omh_delegate_route_handler,
         description=OMH_DELEGATE_ROUTE_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_decision_gate",
         _TOOLSET,
         OMH_DECISION_GATE_SCHEMA,
         omh_decision_gate_handler,
         description=OMH_DECISION_GATE_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_gather_evidence",
         _TOOLSET,
         OMH_EVIDENCE_SCHEMA,
         omh_evidence_handler,
         description=OMH_EVIDENCE_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_hud",
         _TOOLSET,
         OMH_HUD_SCHEMA,
         omh_hud_handler,
         description=OMH_HUD_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_interact",
         _TOOLSET,
         OMH_INTERACT_SCHEMA,
         omh_interact_handler,
         description=OMH_INTERACT_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_memory",
         _TOOLSET,
         OMH_MEMORY_SCHEMA,
         omh_memory_handler,
         description=OMH_MEMORY_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_probe",
         _TOOLSET,
         OMH_PROBE_SCHEMA,
         omh_probe_handler,
         description=OMH_PROBE_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_recommend",
         _TOOLSET,
         OMH_RECOMMEND_SCHEMA,
         omh_recommend_handler,
         description=OMH_RECOMMEND_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_role",
         _TOOLSET,
         OMH_ROLE_SCHEMA,
         omh_role_handler,
         description=OMH_ROLE_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_run_summary",
         _TOOLSET,
         OMH_RUN_SUMMARY_SCHEMA,
         omh_run_summary_handler,
         description=OMH_RUN_SUMMARY_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_source_trust",
         _TOOLSET,
         OMH_SOURCE_TRUST_SCHEMA,
         omh_source_trust_handler,
         description=OMH_SOURCE_TRUST_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_status",
         _TOOLSET,
         OMH_STATUS_SCHEMA,
         omh_status_handler,
         description=OMH_STATUS_SCHEMA["description"],
     )
-    ctx.register_tool(
+    _ = ctx.register_tool(
         "omh_todo",
         _TOOLSET,
         OMH_TODO_SCHEMA,
         omh_todo_handler,
         description=OMH_TODO_SCHEMA["description"],
     )
-    ctx.register_hook("on_session_end", on_session_end)
-    ctx.register_hook("pre_llm_call", pre_llm_call)
-    ctx.register_hook("pre_tool_call", pre_tool_call)
+    _ = ctx.register_hook("on_session_end", on_session_end)
+    _ = ctx.register_hook("pre_llm_call", pre_llm_call)
+    _ = ctx.register_hook("pre_tool_call", pre_tool_call)
     _register_optional_hook(ctx, "post_tool_call", post_tool_call)
     _register_optional_hook(ctx, "pre_verify", pre_verify)
     _register_optional_hook(ctx, "transform_tool_result", transform_tool_result)
@@ -220,4 +235,4 @@ def register(ctx):
     if isinstance(browser_config, dict) and browser_config.get("enabled") is True:
         from .browser_bridge import register as register_browser
 
-        ctx.browser_task = register_browser(ctx, browser_config)
+        setattr(ctx, "browser_task", register_browser(ctx, browser_config))

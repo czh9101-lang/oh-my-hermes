@@ -125,7 +125,9 @@ controller, endpoint, query state, or timeout.
 
 `prepare_lifecycle_growth` consumes the five launch artifacts (`brief`,
 `audience`, `safety`, `experiment`, and `handoff`). A first, approved experiment
-can be locally `READY` without a fabricated readout. It returns `HOLD` for
+can be locally `READY` without a fabricated readout, but requires a separate
+exposure-evidence companion for observed audience, reachability and contact
+checks. It returns `HOLD` for
 unknown/ineligible consent, suppression, frequency, event semantics, identity,
 or owner; absent holdout/approval/data health; unavailable connector evidence;
 production read-only content or an unapproved promotion decision; wrong slot;
@@ -141,7 +143,9 @@ running analysis: preparing another one while work is in flight duplicates it.
 overlap; it neither adds a person to an audience nor starts a journey.
 
 `readout_lifecycle_growth` derives `ship`, `rollback`, `review`, or
-`insufficient_data`. It requires non-zero eligible/displayed/outcome stages,
+`insufficient_data`. Legacy readout-only input is readable but insufficient to
+ship. With experiment and exposure evidence, it uses the same evaluator, requiring
+non-zero eligible/displayed/outcome stages,
 valid actual-exposure/runtime/causal references, and a valid causal method
 before `ship`. `evaluate_lifecycle_growth` also compares observed runtime days
 with the experiment's minimum runtime, so an early readout cannot ship. Both
@@ -154,13 +158,137 @@ are not proof that a provider delivered, displayed, measured, canceled, or
 caused an outcome. A prepared cancellation handoff in particular is not an
 external mutation, a provider request, or a stopped analysis.
 
+## Launch review (issue #1399)
+
+`omh.workflows.lifecycle_growth_launch` adds three pure launch-review builders
+that the CLI exposes as `audience`, `promote`, and `graduate`. Each returns its
+own versioned `prepared_not_observed` record; none of them touches the six
+artifact schemas above, so stored artifacts and `validate` behave exactly as
+before. Exact input keys, bounds, and CLI exit codes live in
+[`docs/WORKFLOW-ARTIFACTS.md`](WORKFLOW-ARTIFACTS.md).
+
+- `build_launch_audience_review` (`launch_audience_review/v1`) reads ordered
+  rules under `first_match` semantics. An unconditional rule at a 100 percent
+  share shadows every later rule that shares the same evaluation domain,
+  bucketing domain, and subject (`person`, `group`, or `device`); those rules
+  are reported `reachable: false` and listed in `unreachable_rule_refs`. A
+  partial share, a conditional rule, a different domain, or a different subject
+  never shadows. Unknown semantics or null domains produce `reachable: null`
+  and a `HOLD` verdict. Reachable means "not provably shadowed"; it is not
+  membership, targeting, or exposure, and the record carries no exposure count.
+  Variants, splits, partial shares, and the holdout exclusion share stay
+  configuration.
+- `build_launch_promotion_preflight` (`launch_promotion_preflight/v1`) compares
+  a source and a target environment without copying anything. The target is
+  always `disabled`. Dependencies already satisfied and dependencies a promotion
+  would create are kept in disjoint lists; carried dependencies and schedules are
+  empty unless the caller explicitly approves each carry. The existing
+  development-draft promotion gate still applies through the optional `safety`
+  block, and an approval is never an observed promotion result.
+- `build_launch_graduation_check` (`launch_graduation_check/v1`) proposes a
+  separate gate cleanup only when the caller supplies `complete` rollout, at
+  least one evidence reference, and `satisfied` rollback conditions. Anything
+  else is `not_proposed` with the naming reason. OMH never infers that a gate
+  was deleted.
+- `evaluate_lifecycle_growth(..., evaluation_context=...)` accepts an optional
+  context with `experiment_reference_state` and `baseline_exposure_state`. A
+  deleted reference is blocked and `insufficient_data`; an absent baseline and
+  zero displayed exposure carry their own reason codes; neither is reported as
+  a runtime outage. A resolved or observed context cannot replace audience or
+  exposure evidence. Missing evidence holds expansion while an independently
+  valid observed rollback stays rollback.
+
+## Audience and exposure evidence
+
+The separate `lifecycle_growth_exposure_evidence/v1` record is supplied under
+`exposure_evidence` to `evaluate` or `prepare`. It reuses the existing bounded
+reference/count/state validation; all six original artifact schemas remain
+unchanged. `validate` accepts this companion too. Its exact keys are:
+
+| Fields | Meaning and allowed values |
+| --- | --- |
+| `schema_version`, `status`, `claim_boundary` | The schema above; `prepared_not_observed`; the same claim boundary as existing lifecycle artifacts. |
+| `lifecycle_growth_id`, `observation_window_ref` | Shared lifecycle identity and the window to which every supplied check and population refers. |
+| `audience`, `safety` | Complete existing `audience_trigger_policy/v1` and `lifecycle_safety_policy/v1` artifacts with matching lifecycle identity. Policies describe eligibility/exclusion reasons, identity and global/campaign contact budgets; observations below must back their application. |
+| `assignment_unit`, `exposure_unit`, `assignment_event_ref`, `actual_exposure_event_ref` | Must match the experiment. Assignment is never actual reach. |
+| `eligible_count`, `assigned_count`, `repeated_contact_count` | Nonnegative integers or null for unknown; booleans are invalid. |
+| `eligibility_evidence_refs`, `exclusion_evidence_refs`, `assignment_evidence_refs` | Observed membership/exclusion checks and assignment. An empty exclusion-result set still requires evidence of the check, not an assumed absence. |
+| `population_reconciliation_state`, `population_evidence_refs` | `reconciled`, `inconsistent`, or `unknown`; supplied reconciliation of identity, observation window, assignment and channel populations. |
+| `contact_pressure_state`, `contact_evidence_refs` | `within_budget`, `exceeded`, or `unknown`; observed repeated-contact pressure against the nested safety policy's global and campaign budgets in the declared window. Configured throttling is not this observation. |
+| `overlap_state`, `overlapping_experiment_refs`, `overlap_evidence_refs` | `absent`, `detected`, or `unknown`; explicit concurrent-intervention check. Empty intervention references without check evidence do not mean absent. |
+| `analysis_run_ref` | The readout's analysis run; empty is permitted for first-launch preparation, not for expansion. |
+| `channel_refs`, `channels` | Declared channels and exactly one row for each. At most eight; missing, duplicated or foreign rows hold. |
+
+Each channel row has exactly `channel_ref`, `reachability_state` (`reachable`,
+`unreachable`, `unknown`), `attempted_count`, `delivered_count`, `reached_count`,
+`failed_count`, `unresolved_count`, `failure_reason_refs`, and `evidence_refs`.
+Counts are nonnegative integers or null. Every reference list has at most eight
+opaque references. Raw provider receipts, addresses and recipient lists have no
+field here.
+
+Counts describe unique subjects in the exposure unit. When assignment uses a
+different unit, population evidence must supply its normalization; OMH does not
+compute a cross-unit conversion. The same evidence accounts for deduplication
+across channels. OMH checks `eligible >= assigned >= attempted`, the existing
+readout funnel, and each channel's `attempted = delivered + failed + unresolved`
+and `reached <= delivered`. Each aggregate channel population must lie between
+the largest channel population and their sum, not equal the sum by assumption.
+These bounds cannot prove set membership: reconciliation remains explicitly
+caller-supplied evidence, not source attestation.
+
+Expansion returns `populations` with `eligible`, `assigned`, `attempted`,
+`reached` (the readout's actual `displayed_count`), and `converted` (its
+`outcome_count`). Delivery and action counts remain separate. Missing assignment
+is null, not zero. Bounded channel counts and failure reasons remain visible.
+Partial delivery requires `HOLD/review`; no failure tolerance is invented.
+Unknown audience, missing checks, unmatched populations, unreachable channels,
+repeated-contact pressure or overlap prevents `ship`. A valid observed rollback
+is never replaced by an insufficient-launch-evidence decision.
+
+First-launch preparation requires the audience, exclusion, contact and channel
+reachability checks, but accepts null assignment/treatment counts and an empty
+analysis-run reference. Already supplied channel failures still hold; removing
+a readout cannot hide them. All checks remain local metadata interpretation:
+neither supplying a reference nor receiving `READY` proves provider observation
+or authorizes external execution.
+
+## Upstream review (issue #1399)
+
+The five community commits cited by the issue were reviewed by read against
+the PostHog default branch through `ae880d309f33eaf236cb4e46991f249a88e1c16e`.
+Only the PostHog row in [`docs/SKILL-SOURCES.md`](SKILL-SOURCES.md) advanced;
+the GrowthBook, Dittofeed, and Novu rows keep their earlier pins. No upstream
+code, tool name, parameter name, endpoint, UI, or enterprise (`ee/`) file was
+adopted, and no product module imports the upstream package.
+
+Adopted as provider-neutral concepts:
+
+- Ordered first-match rules with a same-scope catch-all making later rules
+  unreachable, person/group/device bucketing, and a holdout carried as an
+  exclusion share (audience review).
+- A read-only promotion preflight that copies nothing, lands disabled, keeps
+  satisfied and to-create dependencies distinct, and carries schedules or
+  dependencies only on explicit approval (promotion preflight).
+- Removing a gate after general availability as its own cleanup change rather
+  than a permanent check (graduation check). The rollout-evidence and
+  rollback-condition prerequisites are OMH's contract, not upstream evidence.
+- A stale or deleted experiment reference reported as a validation error, and a
+  zero-exposure baseline reported as no data rather than a server error
+  (evaluation context).
+
+Rejected or left out: card and result UI shapes, links to person or cohort
+records, copy tool and parameter names, target-count limits, write-scope rules,
+any device-level fallback assumption beyond the subject label, and the `ee/`
+diffs, which were not read. Upstream reachability is a display warning, so OMH
+labels it configuration analysis and never observed targeting.
+
 ## Integration boundary
 
-A serialized shared-registration owner must still add the catalog workflow,
-English/Korean routing and exclusions, harness/projection coverage, generated
-skill output, source attribution, and count updates. It should call these APIs,
-not duplicate their validation. It must not treat a local `READY` response as
-external execution evidence.
+The catalog workflow, routing, generated `skills/omh-lifecycle-growth/*`, and
+source attribution exist. Wrapper and integration callers should call these
+APIs, not duplicate their validation, and must not treat a local `READY`
+response or a `prepared_not_observed` launch-review record as external
+execution evidence.
 
 Copy remains with `content-operator`, supplied-data calculations with
 `data-analysis`, recurring scheduling with `automation-blueprint`, and external

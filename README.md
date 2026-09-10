@@ -590,6 +590,8 @@ dimensions rather than collapsed into one marketing score. See
 - [Roles](docs/ROLES.md)
 - [Application cases](docs/APPLICATION_CASES.md)
 - [Model routing, fan-out contracts, and request scoring](docs/FANOUT.md)
+- [Fanout executor evidence: sessions, failure diagnostics, capacity (agent/operator reference)](docs/FANOUT-EXECUTOR-EVIDENCE.md)
+- [Agent board and native Kanban coordination (agent/operator reference)](docs/AGENT-BOARD.md)
 - [Per-model calibration map](MODEL_OPTI.md)
 - [Evidence rules and capability impact](docs/CAPABILITY_IMPACT.md)
 - [Long-term memory model](docs/MEMORY.md)

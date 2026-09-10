@@ -21,6 +21,7 @@ from .lifecycle_growth_contracts import (
     readout_lifecycle_growth,
     validate_lifecycle_growth_artifact,
 )
+from .lifecycle_growth_launch import prepare_lifecycle_launch
 from .product_discovery_validation import (
     append_product_discovery_artifact,
     discovery_audience_gate,
@@ -49,7 +50,7 @@ class WorkflowArtifactOperationError(ValueError):
 Operation = Callable[[OmhPaths, Mapping[str, Any]], dict[str, Any]]
 WORKFLOW_ARTIFACT_OPERATIONS: Final[dict[str, tuple[str, ...]]] = {
     "decision-prototype": ("prepare", "validate", "observe", "receipt", "handoff", "persist"),
-    "lifecycle-growth": ("build", "prepare", "validate", "evaluate", "readout"),
+    "lifecycle-growth": ("build", "prepare", "validate", "evaluate", "readout", "audience", "promote", "graduate"),
     "product-discovery-validation": ("build", "prepare", "validate", "audience-gate", "evaluate", "handoff", "append"),
     "sales-pipeline-review": ("prepare", "validate", "evaluate", "handoff"),
 }
@@ -113,11 +114,29 @@ def _lifecycle_validate(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[st
 
 
 def _lifecycle_evaluate(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, Any]:
-    return evaluate_lifecycle_growth(_required_mapping(payload, "experiment"), _required_mapping(payload, "readout"))
+    return evaluate_lifecycle_growth(
+        _required_mapping(payload, "experiment"), _required_mapping(payload, "readout"),
+        evaluation_context=payload.get("evaluation_context"),
+        exposure_evidence=payload.get("exposure_evidence"),
+    )
 
 
 def _lifecycle_readout(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, Any]:
+    if "readout" in payload:
+        return _lifecycle_evaluate(_paths, payload)
     return readout_lifecycle_growth(payload)
+
+
+def _lifecycle_audience(_paths: OmhPaths, payload: Mapping[str, object]) -> dict[str, object]:
+    return prepare_lifecycle_launch("audience", payload)
+
+
+def _lifecycle_promote(_paths: OmhPaths, payload: Mapping[str, object]) -> dict[str, object]:
+    return prepare_lifecycle_launch("promote", payload)
+
+
+def _lifecycle_graduate(_paths: OmhPaths, payload: Mapping[str, object]) -> dict[str, object]:
+    return prepare_lifecycle_launch("graduate", payload)
 
 
 def _discovery_build(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -201,6 +220,9 @@ _DISPATCH: Final[dict[tuple[str, str], Operation]] = {
     ("lifecycle-growth", "validate"): _lifecycle_validate,
     ("lifecycle-growth", "evaluate"): _lifecycle_evaluate,
     ("lifecycle-growth", "readout"): _lifecycle_readout,
+    ("lifecycle-growth", "audience"): _lifecycle_audience,
+    ("lifecycle-growth", "promote"): _lifecycle_promote,
+    ("lifecycle-growth", "graduate"): _lifecycle_graduate,
     ("product-discovery-validation", "build"): _discovery_build,
     ("product-discovery-validation", "prepare"): _discovery_prepare,
     ("product-discovery-validation", "validate"): _discovery_validate,
