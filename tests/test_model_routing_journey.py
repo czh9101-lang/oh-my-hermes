@@ -81,7 +81,9 @@ class ModelRoutingJourneyTests(unittest.TestCase):
 
         self.assertEqual(missing["status"], "owner_default")
         self.assertTrue(missing["setup_can_continue"])
-        self.assertEqual(missing["inactive_candidates"], ["gpt-6-astra", "gpt-5.6-sol", "claude-opus-5"])
+        # ultrabrain names Astra alone (Sol left the frontier slots on
+        # 2026-09-11); the shared last resort Opus 5 -> Sol follows.
+        self.assertEqual(missing["inactive_candidates"], ["gpt-6-astra", "claude-opus-5", "gpt-5.6-sol"])
         self.assertEqual(unavailable["status"], "choice_required")
         self.assertTrue(unavailable["setup_can_continue"])
         self.assertEqual(unavailable["requested_model"], "gpt-5.6-sol")

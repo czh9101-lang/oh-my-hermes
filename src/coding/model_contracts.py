@@ -112,8 +112,113 @@ _GPT_6_ASTRA: Final[dict[str, object]] = {
     "claim_boundary": MODEL_CONTRACT_CLAIM_BOUNDARY,
 }
 
+# DeepSeek V4.1 Flash. OMH's alias is the versioned gateway spelling; the
+# first-party API names the current Flash generation `deepseek-flash` and
+# that pointer is a declared projection below, not a second contract.
+_DEEPSEEK_V41_FLASH: Final[dict[str, object]] = {
+    "schema_version": MODEL_CONTRACT_SCHEMA_VERSION,
+    "model_id": "deepseek-v4.1-flash",
+    "reasoning_mode": "thinking",
+    "service_tier": "standard",
+    "family": "deepseek",
+    "generation": "deepseek-v4.1",
+    "released": "2026-09-10",
+    "rollout": (
+        "generally available on the first-party API as `deepseek-flash`; `deepseek-v4-flash` and "
+        "`deepseek-v4-flash-vision-exp` are routed to it, and `deepseek-v4-pro` routes to it from "
+        "2026-09-14 12:00 Beijing time pending a V4.1 Pro release; a released id is not "
+        "account-level readiness evidence"
+    ),
+    "served_ids": {
+        "first_party": "deepseek-flash",
+        "openrouter": "deepseek/deepseek-v4.1-flash",
+        "huggingface": "deepseek-ai/DeepSeek-V4.1-Flash",
+    },
+    "knowledge_cutoff": "",
+    # The vendor documents the window and the max output literally (1M
+    # context, 384K max output) and publishes no separate max-input figure;
+    # the output is produced inside the window, so input plus output is not
+    # additive here the way it is in the Astra record.
+    "context_window_tokens": 1_000_000,
+    "max_input_tokens": 1_000_000,
+    "max_output_tokens": 384_000,
+    "limits_note": "1M context and 384K max output are documented literally; no separate max-input figure is published",
+    # The documented ladder is three rungs with thinking on by default at
+    # `high`. Nothing returns an error: the thinking-mode guide publishes a
+    # mapping table for every other rung (below), so there is no floor to
+    # raise to and `unsupported_efforts` stays empty — OMH keeps the
+    # requested rung in the route record and the table says what it bought.
+    "reasoning_efforts": ("low", "high", "max"),
+    "effort_floor": "low",
+    "effort_default": "high",
+    "unsupported_efforts": {},
+    "effort_mapping": {
+        "minimal": "low",
+        "medium": "high",
+        "xhigh": "high",
+        "ultra": "max",
+        "note": (
+            "documented in the thinking-mode guide; no value returns an error. Thinking is "
+            "disabled through `thinking.type=disabled` (OpenAI format) or `reasoning.effort=none` "
+            "(Anthropic format), not through the effort ladder"
+        ),
+    },
+    "tool_calling": {
+        "api": "chat_completions",
+        "note": (
+            "tool calls are served on Chat Completions, the Responses API, and the "
+            "Anthropic-compatible endpoint; on every request that carries the `tools` parameter "
+            "the `reasoning_content` of every earlier turn must be sent back — including turns "
+            "where the model made no tool call — and is concatenated into the context (HTTP 400 "
+            "otherwise); on a request without `tools` it is ignored"
+        ),
+    },
+    # Accepted without error but without effect in thinking mode; `top_p`
+    # has a documented floor of 0.95 there.
+    "unsupported_parameters": ("temperature", "presence_penalty", "frequency_penalty"),
+    "runtime_mechanisms": {
+        "reasoning_content_passback": "documented_not_observed",
+        "prefix_cache_hit_pricing": "documented_not_observed",
+        "native_image_input": "documented_not_observed",
+        "json_output": "documented_not_observed",
+    },
+    "documented_traits": (
+        "thinking is on by default at `high`; the ladder is `low`, `high`, `max`, and the guide "
+        "maps every other rung (`minimal` to `low`, `medium` and `xhigh` to `high`, `ultra` to "
+        "`max`) without an error",
+        "on every request carrying `tools` the reasoning_content of every earlier turn is sent "
+        "back, so earlier reasoning is already in the context of every later tool step",
+        "post-trained on large-scale synthesized agent tasks and evaluated by the vendor at its "
+        "maximum reasoning setting with a 1M-token context and max_tokens of at least 256K",
+        "cache-hit input is priced at a fiftieth of cache-miss input, so a changed prompt prefix "
+        "is billing-visible on every later turn",
+        "temperature, presence_penalty, and frequency_penalty have no effect in thinking mode",
+    ),
+    # DeepSeek list price (api-docs.deepseek.com/quick_start/pricing, 2026-09):
+    # peak-hour rates; every rate halves off-peak. The approximation table
+    # carries peak input/output; the cache-hit rate is its 0.02 ratio row.
+    "pricing_usd_per_mtok": {
+        "input": 0.30,
+        "cached_input": 0.006,
+        "output": 1.20,
+        "off_peak": (
+            "half of every peak rate (cache hit 0.003, cache miss 0.15, output 0.6) outside "
+            "01:00-04:00 and 06:00-10:00 UTC, Monday through Friday"
+        ),
+    },
+    "sources": (
+        "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash",
+        "https://api-docs.deepseek.com/updates/",
+        "https://api-docs.deepseek.com/quick_start/pricing",
+        "https://api-docs.deepseek.com/guides/thinking_mode",
+    ),
+    "sources_read": "2026-09-11",
+    "claim_boundary": MODEL_CONTRACT_CLAIM_BOUNDARY,
+}
+
 MODEL_CONTRACTS: Final[dict[str, Mapping[str, object]]] = {
     "gpt-6-astra": _GPT_6_ASTRA,
+    "deepseek-v4.1-flash": _DEEPSEEK_V41_FLASH,
 }
 
 # Catalog aliases whose relationship to an exact contract is explicitly
@@ -145,6 +250,28 @@ DECLARED_MODEL_CONTRACT_PROJECTIONS: Final[dict[str, Mapping[str, str]]] = {
         "reasoning_mode": "pro",
         "service_tier": "flex",
     },
+    # The first-party API's moving pointer to the current Flash generation
+    # (api-docs.deepseek.com, read 2026-09-11: DeepSeek-V4.1-Flash). The next
+    # Flash release moves it, which is exactly why it is a declared row with
+    # a read date and not a second exact contract.
+    "deepseek-flash": {
+        "contract_model_id": "deepseek-v4.1-flash",
+        "reasoning_mode": "thinking",
+        "service_tier": "standard",
+    },
+}
+
+# Declared aliases that are the SAME model at the contract's own reasoning
+# mode and service tier — a vendor's second spelling, nothing more. A shipped
+# chain may name the pointer instead of the exact id (DeepSeek serves
+# `deepseek-flash` and rejects `deepseek-v4.1-flash`), so a child observed
+# under the exact id must still label the category that names its pointer.
+# Mode and tier variants (`gpt-6-astra-pro`, `-fast`, `-flex`) are NOT
+# pointers: the forward projection is honest for them, the reverse is not.
+# Mirrored in the plugin bundle; the parity test pins both tables and that
+# every entry here is a declared row at the contract's own mode and tier.
+EXACT_CONTRACT_POINTER_ALIASES: Final[dict[str, tuple[str, ...]]] = {
+    "deepseek-v4.1-flash": ("deepseek-flash",),
 }
 
 
@@ -278,6 +405,7 @@ def dynamic_effort_guidance(model_id: str, executor_profile: str) -> dict[str, o
 __all__ = [
     "DECLARED_MODEL_CONTRACT_PROJECTIONS",
     "EFFORT_FLOOR_KIND",
+    "EXACT_CONTRACT_POINTER_ALIASES",
     "MODEL_CONTRACTS",
     "MODEL_CONTRACT_CLAIM_BOUNDARY",
     "MODEL_CONTRACT_PROJECTION_CLAIM_BOUNDARY",

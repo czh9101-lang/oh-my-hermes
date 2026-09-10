@@ -345,6 +345,25 @@ MODEL_HIGH_EFFORT_CALIBRATIONS: Final[dict[str, str]] = {
         "assumption and proceed. Size tests to the change: a reversible, low-impact edit that mirrors "
         "its implementation needs no new test, and a green check is re-run only when its inputs changed."
     ),
+    # DeepSeek V4.1 Flash, per the vendor's API guides and model card
+    # (2026-09-10): thinking on by default, reasoning_content returned on
+    # every tool-calling turn, post-trained on synthesized long-horizon agent
+    # tasks, and the family-wide exact-string edit training; the vendor's
+    # own harness adapter notes that the live API rejects an assistant turn
+    # whose answer sits only in the reasoning channel. The family block's
+    # conditional clauses (reasoning-capable or not, R1 or not) resolve
+    # here, so this block states the resolved contract; the counter for the
+    # long-horizon trait is a blocker-report rule, never a push.
+    "deepseek-v4.1-flash": (
+        "High-effort calibration: this is DeepSeek V4.1 Flash with thinking on by default, and the "
+        "runtime returns your earlier reasoning on every tool turn, so the visible reply carries the "
+        "change, the verification output, and the stop — not a restatement of reasoning the context "
+        "already holds — and a turn that ends without a tool call carries its answer in the visible "
+        "text, never only in reasoning. Edit by exact literal strings — a unique match with exact "
+        "whitespace — as this family's edit training expects. When the evidence in hand cannot satisfy "
+        "a criterion, report the blocker with the observed output rather than widening the search, "
+        "and leave a passed criterion closed."
+    ),
 }
 MODEL_COMPOSITION_CALIBRATIONS: Final[dict[str, str]] = {
     "gpt-6-astra": (
@@ -356,6 +375,16 @@ MODEL_COMPOSITION_CALIBRATIONS: Final[dict[str, str]] = {
         "follow-ups, deeper only while a criterion holds unresolved hard reasoning or contradictory "
         "evidence, and a change of effort lands on the next prepared unit rather than on a claimed "
         "mid-conversation switch."
+    ),
+    "deepseek-v4.1-flash": (
+        "Composition calibration: the composer runs on DeepSeek V4.1 Flash with thinking on by "
+        "default and its reasoning returned on every tool turn, so the visible composition is the "
+        "ordered split — exact owners, scopes, dependencies, and verification commands — not a replay "
+        "of planning already in context, and it carries no synthetic thinking instructions. Cache-hit "
+        "input costs a fiftieth of a miss on this model, so the shared preamble stays byte-identical "
+        "across sibling units and every per-unit difference goes after it. A unit routed to this model "
+        "takes low, high, or max — its documented ladder; the vendor's own table turns medium and xhigh "
+        "into high, so an undocumented rung is a rung you did not choose. Validate once and stop."
     ),
 }
 

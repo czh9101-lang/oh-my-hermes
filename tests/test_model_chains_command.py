@@ -79,7 +79,7 @@ class ModelChainsSetTests(unittest.TestCase):
             self.assertEqual(status, 0)
             self.assertIn("quick: kimi-k3-ultrafast:low, glm-5.2-ultrafast:low (override)", stdout)
             # Untouched categories keep the shipped default.
-            self.assertNotIn("architect: claude-fable-5:xhigh, gpt-5.6-sol:xhigh, kimi-k3:xhigh (override)", stdout)
+            self.assertNotIn("architect: claude-fable-5-1:xhigh, gpt-6-astra:xhigh, kimi-k3:xhigh (override)", stdout)
 
     def test_clear_returns_the_category_to_the_shipped_default(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -89,7 +89,7 @@ class ModelChainsSetTests(unittest.TestCase):
                 _base(root) + ["model-chains", "set", "deep", "--clear"], output_json=False
             )
             self.assertEqual((status, stderr), (0, ""))
-            self.assertIn("deep: gpt-5.6-terra:high, deepseek-v3.2:high (default)", stdout)
+            self.assertIn("deep: gpt-5.6-terra:high, deepseek-flash:high (default)", stdout)
             document = json.loads(_chains_path(root).read_text(encoding="utf-8"))
             self.assertNotIn("deep", document["categories"])
 
@@ -165,8 +165,11 @@ class ModelChainsInterviewTests(unittest.TestCase):
 
     def test_ultrafast_option_never_invents_an_unknown_variant(self) -> None:
         # The offer follows the -ultrafast suffix only when that token is a known
-        # model (shipped chains or price table). deepseek-v3.2-ultrafast exists in
-        # neither source, so no swap is offered; an already-suffixed member never re-swaps.
+        # model (shipped chains or price table). Since 2026-09-11 no shipped chain
+        # names an Ultrafast tier, so the offer rests on the retained price rows
+        # (`glm-5.2-ultrafast`, `kimi-k3-ultrafast`). deepseek-v3.2-ultrafast exists
+        # in neither source, so no swap is offered; an already-suffixed member never
+        # re-swaps.
         self.assertEqual(
             _ultrafast_variant((("glm-5.2", "low"), ("kimi-k3", "high"))),
             (("glm-5.2-ultrafast", "low"), ("kimi-k3-ultrafast", "high")),

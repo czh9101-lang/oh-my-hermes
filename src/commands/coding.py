@@ -1562,9 +1562,11 @@ def cmd_coding_model_contract(args: argparse.Namespace) -> int:
         print(f"- `{effort}`: {detail}")
     print(f"- tool calling: {contract['tool_calling']['api']} API — {contract['tool_calling']['note']}")
     print(f"- unsupported parameters: {', '.join(contract['unsupported_parameters'])}")
+    cutoff = str(contract.get("knowledge_cutoff", "") or "")
     print(
         f"- context {contract['context_window_tokens']:,} tokens; input {contract['max_input_tokens']:,}; "
-        f"output {contract['max_output_tokens']:,}; knowledge cutoff {contract['knowledge_cutoff']}"
+        f"output {contract['max_output_tokens']:,}"
+        + (f"; knowledge cutoff {cutoff}" if cutoff else "; knowledge cutoff not stated")
     )
     policy = payload["effort_policy"]
     if isinstance(policy, dict):

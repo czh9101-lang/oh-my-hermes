@@ -37,7 +37,13 @@ vocabulary that differs from the family's (GPT-6 Astra: `none` is HTTP 400,
 `low` is the floor), record it as an exact-model contract in
 `src/coding/model_contracts.py` and probe the unsupported rungs too — the
 route must answer `floor_raised`, never pass the rung through;
-`omh coding model-contract --model <id>` prints the record.
+`omh coding model-contract --model <id>` prints the record. When the vendor
+instead publishes a mapping for undocumented rungs and returns no error
+(DeepSeek V4.1 Flash: ladder `low`/`high`/`max`; `minimal` → `low`,
+`medium` and `xhigh` → `high`, `ultra` → `max`), leave `unsupported_efforts`
+empty, record the table in the contract's `effort_mapping`, and let the
+route pass the rung through on record — the record says what the rung
+bought, and the chains name only documented rungs.
 
 When the vendor or host exposes multiple spellings for one documented model,
 do not infer inheritance by stripping suffixes. Add only the reviewed catalog
@@ -52,7 +58,10 @@ until it receives an explicit declaration.
 
 A bare name that classifies `unknown` gets generic discipline; add it to
 `_CLAUDE_TIER_ALIASES` (Claude) or the prefix tables in
-`src/coding/model_routing.py`, with a `model_family` test.
+`src/coding/model_routing.py`, with a `model_family` test. Bare vendor names
+(`deepseek`, `minimax`, `astra`) stay `unknown` by pinned decision — only the
+Claude tier words are bare aliases — so probe the versioned ids and the
+vendor's pointer id (`deepseek-flash`), not the vendor name.
 
 ### Served, not released
 
@@ -142,10 +151,30 @@ restate universal protocol rules inside a family entry. Then:
 
 Rules that have held across every onboarding so far:
 
-- The new generation heads every slot the family already held; the older
-  generation stays as fall-through so a machine whose provider only serves
-  the old id keeps resolving to the ecosystem (GLM 5.2 behind 5.3, Fable 5
-  behind 5.1).
+- The new generation takes every slot the family already held, and the
+  superseded generation leaves the shipped chains (owner decision,
+  2026-09-11, applied in one pass to Fable 5 behind 5.1, GLM 5.2 and its
+  Ultrafast tier behind the 5.3 generation, DeepSeek V3.2 behind V4.1 Flash,
+  and GPT-5.6 Sol behind GPT-6 Astra on the two frontier slots). The public
+  table names the current generation of each line; a machine whose provider
+  still serves only the older id keeps it through `omh model-chains set`.
+  The retired alias stays recognized, priced, and provider-mapped — list it
+  in `_RECOGNITION_ONLY_ALIAS_FAMILIES` (`tests/test_provider_entitlements.py`)
+  and keep its `APPROX_PRICE_PER_MTOK` row — so that operator override still
+  resolves and still costs out. Before 2026-09-11 the rule was the opposite
+  (old generation stays as fall-through); do not reintroduce it by copying an
+  older comment.
+- A chain names the id the vendor's own API serves, not the spelling a
+  gateway or a model card uses. DeepSeek serves `deepseek-flash` and
+  rejects `deepseek-v4.1-flash` with HTTP 400, so the chain names the
+  pointer and the versioned contract sits behind it as a declared
+  projection (`DECLARED_MODEL_CONTRACT_PROJECTIONS`) and is listed in
+  `EXACT_CONTRACT_POINTER_ALIASES` (source and plugin mirror) so the plugin's
+  `mixture_category_for` projects in both directions and a child observed
+  under either spelling keeps its category label; a mode or tier variant is
+  not a pointer and only projects forward. Read the Hermes provider
+  profile for the family before choosing the alias — it is the one place
+  that shows what the wire will carry.
 - An access-restricted sibling (Mythos 5.1 = Fable 5.1 under Project
   Glasswing) stays out of every shipped chain: naming a model most accounts
   cannot reach reads as a second model in the public tables. Keep it
@@ -174,7 +203,9 @@ Files that move together (grep the old id to find every site):
 | `model-setup` skill text naming the chains verbatim | `src/skills/catalog_definitions.py` → regenerate `skills/omh-model-setup/SKILL.md` and `docs/WORKFLOWS.md` |
 | Skill body budget note | `src/maintenance/release.py` (`FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`, add the `old -> new` line) |
 | Public chain tables | `README.md`, `README.ko.md`, `README.ja.md`, `README.zh.md`, `docs/INSTALLATION.md`, `site/index.html`, `site/docs/model-routing/index.html` (`tests/test_model_recommendations.py` reads all seven) |
-| Pinned-chain and fallback-count tests | `tests/test_model_recommendations.py`, `tests/test_delegate_route_tool.py`, `tests/test_model_routing.py`, `tests/test_category_maestro.py`, `tests/test_task_scale_routing.py` |
+| Pinned-chain and fallback-count tests | `tests/test_model_recommendations.py`, `tests/test_delegate_route_tool.py`, `tests/test_model_routing.py`, `tests/test_category_maestro.py`, `tests/test_task_scale_routing.py`, `tests/test_model_chains_command.py` |
+| Retired-alias list (an alias that left every chain but stays routable) | `_RECOGNITION_ONLY_ALIAS_FAMILIES` in `tests/test_provider_entitlements.py` |
+| Contract audit doc paths | `_MODEL_DOCS` in `src/coding/model_contract_coverage.py` |
 | CLI help examples | `src/commands/coding.py` |
 
 ## 5. Price from documented list only

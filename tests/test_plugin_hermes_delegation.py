@@ -187,16 +187,16 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
 
     def test_a_routed_ultrabrain_child_is_labeled_ultrabrain(self):
         self.assertEqual(
-            mixture_category_for("gpt-5.6-sol", "xhigh", parent_model="kimi-k3"),
+            mixture_category_for("gpt-6-astra", "xhigh", parent_model="kimi-k3"),
             "ultrabrain",
         )
 
     def test_an_effort_mismatch_with_the_chain_entry_yields_no_category(self):
-        # gpt-5.6-sol appears only as the ultrabrain head, which declares
-        # xhigh; a medium run on a different parent matches nothing and must
-        # not be dressed up as a routed ultrabrain dispatch.
+        # gpt-6-astra appears only at xhigh (the ultrabrain head and the
+        # architect GPT slot); a medium run on a different parent matches
+        # nothing and must not be dressed up as a routed ultrabrain dispatch.
         self.assertEqual(
-            mixture_category_for("gpt-5.6-sol", "medium", parent_model="kimi-k3"), ""
+            mixture_category_for("gpt-6-astra", "medium", parent_model="kimi-k3"), ""
         )
 
     def test_head_match_beats_membership_match(self):
@@ -208,12 +208,17 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
         )
 
     def test_earliest_chain_position_beats_category_order(self):
-        # glm-5.2-ultrafast:low sits second in `quick` but only third in
-        # `unspecified-low` (which precedes quick in canonical order); the
-        # shallower fall-through slot is the likelier route, so the quick
-        # label survives glm-5.3-flash taking the quick head.
+        # A model that sits third in an earlier category but second in a
+        # later one is labelled by the shallower fall-through slot: that is
+        # the likelier route. The shipped chains no longer carry such a pair
+        # (the 5.2 Ultrafast entry that did left on 2026-09-11), so the rule
+        # is pinned on explicit chains.
+        chains = {
+            "unspecified-low": (("glm-5.3", "low"), ("deepseek-v4.1-flash", "low"), ("kimi-k3", "low")),
+            "quick": (("glm-5.3-flash", "low"), ("kimi-k3", "low")),
+        }
         self.assertEqual(
-            mixture_category_for("glm-5.2-ultrafast", "low", parent_model="kimi-k3"),
+            mixture_category_for("kimi-k3", "low", parent_model="claude-opus-5", chains=chains),
             "quick",
         )
 
@@ -240,9 +245,9 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
     def test_an_effort_that_matches_no_chain_entry_is_not_attributed(self):
         # Every category now declares its effort (owner decision), so a child
         # whose effort matches no entry — e.g. an inherited medium on the
-        # quick chain's model — shows the bare model, not a routed category.
+        # quick chain's head — shows the bare model, not a routed category.
         self.assertEqual(
-            mixture_category_for("glm-5.2-ultrafast", "medium", parent_model="kimi-k3"),
+            mixture_category_for("glm-5.3-flash", "medium", parent_model="kimi-k3"),
             "",
         )
 
@@ -259,9 +264,14 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
             mixture_category_for("kimi-k3-ultrafast", "low", parent_model="gpt-5.6-sol"),
             "quick",
         )
-        # An explicitly-named variant still matches itself first.
+        # An explicitly-named variant still matches itself first (no shipped
+        # chain names a variant since 2026-09-11, so the rule is pinned on an
+        # explicit chain).
         self.assertEqual(
-            mixture_category_for("glm-5.2-ultrafast", "low", parent_model="kimi-k3"),
+            mixture_category_for(
+                "kimi-k3-ultrafast", "low", parent_model="gpt-5.6-sol",
+                chains={"quick": (("kimi-k3-ultrafast", "low"),)},
+            ),
             "quick",
         )
         # The effort contract still applies to the base-model retry.
@@ -272,7 +282,7 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
 
     def test_a_routed_architect_child_is_labeled_architect(self):
         self.assertEqual(
-            mixture_category_for("claude-fable-5", "xhigh", parent_model="kimi-k3"),
+            mixture_category_for("claude-fable-5-1", "xhigh", parent_model="kimi-k3"),
             "architect",
         )
 
@@ -288,19 +298,69 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
             for model_id, projection in DECLARED_MODEL_CONTRACT_PROJECTIONS.items()
         }
         self.assertEqual(DECLARED_MODEL_ALIAS_PROJECTIONS, expected)
-        for model_id in ("gpt-6-astra", *expected):
-            requested = f"openai/{model_id}"
+        # Per exact contract: (vendor prefix, effort, category, a serving
+        # family, a non-serving family). Every declared alias inherits its
+        # contract's category and provider eligibility.
+        # The DeepSeek chains name the declared pointer (`deepseek-flash`),
+        # so the exact id labels its category through the reverse
+        # projection and the pointer through a direct chain match.
+        contracts = {
+            "gpt-6-astra": ("openai", "xhigh", "ultrabrain", "openai", "anthropic"),
+            "deepseek-v4.1-flash": ("deepseek", "high", "deep", "deepseek", "anthropic"),
+        }
+        for model_id in (*contracts, *expected):
+            contract_id = expected.get(model_id, (model_id,))[0]
+            vendor, effort, category, serving, non_serving = contracts[contract_id]
+            requested = f"{vendor}/{model_id}"
             with self.subTest(model_id=model_id):
                 self.assertEqual(
-                    mixture_category_for(requested, "xhigh", parent_model="kimi-k3"),
-                    "ultrabrain",
+                    mixture_category_for(requested, effort, parent_model="kimi-k3"),
+                    category,
                 )
-                self.assertIs(provider_serves_alias(requested, "openai"), True)
-                self.assertIs(provider_serves_alias(requested, "anthropic"), False)
+                self.assertIs(provider_serves_alias(requested, serving), True)
+                self.assertIs(provider_serves_alias(requested, non_serving), False)
 
         unknown = "openai/gpt-6-astra-pro-turbo"
         self.assertEqual(mixture_category_for(unknown, "xhigh", parent_model="kimi-k3"), "")
         self.assertIsNone(provider_serves_alias(unknown, "openai"))
+        # Both DeepSeek spellings label both DeepSeek slots at their efforts;
+        # the vendor-routed legacy id is not a declared alias and stays bare.
+        for spelling in ("deepseek-flash", "deepseek/deepseek-v4.1-flash"):
+            self.assertEqual(mixture_category_for(spelling, "low", parent_model="kimi-k3"), "unspecified-low")
+        self.assertEqual(mixture_category_for("deepseek/deepseek-v4-flash", "high", parent_model="kimi-k3"), "")
+
+    def test_reverse_projection_is_limited_to_pointer_aliases(self):
+        from omh.coding.model_contracts import EXACT_CONTRACT_POINTER_ALIASES as source_pointers
+
+        pointers = hermes_delegation_module.EXACT_CONTRACT_POINTER_ALIASES
+        exact = hermes_delegation_module.EXACT_MODEL_CONTRACT_ALIASES
+        # Parity, and every pointer is a declared row at the contract's own
+        # mode and tier — a second spelling, not a mode or price variant.
+        self.assertEqual(pointers, source_pointers)
+        for contract_id, aliases in pointers.items():
+            self.assertIn(contract_id, exact)
+            for alias in aliases:
+                base, mode, tier = DECLARED_MODEL_ALIAS_PROJECTIONS[alias]
+                self.assertEqual(base, contract_id)
+                contract = MODEL_CONTRACTS[contract_id]
+                self.assertEqual((mode, tier), (contract["reasoning_mode"], contract["service_tier"]))
+        # A chain (shipped or an operator override) that names a mode or tier
+        # variant never labels the base id: `-pro-flex` is a different
+        # reasoning mode at half price, `-fast` is the same mode at double.
+        for alias, effort in (("gpt-6-astra-pro-flex", "xhigh"), ("gpt-6-astra-fast", "low"), ("gpt-6-astra-pro", "xhigh")):
+            chains = {"architect": ((alias, effort),)}
+            with self.subTest(alias=alias):
+                self.assertEqual(
+                    mixture_category_for("openai/gpt-6-astra", effort, parent_model="kimi-k3", chains=chains), ""
+                )
+        # The forward direction stays: the variant itself matches its entry.
+        self.assertEqual(
+            mixture_category_for(
+                "openai/gpt-6-astra-fast", "low", parent_model="kimi-k3",
+                chains={"quick": (("gpt-6-astra-fast", "low"),)},
+            ),
+            "quick",
+        )
 
 
 def _write_overrides(omh_home: Path, document: object) -> Path:
@@ -460,9 +520,9 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
                 {
                     "schema_version": "model_provider_routes/v1",
                     "models": {
-                        "glm-5.2-ultrafast": {
+                        "kimi-k3": {
                             "provider": "gateway",
-                            "model": "z-ai/glm-5.2-ultrafast",
+                            "model": "moonshotai/kimi-k3",
                         }
                     },
                 }
@@ -474,7 +534,7 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
             [
                 {
                     "id": "20260818_100100_provider",
-                    "model": "z-ai/glm-5.2-ultrafast",
+                    "model": "moonshotai/kimi-k3",
                     "effort": "low",
                     "started_at": NOW - 60,
                     "usage": {"last_seen": NOW - 5, "output_tokens": 10},
@@ -488,10 +548,10 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
             omh_home=self.home,
         )["rows"][0]
 
-        self.assertEqual(row["alias"], "glm-5.2-ultrafast")
+        self.assertEqual(row["alias"], "kimi-k3")
         self.assertEqual(row["provider"], "gateway")
         self.assertEqual(row["provider_source"], "model_provider_routes")
-        self.assertEqual(row["model"], "z-ai/glm-5.2-ultrafast")
+        self.assertEqual(row["model"], "moonshotai/kimi-k3")
         self.assertEqual(row["category"], "quick")
 
     def test_a_live_child_projects_a_running_row_with_model_effort_and_metrics(self):
@@ -1002,9 +1062,9 @@ class HudMergeTest(unittest.TestCase):
                     {
                         "schema_version": "model_provider_routes/v1",
                         "models": {
-                            "glm-5.2-ultrafast": {
+                            "kimi-k3": {
                                 "provider": "gateway",
-                                "model": "z-ai/glm-5.2-ultrafast",
+                                "model": "moonshotai/kimi-k3",
                             }
                         },
                     }
@@ -1016,7 +1076,7 @@ class HudMergeTest(unittest.TestCase):
                 [
                     {
                         "id": "20260818_100100_provider",
-                        "model": "z-ai/glm-5.2-ultrafast",
+                        "model": "moonshotai/kimi-k3",
                         "effort": "low",
                         "started_at": time.time() - 30,
                         "usage": {
@@ -1030,7 +1090,7 @@ class HudMergeTest(unittest.TestCase):
 
             row = read_omh_hud(omh_home, hermes_home)["subagents"]["rows"][0]
 
-            self.assertEqual(row["alias"], "glm-5.2-ultrafast")
+            self.assertEqual(row["alias"], "kimi-k3")
             self.assertEqual(row["provider"], "gateway")
             self.assertEqual(row["category"], "quick")
 
@@ -1133,11 +1193,11 @@ def _record(**overrides) -> dict:
     record = {
         "origin": "fallback",
         "category": "visual-engineering",
-        "alias": "glm-5.2-ultrafast",
-        "wire_model": "z-ai/glm-5.2-ultrafast",
+        "alias": "kimi-k3",
+        "wire_model": "moonshotai/kimi-k3",
         "provider": "gateway",
         "reasoning_effort": "low",
-        "from_alias": "claude-fable-5",
+        "from_alias": "claude-fable-5-1",
         "written_at": NOW - 120,
     }
     record.update(overrides)
@@ -1200,9 +1260,9 @@ class RouteProvenanceProjectionTest(unittest.TestCase):
                 {
                     "schema_version": "model_provider_routes/v1",
                     "models": {
-                        "glm-5.2-ultrafast": {
+                        "kimi-k3": {
                             "provider": "gateway",
-                            "model": "z-ai/glm-5.2-ultrafast",
+                            "model": "moonshotai/kimi-k3",
                         }
                     },
                 }
@@ -1227,7 +1287,7 @@ class RouteProvenanceProjectionTest(unittest.TestCase):
 
     def test_a_fallback_route_labels_its_child_with_category_and_origin(self):
         _write_provenance(self.home, [_record()])
-        row = self._row("z-ai/glm-5.2-ultrafast")
+        row = self._row("moonshotai/kimi-k3")
         self.assertEqual(row["category"], "visual-engineering")
         self.assertEqual(row["route_origin"], "fallback")
         self.assertEqual(row["category_source"], "route_provenance")
@@ -1306,7 +1366,7 @@ class RouteProvenanceProjectionTest(unittest.TestCase):
                 {"origin": "cleared", "written_at": NOW - 200},
             ],
         )
-        row = self._row("z-ai/glm-5.2-ultrafast")
+        row = self._row("moonshotai/kimi-k3")
         self.assertNotIn("route_origin", row)
         self.assertNotIn("category_source", row)
         self.assertEqual(row["category"], "quick")
@@ -1340,7 +1400,7 @@ class RouteProvenanceProjectionTest(unittest.TestCase):
                 ),
             ],
         )
-        row = self._row("z-ai/glm-5.2-ultrafast")
+        row = self._row("moonshotai/kimi-k3")
         self.assertNotIn("route_origin", row)
         self.assertEqual(row["category"], "quick")
 
@@ -1360,6 +1420,6 @@ class RouteProvenanceProjectionTest(unittest.TestCase):
             with self.subTest(records=records):
                 _write_provenance(self.home, records)
                 (self.home / "state.db").unlink(missing_ok=True)
-                row = self._row("z-ai/glm-5.2-ultrafast")
+                row = self._row("moonshotai/kimi-k3")
                 self.assertNotIn("route_origin", row)
                 self.assertEqual(row["category"], "quick")

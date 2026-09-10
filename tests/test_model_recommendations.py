@@ -184,34 +184,35 @@ class RecommendationCatalogTests(unittest.TestCase):
         def aliases(section: str, name: str) -> list[str]:
             return [entry["model_alias"] for entry in catalog[section][name]]
 
+        # Superseded generations left every shipped chain (owner decision,
+        # 2026-09-11): Fable 5, GLM 5.2 and its Ultrafast tier, DeepSeek
+        # V3.2, and Sol behind Astra. A chain names the current generation of
+        # each line; an older id lives on only in a machine-level override.
         self.assertEqual(aliases("role_suggestions", "main"), [
-            "kimi-k3", "claude-fable-5-1", "claude-opus-5", "claude-fable-5",
-            "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra",
+            "kimi-k3", "claude-fable-5-1", "claude-opus-5", "gpt-6-astra", "gpt-5.6-terra",
         ])
         # A chain that would otherwise sit in one provider ecosystem ends on
         # a comparable-tier candidate from another (owner rule, 2026-08-19)
         # so one rejected ecosystem cannot exhaust the chain.
         self.assertEqual(
             aliases("categories", "unspecified-low"),
-            ["glm-5.3", "glm-5.2", "glm-5.2-ultrafast", "deepseek-v3.2", "claude-opus-5"],
+            ["glm-5.3", "deepseek-flash", "claude-opus-5"],
         )
         self.assertEqual(aliases("categories", "unspecified-high"), ["kimi-k3", "claude-opus-5"])
-        # GPT-6 Astra heads the GPT frontier slots (2026-09-03) with Sol as
-        # fall-through, the same generation rule as GLM 5.2 behind 5.3.
-        self.assertEqual(aliases("categories", "ultrabrain"), ["gpt-6-astra", "gpt-5.6-sol"])
+        # GPT-6 Astra heads the GPT frontier slots (2026-09-03).
+        self.assertEqual(aliases("categories", "ultrabrain"), ["gpt-6-astra"])
         # DeepSeek closes deep's single-ecosystem exposure with a
-        # reasoning-capable budget fallback (owner request, 2026-08-21).
-        self.assertEqual(aliases("categories", "deep"), ["gpt-5.6-terra", "deepseek-v3.2"])
+        # reasoning-capable budget fallback (owner request, 2026-08-21);
+        # V4.1 Flash took the slot from V3.2 on 2026-09-11; the alias is the
+        # vendor-served pointer id, and the versioned contract sits behind it.
+        self.assertEqual(aliases("categories", "deep"), ["gpt-5.6-terra", "deepseek-flash"])
         self.assertEqual(
             aliases("categories", "architect"),
-            ["claude-fable-5-1", "claude-fable-5", "gpt-6-astra", "gpt-5.6-sol", "kimi-k3"],
+            ["claude-fable-5-1", "gpt-6-astra", "kimi-k3"],
         )
         self.assertEqual(
             aliases("categories", "quick"),
-            [
-                "glm-5.3-flash", "glm-5.2-ultrafast", "kimi-k3", "gpt-5.6-luna",
-                "claude-fable-5-1", "claude-fable-5",
-            ],
+            ["glm-5.3-flash", "kimi-k3", "gpt-5.6-luna", "claude-fable-5-1"],
         )
         self.assertEqual(
             aliases("categories", "writing"),
@@ -219,33 +220,18 @@ class RecommendationCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             aliases("categories", "visual-engineering"),
-            ["claude-fable-5-1", "claude-fable-5", "kimi-k3"],
+            ["claude-fable-5-1", "kimi-k3"],
         )
         self.assertEqual(
             aliases("categories", "artistry"),
-            ["gemini-3.1-pro", "claude-fable-5-1", "claude-fable-5", "kimi-k3"],
-        )
-        self.assertEqual(
-            aliases("categories", "visual-engineering"),
-            ["claude-fable-5-1", "claude-fable-5", "kimi-k3"],
-        )
-        self.assertEqual(
-            aliases("categories", "quick"),
-            [
-                "glm-5.3-flash", "glm-5.2-ultrafast", "kimi-k3", "gpt-5.6-luna",
-                "claude-fable-5-1", "claude-fable-5",
-            ],
+            ["gemini-3.1-pro", "claude-fable-5-1", "kimi-k3"],
         )
         self.assertEqual(aliases("categories", "writing"), ["kimi-k3", "qwen3-coder", "gemini-3.1-pro"])
-        self.assertEqual(
-            aliases("categories", "artistry"),
-            ["gemini-3.1-pro", "claude-fable-5-1", "claude-fable-5", "kimi-k3"],
-        )
         self.assertEqual(aliases("domain_affinities", "x_platform_data"), [
             "grok-code-fast", "kimi-k3", "gemini-3.1-pro",
         ])
         main = catalog["role_suggestions"]["main"]
-        self.assertEqual([entry["reasoning_effort"] for entry in main[-3:]], ["xhigh", "medium", "high"])
+        self.assertEqual([entry["reasoning_effort"] for entry in main[-2:]], ["xhigh", "high"])
         self.assertEqual(catalog["categories"]["ultrabrain"][0]["reasoning_effort"], "xhigh")
         self.assertEqual(catalog["categories"]["deep"][0]["reasoning_effort"], "high")
         for section in ("categories", "role_suggestions", "domain_affinities"):
@@ -554,15 +540,7 @@ class LastResortFallbackTests(unittest.TestCase):
         self.assertEqual(route["available_chain"], ["claude-opus-5"])
         self.assertEqual(
             route["inactive_candidates"],
-            [
-                "glm-5.3-flash",
-                "glm-5.2-ultrafast",
-                "kimi-k3",
-                "gpt-5.6-luna",
-                "claude-fable-5-1",
-                "claude-fable-5",
-                "gpt-5.6-sol",
-            ],
+            ["glm-5.3-flash", "kimi-k3", "gpt-5.6-luna", "claude-fable-5-1", "gpt-5.6-sol"],
         )
         self.assertEqual(route["projection"]["kind"], "hermes_native_binding")
         self.assertEqual(route["projection"]["apply_state"], "approval_required")
@@ -572,12 +550,14 @@ class LastResortFallbackTests(unittest.TestCase):
             owner="hermes",
             category="quick",
             active_models=(
-                _active("glm-5.2-ultrafast", provider="zai", family="glm"),
+                # Position 2 of `quick`, not the head: a non-head chain
+                # candidate still outranks the shared last resort.
+                _active("kimi-k3", provider="apitopia", family="kimi"),
                 *self._OPUS_ONLY,
             ),
         )
         self.assertEqual(route["source"], "recommendation_chain")
-        self.assertEqual(route["selected"]["model_alias"], "glm-5.2-ultrafast")
+        self.assertEqual(route["selected"]["model_alias"], "kimi-k3")
 
     def test_last_resort_also_serves_role_slot_and_domain_selectors(self) -> None:
         route = resolve_model_recommendation(
@@ -607,11 +587,9 @@ class LastResortFallbackTests(unittest.TestCase):
             route["inactive_candidates"],
             [
                 "glm-5.3-flash",
-                "glm-5.2-ultrafast",
                 "kimi-k3",
                 "gpt-5.6-luna",
                 "claude-fable-5-1",
-                "claude-fable-5",
                 "claude-opus-5",
                 "gpt-5.6-sol",
             ],

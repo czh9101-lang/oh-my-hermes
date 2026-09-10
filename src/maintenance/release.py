@@ -784,7 +784,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # result corrupts task evidence before any reference is opened; the operation
 # table and QA boundaries live in `docs/AGENT-BOARD.md`, outside this budget;
 # warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 925045
+# 925045 -> 925059: model-setup's chain line moved to the 2026-09-11
+# chains (DeepSeek Flash (V4.1) in, the superseded generations out) and
+# gained the one-sentence rule that a chain names the current generation
+# of each line (net +14 chars); warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 925059
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

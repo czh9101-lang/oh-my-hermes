@@ -43,51 +43,51 @@ from typing import Any
 # touching code by writing the mixture_chain_overrides/v1 document at
 # ~/.omh/routing/model-chains.json (see effective_mixture_category_chains).
 HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
-    # GPT-6 Astra heads the GPT frontier slots (2026-09-03); Sol stays as
-    # fall-through so a machine the staged rollout has not reached keeps
-    # resolving to the GPT ecosystem.
-    "ultrabrain": (("gpt-6-astra", "xhigh"), ("gpt-5.6-sol", "xhigh")),
+    # GPT-6 Astra heads the GPT frontier slots (2026-09-03). Superseded
+    # generations left every shipped chain on 2026-09-11 (owner decision):
+    # Sol behind Astra, Fable 5 behind Fable 5.1, GLM 5.2 and its Ultrafast
+    # tier behind the 5.3 generation, DeepSeek V3.2 behind V4.1 Flash. A
+    # machine whose provider still serves only the older id keeps it through
+    # ~/.omh/routing/model-chains.json, not through the public table.
+    "ultrabrain": (("gpt-6-astra", "xhigh"),),
     # DeepSeek closes deep's single-ecosystem exposure (the owner rule below
     # applied to a chain that sat entirely on GPT) with a reasoning-capable
-    # budget candidate from a fourth provider ecosystem.
-    "deep": (("gpt-5.6-terra", "high"), ("deepseek-v3.2", "high")),
+    # budget candidate from a fourth provider ecosystem. V4.1 Flash's
+    # documented ladder is low/high/max (high default), so `high` here is a
+    # documented rung, not a nearest-match guess. The alias is the vendor's
+    # served pointer id (`deepseek-flash`); the first-party API rejects the
+    # versioned spelling, and the versioned contract sits behind the pointer
+    # as a declared projection.
+    "deep": (("gpt-5.6-terra", "high"), ("deepseek-flash", "high")),
     # Architecture/system-design lanes: full-depth effort across three
     # provider ecosystems. Fable and Kimi appear in other chains only at
     # low/high, so at xhigh `mixture_category_for` labels them architect;
-    # Sol at xhigh stays labeled ultrabrain (its canonical head), which is
+    # Astra at xhigh stays labeled ultrabrain (its canonical head), which is
     # the honest projection when the chain falls through to it.
-    # Claude vendor order (owner decision, 2026-09-06): Fable 5.1 -> Fable 5
-    # fall-through. Claude Mythos 5.1 is Fable 5.1 under Project Glasswing
-    # access, so no shipped chain names it; it stays recognized, priced, and
-    # routable for a user who asks for it by name.
+    # Claude vendor order (owner decision, 2026-09-06): Fable 5.1 -> Opus 5.
+    # Claude Mythos 5.1 is Fable 5.1 under Project Glasswing access, so no
+    # shipped chain names it; it stays recognized, priced, and routable for a
+    # user who asks for it by name.
     "architect": (
         ("claude-fable-5-1", "xhigh"),
-        ("claude-fable-5", "xhigh"),
         ("gpt-6-astra", "xhigh"),
-        ("gpt-5.6-sol", "xhigh"),
         ("kimi-k3", "xhigh"),
     ),
     "unspecified-high": (("kimi-k3", "medium"), ("claude-opus-5", "medium")),
     # A chain that would otherwise sit in one provider ecosystem ends with a
     # comparable-tier candidate from another (owner rule, 2026-08-19), so one
     # rejected ecosystem cannot exhaust the whole chain.
-    # GLM 5.3 leads (owner decision, 2026-08-31): 5.3 heads the low-cost
-    # chains and the 5.2 entries stay as fall-through so machines that only
-    # serve 5.2 keep resolving to GLM instead of skipping the ecosystem.
+    # GLM 5.3 leads (owner decision, 2026-08-31).
     "unspecified-low": (
         ("glm-5.3", "low"),
-        ("glm-5.2", "low"),
-        ("glm-5.2-ultrafast", "low"),
-        ("deepseek-v3.2", "low"),
+        ("deepseek-flash", "low"),
         ("claude-opus-5", "low"),
     ),
     "quick": (
         ("glm-5.3-flash", "low"),
-        ("glm-5.2-ultrafast", "low"),
         ("kimi-k3", "low"),
         ("gpt-5.6-luna", "low"),
         ("claude-fable-5-1", "low"),
-        ("claude-fable-5", "low"),
     ),
     "writing": (
         ("kimi-k3", "medium"),
@@ -96,13 +96,11 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "visual-engineering": (
         ("claude-fable-5-1", "high"),
-        ("claude-fable-5", "high"),
         ("kimi-k3", "high"),
     ),
     "artistry": (
         ("gemini-3.1-pro", "high"),
         ("claude-fable-5-1", "high"),
-        ("claude-fable-5", "high"),
         ("kimi-k3", "high"),
     ),
 }
@@ -274,7 +272,6 @@ SUBSCRIPTION_CLI_PROFILES: tuple[str, ...] = ("claude-code",)
 HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
     "kimi-k3": ("apitopia", "kimi-coding", "openrouter", "opencode"),
     "claude-opus-5": ("ccapi", "anthropic", "openrouter"),
-    "claude-fable-5": ("ccapi", "anthropic", "openrouter"),
     "claude-fable-5-1": ("ccapi", "anthropic", "openrouter"),
     # Recognition-only: no shipped chain names Claude Mythos 5.1, but a user
     # who asks for it still deserves "which of my providers serves this"
@@ -284,6 +281,14 @@ HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
     "gpt-5.6-sol": ("openai-codex", "openai"),
     "gpt-5.6-terra": ("openai-codex", "openai"),
     "gpt-5.6-luna": ("openai-codex", "openai"),
+    "deepseek-flash": ("deepseek", "openrouter", "opencode"),
+    # Recognition-only: the versioned spelling of the Flash pointer above
+    # (the gateway id `deepseek/deepseek-v4.1-flash` arrives this way).
+    "deepseek-v4.1-flash": ("deepseek", "openrouter", "opencode"),
+    # Recognition-only, retired generations (left the shipped chains on
+    # 2026-09-11): a machine-level chain override may still name them, and
+    # that operator deserves "which of my providers serves this" answered.
+    "claude-fable-5": ("ccapi", "anthropic", "openrouter"),
     "deepseek-v3.2": ("deepseek", "openrouter", "opencode"),
     "glm-5.2": ("zai", "openrouter", "opencode"),
     "glm-5.2-ultrafast": ("zai", "openrouter", "opencode"),
@@ -297,7 +302,7 @@ HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
 # Standalone mirror of coding.model_contracts' exact keys. Keep this separate
 # from declared aliases so a newly documented child contract stops inheriting
 # stale provider/category metadata until its own rows are added here.
-EXACT_MODEL_CONTRACT_ALIASES: frozenset[str] = frozenset({"gpt-6-astra"})
+EXACT_MODEL_CONTRACT_ALIASES: frozenset[str] = frozenset({"gpt-6-astra", "deepseek-v4.1-flash"})
 
 # Standalone mirror of coding.model_contracts' bounded declared projections.
 # This plugin is copied into Hermes and cannot import the source package; the
@@ -309,6 +314,19 @@ DECLARED_MODEL_ALIAS_PROJECTIONS: dict[str, tuple[str, str, str]] = {
     "gpt-6-astra-pro": ("gpt-6-astra", "pro", "standard"),
     "gpt-6-astra-pro-fast": ("gpt-6-astra", "pro", "fast"),
     "gpt-6-astra-pro-flex": ("gpt-6-astra", "pro", "flex"),
+    # DeepSeek's first-party API names the current Flash generation
+    # `deepseek-flash` (api-docs.deepseek.com, 2026-09-10); today that is
+    # DeepSeek-V4.1-Flash. The pointer moves with the next Flash release, so
+    # it is a declared projection with a read date, not an exact contract.
+    "deepseek-flash": ("deepseek-v4.1-flash", "thinking", "standard"),
+}
+
+# Standalone mirror of coding.model_contracts.EXACT_CONTRACT_POINTER_ALIASES:
+# the declared aliases that are the same model at the contract's own mode
+# and tier (a vendor's second spelling). Only these project in reverse — an
+# exact id never inherits a `-pro` / `-fast` / `-flex` chain entry's label.
+EXACT_CONTRACT_POINTER_ALIASES: dict[str, tuple[str, ...]] = {
+    "deepseek-v4.1-flash": ("deepseek-flash",),
 }
 
 
@@ -880,7 +898,15 @@ APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     # output side dominates real spend; still an approximation, not billing.
     "glm-5.3": (1.4, 4.4),
     "glm-5.3-flash": (0.15, 0.5),
-    # DeepSeek list price (api-docs.deepseek.com pricing, 2026-08):
+    # DeepSeek list price (api-docs.deepseek.com/quick_start/pricing, 2026-09):
+    # peak-hour cache-miss input 0.30 / output 1.20; cache-hit input 0.006
+    # (the 0.02 ratio below); every rate halves off-peak (outside 01:00-04:00
+    # and 06:00-10:00 UTC, Monday-Friday). Peak is the honest approximation
+    # because a fanout wave has no off-peak guarantee.
+    "deepseek-v4.1-flash": (0.30, 1.20),
+    # DeepSeek list price (api-docs.deepseek.com pricing, 2026-08); the id
+    # left the shipped chains on 2026-09-11 but a machine-level override may
+    # still route it, so the row stays.
     "deepseek-v3.2": (0.28, 0.42),
     # Zhipu AI speed-tier ballpark (docs.z.ai pricing, 2026-08):
     "glm-5.2-ultrafast": (0.3, 1.2),
@@ -908,6 +934,9 @@ APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
 APPROX_CACHE_READ_RATIO: dict[str, float] = {
     "claude-fable-5-1": 0.025,
     "claude-mythos-5-1": 0.025,
+    # DeepSeek V4.1 Flash cache hit 0.006 vs cache miss 0.30 per MTok input
+    # (api-docs.deepseek.com/quick_start/pricing, 2026-09).
+    "deepseek-v4.1-flash": 0.02,
 }
 _DEFAULT_CACHE_READ_RATIO = 0.1
 
@@ -1144,6 +1173,17 @@ def mixture_category_for(
     projected_model, _service_tier = _projected_model_alias(observed_model)
     if projected_model != observed_model:
         candidates.append(projected_model)
+    # The reverse direction: a chain may name the vendor's served pointer
+    # (`deepseek-flash`) while the child ran under the exact contract id
+    # (`deepseek/deepseek-v4.1-flash` on a gateway). Only a pointer — the
+    # same model at the same mode and tier — projects this way; a `-pro` /
+    # `-fast` / `-flex` entry is a different mode or price and never labels
+    # the base id.
+    candidates.extend(
+        alias
+        for alias in EXACT_CONTRACT_POINTER_ALIASES.get(observed_model, ())
+        if alias not in candidates
+    )
     if observed_model not in EXACT_MODEL_CONTRACT_ALIASES:
         for speed_suffix in ("-ultrafast", "-highspeed", "-fast"):
             if observed_model.endswith(speed_suffix):
