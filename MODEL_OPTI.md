@@ -624,9 +624,17 @@ pairing so a benchmark claim can never mix in other prompt changes.
   shell tool, a one-line persona ("You are a helpful software engineer
   assistant."), no runtime context, no compaction, effort `max`,
   `max_tokens` 256,000 — which scored above the Standard and PTC presets on
-  DeepSWE (72.6 / 70.5 / 67.6) and Terminal-Bench 2.1 (90.6 / 85.8 / 85.8):
-  the model does its best work under little scaffolding, which is one more
-  reason the override below stays three sentences. Community harness notes
+  DeepSWE (72.6 / 70.5 / 67.6) and Terminal-Bench 2.1 (90.6 / 85.8 / 85.8).
+  The card's scaffold table says the same thing from the other side: across
+  eight harnesses (Claude Code, Codex, OpenCode, Pi, mini-SWE-agent, and the
+  three DSH presets) DeepSWE stays within 65.5–74.2 and Terminal-Bench 2.1
+  within 84.1–90.6 — the model was trained to depend little on the harness,
+  so scaffolding is not where its pass rate lives. Both facts are why the
+  override below stays three sentences and why OMH's claims for this model
+  are cost claims, not pass-rate claims. The card publishes no per-effort
+  score or token table for the API rungs; a circulating "effort 25 / 50 /
+  100" curve is unsourced until the vendor prints it, and #1463's `low`
+  arm is how OMH measures it instead. Community harness notes
   (OpenRouter's listing) describe it as strongest on long-horizon tasks that
   run to completion across many steps — the same "keeps working" trait the
   Astra measurement found expensive on tasks a model will not pass.
@@ -696,7 +704,11 @@ pairing so a benchmark claim can never mix in other prompt changes.
   prior reasoning, mostly as cache hits. On the installed v0.21.1 a typed
   `deepseek-flash` is folded onto `deepseek-v4-flash`, which the vendor
   routes to V4.1 Flash; once the installed Hermes Agent moves to a
-  post-2026-09-10 build, `deepseek-flash` is canonical. Forced `tool_choice` with thinking on
+  post-2026-09-10 build, `deepseek-flash` is canonical. Hermes sends no
+  `max_tokens` for DeepSeek unless the operator configures one, so the
+  API's own 384K ceiling applies and the small-`max_tokens` trap (the
+  reasoning trace spends the budget and the visible reply comes back
+  empty) does not arise on the default route. Forced `tool_choice` with thinking on
   returns 400 on the first-party endpoint (community-observed); OMH never
   writes that shape.
 - **Pricing:** the approximation table carries the peak-hour list rate,
