@@ -115,17 +115,48 @@ Use the digest diff and missing rows as inputs to model optimization,
 onboarding, doctor triage, or a release checklist. They are evidence-bounded
 work items, not automatic route changes or provider-readiness claims.
 
-## 2. Research, official first
+## 2. Research, official first — four lanes, in parallel
 
 For Anthropic models the bundled `claude-api` skill's migration guide is the
 official source (model ids, pricing, effort semantics, prompt-tunable
 behavioral shifts). For other families: the vendor's release notes, thinking
 and tool-calling contract, context and output limits, list pricing, speed
-tiers. Then community harness handling (OpenCode, Codex CLI, Aider, Hermes
-upstream), labeled separately. Write findings under
-`.omc/research/<family>-<generation>/` with every claim labeled official,
-community, or observed; a community claim never overrides an official
-contract.
+tiers. Run the lanes below as separate read-only research agents at the same
+time — each writes one dossier under `.omc/research/<family>-<generation>/`
+with every claim labeled official, community, or observed; a community claim
+never overrides an official contract.
+
+1. **Official** — the vendor's docs, change log, pricing page, and model
+   card. Quote the effort table verbatim when one exists (DeepSeek publishes
+   `minimal → low`, `medium → high`, `xhigh → high`, `ultra → max`; a
+   paraphrase like "nearest level" is not the contract).
+2. **Hermes runtime (observed)** — read the installed Hermes Agent AND
+   `origin/main` of the upstream checkout for the family:
+   `plugins/model-providers/<vendor>/__init__.py` (what the wire carries per
+   effort, whether thinking is sent explicitly), `hermes_cli/model_normalize.py`
+   (which typed ids are folded or passed through), `agent/reasoning_effort.py`
+   (the per-family ladder and overrides), `agent/message_sanitization.py` /
+   `chat_completion_helpers.py` (reasoning passback), `agent/model_metadata.py`
+   and `agent/usage_pricing.py` (limits and the price snapshot Hermes bills
+   with). This lane is the one that shows what the wire will carry: it is how
+   the DeepSeek round learned that the first-party API rejects the versioned
+   id and that Hermes escalates `xhigh` to `max`. It also tells you which
+   Hermes build the chain alias needs (`omh update` does not upgrade Hermes;
+   say "once the installed Hermes Agent moves to build X").
+3. **Vendor harness (official)** — when the vendor publishes its own agent
+   harness (`deepseek-ai/deepseek-harness`), read its presets, system prompt,
+   editor contract, and the model adapter/serializer. The adapter records API
+   rejections the docs omit (DeepSeek: an assistant turn whose answer sits
+   only in the reasoning channel is rejected), and the preset the vendor
+   benchmarks with says how much scaffolding the model wants (DeepSeek:
+   Minimal — one shell tool, a one-line persona — scored above Standard).
+4. **Community harnesses** — OpenCode / models.dev, OpenRouter's endpoint
+   listing, oh-my-openagent, oh-my-pi, Aider, and the issue trackers. Use
+   them for divergence (which ids 400, which harnesses drop the passback,
+   who records off-peak as list price), never for the contract.
+
+Each dossier ends with candidate trait → counter sentences tied to a quoted
+source line, and none of them may push the model to keep working.
 
 ## 3. Calibrate, trait to counter
 
@@ -203,7 +234,7 @@ Files that move together (grep the old id to find every site):
 | `model-setup` skill text naming the chains verbatim | `src/skills/catalog_definitions.py` → regenerate `skills/omh-model-setup/SKILL.md` and `docs/WORKFLOWS.md` |
 | Skill body budget note | `src/maintenance/release.py` (`FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`, add the `old -> new` line) |
 | Public chain tables | `README.md`, `README.ko.md`, `README.ja.md`, `README.zh.md`, `docs/INSTALLATION.md`, `site/index.html`, `site/docs/model-routing/index.html` (`tests/test_model_recommendations.py` reads all seven) |
-| Pinned-chain and fallback-count tests | `tests/test_model_recommendations.py`, `tests/test_delegate_route_tool.py`, `tests/test_model_routing.py`, `tests/test_category_maestro.py`, `tests/test_task_scale_routing.py`, `tests/test_model_chains_command.py` |
+| Pinned-chain and fallback-count tests | `tests/test_model_recommendations.py`, `tests/test_model_recommendation_routing.py`, `tests/test_model_routing_journey.py`, `tests/test_delegate_route_tool.py`, `tests/test_model_routing.py`, `tests/test_category_maestro.py`, `tests/test_task_scale_routing.py`, `tests/test_model_chains_command.py`, `tests/test_provider_entitlements.py` (chain-shaping cases), `tests/test_plugin_hermes_delegation.py` (route-provenance and reader fixtures name a chain member) — pins live in fixtures as well as assertions, so grep `tests/` for the old id and start the full suite in the background before the first doc edit, not after |
 | Retired-alias list (an alias that left every chain but stays routable) | `_RECOGNITION_ONLY_ALIAS_FAMILIES` in `tests/test_provider_entitlements.py` |
 | Contract audit doc paths | `_MODEL_DOCS` in `src/coding/model_contract_coverage.py` |
 | CLI help examples | `src/commands/coding.py` |
@@ -245,6 +276,14 @@ provider's rejection comes back as a normal result and the chain falls
 through, which is exactly why the older generation stays behind the new one.
 
 ## 7. Prove it
+
+Start the full suite in the background as soon as the chain edit lands and
+keep editing docs while it runs; a chain change reaches fixtures in files the
+table above cannot enumerate completely, and the suite is the only grep that
+finds them all. Then a separate review lane (a read-only reviewer on the
+diff) before the commit: the DeepSeek round's reviewer caught a reverse
+projection that would have let a `-pro` / `-fast` / `-flex` alias label its
+base id.
 
 ```sh
 PYTHONPATH=tests uv run python -m unittest discover -s tests
