@@ -1,14 +1,28 @@
 from __future__ import annotations
 
+from importlib.resources import files
 import json
 import unittest
 
 from _cli_harness import run_cli
+from omh.catalogs.awesome_hermes_agent import PACKAGED_COVERAGE_SCOPE
 from omh.catalogs.awesome_hermes_agent_outcomes import (
     PLUGIN_OUTCOME_SCHEMA_VERSION,
     _parse_plugin_outcomes,
     awesome_hermes_plugin_outcomes,
 )
+
+
+def stored_matrix() -> dict[str, object]:
+    """The envelope as it sits on disk.
+
+    `_parse_plugin_outcomes` validates the stored envelope, whose key set is
+    closed. `awesome_hermes_plugin_outcomes` returns a projection of it that
+    also carries the coverage-scope label, so feeding the projection back into
+    the parser tests a shape the parser never receives.
+    """
+    resource = files("omh.catalogs").joinpath("awesome_hermes_agent_plugin_outcomes.json")
+    return json.loads(resource.read_text(encoding="utf-8"))
 
 
 class AwesomeHermesAgentPluginOutcomeTests(unittest.TestCase):
@@ -50,12 +64,17 @@ class AwesomeHermesAgentPluginOutcomeTests(unittest.TestCase):
             self.assertEqual(outcomes[plugin_id]["implementation_state"], "omh_native")
 
     def test_loader_rejects_native_claims_without_implementation_evidence(self) -> None:
-        payload = awesome_hermes_plugin_outcomes()
-        invalid = json.loads(json.dumps(payload))
+        invalid = stored_matrix()
         invalid["outcomes"][0]["evidence_refs"] = []
 
         with self.assertRaisesRegex(ValueError, "code or test evidence"):
             _parse_plugin_outcomes(invalid)
+
+    def test_the_matrix_is_labelled_as_a_packaged_snapshot_not_host_coverage(self) -> None:
+        payload = awesome_hermes_plugin_outcomes()
+
+        self.assertEqual(payload["coverage_scope"], PACKAGED_COVERAGE_SCOPE)
+        self.assertIn("not the active host catalog", str(payload["coverage_scope_note"]))
 
     def test_ecosystem_cli_emits_the_outcomes_matrix(self) -> None:
         status, stdout, stderr = run_cli(["ecosystem", "awesome-hermes", "outcomes", "--json"])

@@ -47,6 +47,7 @@ references rather than normal user steps.
 | Capture and recall reviewed project context | [Project Memory](MEMORY.md) |
 | Answer what a web page said as of a date, or compare then versus now | [Temporal Source Receipts](TEMPORAL-SOURCE-RECEIPTS.md) |
 | Judge whether a realtime voice connector keeps whole spoken turns | [Realtime Voice Trial Receipts](REALTIME-VOICE-TRIAL-RECEIPTS.md) |
+| See which OMH workflow owns each plugin in the active host catalog | [Plugin Catalog Coverage](PLUGIN-CATALOG-COVERAGE.md) |
 | Choose a situation-level workflow | [Playbooks](PLAYBOOKS.md) |
 | Prepare or verify a release | [Release](RELEASE.md) |
 

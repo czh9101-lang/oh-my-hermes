@@ -7,7 +7,12 @@ import json
 import re
 from typing import Final
 
-from .awesome_hermes_agent import AwesomeHermesCatalogError, UPSTREAM_SOURCE_COMMIT
+from .awesome_hermes_agent import (
+    AwesomeHermesCatalogError,
+    PACKAGED_COVERAGE_SCOPE,
+    PACKAGED_COVERAGE_SCOPE_NOTE,
+    UPSTREAM_SOURCE_COMMIT,
+)
 
 
 PLUGIN_OUTCOME_SCHEMA_VERSION: Final = "awesome_hermes_plugin_outcome_matrix/v1"
@@ -75,6 +80,8 @@ def awesome_hermes_plugin_outcomes() -> dict[str, object]:
     return {
         "schema_version": PLUGIN_OUTCOME_SCHEMA_VERSION,
         "source_commit": source_commit,
+        "coverage_scope": PACKAGED_COVERAGE_SCOPE,
+        "coverage_scope_note": PACKAGED_COVERAGE_SCOPE_NOTE,
         "outcomes": [outcome.to_dict() for outcome in outcomes],
         "claim_boundary": claim_boundary,
     }
