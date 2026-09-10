@@ -151,13 +151,25 @@ lock never spans a child's lifetime. Work that already started keeps its own
 result; unrelated owners keep launching; cancellation stays distinct from
 capacity.
 
-Positive detection needs a `CodexAdmissionSource` supplied to
-`dispatch_fanout(..., capacity_sources=...)` whose resolved path, SHA-256,
-version, and source revision match the attempt's negotiated binary identity.
-No native binary hash ships as supported, so an unqualified build is an
-ordinary failure and `native_support` reads
-`unsupported_without_source_qualified_build`. Fixtures carry
-`evidence_kind: fixture`; a caller's build association carries
+By default, `dispatch_fanout(..., capacity_sources=None)` resolves the attempt's
+negotiated executable SHA-256 and exact version against the shipped reviewed
+build registry, binding the result to the actual resolved executable path.
+Only the official Codex 0.154.0 Darwin ARM64 and Linux ARM64/musl binaries in
+[the compact provenance reference](FANOUT-CODEX-BUILD-PROVENANCE.md) qualify.
+This is not an executor version requirement or release floor. Unknown builds,
+including different bytes reporting the same version, remain ordinary failures.
+The resolver is local and read-only: no network, operator attestation, or new
+client dependency. An explicit `capacity_sources=()` disables recognition;
+a supplied sequence remains the path-bound integration/fixture seam.
+
+Recognized launches receive `RUST_LIB_BACKTRACE=0`; exact framing and complete
+capture checks are unchanged. The executable identity is checked again after
+the process exits. Summary `native_support` reflects only recognized,
+postflight-checked launches in this invocation: `source_qualified_build` for a
+reviewed native association, `fixture_only` for fixture-only observations, or
+`unsupported_without_source_qualified_build` otherwise. A recognized build can
+still have an ordinary failure; support is not a rejection or quota observation.
+Fixtures carry `evidence_kind: fixture`; reviewed build associations carry
 `source_verified`. Neither is vendor saturation evidence.
 
 ### What is recorded (`fanout_capacity_unit/v1`)
@@ -172,7 +184,9 @@ the trip. It is the optional `capacity` field of the unit result, the
 | `owner`, `fanout_id`, `unit_id`, `run_ref`, `attempt_id`, `invocation_id` | Dispatcher-owned identity of this attempt; a fresh attempt and invocation ID per real start, never a retry index. |
 | `process_started` | Whether a process existed for this attempt. |
 | `trigger_unit`, `trigger_owner`, `trigger_attempt_id`, `trip_sequence` | The attempt whose rejection closed the gate and its order. |
-| `adapter`, `protocol`, `definition_revision`, `evidence_kind` | `codex_fresh_initial_request_queue`, `codex_exec_json`, the accepted source revision, and `fixture` or `source_verified`. |
+| `adapter`, `protocol`, `evidence_kind` | `codex_fresh_initial_request_queue`, `codex_exec_json`, and `fixture` or `source_verified`. |
+| `definition_revision` | Original classifier definition pin `b83105710695b70b6d96a64d1e4612bdf68d5f92`; not a claim that the released executable was built from that commit. |
+| `source_revision` | Associated build source: the definition pin for original fixtures, or reviewed release commit `6b9826e3aa83b1a5947db50f4332cb9c65f1b340`. Legacy v1 records missing this field remain readable without inventing a source association. |
 | `scope`, `quota_observed`, `next_action` | Always `process_local`, `false`, and `explicit_bounded_redispatch_after_capacity_change`. |
 
 A companion `capacity_lineage` keeps the blocked unit's owner, base SHA,

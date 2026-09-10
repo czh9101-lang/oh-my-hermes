@@ -1852,7 +1852,7 @@ def dispatch_fanout(
     diagnostic_engine: DiagnosticExecutionEngine | None = None,
     final_review_engine: FinalReviewWaveEngine | None = None,
     emit_health_events: bool = False,
-    capacity_sources: Sequence[CodexAdmissionSource] = (),
+    capacity_sources: Sequence[CodexAdmissionSource] | None = None,
     health_clock: Callable[[], int] = monotonic_milliseconds,
 ) -> dict[str, Any]:
     # The spawn guard runs before every other check, including the two
@@ -2472,7 +2472,8 @@ def dispatch_fanout(
         "claim_boundary": f"{DISPATCH_CLAIM_BOUNDARY} {FANOUT_CLAIM_BOUNDARY}",
     }
     summary['capacity'] = capacity_summary(summary_units,
-        requested=(concurrency_policy or {}).get('requested', concurrency), effective=max(1, concurrency))
+        requested=(concurrency_policy or {}).get('requested', concurrency), effective=max(1, concurrency),
+        recognized_sources=launch_gate.recognized_sources())
     if final_review is not None:
         summary.update(final_review)
     summary["review_dispatch_budget"] = {
@@ -3506,7 +3507,7 @@ def _dispatch_unit(
     intake_root: Path | None = None,
     session_contract_digest: str = "",
     launch_gate: OwnerLaunchGate | None = None,
-    capacity_sources: Sequence[CodexAdmissionSource] = (),
+    capacity_sources: Sequence[CodexAdmissionSource] | None = None,
     capacity_resume_rows: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, Any]:
     if intake_root is None:
@@ -4098,7 +4099,7 @@ def _dispatch_unit(
                     # the dispatcher's own environment: an agent CLI that reads
                     # its instructions and reaches for `omh coding fanout
                     # dispatch` refuses on the depth it inherits here.
-                    env=child_env,
+                    env={**child_env, 'RUST_LIB_BACKTRACE': '0'} if source is not None else child_env,
                     text=True,
                     capture_output=True,
                     timeout=timeout,
@@ -4116,6 +4117,8 @@ def _dispatch_unit(
                 if source is not None and (session_capability is None or
                         observe_session_binary(source.resolved_path) != session_capability.binary_identity):
                     source = None
+                if source is not None and binary_capture and 'launch' in spawn_kwargs:
+                    launch_gate.observe_source(source)
                 receipt = admission_observer.receipt(capture, binding=admission_binding, source=source,
                     returncode=exit_code, process_started=binary_capture and 'launch' in spawn_kwargs,
                     fresh_exec=bool(argv and len(argv) > 2 and argv[1] == 'exec' and '--json' in argv

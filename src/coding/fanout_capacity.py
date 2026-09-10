@@ -1,8 +1,8 @@
 """Invocation-local atomic launch admission, not a scheduler or quota estimator.
 
 Only source-qualified adapter evidence can close an owner gate. The Codex
-adapter consumes shared bounded decoding and requires an independently supplied
-build association; no native binary hashes or release floors ship as supported.
+adapter consumes shared bounded decoding and matches reviewed executable hashes
+and versions to source. Unknown builds remain unsupported; there is no release floor.
 Raw model/sidecar JSON never becomes a typed admission receipt.
 
 The caller places launch() around actual Popen after waits/stagger/backoff and
@@ -59,6 +59,7 @@ class AdmissionReceipt:
     implementation_started: bool = False
     definition_revision: str | None = None
     evidence_kind: str = 'supplied_adapter'
+    source_revision: str | None = None
 
 
 def validate_admission_receipt(
@@ -139,6 +140,7 @@ class _GateState:
     lock: LockType = field(default_factory=threading.Lock)
     sequence: int = 0
     trips: dict[str, CapacityTrip] = field(default_factory=dict)
+    sources: set[CodexAdmissionSource] = field(default_factory=set)
 
     def trip(self, receipt: AdmissionReceipt) -> CapacityTrip:
         # Caller holds lock; this state never escapes the module's gate/context.
@@ -242,8 +244,29 @@ class OwnerLaunchGate:
         with self._state.lock:
             return self._state.trips.get(owner)
 
+    def observe_source(self, source: CodexAdmissionSource) -> None:
+        """Record a completed launch's postflight-checked build, not a refusal."""
+        with self._state.lock:
+            self._state.sources.add(source)
+
+    def recognized_sources(self) -> tuple[CodexAdmissionSource, ...]:
+        with self._state.lock:
+            return tuple(self._state.sources)
+
 
 CODEX_ADMISSION_REVISION = 'b83105710695b70b6d96a64d1e4612bdf68d5f92'
+CODEX_RELEASE_REVISION = '6b9826e3aa83b1a5947db50f4332cb9c65f1b340'
+# Exact reviewed build associations, not a minimum executor version requirement.
+# Values: reported version, build source commit, evidence kind. See
+# docs/FANOUT-CODEX-BUILD-PROVENANCE.md for verification and platform attribution.
+CODEX_ADMISSION_BUILDS: Mapping[str, tuple[str, str, Literal['fixture', 'source_verified']]] = {
+    # Official rust-v0.154.0, aarch64-apple-darwin.
+    '4f85982624b3898c8991cb80c0981b2aa71070e3537046c9a95950318a95afcc':
+        ('0.154.0', CODEX_RELEASE_REVISION, 'source_verified'),
+    # Official rust-v0.154.0, aarch64-unknown-linux-musl.
+    '9b7c1c7abdc26fc3c4f47c77656a8e9121def5483dbae830ef1ee561758448a9':
+        ('0.154.0', CODEX_RELEASE_REVISION, 'source_verified'),
+}
 CODEX_ADMISSION_ERROR = 'Error: turn/start: turn/start failed: in-process app-server request queue is full (code -32001)\n'
 CODEX_ADMISSION_SUPPORT = AdmissionSupport('codex_fresh_initial_request_queue', 'codex_exec_json', 'process_local')
 CAPACITY_STATUSES = frozenset({'executor_capacity_rejected', 'not_started_capacity_blocked',
@@ -254,9 +277,9 @@ CAPACITY_STATUSES = frozenset({'executor_capacity_rejected', 'not_started_capaci
 class CodexAdmissionSource:
     """Trusted caller's independently identified build, NOT a version-floor guess.
 
-    No native binary hashes ship as supported. Help/version alone cannot qualify
-    a build. Fixtures must identify themselves as fixtures; source_verified is a
-    caller's source/build association, not cryptographic source attestation.
+    Help/version alone cannot qualify a build. The default resolver binds the
+    observed path to a shipped reviewed digest; explicit sequences are a trusted
+    integration/test seam. Fixtures must identify themselves as fixtures.
     """
     resolved_path: str
     sha256: str
@@ -266,11 +289,17 @@ class CodexAdmissionSource:
 
 
 def codex_admission_source(capability: SessionCapability | None,
-                           sources: Sequence[CodexAdmissionSource]) -> CodexAdmissionSource | None:
+                           sources: Sequence[CodexAdmissionSource] | None = None) -> CodexAdmissionSource | None:
     if capability is None or capability.executor != 'codex' or capability.protocol != 'codex_exec_json':
         return None
+    if sources is None:
+        build = CODEX_ADMISSION_BUILDS.get(capability.binary_identity.sha256)
+        sources = () if build is None else (CodexAdmissionSource(
+            capability.binary_identity.resolved_path, capability.binary_identity.sha256,
+            build[0], build[1], build[2]),)
     for source in sources:
-        if (type(source) is CodexAdmissionSource and source.source_revision == CODEX_ADMISSION_REVISION
+        if (type(source) is CodexAdmissionSource
+                and source.source_revision in (CODEX_ADMISSION_REVISION, CODEX_RELEASE_REVISION)
                 and source.evidence_kind in ('fixture', 'source_verified')
                 and source.resolved_path == capability.binary_identity.resolved_path
                 and re.fullmatch('[0-9a-f]{64}', source.sha256)
@@ -317,8 +346,8 @@ class CodexAdmissionObserver:
                 or any(issue != 'invalid_frame' for issue in capture.issues)):
             return None
         return AdmissionReceipt(CODEX_ADMISSION_SUPPORT.adapter, CODEX_ADMISSION_SUPPORT.protocol,
-                                binding, True, returncode, definition_revision=source.source_revision,
-                                evidence_kind=source.evidence_kind)
+                                binding, True, returncode, definition_revision=CODEX_ADMISSION_REVISION,
+                                evidence_kind=source.evidence_kind, source_revision=source.source_revision)
 
 
 def capacity_fields(binding: AdmissionBinding, trip: CapacityTrip, *, status: str,
@@ -331,6 +360,7 @@ def capacity_fields(binding: AdmissionBinding, trip: CapacityTrip, *, status: st
             'trigger_owner': trip.receipt.binding.owner,
             'adapter': trip.receipt.adapter, 'protocol': trip.receipt.protocol,
             'definition_revision': trip.receipt.definition_revision, 'evidence_kind': trip.receipt.evidence_kind,
+            'source_revision': trip.receipt.source_revision,
             'trigger_attempt_id': trip.receipt.binding.attempt_id, 'trip_sequence': trip.sequence,
             'next_action': 'explicit_bounded_redispatch_after_capacity_change',
             'quota_observed': False}
@@ -346,6 +376,9 @@ def read_capacity_fields(record: Mapping[str, object]) -> dict[str, object]:
                 'attempt_id', 'invocation_id', 'process_started', 'scope', 'trigger_unit',
                 'trigger_attempt_id', 'trip_sequence', 'next_action', 'quota_observed',
                 'trigger_owner', 'adapter', 'protocol', 'definition_revision', 'evidence_kind'}
+    # Legacy v1 records predate the separate build-source field. Do not invent it.
+    if 'source_revision' in value:
+        required.add('source_revision')
     if (set(value) != required or value['schema_version'] != 'fanout_capacity_unit/v1'
             or not isinstance(value['status'], str) or value['status'] not in CAPACITY_STATUSES
             or value['scope'] != 'process_local'
@@ -354,9 +387,19 @@ def read_capacity_fields(record: Mapping[str, object]) -> dict[str, object]:
             or value['next_action'] != 'explicit_bounded_redispatch_after_capacity_change'):
         return {}
     if (value['evidence_kind'] not in ('fixture', 'source_verified', 'supplied_adapter')
-            or value['definition_revision'] not in (None, CODEX_ADMISSION_REVISION)):
+            or value['definition_revision'] not in (None, CODEX_ADMISSION_REVISION)
+            or value.get('source_revision') not in (None, CODEX_ADMISSION_REVISION, CODEX_RELEASE_REVISION)):
         return {}
-    for key in required - {'process_started', 'quota_observed', 'trip_sequence', 'definition_revision'}:
+    if ('source_revision' in value and value['adapter'] == CODEX_ADMISSION_SUPPORT.adapter
+            and value['source_revision'] is None):
+        return {}
+    if (value.get('source_revision') is not None and (
+            value['definition_revision'] != CODEX_ADMISSION_REVISION
+            or value['adapter'] != CODEX_ADMISSION_SUPPORT.adapter
+            or value['protocol'] != CODEX_ADMISSION_SUPPORT.protocol
+            or value['evidence_kind'] not in ('fixture', 'source_verified'))):
+        return {}
+    for key in required - {'process_started', 'quota_observed', 'trip_sequence', 'definition_revision', 'source_revision'}:
         item = value[key]
         if not isinstance(item, str) or not 0 < len(item) <= 2048 or not item.isprintable():
             return {}
@@ -382,12 +425,16 @@ def read_capacity_fields(record: Mapping[str, object]) -> dict[str, object]:
     return result
 
 
-def capacity_summary(units: Sequence[Mapping[str, object]], *, requested: int | None, effective: int) -> dict[str, object]:
+def capacity_summary(units: Sequence[Mapping[str, object]], *, requested: int | None, effective: int,
+                     recognized_sources: Sequence[CodexAdmissionSource] = ()) -> dict[str, object]:
     affected = [str(row['unit_id']) for row in units if read_capacity_fields(row)]
+    kinds = {source.evidence_kind for source in recognized_sources}
+    native_support = ('source_qualified_build' if 'source_verified' in kinds else
+                      'fixture_only' if 'fixture' in kinds else 'unsupported_without_source_qualified_build')
     return {'schema_version': 'fanout_capacity/v1', 'requested_concurrency': requested,
             'effective_concurrency': effective, 'affected_units': affected,
             'closed_owners': sorted({str(value['trigger_owner']) for row in units
                                      if (fields := read_capacity_fields(row))
                                      and is_string_map(value := fields['capacity'])}),
-            'native_support': 'unsupported_without_source_qualified_build', 'quota_observed': False,
+            'native_support': native_support, 'quota_observed': False,
             'next_action': 'explicit_bounded_redispatch_after_capacity_change' if affected else 'none'}
