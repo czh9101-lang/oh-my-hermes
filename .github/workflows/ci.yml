@@ -154,6 +154,10 @@ jobs:
     needs: plan
     runs-on: windows-latest
     strategy:
+      # Each shard runs a disjoint half of the suite, so cancelling the sibling
+      # when one fails leaves that half unmeasured and the blast radius unknown
+      # -- and it cancelled a different half on each of two consecutive heads.
+      fail-fast: false
       matrix:
         shard: [0, 1]
     steps:
