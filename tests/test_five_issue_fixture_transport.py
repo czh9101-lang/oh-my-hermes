@@ -24,6 +24,14 @@ from five_issue_cases.sessions import decode, record
 
 
 class FixtureTransportTests(unittest.TestCase):
+    def test_fixture_environment_keeps_system_bootstrap_without_user_state(self) -> None:
+        system = {'SYSTEMROOT': r'C:\Windows', 'WINDIR': r'C:\Windows',
+                  'COMSPEC': r'C:\Windows\System32\cmd.exe', 'PATHEXT': '.COM;.EXE;.BAT;.CMD'}
+        with patch.dict(os.environ, {**system, 'HOME': 'private-home',
+                                     'APPDATA': 'private-state', 'AWS_SECRET_ACCESS_KEY': 'private'}, clear=True):
+            environment = fixture.fixture_system_environment()
+        self.assertEqual(environment, system)
+
     def test_protocol_and_identity_survive_interpreter_transport(self) -> None:
         # Given a Python implementation of the real fixture protocol adapter.
         with TemporaryDirectory(prefix='fixture-transport-') as directory:

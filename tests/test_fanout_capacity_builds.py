@@ -15,7 +15,7 @@ from unittest.mock import patch
 from _local_package import load_local_package
 load_local_package()
 
-from five_issue_process_fixture import fixture_executable_transport, write_fixture_executable
+from five_issue_process_fixture import fixture_executable_transport, fixture_system_environment, write_fixture_executable
 from five_issue_cases.capacity import RunnerOptions, no_stagger, ready
 from five_issue_cases.sessions import decode, record, rows_of, text
 from _cli_harness import run_cli
@@ -55,7 +55,7 @@ class CapacityDefaultBuildTests(unittest.TestCase):
                                   capture_output=True, text=True, check=True).stdout.strip()
             home = root / 'home'
             home.mkdir()
-            env = {'PATH': os.environ.get('PATH', ''), 'HOME': str(home),
+            env = {**fixture_system_environment(), 'PATH': os.environ.get('PATH', ''), 'HOME': str(home),
                    'CODEX_HOME': str(home / 'codex'), 'RUST_LIB_BACKTRACE': '1'}
             paths = OmhPaths(omh_home=root / 'omh', hermes_home=root / 'hermes')
             executable = write_fixture_executable(root / 'codex-fixture', '\n'.join((

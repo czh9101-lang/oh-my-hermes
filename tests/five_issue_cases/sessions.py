@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from contextlib import ExitStack
 import json
 import re
-from five_issue_process_fixture import fixture_executable_transport, write_fixture_executable
+from five_issue_process_fixture import fixture_executable_transport, fixture_system_environment, write_fixture_executable
 import os
 from uuid import NAMESPACE_URL, uuid5
 from pathlib import Path
@@ -69,7 +69,7 @@ def run_case(case_id: str) -> CaseResult:
                 'commit', '-qm', 'fixture')
         base = git('rev-parse', 'HEAD')
         paths = OmhPaths(omh_home=root / 'omh', hermes_home=root / 'hermes')
-        environment = {'PATH': os.environ.get('PATH', ''), 'HOME': str(root / 'home'),
+        environment = {**fixture_system_environment(), 'PATH': os.environ.get('PATH', ''), 'HOME': str(root / 'home'),
                        'CODEX_HOME': str(root / 'codex-state'), 'CLAUDE_CONFIG_DIR': str(root / 'claude-state')}
         for key in ('HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR'):
             Path(environment[key]).mkdir()

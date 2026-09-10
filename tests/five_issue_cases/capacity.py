@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from five_issue_process_fixture import fixture_executable_transport, write_fixture_executable
+from five_issue_process_fixture import fixture_executable_transport, fixture_system_environment, write_fixture_executable
 import re
 import socket
 from contextlib import ExitStack
@@ -144,7 +144,7 @@ def run_case(case_id: str) -> CaseResult:
         _ = git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture')
         base = git('rev-parse', 'HEAD')
         paths = OmhPaths(omh_home=root / 'omh', hermes_home=root / 'hermes')
-        env = {'PATH': os.environ.get('PATH', ''), 'HOME': str(root / 'home'),
+        env = {**fixture_system_environment(), 'PATH': os.environ.get('PATH', ''), 'HOME': str(root / 'home'),
                'CODEX_HOME': str(root / 'codex'), 'CLAUDE_CONFIG_DIR': str(root / 'claude')}
         for key in ('HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR'):
             Path(env[key]).mkdir()

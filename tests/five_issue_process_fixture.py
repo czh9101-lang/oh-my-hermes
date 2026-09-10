@@ -50,6 +50,12 @@ class Cleanup(TypedDict):
 FIXTURE_DEADLINE = 60 if os.name == 'nt' else 5
 
 
+def fixture_system_environment() -> dict[str, str]:
+    """Keep Windows runtime prerequisites, not the user's homes or credentials."""
+    return {key: os.environ[key] for key in
+            ('SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT') if key in os.environ}
+
+
 def write_fixture_executable(path: Path, body: str, *,
                              interpreter: bool = os.name == 'nt') -> list[str]:
     """Keep one hashable fixture identity; adapt Python only at Popen.
