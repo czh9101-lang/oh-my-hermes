@@ -44,6 +44,11 @@ class Cleanup(TypedDict):
     errors: list[str]
 
 
+# Windows CI starts a Python child several seconds slower than POSIX; these
+# are bounded rendezvous deadlines, not timing assumptions.
+FIXTURE_DEADLINE = 60 if os.name == 'nt' else 5
+
+
 def write_fixture_executable(path: Path, body: str) -> list[str]:
     """Write a python fixture CLI and return the argv prefix that runs it.
 
@@ -112,7 +117,7 @@ class FixtureProcess:
     def finish(self) -> subprocess.CompletedProcess[bytes]:
         self.send('finish')
         self.event('finished')
-        code = self.process.wait(timeout=5)
+        code = self.process.wait(timeout=FIXTURE_DEADLINE)
         _ = self.stdout.seek(0)
         _ = self.stderr.seek(0)
         return subprocess.CompletedProcess(self.command, code, self.stdout.read(), self.stderr.read())
@@ -153,7 +158,7 @@ def process_fixture(arguments: Sequence[str] = (), *, stdout: bytes = b'',
             listener = stack.enter_context(socket.socket())
             listener.bind(('127.0.0.1', 0))
             listener.listen(1)
-            listener.settimeout(5)
+            listener.settimeout(FIXTURE_DEADLINE)
             address: Callable[[], tuple[str, int]] = listener.getsockname
             port = address()[1]
             receipt['owned_resources'].append(f'tcp:127.0.0.1:{port}')
@@ -173,9 +178,9 @@ def process_fixture(arguments: Sequence[str] = (), *, stdout: bytes = b'',
             try:
                 accepted = listener.accept()[0]
                 connection = stack.enter_context(accepted)
-                connection.settimeout(5)
+                connection.settimeout(FIXTURE_DEADLINE)
                 control = stack.enter_context(connection.makefile('rwb', buffering=0))
-                if _line(control, 5) != token:
+                if _line(control, FIXTURE_DEADLINE) != token:
                     raise ValueError('fixture_control_identity_mismatch')
                 child = FixtureProcess(process, command, control, control, out, err, receipt)
                 yield child
@@ -183,7 +188,7 @@ def process_fixture(arguments: Sequence[str] = (), *, stdout: bytes = b'',
                 if process.poll() is None:
                     process.kill()
                     receipt['terminated_processes'].append(process.pid)
-                _ = process.wait(timeout=5)
+                _ = process.wait(timeout=FIXTURE_DEADLINE)
 
 
 def _emit(payload: dict[str, str | bool | list[str] | dict[str, str]]) -> None:
@@ -251,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
                 token = os.environ.get('FIVE_ISSUE_CONTROL_TOKEN', '')
                 if len(token) != 32 or any(char not in '0123456789abcdef' for char in token):
                     raise ValueError('fixture_control_identity_missing')
-                connection = stack.enter_context(socket.create_connection(('127.0.0.1', args.control_port), 5))
+                connection = stack.enter_context(socket.create_connection(('127.0.0.1', args.control_port), FIXTURE_DEADLINE))
                 control = stack.enter_context(connection.makefile('rwb', buffering=0))
                 _ = control.write((token + '\n').encode('ascii'))
                 events = control

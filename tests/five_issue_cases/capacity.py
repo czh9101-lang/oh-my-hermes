@@ -53,6 +53,10 @@ def no_stagger(_self: object) -> None:
 def ready(*_args: object) -> dict[str, object]:
     return {'status': 'ready'}
 
+# Windows CI runners start a Python child several seconds slower than POSIX;
+# these are bounded rendezvous deadlines, not timing assumptions.
+FIXTURE_DEADLINE = 60 if os.name == 'nt' else 10
+
 ERROR_LINE = 'Error: turn/start: turn/start failed: in-process app-server request queue is full (code -32001)\n'
 SOURCE_REVISION = 'b83105710695b70b6d96a64d1e4612bdf68d5f92'
 
@@ -148,7 +152,7 @@ def run_case(case_id: str) -> CaseResult:
         listener = resources.enter_context(socket.socket())
         listener.bind(('127.0.0.1', 0))
         listener.listen(1)
-        listener.settimeout(10)
+        listener.settimeout(FIXTURE_DEADLINE)
         address: Callable[[], tuple[str, int]] = listener.getsockname
         port = address()[1]
         control_token = uuid4().hex
@@ -159,7 +163,7 @@ def run_case(case_id: str) -> CaseResult:
             "if '--help' in sys.argv: print('--json resume --output-format stream-json --verbose --resume'); raise SystemExit(0)\n" +
             "if '--held' in sys.argv:\n" +
             " i=sys.argv.index('--held')\n" +
-            " with socket.create_connection(('127.0.0.1',int(sys.argv[i+1])),timeout=10) as control:\n" +
+            " with socket.create_connection(('127.0.0.1',int(sys.argv[i+1])),timeout=" + str(FIXTURE_DEADLINE) + ") as control:\n" +
             "  control.sendall((sys.argv[i+2]+'\\n').encode())\n" +
             "  with control.makefile('rb') as incoming: assert incoming.readline(64)==b'finish\\n'\n" +
             "if '--reject' in sys.argv:\n" +
@@ -194,7 +198,7 @@ def run_case(case_id: str) -> CaseResult:
         backoff = threading.Event()
         def retry_wait(_delay: float) -> None:
             backoff.set()
-            assert tripped.wait(10), 'retry did not observe the owner trip'
+            assert tripped.wait(FIXTURE_DEADLINE), 'retry did not observe the owner trip'
         process_exits: list[int] = []
         starts: list[str] = []
         actual_reject = capacity.LaunchContext.reject
@@ -226,24 +230,24 @@ def run_case(case_id: str) -> CaseResult:
                 if unit == 'a':
                     if case_id != 'C6':
                         child_control = resources.enter_context(listener.accept()[0])
-                        child_control.settimeout(10)
+                        child_control.settimeout(FIXTURE_DEADLINE)
                         with child_control.makefile('rb') as incoming:
                             assert incoming.readline(64) == (control_token + '\n').encode()
                         assert process.poll() is None, 'held child exited before admission rejection'
                     started.set()
                     # The child itself blocks on an authenticated release, not a timing delay.
-                    if case_id != 'C6' and not release.wait(10):
+                    if case_id != 'C6' and not release.wait(FIXTURE_DEADLINE):
                         raise TimeoutError('capacity_trip_release')
             kwargs['on_spawn'] = on_spawn
             if unit == 'c' and case_id == 'C1':
                 prepared.set()
-                assert tripped.wait(10), 'prepared waiter did not observe trip'
+                assert tripped.wait(FIXTURE_DEADLINE), 'prepared waiter did not observe trip'
             if unit == 'b' and rejecting:
-                assert started.wait(10), 'A did not cross Popen'
+                assert started.wait(FIXTURE_DEADLINE), 'A did not cross Popen'
                 if case_id == 'C1':
-                    assert prepared.wait(10), 'C never reached the prepared boundary'
+                    assert prepared.wait(FIXTURE_DEADLINE), 'C never reached the prepared boundary'
                 if case_id == 'C6':
-                    assert backoff.wait(10), 'A did not enter retry backoff'
+                    assert backoff.wait(FIXTURE_DEADLINE), 'A did not enter retry backoff'
             result = signal_safe_unit_runner(argv, **kwargs)
             process_exits.append(result.returncode)
             if unit == 'a':
