@@ -13,6 +13,7 @@ from ..catalogs.awesome_hermes_agent import (
 from ..catalogs.awesome_hermes_agent_outcomes import awesome_hermes_plugin_outcomes
 from ..installer import OmhError
 from .common import _print_json, _wants_json
+from .plugin_catalog import _add_plugin_catalog_commands
 
 
 def _print_packaged_scope() -> None:
@@ -162,6 +163,8 @@ def _add_ecosystem_commands(sub) -> None:
     outcomes = awesome_sub.add_parser("outcomes", help="Show selected plugin outcomes and OMH claim boundaries.")
     outcomes.add_argument("--json", action="store_true", help="Print the machine-readable outcome matrix.")
     outcomes.set_defaults(func=cmd_ecosystem_awesome_outcomes)
+
+    _add_plugin_catalog_commands(ecosystem_sub)
 
 
 __all__ = [
