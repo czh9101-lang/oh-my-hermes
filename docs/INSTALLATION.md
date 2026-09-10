@@ -342,14 +342,19 @@ under what name, belongs to one account — so OMH ships no routes and hardcodes
 no provider.
 
 Which providers and subscriptions a machine holds is a third, separate
-question. The interactive `omh setup` asks it — for each provider id in
-Hermes' config (`providers.<id>` and `model.provider`, except `auto`) and
-for each builtin provider whose key NAME appears in `$HERMES_HOME/.env` or
-the environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...; values are never
-read): do you hold it, and is it a vendor provider or a multi-vendor
-gateway; then any further provider id you type; and, when the Claude Code
-CLI is on PATH, whether you have a Claude Code subscription — and records
-the answers in `~/.omh/routing/providers.json` (`provider_entitlements/v1`):
+question. The interactive `omh setup` asks it as one ticked list of the
+services you have an account, key, or login for: every provider family, plus
+each provider id in Hermes' config (`providers.<id>` and `model.provider`,
+except `auto`) and each builtin provider whose key NAME appears in
+`$HERMES_HOME/.env` or the environment (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, ...; values are never read). Rows found that way arrive
+ticked, because a found config key or variable name is a sensible default —
+it is not proof of a working account, so every ticked row can be cleared and
+only what you leave ticked is recorded. After the list you can type any
+further provider id (that one is asked for its kind, since OMH knows nothing
+about it), and, when the Claude Code CLI is on PATH, you are asked whether
+you have a Claude Code subscription. The answers are recorded in
+`~/.omh/routing/providers.json` (`provider_entitlements/v1`):
 
 ```json
 {

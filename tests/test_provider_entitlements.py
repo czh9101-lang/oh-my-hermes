@@ -7,17 +7,22 @@ place a machine's own accounts are described. Shaping reorders, never drops.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from _cli_harness import run_cli
 from _local_package import load_local_package
 
 load_local_package()
 
 from omh.coding.model_recommendations import SHIPPED_MODEL_RECOMMENDATIONS  # noqa: E402
+from omh.commands.common import _wants_json  # noqa: E402
+from omh.commands.language import LANGUAGE_CODES, MESSAGES, tr  # noqa: E402
 from omh.coding.model_routing import CLAUDE_FRONTIER_CHAIN_MODELS  # noqa: E402
 from omh.commands import setup as setup_module  # noqa: E402
 from omh.config_adapter import configured_provider_ids  # noqa: E402
@@ -278,6 +283,93 @@ class ConfigReaderTests(unittest.TestCase):
         self.assertEqual(configured_provider_ids("providers:\n  og:\n    base_url: x\nmodel:\n  provider: og\n"), ["og"])
 
 
+class MultiChoicePromptTests(unittest.TestCase):
+    """The multi-select primitive: same shape as `_ask_single_choice`, many answers."""
+
+    rendered = ""
+    defaults: list[str] = []
+    OPTIONS = [
+        {"choice": "1", "value": "og", "label": "og", "description": "found in your Hermes config"},
+        {"choice": "2", "value": "zai", "label": "Z.ai (GLM)", "description": ""},
+        {"choice": "3", "value": "openrouter", "label": "OpenRouter", "description": "relays every model family"},
+    ]
+
+    def _typed(self, answers: list[str], selected: list[str]) -> list[str]:
+        replies = iter(answers)
+        self.defaults = []
+        out = io.StringIO()
+
+        def ask(_prompt, *, default, **_kwargs):
+            self.defaults.append(default)
+            return next(replies)
+
+        with patch.object(setup_module, "_keyboard_menu_available", return_value=False), patch.object(
+            setup_module, "_ask", side_effect=ask
+        ), redirect_stdout(out):
+            chosen = setup_module._ask_multi_choice(
+                "Which?", ["pick some"], self.OPTIONS, selected=selected, use_color=False, language="en"
+            )
+        self.rendered = out.getvalue()
+        return chosen
+
+    def test_empty_input_keeps_the_preselected_set(self) -> None:
+        self.assertEqual(self._typed([""], ["og", "openrouter"]), ["og", "openrouter"])
+        # The ticked rows are shown ticked, and the prompt's default names them
+        # so "Enter" is visibly the ticked list rather than a blind accept.
+        self.assertIn("1) [x] og", self.rendered)
+        self.assertIn("2) [ ] Z.ai (GLM)", self.rendered)
+        self.assertEqual(self.defaults, ["1,3"])
+        # With nothing ticked the default is the clear-everything token.
+        self.assertEqual(self._typed([""], []), [])
+        self.assertEqual(self.defaults, ["0"])
+
+    def test_numbers_replace_the_selection_and_can_clear_a_preselected_row(self) -> None:
+        self.assertEqual(self._typed(["2, 3"], ["og"]), ["zai", "openrouter"])
+        self.assertEqual(self._typed(["2"], ["og", "zai", "openrouter"]), ["zai"])
+
+    def test_zero_means_none_which_empty_input_cannot_say(self) -> None:
+        self.assertEqual(self._typed(["0"], ["og", "zai"]), [])
+        self.assertEqual(self._typed(["none"], ["og"]), [])
+
+    def test_values_are_accepted_and_an_unknown_token_re_asks(self) -> None:
+        self.assertEqual(self._typed(["zai"], []), ["zai"])
+        self.assertEqual(self._typed(["9", "1"], ["zai"]), ["og"])
+
+    def test_keyboard_path_toggles_with_space_and_confirms_with_enter(self) -> None:
+        keys = iter([" ", "\x1b[B", " ", "\r"])  # untick 1, move down, tick 2, confirm
+        out = io.StringIO()
+        with patch.object(setup_module, "_keyboard_menu_available", return_value=True), patch.object(
+            setup_module, "_read_tui_key", side_effect=lambda: next(keys)
+        ), redirect_stdout(out):
+            chosen = setup_module._ask_multi_choice(
+                "Which?", ["pick some"], self.OPTIONS, selected=["og"], use_color=False, language="en"
+            )
+        self.assertEqual(chosen, ["zai"])
+        rendered = out.getvalue()
+        self.assertIn("[x] og", rendered)  # the first render, before the untick
+        self.assertIn("[x] Z.ai (GLM)", rendered)  # after Space on row 2
+
+    def test_every_language_carries_the_new_prompt_keys(self) -> None:
+        keys = (
+            "menu_hint_multi",
+            "select_multi",
+            "provider_select_title",
+            "provider_select_intro_1",
+            "provider_select_intro_2",
+            "provider_detected_config",
+            "provider_detected_env",
+            "provider_recorded_before",
+        )
+        for code in LANGUAGE_CODES:
+            for key in keys:
+                with self.subTest(language=code, key=key):
+                    self.assertIn(key, MESSAGES[code])
+                    self.assertTrue(tr(code, key, name="X").strip())
+        # The retired per-provider question is gone from every catalog.
+        for code in LANGUAGE_CODES:
+            self.assertNotIn("provider_hold_prompt", MESSAGES[code])
+
+
 class SetupInterviewTests(unittest.TestCase):
     def _paths(self, root: Path):
         args = argparse.Namespace(omh_home=str(root / ".omh"), hermes_home=str(root / ".hermes"), scope=None)
@@ -297,13 +389,13 @@ class SetupInterviewTests(unittest.TestCase):
                 "claude-code": {"binary_present": True, "login_marker": "present"},
                 "codex": {"binary_present": True, "login_marker": "absent"},
             }
-            # record? yes; hold og? yes; hold zai? no; claude-code? yes. Codex
-            # is never asked: a Codex login is a Hermes provider, not a
-            # Maestro-only subscription.
-            answers = iter([True, True, False, True])
+            # record? yes; then one list (og ticked, zai unticked); then
+            # claude-code? yes. Codex is never asked: a Codex login is a
+            # Hermes provider, not a Maestro-only subscription.
+            answers = iter([True, True])
             with patch.object(setup_module, "_detect_external_cli_profiles", return_value=detected), patch.object(
                 setup_module, "_ask_yes_no", side_effect=lambda *a, **k: next(answers)
-            ), patch.object(setup_module, "_ask_single_choice", return_value="gateway"), patch.object(
+            ), patch.object(setup_module, "_ask_multi_choice", return_value=["og"]), patch.object(
                 setup_module, "_ask", return_value=""
             ), patch.object(setup_module, "_use_color", return_value=False):
                 setup_module._ask_provider_entitlements(args, paths, "en")
@@ -336,31 +428,36 @@ class SetupInterviewTests(unittest.TestCase):
                 {"schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION, "providers": {"zai": "zai"}, "subscription_clis": []},
             )
             args = argparse.Namespace()
-            yes_no_defaults: list[tuple[str, bool]] = []
-            kind_defaults: list[tuple[str, str]] = []
+            gate_defaults: list[bool] = []
+            rows: dict[str, object] = {}
 
-            def yes_no(prompt, *, default, **_kwargs):
-                yes_no_defaults.append((prompt, default))
+            def yes_no(_prompt, *, default, **_kwargs):
+                gate_defaults.append(default)
                 return True
 
-            def single_choice(title, _intro, options, *, default_choice, **_kwargs):
-                kind_defaults.append((title, next(o["value"] for o in options if o["choice"] == default_choice)))
-                return next(o["value"] for o in options if o["choice"] == default_choice)
+            def multi_choice(_title, _intro, options, *, selected, **_kwargs):
+                rows["options"] = options
+                rows["selected"] = selected
+                return list(selected)
 
             with patch.object(
                 setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": False}, "codex": {"binary_present": False}}
             ), patch.object(setup_module, "_ask_yes_no", side_effect=yes_no), patch.object(
-                setup_module, "_ask_single_choice", side_effect=single_choice
+                setup_module, "_ask_multi_choice", side_effect=multi_choice
             ), patch.object(setup_module, "_ask", return_value=""), patch.object(setup_module, "_use_color", return_value=False):
                 setup_module._ask_provider_entitlements(args, paths, "en")
 
-            # The top-level question defaults to No once a valid document exists;
-            # a previously recorded provider defaults to Yes, an unrecorded one to No.
-            self.assertEqual([default for _prompt, default in yes_no_defaults], [False, False, True])
-            self.assertIn("`og`", yes_no_defaults[1][0])
-            self.assertIn("`zai`", yes_no_defaults[2][0])
-            # The recorded kind seeds the kind default; a new provider defaults to gateway.
-            self.assertEqual([kind for _title, kind in kind_defaults], ["gateway", "zai"])
+            # The top-level question still defaults to No once a valid document
+            # exists, and it is now the only yes/no left before the list.
+            self.assertEqual(gate_defaults, [False])
+            # The previously recorded provider is pre-ticked; the configured one
+            # the operator declined last time is offered but not.
+            values = [option["value"] for option in rows["options"]]
+            self.assertEqual(values[:2], ["og", "zai"])
+            self.assertEqual(rows["selected"], ["zai"])
+            # The recorded kind survives the re-run rather than reverting.
+            document = json.loads(provider_entitlements_path(paths.omh_home).read_text(encoding="utf-8"))
+            self.assertEqual(document["providers"], {"zai": "zai"})
 
     def test_env_key_names_surface_builtin_providers_without_reading_values(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -377,23 +474,28 @@ class SetupInterviewTests(unittest.TestCase):
                 os.environ.pop("ANTHROPIC_API_KEY", None)
                 candidates = setup_module._provider_candidates(paths)
             # `auto` is Hermes' resolution mode, not an account, and is never asked.
-            self.assertEqual(candidates, [("anthropic", "anthropic")])
+            # The third element is where the row was found, and it is the
+            # variable NAME -- the value is never read.
+            self.assertEqual(candidates, [("anthropic", "anthropic", "ANTHROPIC_API_KEY")])
             args = argparse.Namespace()
-            kinds: list[str] = []
+            rows: dict[str, object] = {}
 
-            def single_choice(_title, _intro, options, *, default_choice, **_kwargs):
-                kinds.append(next(o["value"] for o in options if o["choice"] == default_choice))
-                return kinds[-1]
+            def multi_choice(_title, _intro, options, *, selected, **_kwargs):
+                rows["options"] = options
+                return list(selected)
 
             with patch.object(
                 setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": False}, "codex": {"binary_present": False}}
             ), patch.object(setup_module, "_ask_yes_no", return_value=True), patch.object(
-                setup_module, "_ask_single_choice", side_effect=single_choice
+                setup_module, "_ask_multi_choice", side_effect=multi_choice
             ), patch.object(setup_module, "_ask", return_value=""), patch.object(setup_module, "_use_color", return_value=False):
                 setup_module._ask_provider_entitlements(args, paths, "en")
             document = json.loads(provider_entitlements_path(paths.omh_home).read_text(encoding="utf-8"))
             self.assertEqual(document["providers"], {"anthropic": "anthropic"})
-            self.assertEqual(kinds, ["anthropic"])
+            # The row names the variable it was found by; no value reaches the
+            # menu or the document.
+            self.assertEqual(rows["options"][0]["description"], "found: ANTHROPIC_API_KEY is set here")
+            self.assertNotIn("sk-secret-value", json.dumps(rows["options"]))
             self.assertNotIn("sk-secret-value", json.dumps(document))
 
     def test_add_loop_records_extra_providers_and_rejects_bad_ids(self) -> None:
@@ -402,18 +504,20 @@ class SetupInterviewTests(unittest.TestCase):
             paths = self._paths(root)
             self._config(paths, "providers:\n  <<: *shared\n  og:\n    base_url: x\n")
             args = argparse.Namespace()
-            extra = iter(["my provider", "og", "openrouter", ""])
+            extra = iter(["my provider", "og", "work-relay", ""])
             with patch.object(
                 setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": False}, "codex": {"binary_present": False}}
             ), patch.object(setup_module, "_ask_yes_no", return_value=True), patch.object(
-                setup_module, "_ask_single_choice", return_value="openrouter"
-            ), patch.object(setup_module, "_ask", side_effect=lambda *a, **k: next(extra)), patch.object(
-                setup_module, "_use_color", return_value=False
-            ):
+                setup_module, "_ask_multi_choice", return_value=["og"]
+            ), patch.object(setup_module, "_ask_single_choice", return_value="openrouter"), patch.object(
+                setup_module, "_ask", side_effect=lambda *a, **k: next(extra)
+            ), patch.object(setup_module, "_use_color", return_value=False):
                 setup_module._ask_provider_entitlements(args, paths, "en")
             document = json.loads(provider_entitlements_path(paths.omh_home).read_text(encoding="utf-8"))
-            # The YAML merge key `<<` is never asked; the bad id and the duplicate are skipped.
-            self.assertEqual(document["providers"], {"og": "openrouter", "openrouter": "openrouter"})
+            # A provider outside the family vocabulary is still reachable by
+            # name after the list, and still gets its kind menu. The YAML merge
+            # key `<<` is never offered; the bad id and the duplicate are skipped.
+            self.assertEqual(document["providers"], {"og": "gateway", "work-relay": "openrouter"})
             parsed, status = load_provider_entitlements(paths.omh_home)
             self.assertEqual(status, "applied")
             self.assertIsNotNone(parsed)
@@ -479,6 +583,125 @@ class SetupInterviewTests(unittest.TestCase):
                 setup_module, "_use_color", return_value=False
             ):
                 setup_module._ask_provider_entitlements(args, paths, "en")
+            self.assertFalse(provider_entitlements_path(paths.omh_home).exists())
+
+    def test_a_detected_row_is_a_default_the_operator_can_clear(self) -> None:
+        """Detection pre-ticks a row; it never decides one.
+
+        EXECUTOR_AUTH_SIGNALS_CLAIM_BOUNDARY applies to the config key and the
+        variable name too: neither is an account. Unticking a pre-ticked row
+        must keep it out of the document.
+        """
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._paths(root)
+            self._config(paths, "providers:\n  og:\n    base_url: x\n  zai:\n    base_url: y\n")
+            args = argparse.Namespace()
+            seen: dict[str, object] = {}
+
+            def multi_choice(_title, _intro, options, *, selected, **_kwargs):
+                seen["selected"] = list(selected)
+                # The operator unticks `og` and leaves `zai`.
+                return [value for value in selected if value != "og"]
+
+            with patch.object(
+                setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": False}, "codex": {"binary_present": False}}
+            ), patch.object(setup_module, "_ask_yes_no", return_value=True), patch.object(
+                setup_module, "_ask_multi_choice", side_effect=multi_choice
+            ), patch.object(setup_module, "_ask", return_value=""), patch.object(setup_module, "_use_color", return_value=False):
+                setup_module._ask_provider_entitlements(args, paths, "en")
+            self.assertEqual(seen["selected"], ["og", "zai"])
+            document = json.loads(provider_entitlements_path(paths.omh_home).read_text(encoding="utf-8"))
+            self.assertEqual(document["providers"], {"zai": "gateway"})
+
+    def test_recorded_document_keeps_its_serialized_shape(self) -> None:
+        """The question shape changed; the `provider_entitlements/v1` bytes did not."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._paths(root)
+            self._config(paths, "providers:\n  og:\n    base_url: x\n")
+            args = argparse.Namespace()
+            answers = iter([True, True])
+            with patch.object(
+                setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": True, "login_marker": "present"}, "codex": {"binary_present": False}}
+            ), patch.object(setup_module, "_ask_yes_no", side_effect=lambda *a, **k: next(answers)), patch.object(
+                setup_module, "_ask_multi_choice", return_value=["og"]
+            ), patch.object(setup_module, "_ask", return_value=""), patch.object(setup_module, "_use_color", return_value=False):
+                setup_module._ask_provider_entitlements(args, paths, "en")
+            self.assertEqual(
+                provider_entitlements_path(paths.omh_home).read_text(encoding="utf-8"),
+                '{\n'
+                '  "providers": {\n'
+                '    "og": "gateway"\n'
+                '  },\n'
+                '  "schema_version": "provider_entitlements/v1",\n'
+                '  "subscription_clis": [\n'
+                '    "claude-code"\n'
+                '  ]\n'
+                '}\n',
+            )
+            _parsed, status = load_provider_entitlements(paths.omh_home)
+            self.assertEqual(status, "applied")
+
+    def test_every_setup_suppressor_still_closes_the_only_door(self) -> None:
+        """Re-derive the suppressor list from the gate rather than restating it.
+
+        `_ask_provider_entitlements` is reachable only from `_run_setup_wizard`,
+        which runs only when `_setup_should_interact` says so. A new suppressor
+        added to the gate without a case here fails this test.
+        """
+        import inspect
+        import re as _re
+
+        from omh.commands.main import build_parser
+
+        gate = inspect.getsource(setup_module._setup_should_interact) + inspect.getsource(_wants_json)
+        read = set(_re.findall(r'getattr\(args, "([a-z_]+)"', gate)) | set(_re.findall(r"args\.([a-z_]+)", gate))
+        suppressors = {
+            "json": True,
+            "dry_run": True,
+            "yes": True,
+            "no_interactive": True,
+            "profile": ["safety-first"],
+            "default_executor": "codex",
+            "profile_pack": ["team"],
+            "with_mcp": True,
+            "memory_mode": "auto",
+            "with_menubar": True,
+            "no_menubar": True,
+            "skip_apply": True,
+            "scope": "user",
+            "model_setup": True,
+        }
+        self.assertEqual(read - {"interactive"}, set(suppressors))
+        parser = build_parser()
+        for name, value in suppressors.items():
+            with self.subTest(suppressor=name):
+                args = parser.parse_args(["setup"])
+                self.assertIn(name, vars(args))
+                # `vars()`, not `setattr`: the static shard planner rejects a
+                # `setattr` whose name is not a literal.
+                vars(args)[name] = value
+                self.assertFalse(setup_module._setup_should_interact(args))
+        # `OMH_OUTPUT=json` is the same hard suppressor without a flag.
+        with patch.dict("os.environ", {"OMH_OUTPUT": "json"}):
+            self.assertFalse(setup_module._setup_should_interact(parser.parse_args(["setup", "--interactive"])))
+        # `--interactive` is the one flag that forces the question on.
+        forced = parser.parse_args(["setup", "--interactive"])
+        self.assertTrue(setup_module._setup_should_interact(forced))
+
+    def test_yes_run_writes_no_entitlement_document(self) -> None:
+        """`--yes` is consent for the display choice, never for an entitlement answer."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._paths(root)
+            self._config(paths, "providers:\n  og:\n    base_url: x\n")
+            self.assertTrue(setup_module._provider_candidates(paths))
+            status, _stdout, stderr = run_cli(
+                ["--omh-home", str(paths.omh_home), "--hermes-home", str(paths.hermes_home), "setup", "--yes"],
+                output_json=False,
+            )
+            self.assertEqual(status, 0, stderr)
             self.assertFalse(provider_entitlements_path(paths.omh_home).exists())
 
     def test_nothing_detected_asks_nothing(self) -> None:

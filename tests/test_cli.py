@@ -2910,7 +2910,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             third_prompt = yes_no.call_args_list[2].args[0]
             self.assertIn("category", third_prompt)
             fourth_prompt = yes_no.call_args_list[3].args[0]
-            self.assertIn("provider", fourth_prompt)
+            self.assertIn("AI services", fourth_prompt)
             dispatch_models_path = omh_home / "routing" / "dispatch-models.json"
             self.assertTrue(dispatch_models_path.exists())
             seeded = json.loads(dispatch_models_path.read_text(encoding="utf-8"))
