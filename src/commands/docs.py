@@ -292,6 +292,20 @@ def cmd_docs_claims(args: argparse.Namespace) -> int:
     return 1 if args.check and not payload["ok"] else 0
 
 
+def cmd_docs_navigation(args: argparse.Namespace) -> int:
+    from ..maintenance.documentation_navigation import (
+        documentation_navigation_report,
+        format_documentation_navigation,
+    )
+
+    payload = documentation_navigation_report(root=Path(args.root))
+    if args.json:
+        _print_json(payload)
+    else:
+        print(format_documentation_navigation(payload))
+    return 1 if args.check and not payload["ok"] else 0
+
+
 def _add_docs_commands(sub) -> None:
     docs = sub.add_parser("docs", help="Render or check generated OMH workflow reference docs.")
     docs_sub = docs.add_subparsers(dest="docs_command", required=True)
@@ -305,6 +319,19 @@ def _add_docs_commands(sub) -> None:
     claims.add_argument("--enable-model", action="store_true", help="Explicit advisory opt-in, requires --claim. Core CLI has no provider adapter: reports not_run.")
     claims.add_argument("--model-run-cap", type=int, default=1, help="Advisory run cap (0-3); never a release gate.")
     claims.set_defaults(func=cmd_docs_claims)
+
+    navigation = docs_sub.add_parser(
+        "navigation",
+        help=(
+            "Check public documentation structure offline: reachability from declared roots, "
+            "local link targets, navigation-root uniqueness, public-path collisions, and "
+            "classification of every intentionally non-public page (maintainers)."
+        ),
+    )
+    navigation.add_argument("--check", action="store_true", help="Exit 1 when any structural finding is reported; anchor advisories never block.")
+    navigation.add_argument("--json", action="store_true", help="Print the machine-readable documentation_navigation_audit/v1 payload.")
+    navigation.add_argument("--root", default=".", help="Repository tree to audit.")
+    navigation.set_defaults(func=cmd_docs_navigation)
 
     docs_workflows = docs_sub.add_parser("workflows")
     docs_workflows.add_argument("--output", default=None)

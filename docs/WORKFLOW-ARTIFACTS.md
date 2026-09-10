@@ -14,12 +14,14 @@ The command returns `workflow_artifact_operation_result/v1`. It does not echo th
 
 ## Closed operations
 
+Each workflow has its own contract page, linked from the first column.
+
 | Workflow | Operations | Explicit durable operation |
 | --- | --- | --- |
-| `decision-prototype` | `prepare`, `validate`, `observe`, `receipt`, `handoff`, `persist` | `persist` writes the validated existing prototype artifact store. |
-| `lifecycle-growth` | `build`, `prepare`, `validate`, `evaluate`, `readout`, `audience`, `promote`, `graduate` | `build` derives the five prepared artifacts from semantic fields; returned JSON is the durable serializable artifact. |
-| `product-discovery-validation` | `build`, `prepare`, `validate`, `audience-gate`, `evaluate`, `handoff`, `append` | `build` derives the five pre-decision artifacts and their hashes; `append` uses the existing append-only discovery store. |
-| `sales-pipeline-review` | `prepare`, `validate`, `evaluate`, `handoff` | None; returned JSON is the durable serializable artifact. |
+| [`decision-prototype`](DECISION-PROTOTYPES.md) | `prepare`, `validate`, `observe`, `receipt`, `handoff`, `persist` | `persist` writes the validated existing prototype artifact store. |
+| [`lifecycle-growth`](LIFECYCLE-GROWTH.md) | `build`, `prepare`, `validate`, `evaluate`, `readout`, `audience`, `promote`, `graduate` | `build` derives the five prepared artifacts from semantic fields; returned JSON is the durable serializable artifact. |
+| [`product-discovery-validation`](PRODUCT-DISCOVERY-VALIDATION.md) | `build`, `prepare`, `validate`, `audience-gate`, `evaluate`, `handoff`, `append` | `build` derives the five pre-decision artifacts and their hashes; `append` uses the existing append-only discovery store. |
+| [`sales-pipeline-review`](SALES-PIPELINE-REVIEW.md) | `prepare`, `validate`, `evaluate`, `handoff` | None; returned JSON is the durable serializable artifact. |
 
 Unsupported workflow/operation pairs are parser errors. `validate` dispatches to the producer's schema-specific validator: lifecycle has its six artifact schemas, and sales has scope, health, forecast, outcome-learning, renewal-risk, and handoff validators.
 

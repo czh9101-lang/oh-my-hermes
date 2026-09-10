@@ -110,6 +110,14 @@ jobs:
       - name: Generated ULW site region check
         if: matrix.shard == 0
         run: python -m omh.cli docs ulw-site --check
+      # Structure, not equality: a page can stay byte-identical to its producer
+      # and still have left the public map. This gate is the one that notices.
+      # The windows leg reaches the same verdict through
+      # tests/test_documentation_navigation.py, which audits this repository --
+      # separator, case, and encoding handling is where the two hosts differ.
+      - name: Documentation navigation check
+        if: matrix.shard == 0
+        run: python -m omh.cli docs navigation --check
       - name: Whitespace and conflict-marker check
         if: matrix.python-version == '3.11' && matrix.shard == 0 && github.event_name == 'pull_request'
         run: git diff --check "origin/${{ github.base_ref }}...HEAD"

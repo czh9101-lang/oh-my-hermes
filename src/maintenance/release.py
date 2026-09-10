@@ -987,6 +987,16 @@ def release_readiness_checklist(
             "This checklist prepares the command, not its result. Generated drift is separate evidence; optional model judgments never block release.",
         ),
         ReleaseChecklistItem(
+            "documentation_navigation",
+            "Check public documentation structure",
+            "uv run python -m omh.cli docs navigation --check",
+            "contract-quality",
+            True,
+            False,
+            "Every in-scope page is reachable from a declared root or classified with a reason, every local target resolves, and navigation roots are unique, in an observed documentation_navigation_audit/v1 report.",
+            "Structure only. A reachable page is not evidence that its content is current or usable, and this is a separate evidence class from generated-artifact equality and from the semantic claim audit.",
+        ),
+        ReleaseChecklistItem(
             "source_checkout_command_smoke",
             "Check source-checkout console command importability",
             'uv run --no-editable omh recommend "risky refactor" --limit 1 --json',

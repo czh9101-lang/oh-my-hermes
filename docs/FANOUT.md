@@ -3,6 +3,10 @@
 Audience: operators, wrappers, and coding agents. Normal users describe the
 goal to Hermes in chat; these commands are the backend surface.
 
+What a dispatched child process is allowed to inherit from the parent
+environment is a separate contract with its own default of least privilege:
+[Fanout child-environment policy](CHILD-ENVIRONMENT-POLICY.md).
+
 ## Lifecycle
 
 1. **Propose** — Hermes (the LLM) proposes the unit split in chat: unit ids,
