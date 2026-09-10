@@ -26,6 +26,7 @@ from .lifecycle_growth_artifacts import (
     validate_safety,
 )
 from .lifecycle_growth_launch import lifecycle_growth_evaluation_context
+from .lifecycle_growth_exposure import is_exposure_evidence, review_exposure_evidence, validate_exposure_evidence
 from .lifecycle_growth_readout import (
     build_growth_measurement_readout,
     derive_readout_disposition,
@@ -53,8 +54,10 @@ _LAUNCH_SCHEMAS: Final = {
 }
 
 
-def validate_lifecycle_growth_artifact(record: Any) -> list[str]:
+def validate_lifecycle_growth_artifact(record: object) -> list[str]:
     """Return structural errors for one versioned lifecycle-growth artifact."""
+    if is_exposure_evidence(record):
+        return validate_exposure_evidence(record)
     schema, errors = artifact_shape_errors(record)
     if not schema or not isinstance(record, Mapping):
         return errors
@@ -92,32 +95,43 @@ def prepare_lifecycle_growth(artifacts: Mapping[str, Mapping[str, Any]]) -> dict
     _hold_for_audience(records["audience"], errors)
     _hold_for_experiment(records["experiment"], errors)
     _hold_for_handoff(records["handoff"], errors)
+    evidence = artifacts.get("exposure_evidence")
+    errors.extend(review_exposure_evidence(evidence, records["experiment"], records.get("readout")).reasons)
+    if isinstance(evidence, Mapping):
+        if any(evidence.get(name) != records[name] for name in ("audience", "safety")):
+            errors.append("exposure_policy_mismatch")
+        if evidence.get("channel_refs") != records["brief"].get("available_surface_refs"):
+            errors.append("channel_scope_mismatch")
+    records["exposure_evidence"] = evidence if isinstance(evidence, Mapping) else {}
     _hold_for_analysis(records, errors)
     return _readiness(errors)
 
 
 def evaluate_lifecycle_growth(
     experiment: Mapping[str, Any], readout: Mapping[str, Any], *, evaluation_context: object = None,
+    exposure_evidence: object = None,
 ) -> dict[str, object]:
-    """Evaluate supplied evidence; absent context preserves the original result.
-
-    Optional reference/baseline context can only hold interpretation, never turn
-    configuration, assignment, delivery or a launch proposal into exposure.
-    """
+    """Require audience/exposure observations before recommending expansion."""
     errors = _expected_errors(experiment, "growth_experiment_plan/v1", "experiment")
     errors.extend(_expected_errors(readout, "growth_measurement_readout/v1", "readout"))
     if not errors and experiment.get("lifecycle_growth_id") != readout.get("lifecycle_growth_id"):
         errors.append("experiment and readout lifecycle_growth_id differ")
-    result = readout_lifecycle_growth(readout)
+    result = _readout_lifecycle_growth(readout, experiment, exposure_evidence)
+    _hold_for_experiment(experiment, errors)
     observed_days = readout.get("runtime_days_observed")
     minimum_days = experiment.get("minimum_runtime_days")
     if isinstance(observed_days, int) and isinstance(minimum_days, int) and observed_days < minimum_days:
-        result["disposition"] = "insufficient_data"
-        result["interpretation_state"] = "HOLD"
         errors.append("minimum runtime has not elapsed")
     if errors:
-        result["disposition"] = "insufficient_data"
+        if result["disposition"] != "rollback":
+            result["disposition"] = "insufficient_data"
         result["interpretation_state"] = "HOLD"
+    context = lifecycle_growth_evaluation_context(
+        evaluation_context, displayed_count=max(0, _count(readout, "displayed_count")),
+    )
+    reasons = _errors(result["evidence_reason_codes"]) + _errors(context.get("evidence_reason_codes", []))
+    if context.get("evidence_reason_codes") and result["disposition"] != "rollback":
+        result.update(disposition="insufficient_data", interpretation_state="HOLD")
     return {
         "schema_version": LIFECYCLE_GROWTH_READOUT_SCHEMA_VERSION,
         "interpretation_state": result["interpretation_state"],
@@ -126,26 +140,51 @@ def evaluate_lifecycle_growth(
         "exposure_unit": experiment.get("exposure_unit", ""),
         "actual_exposure_count": result["actual_exposure_count"],
         "delivery_count": result["delivery_count"],
+        "populations": result["populations"],
+        "channels": result["channels"],
         "runtime_days_observed": result["runtime_days_observed"],
         "analysis_run_state": result["analysis_run_state"],
         "analysis_observed_at": result["analysis_observed_at"],
         "analysis_delay_state": result["analysis_delay_state"],
         "artifact_errors": _errors(result.get("artifact_errors")) + errors,
         "claim_boundary": "Assignment is not exposure; evaluation is derived from bounded caller-supplied metadata only.",
-        **lifecycle_growth_evaluation_context(
-            evaluation_context, displayed_count=max(0, _count(readout, "displayed_count")),
-        ),
+        "evidence_reason_codes": reasons,
+        "blocked": bool(errors or reasons or result["interpretation_state"] == "HOLD"),
     }
 
 
-def readout_lifecycle_growth(readout: Mapping[str, Any]) -> dict[str, object]:
+def readout_lifecycle_growth(
+    readout: Mapping[str, Any], *, experiment: Mapping[str, object] | None = None,
+    exposure_evidence: object = None,
+) -> dict[str, object]:
+    """Read old artifacts conservatively, or evaluate a complete expansion input."""
+    if experiment is not None:
+        return evaluate_lifecycle_growth(experiment, readout, exposure_evidence=exposure_evidence)
+    return _readout_lifecycle_growth(readout, None, exposure_evidence)
+
+
+def _readout_lifecycle_growth(
+    readout: Mapping[str, object], experiment: Mapping[str, object] | None, exposure_evidence: object,
+) -> dict[str, object]:
     """Derive a readout disposition without claiming provider observation occurred."""
     errors = _expected_errors(readout, "growth_measurement_readout/v1", "readout")
     disposition = derive_readout_disposition(readout)
+    exposure = review_exposure_evidence(exposure_evidence, experiment, readout)
+    reasons = list(exposure.reasons)
+    if experiment is None:
+        reasons.append("experiment_missing")
+    if reasons and disposition == "ship":
+        disposition = "review" if "channel_partial_delivery" in reasons else "insufficient_data"
     return {
         "schema_version": LIFECYCLE_GROWTH_READOUT_SCHEMA_VERSION,
         "interpretation_state": "READY" if not errors and disposition == "ship" else "HOLD",
         "disposition": disposition if not errors else "insufficient_data",
+        "evidence_reason_codes": reasons,
+        "blocked": bool(errors or reasons or disposition != "ship"),
+        "populations": {"eligible": _count(readout, "eligible_count"), "assigned": exposure.assigned_count,
+                        "attempted": _count(readout, "attempted_count"), "reached": _count(readout, "displayed_count"),
+                        "converted": _count(readout, "outcome_count")},
+        "channels": list(exposure.channels),
         "actual_exposure_count": _count(readout, "displayed_count"),
         "delivery_count": _count(readout, "delivered_count"),
         "action_count": _count(readout, "acted_count"),
@@ -245,7 +284,7 @@ def _hold_for_analysis(records: Mapping[str, Mapping[str, Any]], errors: list[st
     readout = records.get("readout")
     if readout is None:
         return
-    if readout_lifecycle_growth(readout)["interpretation_state"] == "HOLD":
+    if evaluate_lifecycle_growth(records["experiment"], readout, exposure_evidence=records.get("exposure_evidence"))["interpretation_state"] == "HOLD":
         errors.append("observed readout interpretation is on hold")
     if analysis_run_state(readout) in IN_FLIGHT_ANALYSIS_STATES:
         errors.append("the latest analysis run is still in flight; reconcile it before preparing another")

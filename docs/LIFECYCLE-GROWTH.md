@@ -125,7 +125,9 @@ controller, endpoint, query state, or timeout.
 
 `prepare_lifecycle_growth` consumes the five launch artifacts (`brief`,
 `audience`, `safety`, `experiment`, and `handoff`). A first, approved experiment
-can be locally `READY` without a fabricated readout. It returns `HOLD` for
+can be locally `READY` without a fabricated readout, but requires a separate
+exposure-evidence companion for observed audience, reachability and contact
+checks. It returns `HOLD` for
 unknown/ineligible consent, suppression, frequency, event semantics, identity,
 or owner; absent holdout/approval/data health; unavailable connector evidence;
 production read-only content or an unapproved promotion decision; wrong slot;
@@ -141,7 +143,9 @@ running analysis: preparing another one while work is in flight duplicates it.
 overlap; it neither adds a person to an audience nor starts a journey.
 
 `readout_lifecycle_growth` derives `ship`, `rollback`, `review`, or
-`insufficient_data`. It requires non-zero eligible/displayed/outcome stages,
+`insufficient_data`. Legacy readout-only input is readable but insufficient to
+ship. With experiment and exposure evidence, it uses the same evaluator, requiring
+non-zero eligible/displayed/outcome stages,
 valid actual-exposure/runtime/causal references, and a valid causal method
 before `ship`. `evaluate_lifecycle_growth` also compares observed runtime days
 with the experiment's minimum runtime, so an early readout cannot ship. Both
@@ -190,8 +194,63 @@ before. Exact input keys, bounds, and CLI exit codes live in
   context with `experiment_reference_state` and `baseline_exposure_state`. A
   deleted reference is blocked and `insufficient_data`; an absent baseline and
   zero displayed exposure carry their own reason codes; neither is reported as
-  a runtime outage. Omitting the context preserves the original output byte for
-  byte, and a resolved or observed context can never upgrade an existing hold.
+  a runtime outage. A resolved or observed context cannot replace audience or
+  exposure evidence. Missing evidence holds expansion while an independently
+  valid observed rollback stays rollback.
+
+## Audience and exposure evidence
+
+The separate `lifecycle_growth_exposure_evidence/v1` record is supplied under
+`exposure_evidence` to `evaluate` or `prepare`. It reuses the existing bounded
+reference/count/state validation; all six original artifact schemas remain
+unchanged. `validate` accepts this companion too. Its exact keys are:
+
+| Fields | Meaning and allowed values |
+| --- | --- |
+| `schema_version`, `status`, `claim_boundary` | The schema above; `prepared_not_observed`; the same claim boundary as existing lifecycle artifacts. |
+| `lifecycle_growth_id`, `observation_window_ref` | Shared lifecycle identity and the window to which every supplied check and population refers. |
+| `audience`, `safety` | Complete existing `audience_trigger_policy/v1` and `lifecycle_safety_policy/v1` artifacts with matching lifecycle identity. Policies describe eligibility/exclusion reasons, identity and global/campaign contact budgets; observations below must back their application. |
+| `assignment_unit`, `exposure_unit`, `assignment_event_ref`, `actual_exposure_event_ref` | Must match the experiment. Assignment is never actual reach. |
+| `eligible_count`, `assigned_count`, `repeated_contact_count` | Nonnegative integers or null for unknown; booleans are invalid. |
+| `eligibility_evidence_refs`, `exclusion_evidence_refs`, `assignment_evidence_refs` | Observed membership/exclusion checks and assignment. An empty exclusion-result set still requires evidence of the check, not an assumed absence. |
+| `population_reconciliation_state`, `population_evidence_refs` | `reconciled`, `inconsistent`, or `unknown`; supplied reconciliation of identity, observation window, assignment and channel populations. |
+| `contact_pressure_state`, `contact_evidence_refs` | `within_budget`, `exceeded`, or `unknown`; observed repeated-contact pressure against the nested safety policy's global and campaign budgets in the declared window. Configured throttling is not this observation. |
+| `overlap_state`, `overlapping_experiment_refs`, `overlap_evidence_refs` | `absent`, `detected`, or `unknown`; explicit concurrent-intervention check. Empty intervention references without check evidence do not mean absent. |
+| `analysis_run_ref` | The readout's analysis run; empty is permitted for first-launch preparation, not for expansion. |
+| `channel_refs`, `channels` | Declared channels and exactly one row for each. At most eight; missing, duplicated or foreign rows hold. |
+
+Each channel row has exactly `channel_ref`, `reachability_state` (`reachable`,
+`unreachable`, `unknown`), `attempted_count`, `delivered_count`, `reached_count`,
+`failed_count`, `unresolved_count`, `failure_reason_refs`, and `evidence_refs`.
+Counts are nonnegative integers or null. Every reference list has at most eight
+opaque references. Raw provider receipts, addresses and recipient lists have no
+field here.
+
+Counts describe unique subjects in the exposure unit. When assignment uses a
+different unit, population evidence must supply its normalization; OMH does not
+compute a cross-unit conversion. The same evidence accounts for deduplication
+across channels. OMH checks `eligible >= assigned >= attempted`, the existing
+readout funnel, and each channel's `attempted = delivered + failed + unresolved`
+and `reached <= delivered`. Each aggregate channel population must lie between
+the largest channel population and their sum, not equal the sum by assumption.
+These bounds cannot prove set membership: reconciliation remains explicitly
+caller-supplied evidence, not source attestation.
+
+Expansion returns `populations` with `eligible`, `assigned`, `attempted`,
+`reached` (the readout's actual `displayed_count`), and `converted` (its
+`outcome_count`). Delivery and action counts remain separate. Missing assignment
+is null, not zero. Bounded channel counts and failure reasons remain visible.
+Partial delivery requires `HOLD/review`; no failure tolerance is invented.
+Unknown audience, missing checks, unmatched populations, unreachable channels,
+repeated-contact pressure or overlap prevents `ship`. A valid observed rollback
+is never replaced by an insufficient-launch-evidence decision.
+
+First-launch preparation requires the audience, exclusion, contact and channel
+reachability checks, but accepts null assignment/treatment counts and an empty
+analysis-run reference. Already supplied channel failures still hold; removing
+a readout cannot hide them. All checks remain local metadata interpretation:
+neither supplying a reference nor receiving `READY` proves provider observation
+or authorizes external execution.
 
 ## Upstream review (issue #1399)
 

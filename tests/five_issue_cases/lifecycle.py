@@ -155,7 +155,8 @@ class _Scenario:
         result = self.cli("evaluate", {"experiment": experiment, "readout": readout,
                                       "evaluation_context": {"experiment_reference_state": "resolved", "baseline_exposure_state": "observed"}})
         self.check("configuration_not_exposure", result["actual_exposure_count"] == 0 and result["delivery_count"] == 7
-                   and result["disposition"] == "insufficient_data" and result["evidence_reason_codes"] == ["exposure_absent"])
+                   and result["disposition"] == "insufficient_data"
+                   and result["evidence_reason_codes"] == ["exposure_evidence_missing", "exposure_absent"])
 
     def promotion(self) -> None:
         for approved in (False, True):
@@ -188,8 +189,8 @@ class _Scenario:
                                             ("unknown", "observed", "experiment_reference_unknown")):
             result = self.cli("evaluate", {"experiment": experiment, "readout": readout,
                                           "evaluation_context": {"experiment_reference_state": reference, "baseline_exposure_state": baseline}})
-            self.check(reason, result["evidence_reason_codes"] == [reason]
-                       and result["blocked"] == (reference == "deleted")
+            self.check(reason, result["evidence_reason_codes"] == ["exposure_evidence_missing", reason]
+                       and result["blocked"] is True
                        and result["disposition"] == "insufficient_data" and result["interpretation_state"] == "HOLD")
         _ = self.cli("evaluate", {"experiment": experiment, "readout": readout, "evaluation_context": {
             "experiment_reference_state": "resolved", "baseline_exposure_state": "multiple"}}, expected_exit=2)
@@ -210,9 +211,30 @@ class _Scenario:
         self.check("readout_separate", self.cli("readout", readout)["actual_exposure_count"] == 6
                    and old["delivery_count"] == 7 and old["assignment_unit"] == "account" and old["exposure_unit"] == "account")
         self.check("prepared_action", _record(artifacts["handoff"])["timing_state"] == "not_scheduled")
+        self.check("legacy_cannot_expand", old["disposition"] == "insufficient_data" and old["blocked"] is True)
+        self.exposure()
         self.promotion()
         self.graduation()
         self.subjects()
+
+    def exposure(self) -> None:
+        from test_lifecycle_growth_exposure import exposure_inputs
+
+        full = _record(exposure_inputs())
+        observed = self.cli("evaluate", full)
+        self.check("observed_expansion", observed["disposition"] == "ship" and observed["blocked"] is False
+                   and observed["populations"] == {"eligible": 10, "assigned": 8, "attempted": 8, "reached": 8, "converted": 1})
+        cases: tuple[tuple[str, JsonValue], ...] = (("assigned_count", None), ("contact_pressure_state", "unknown"), ("overlap_state", "detected"),
+                             ("population_reconciliation_state", "inconsistent"), ("channels", []))
+        for field, value in cases:
+            payload = _record(exposure_inputs())
+            payload["exposure_evidence"] = dict(_record(payload["exposure_evidence"]), **{field: value})
+            result = self.cli("evaluate", payload)
+            self.check(field + "_holds", result["interpretation_state"] == "HOLD" and result["blocked"] is True)
+        rollback = _record(exposure_inputs())
+        rollback["readout"] = dict(_record(rollback["readout"]), guardrail_state="failed", disposition="rollback")
+        del rollback["exposure_evidence"]
+        self.check("rollback_preserved", self.cli("evaluate", rollback)["disposition"] == "rollback")
 
 
 POSTHOG_REPO = "https://github.com/PostHog/posthog"
@@ -267,10 +289,10 @@ def _run_l7_source_review() -> CaseResult:
     offenders = [str(p.relative_to(root)) for p in sorted((root / "src").rglob("*.py"))
                  if any(line.lstrip().startswith(("import posthog", "from posthog")) for line in p.read_text(encoding="utf-8").splitlines())]
     checks["no_vendor_import"] = offenders == []
-    argv = [sys.executable, "-P", "-m", "omh.cli", "docs", "claims", "--check", "--json"]
+    argv = [*CLI, "docs", "claims", "--check", "--json"]
     result["commands"].append(list(argv))
     child = subprocess.run(argv, capture_output=True, text=True, timeout=120, cwd=root,
-                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", UV_NO_SYNC="1"))
+                           env=dict(os.environ, PYTHONPATH=str(ROOT / "tests"), PYTHONDONTWRITEBYTECODE="1", UV_NO_SYNC="1"))
     exits.append(child.returncode)
     checks["docs_claims_check"] = child.returncode == 0
     result["observations"] = {"checks": checks, "exit_codes": exits, "command_count": len(result["commands"]),

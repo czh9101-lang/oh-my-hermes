@@ -95,7 +95,7 @@ class AnalysisRunStateTests(unittest.TestCase):
             ("not_started", "insufficient_data"),
             ("queued", "review"),
             ("running", "review"),
-            ("completed", "ship"),
+            ("completed", "insufficient_data"),
             ("failed", "insufficient_data"),
             ("canceled", "insufficient_data"),
             ("unknown", "insufficient_data"),
@@ -287,8 +287,9 @@ class AnalysisReadinessTests(unittest.TestCase):
                 self.assertIn("the latest analysis run is still in flight; reconcile it before preparing another", readiness["hold_reasons"])
 
     def test_given_a_completed_analysis_on_a_shipping_readout_when_prepared_then_launch_stays_ready(self) -> None:
+        from test_lifecycle_growth_exposure import exposure_inputs
         artifacts = _launch_artifacts()
-        artifacts["readout"] = _readout()
+        artifacts.update(exposure_inputs())
 
         readiness = prepare_lifecycle_growth(artifacts)
 

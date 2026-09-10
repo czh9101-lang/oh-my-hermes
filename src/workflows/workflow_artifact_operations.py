@@ -117,10 +117,13 @@ def _lifecycle_evaluate(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[st
     return evaluate_lifecycle_growth(
         _required_mapping(payload, "experiment"), _required_mapping(payload, "readout"),
         evaluation_context=payload.get("evaluation_context"),
+        exposure_evidence=payload.get("exposure_evidence"),
     )
 
 
 def _lifecycle_readout(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, Any]:
+    if "readout" in payload:
+        return _lifecycle_evaluate(_paths, payload)
     return readout_lifecycle_growth(payload)
 
 

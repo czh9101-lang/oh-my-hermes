@@ -38,8 +38,9 @@ Preparation does not write state. Persist only when the producer already owns a 
 ## Lifecycle launch review (agent/operator reference)
 
 The new operations return separate `prepared_not_observed` records, not additions
-inside the six closed lifecycle artifact schemas. `validate` continues to accept
-only those six original artifact shapes. No operation launches treatment, carries
+inside the six closed lifecycle artifact schemas. `validate` preserves those
+original artifact shapes and also accepts the separate exposure-evidence companion.
+No operation launches treatment, carries
 configuration into a provider, or deletes a gate; `READY` is local preparation,
 not observed execution. These contracts are provider- and executor-neutral.
 
@@ -80,19 +81,34 @@ runtime outages. A valid prepared `HOLD` still returns CLI exit 0.
 `evaluate` still accepts `experiment` and `readout`. It also accepts optional
 `evaluation_context` with exactly `experiment_reference_state`
 (`resolved`, `deleted`, `unknown`) and `baseline_exposure_state`
-(`observed`, `absent`, `unknown`). Omitted or null context preserves the original
-output exactly. Present context adds `evidence_reason_codes` and `blocked`:
+(`observed`, `absent`, `unknown`). It also accepts `exposure_evidence` as described
+in [the exposure contract](LIFECYCLE-GROWTH.md#audience-and-exposure-evidence).
+Missing exposure evidence holds expansion even when reference and baseline are
+resolved. Every decision reports `evidence_reason_codes`, `blocked`, five distinct
+`populations`, and bounded `channels`. Context contributes these reasons:
 
-- Deleted reference: `experiment_reference_deleted`, blocked, `HOLD`,
-  `insufficient_data`.
+- Deleted reference: `experiment_reference_deleted`, blocked, `HOLD`.
 - Absent baseline: `baseline_exposure_absent`, `HOLD`, `insufficient_data`.
 - Zero displayed exposure: `exposure_absent`, never inferred exposure from delivery.
 - Unknown reference/baseline: its own unknown reason and `HOLD`.
 
 Resolved/observed context cannot upgrade an existing runtime, data-health,
 validation, or rollback hold. All original artifact errors remain. The disposition
-vocabulary stays `ship`, `rollback`, `review`, `insufficient_data`; all evaluation
+vocabulary stays `ship`, `rollback`, `review`, `insufficient_data`. An independently
+valid readout's rollback is preserved even with missing launch evidence or short
+runtime; other missing-evidence decisions are `insufficient_data`. All evaluation
 results remain derived from bounded caller-supplied evidence, not provider calls.
+
+`prepare` accepts the companion alongside its five artifacts and optional readout.
+Its nested audience/safety policies must match the launch artifacts and its
+channel scope must match the brief. A first launch needs observed audience,
+reachability, exclusion and contact checks, but not assignment or treatment
+observations. With a readout, the full expansion gate applies.
+
+`readout` accepts either the legacy readout artifact alone (readable but not
+sufficient for `ship`) or the same `{experiment, readout, exposure_evidence,
+evaluation_context?}` input as `evaluate`. There is no provider invocation or
+automatic observation/build of the companion; the caller supplies its records.
 
 For example, an agent can submit this complete synthetic graduation proposal via
 `omh runtime workflow-artifact lifecycle-growth graduate --input -`:

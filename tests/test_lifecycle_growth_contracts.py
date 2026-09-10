@@ -159,13 +159,14 @@ class LifecycleGrowthContractTests(unittest.TestCase):
         values.update(overrides)
         return build_growth_measurement_readout(**values)
 
-    def test_given_approved_first_experiment_when_prepared_then_launch_is_ready_without_readout(self) -> None:
+    def test_given_approved_first_experiment_without_observed_checks_when_prepared_then_hold(self) -> None:
         artifacts = self._launch_artifacts()
 
         readiness = prepare_lifecycle_growth(artifacts)
 
-        self.assertEqual(readiness["verdict"], "READY")
-        self.assertTrue(readiness["launch_ready"])
+        self.assertEqual(readiness["verdict"], "HOLD")
+        self.assertFalse(readiness["launch_ready"])
+        self.assertEqual(readiness["hold_reasons"], ["exposure_evidence_missing"])
         self.assertTrue(all(validate_lifecycle_growth_artifact(record) == [] for record in artifacts.values()))
 
     def test_given_unknown_eligibility_or_owner_when_prepared_then_hold(self) -> None:

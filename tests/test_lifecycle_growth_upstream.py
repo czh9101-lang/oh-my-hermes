@@ -324,8 +324,11 @@ class LifecycleGrowthUpstreamTests(unittest.TestCase):
         result = contracts.evaluate_lifecycle_growth(fixture.experiment(), fixture.readout())
         self.assertEqual(set(result), {"schema_version", "interpretation_state", "disposition", "assignment_unit", "exposure_unit",
                                        "actual_exposure_count", "delivery_count", "runtime_days_observed", "artifact_errors",
-                                       "analysis_run_state", "analysis_delay_state", "analysis_observed_at", "claim_boundary"})
-        self.assertEqual(result["disposition"], "ship")
+                                       "analysis_run_state", "analysis_delay_state", "analysis_observed_at", "claim_boundary",
+                                       "populations", "channels", "evidence_reason_codes", "blocked"})
+        self.assertEqual(result["disposition"], "insufficient_data")
+        self.assertEqual(result["evidence_reason_codes"], ["exposure_evidence_missing"])
+        self.assertTrue(result["blocked"])
         self.assertEqual((result["delivery_count"], result["actual_exposure_count"]), (7, 6))
         self.assertEqual((result["assignment_unit"], result["exposure_unit"]), ("account", "account"))
         self.assertEqual(result["artifact_errors"], [])
@@ -419,7 +422,7 @@ class LifecycleGrowthPublicTests(unittest.TestCase):
         self.assertEqual(result["delivery_count"], 7)
         self.assertEqual(result["disposition"], "insufficient_data")
         self.assertIn("evidence_reason_codes", result)
-        self.assertEqual(result["evidence_reason_codes"], ["exposure_absent"])
+        self.assertEqual(result["evidence_reason_codes"], ["exposure_evidence_missing", "exposure_absent"])
 
     def test_l3_public_promotion_approval_and_result_are_separate(self):
         for dependencies, schedules in product((False, True), repeat=2):
@@ -449,8 +452,8 @@ class LifecycleGrowthPublicTests(unittest.TestCase):
             self.assertNotIn("gate_deleted", result)
 
     def test_l5_public_evaluation_context_and_invalid_controls(self):
-        fixture = readiness_fixture()
-        source = {"experiment": fixture.experiment(), "readout": fixture.readout()}
+        from test_lifecycle_growth_exposure import exposure_inputs
+        source = exposure_inputs()
         for reference, baseline in product(("resolved", "deleted", "unknown"), ("observed", "absent", "unknown")):
             context = {"experiment_reference_state": reference, "baseline_exposure_state": baseline}
             result = self.cli("evaluate", dict(source, evaluation_context=context))
@@ -458,7 +461,7 @@ class LifecycleGrowthPublicTests(unittest.TestCase):
             reasons += ["baseline_exposure_" + baseline] if baseline != "observed" else []
             self.assertIn("evidence_reason_codes", result)
             self.assertEqual(result["evidence_reason_codes"], reasons)
-            self.assertEqual(result["blocked"], reference == "deleted")
+            self.assertEqual(result["blocked"], bool(reasons))
             self.assertEqual(result["disposition"], "insufficient_data" if reasons else "ship")
             self.assertEqual(result["interpretation_state"], "HOLD" if reasons else "READY")
         invalid_contexts: list[object] = [{}, [], False, {"experiment_reference_state": "resolved", "baseline_exposure_state": "multiple"},
@@ -477,7 +480,7 @@ class LifecycleGrowthPublicTests(unittest.TestCase):
             self.assertEqual(self.cli("evaluate", source), old)
             self.assertEqual(self.cli("evaluate", dict(source, evaluation_context=None)), old)
             with_context = self.cli("evaluate", dict(source, evaluation_context=context))
-            self.assertEqual(with_context, old | {"evidence_reason_codes": [], "blocked": False})
+            self.assertEqual(with_context, old)
         from five_issue_cases import lifecycle as qa
         for case in ("L1", "L2", "L3", "L4", "L5", "L6"):
             with self.subTest(case=case):
