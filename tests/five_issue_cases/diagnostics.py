@@ -60,7 +60,7 @@ def exercise_dispatch(*, stdout: bytes = b'', stderr: bytes = b'', exit_code: in
         if verification:
             import shlex
             unit['verification_commands'] = [shlex.join([
-                sys.executable, '-c', 'import sys; sys.stderr.write("compiler failed\\n"); sys.exit(7)'])]
+                sys.executable, '-c', 'import sys; sys.stderr.buffer.write(b"compiler failed\\n"); sys.exit(7)'])]
         contract = write_fanout_contract(paths, build_fanout_contract(goal, [unit]))
         fanout_id = str(contract['fanout_id'])
         run_ref = fanout_id + '-core'

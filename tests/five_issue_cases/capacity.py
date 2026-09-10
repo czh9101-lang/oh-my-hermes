@@ -81,7 +81,7 @@ def negative_admission_cases() -> int:
         ERROR_LINE.replace('turn/start', 'thread/start'), ERROR_LINE.rstrip('\n'),
         ERROR_LINE + 'backtrace\n', 'nested agent thread limit reached\n', '')]
     variants += [(value, stderr) for value in (
-        b'', b'{bad}\n', stdout.rstrip(b'\n'), stdout + b'{"type":"turn.started"}\n',
+        b'', b'{bad}\n', stdout.rstrip(b'\n'), stdout.replace(b'\n', b'\r\n'), stdout + b'{"type":"turn.started"}\n',
         stdout + b'{"type":"item.started"}\n', stdout + stdout,
         b'{"tool_result":{"type":"thread.started"}}\n',
         stdout.replace(b'"thread_id":', b'"extra":true,"thread_id":'),
@@ -166,7 +166,7 @@ def run_case(case_id: str) -> CaseResult:
             "  control.sendall((sys.argv[i+2]+'\\n').encode())\n" +
             "  with control.makefile('rb') as incoming: assert incoming.readline(64)==b'finish\\n'\n" +
             "if '--reject' in sys.argv:\n" +
-            " print(json.dumps({'type':'thread.started','thread_id':'11111111-1111-4111-8111-111111111111'}))\n" +
+            " sys.stdout.buffer.write((json.dumps({'type':'thread.started','thread_id':'11111111-1111-4111-8111-111111111111'})+'\\n').encode('utf-8'))\n" +
             ' sys.stderr.buffer.write(' + repr(ERROR_LINE.encode('utf-8')) + "); raise SystemExit(1)\n" +
             "if '--ordinary' in sys.argv: sys.stderr.write('compiler failed\\n'); raise SystemExit(3)\n" +
             "if '--rate' in sys.argv: sys.stderr.write('HTTP 429\\n'); raise SystemExit(1)\n" +

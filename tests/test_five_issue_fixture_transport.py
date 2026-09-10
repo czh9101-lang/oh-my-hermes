@@ -7,6 +7,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -161,7 +162,8 @@ class FixtureTransportTests(unittest.TestCase):
 
         def writer(path: Path, body: str) -> list[str]:
             return fixture.write_fixture_executable(path,
-                "import sys; sys.stderr.reconfigure(newline='\\r\\n')\n" + body, interpreter=True)
+                "import sys; sys.stdout.reconfigure(newline='\\r\\n'); sys.stderr.reconfigure(newline='\\r\\n')\n" + body,
+                interpreter=True)
 
         for case in ('C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'):
             with self.subTest(case=case), patch.object(capacity, 'write_fixture_executable', writer):
@@ -170,6 +172,21 @@ class FixtureTransportTests(unittest.TestCase):
                 # Then exact admission framing and all existing scenario assertions hold.
                 self.assertTrue(result['pass'])
                 self.assertTrue(result['cleanup']['verified_absent'])
+
+    def test_verification_diagnostic_bytes_survive_crlf_text_stream(self) -> None:
+        from five_issue_cases import diagnostics
+        join = shlex.join
+
+        def windows_command(arguments: list[str]) -> str:
+            argv = list(arguments)
+            if len(argv) == 3 and argv[:2] == [sys.executable, '-c']:
+                argv[2] = "import sys; sys.stderr.reconfigure(newline='\\r\\n'); " + argv[2]
+            return join(argv)
+
+        with patch('shlex.join', windows_command):
+            result = diagnostics.run_case('D5')
+        self.assertTrue(result['pass'], result['observations'])
+        self.assertTrue(result['cleanup']['verified_absent'])
 
 
 if __name__ == '__main__':
