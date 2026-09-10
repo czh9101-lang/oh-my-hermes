@@ -174,6 +174,34 @@ Rules:
 - Grepping the repo and matching stale strings under `build/lib/` — it is a
   gitignored copy of old sources. Scope searches to `src/`, `tests/`, `docs/`,
   `skills/`.
+- Trusting a red run before clearing `build/`. A `ModuleNotFoundError` whose
+  traceback names a `build/__editable__…` path is the gitignored editable
+  install, not the tree you are editing: your venv's copy predates a module the
+  branch now has. It is not a real failure and it is not the other branch's
+  regression. Clear it before you diagnose anything:
+
+  ```sh
+  rm -rf build && uv sync --reinstall-package oh-my-hermes
+  ```
+
+  This is worth its own entry because of how it lies. Bisecting across the
+  commit that adds the module produces green-then-red — the exact shape of a
+  genuine regression — since before that commit the stale copy is adequate and
+  after it the import fails. It cost several agents hours in one afternoon and
+  produced one false attribution of a defect to another contributor's branch.
+  If a checkout ever aborts with "local changes would be overwritten", stop:
+  every run after that measured the same dirty tree. `git reset --hard &&
+  git clean -fdx` first, then re-measure.
+- Concluding a platform fact settles a call site. Windows and POSIX differ in
+  ways this repo keeps rediscovering — `Path.write_text` without `newline=`
+  emits CRLF; a child process's stdout arrives CRLF-terminated; CR is a control
+  character to a text guard; and Windows will not unlink a file another thread
+  still holds open, so a leaked worker turns a test failure into a failure plus
+  a cleanup error. Each of those is true, and none of them is a conclusion on
+  its own. One prediction here reasoned correctly that `os.open` without
+  `O_BINARY` returns a text-mode descriptor, and missed that the next line's
+  `os.fdopen(fd, 'rb')` re-sets the descriptor to binary before a byte is read.
+  Trace the composition to the end, or say the claim is untested.
 - Regenerating docs but forgetting the demo cards (or vice versa) when catalog
   data changes — the parse-equality test catches it late; regenerate all four
   artifact families together.
