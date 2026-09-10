@@ -4,6 +4,8 @@ import argparse
 
 from ..catalogs.awesome_hermes_agent import (
     AwesomeHermesCatalogError,
+    PACKAGED_COVERAGE_SCOPE,
+    PACKAGED_COVERAGE_SCOPE_NOTE,
     awesome_hermes_coverage_payload,
     awesome_hermes_item,
     awesome_hermes_summary,
@@ -11,6 +13,15 @@ from ..catalogs.awesome_hermes_agent import (
 from ..catalogs.awesome_hermes_agent_outcomes import awesome_hermes_plugin_outcomes
 from ..installer import OmhError
 from .common import _print_json, _wants_json
+
+
+def _print_packaged_scope() -> None:
+    """Say on every packaged-catalog surface that it is not host coverage.
+
+    The label lives next to the numbers rather than in a doc, because the
+    numbers are what a reader quotes.
+    """
+    print(f"Scope: {PACKAGED_COVERAGE_SCOPE} -- {PACKAGED_COVERAGE_SCOPE_NOTE}")
 
 
 def cmd_ecosystem_awesome_summary(args: argparse.Namespace) -> int:
@@ -27,6 +38,7 @@ def cmd_ecosystem_awesome_summary(args: argparse.Namespace) -> int:
         for status, count in status_counts.items():
             print(f"- {status}: {count}")
     print("Boundary: coverage is OMH routing/readiness context, not plugin installation or safety approval.")
+    _print_packaged_scope()
     print("For machine-readable output, rerun with `--json`.")
     return 0
 
@@ -66,6 +78,7 @@ def cmd_ecosystem_awesome_list(args: argparse.Namespace) -> int:
         if hidden > 0:
             print(f"... {hidden} more")
     print("Boundary: list output does not install, trust, or load any external plugin.")
+    _print_packaged_scope()
     return 0
 
 
@@ -77,6 +90,8 @@ def cmd_ecosystem_awesome_inspect(args: argparse.Namespace) -> int:
     payload = {
         "schema_version": "awesome_hermes_agent_item_coverage/v1",
         "item": coverage.to_dict(),
+        "coverage_scope": PACKAGED_COVERAGE_SCOPE,
+        "coverage_scope_note": PACKAGED_COVERAGE_SCOPE_NOTE,
         "claim_boundary": (
             "Item coverage is a local OMH comparison. It is not external repository trust, plugin load, "
             "runtime execution, or feature parity evidence."
@@ -94,6 +109,7 @@ def cmd_ecosystem_awesome_inspect(args: argparse.Namespace) -> int:
     print(f"OMH surfaces: {', '.join(coverage.omh_surfaces)}")
     for note in coverage.notes:
         print(f"- {note}")
+    _print_packaged_scope()
     return 0
 
 
@@ -111,6 +127,7 @@ def cmd_ecosystem_awesome_outcomes(args: argparse.Namespace) -> int:
             continue
         print(f"- {outcome['plugin_id']}: {outcome['implementation_state']}")
     print(f"Boundary: {payload['claim_boundary']}")
+    _print_packaged_scope()
     return 0
 
 

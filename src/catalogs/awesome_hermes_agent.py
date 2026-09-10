@@ -18,6 +18,19 @@ UPSTREAM_README_SHA256: Final = "33d58901d6f8a96f1801406c293d5c3061dce2e23a05257
 UPSTREAM_ITEM_COUNT: Final = 216
 UPSTREAM_PLUGIN_COUNT: Final = 35
 
+#: What this catalog and the selected-outcome matrix are, said in the payloads
+#: themselves rather than only in a doc. Both are projections of one upstream
+#: revision packaged into an OMH release; neither observes the catalog a host
+#: is running today, and a reader who mistakes one for the other believes OMH
+#: covered plugins that were admitted, revised, or withdrawn since.
+PACKAGED_COVERAGE_SCOPE: Final = "snapshot_limited"
+PACKAGED_COVERAGE_SCOPE_NOTE: Final = (
+    "This is the upstream catalog snapshot packaged with this OMH revision, not the active host catalog. "
+    "It cannot report entries the host admitted, revised, or removed after the pinned revision. For current "
+    "host coverage, reconcile a host-supplied plugin_catalog_snapshot/v1 with "
+    "`omh ecosystem plugin-catalog coverage`."
+)
+
 
 class AwesomeHermesCatalogError(ValueError):
     pass
@@ -181,6 +194,8 @@ def awesome_hermes_summary() -> dict[str, str | int | dict[str, int]]:
         "schema_version": COVERAGE_SCHEMA_VERSION,
         "source_repo": SOURCE_REPO,
         "source_commit": awesome_hermes_catalog().source.commit,
+        "coverage_scope": PACKAGED_COVERAGE_SCOPE,
+        "coverage_scope_note": PACKAGED_COVERAGE_SCOPE_NOTE,
         **summary.to_dict(),
     }
 
@@ -205,6 +220,8 @@ def awesome_hermes_coverage_payload(
         "item_count": len(coverage),
         "summary": _summarize_coverage(coverage).to_dict(),
         "catalog_summary": awesome_hermes_summary(),
+        "coverage_scope": PACKAGED_COVERAGE_SCOPE,
+        "coverage_scope_note": PACKAGED_COVERAGE_SCOPE_NOTE,
         "items": [item.to_dict() for item in coverage],
         "claim_boundary": (
             "Coverage means OMH has a routing, review, readiness, or handoff surface. It is not external "
