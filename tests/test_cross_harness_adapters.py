@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import time
@@ -200,7 +202,40 @@ class FailClosedAdapterRunnerTests(_RunnerMixin):
         self._assert_descendant_is_killed("descendant-exit-inherited")
 
     def test_crashed_parent_descendant_is_killed(self) -> None:
-        self.assertEqual(self._assert_descendant_is_killed("crash-descendant", timeout_seconds=5).reason_code, "process_crash")
+        outcome = self._assert_descendant_is_killed("crash-descendant", timeout_seconds=5)
+        self.assertEqual(outcome.reason_code, "process_crash")
+        self.assertEqual(outcome.repetitions[0].exit_code, -signal.SIGABRT)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux dumpability syscall")
+    def test_crash_fixture_disables_dumping_before_real_sigabrt(self) -> None:
+        # Given a disposable Linux process with dumping explicitly enabled.
+        code = """
+import ctypes, os, runpy, sys
+namespace = runpy.run_path(sys.argv[1])
+prctl = ctypes.CDLL(None, use_errno=True).prctl
+prctl.argtypes = (ctypes.c_int, *([ctypes.c_ulong] * 4))
+prctl.restype = ctypes.c_int
+assert prctl(4, 1, 0, 0, 0) == 0
+assert prctl(3, 0, 0, 0, 0) == 1
+real_abort = os.abort
+def observe_abort():
+    dumpable = prctl(3, 0, 0, 0, 0)
+    print(dumpable, flush=True)
+    if dumpable != 0:
+        os._exit(91)
+    real_abort()
+os.abort = observe_abort
+namespace["_abort"]()
+"""
+        with TemporaryDirectory() as temporary:
+            # When the fixture aborts, inspect kernel state at the signal boundary.
+            result = subprocess.run(
+                [sys.executable, "-c", code, str(FAKE.resolve())],
+                cwd=temporary, capture_output=True, timeout=5, check=False,
+            )
+        # Then the actual fatal signal remains, without invoking a dump collector.
+        self.assertEqual(result.stdout, b"0\n")
+        self.assertEqual(result.returncode, -signal.SIGABRT, result.stderr)
 
     def test_timed_out_parent_descendant_is_killed(self) -> None:
         self.assertEqual(self._assert_descendant_is_killed("timeout").reason_code, "process_timeout")
@@ -291,6 +326,8 @@ class FailClosedAdapterRunnerTests(_RunnerMixin):
                 outcome = self._run(scenario, timeout_seconds=2 if scenario == "timeout" else 5)
                 self.assertEqual(outcome.reason_code, reason, msg=_scenario_diagnostics(outcome, time.monotonic() - started))
                 self.assertNotEqual(outcome.status, "observed_success")
+                if scenario == "crash":
+                    self.assertEqual(outcome.repetitions[0].exit_code, -signal.SIGABRT)
                 if scenario == "timeout":
                     self.assertEqual((outcome.repetitions[0].process_group_terminated, outcome.repetitions[0].inventory[0].path), (True, "work/descendant-heartbeat"))
 
