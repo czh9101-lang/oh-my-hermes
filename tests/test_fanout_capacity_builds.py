@@ -88,8 +88,9 @@ class CapacityDefaultBuildTests(unittest.TestCase):
                             _ = stream.write('\n# replaced fixture identity\n')
                 return result
 
-            for marker in ('accepts_on_spawn', 'accepts_output_capture', 'accepts_launch'):
-                setattr(runner, marker, True)
+            setattr(runner, 'accepts_on_spawn', True)
+            setattr(runner, 'accepts_output_capture', True)
+            setattr(runner, 'accepts_launch', True)
             goal = 'Exercise the default reviewed-build resolver with a labeled fixture.'
             contract = write_fanout_contract(paths, build_fanout_contract(goal, [
                 {'unit_id': name, 'title': name, 'owner': 'codex', 'file_scope': [name + '/']}
