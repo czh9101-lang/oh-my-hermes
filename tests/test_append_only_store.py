@@ -20,8 +20,10 @@ from __future__ import annotations
 import json
 import threading
 import unittest
+from json import JSONDecodeError
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from _credential_fixtures import AWS_ACCESS_KEY_ID
 from _local_package import load_local_package
@@ -45,6 +47,7 @@ from omh.system.append_only_store import (
     store_errors,
     supersede_chain_errors,
 )
+from omh.system import local_store
 from omh.system.local_store import read_jsonl_objects
 
 LABEL = "test_record"
@@ -56,6 +59,27 @@ def _record(record_id: str, *, run_id: str = "run-1", supersedes: str = "") -> d
 
 def _no_errors(record: dict) -> list[str]:
     return []
+
+
+def _writers_that_landed(path: Path) -> tuple[list[int], int]:
+    """The writer indices on disk, and how many lines did not parse.
+
+    Splitting the two is what tells an interleave from a dropped append: only
+    an interleave leaves a spliced line behind.
+    """
+    landed: list[int] = []
+    unparseable = 0
+    if not path.exists():
+        # Every append was dropped before it created the store: no lines, and
+        # nothing raised. Reporting that as zero landed keeps the assertion
+        # message the diagnosis instead of a FileNotFoundError from the probe.
+        return landed, unparseable
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            landed.append(json.loads(line)["writer"])
+        except (JSONDecodeError, KeyError, TypeError):
+            unparseable += 1
+    return landed, unparseable
 
 
 class TornTailTests(unittest.TestCase):
@@ -156,12 +180,69 @@ class ConcurrentAppendTests(unittest.TestCase):
                 thread.join()
 
             self.assertEqual(raised, [])
-            lines = path.read_text(encoding="utf-8").splitlines()
-            self.assertEqual(len(lines), writers)
-            self.assertEqual(
-                sorted(json.loads(line)["writer"] for line in lines),
-                sorted(range(writers)),
-            )
+            landed, unparseable = _writers_that_landed(path)
+            # A short count has two causes the count alone cannot tell apart,
+            # and a bare `13 != 16` left a Windows failure with three live
+            # theories. An interleave splices records and leaves unparseable
+            # lines behind; a swallowed OSError inside `append_sidecar_line`
+            # means the append never happened and every surviving line is
+            # intact. Report both, so the next failure says which it was.
+            detail = f"missing={sorted(set(range(writers)) - set(landed))} unparseable={unparseable}"
+            self.assertEqual(len(landed) + unparseable, writers, detail)
+            self.assertEqual(sorted(landed), sorted(range(writers)), detail)
+
+    def test_a_denied_chmod_on_the_lock_sidecar_never_costs_a_line(self) -> None:
+        """Windows denies the sidecar's chmod; the record must still land.
+
+        `file_lock` prepares its lock sidecar through `ensure_file` before it
+        takes the lock, so barrier-synchronized writers all run that chmod at
+        once against a file the others already hold open. Windows refuses it
+        for that window and POSIX never does. Unretried, the denial escapes
+        `file_lock` into `append_sidecar_line`, whose documented best-effort
+        swallow drops it without a word: the line is gone, nothing is raised,
+        and the count comes back short with no way to tell that apart from a
+        lock that failed to hold.
+        """
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "store.jsonl"
+            writers = 16
+            barrier = threading.Barrier(writers)
+            raised: list[Exception] = []
+            denials: dict[int, int] = {}
+            guard = threading.Lock()
+            real_chmod = Path.chmod
+
+            def denied_while_shared(target: Path, mode: int, *args: object, **kwargs: object) -> None:
+                if target.name.endswith(".lock"):
+                    with guard:
+                        thread = threading.get_ident()
+                        denials[thread] = denials.get(thread, 0) + 1
+                        seen = denials[thread]
+                    if seen <= 2:
+                        raise PermissionError(32, "used by another process")
+                real_chmod(target, mode, *args, **kwargs)
+
+            def append(index: int) -> None:
+                barrier.wait()
+                try:
+                    append_sidecar_line(path, {"writer": index, "payload": "x" * 64})
+                except Exception as exc:  # reported on the main thread, never silently dropped
+                    raised.append(exc)
+
+            threads = [threading.Thread(target=append, args=(index,)) for index in range(writers)]
+            with (
+                patch.object(local_store.os, "name", "nt"),
+                patch.object(Path, "chmod", denied_while_shared),
+            ):
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+
+            self.assertEqual(raised, [])
+            landed, unparseable = _writers_that_landed(path)
+            self.assertEqual(unparseable, 0)
+            self.assertEqual(sorted(landed), sorted(range(writers)))
 
 
 class SidecarTests(unittest.TestCase):
