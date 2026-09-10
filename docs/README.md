@@ -38,6 +38,9 @@ references rather than normal user steps.
 | Understand what OMH is and is not | [Direction](DIRECTION.md) |
 | Understand modules, artifacts, and ownership | [Architecture](ARCHITECTURE.md) |
 | Inspect the runtime-readable capability map | [Capabilities](CAPABILITIES.md) |
+| Turn a capability family on or off without uninstalling | [Capability Toggles](CAPABILITY-TOGGLES.md) |
+| Block a Hermes tool call with a rule you wrote | [Toolcall Rules](TOOLCALL-RULES.md) |
+| See which coding work is running, in which session | [Coding Observability](CODING-OBSERVABILITY.md) |
 | Understand measured and unproven impact claims | [Capability Impact](CAPABILITY_IMPACT.md) |
 | Browse all generated skills and harness metadata | [Workflow Reference](WORKFLOWS.md) |
 | Apply Apple UI design/review/improvement guidance | [Apple Design Guidance](APPLE-DESIGN.md) |
@@ -124,6 +127,26 @@ Use [Capabilities](CAPABILITIES.md) for the manifest contract and
 | Public roadmap | [Roadmap](ROADMAP.md) |
 | GitHub Pages source | [Website](../site/index.html) |
 
+## Agent And Operator Contracts
+
+These are control-plane contracts for wrappers, host integrators, connector
+adapters, and operators. Normal chat users never need them; they are listed here
+so that every published contract has a path from this map instead of being
+findable only by knowing its filename.
+
+| Contract | Read |
+| --- | --- |
+| Metadata-only workflow artifact CLI, and the four workflows it dispatches | [Workflow Artifacts](WORKFLOW-ARTIFACTS.md) |
+| Host-supplied browser adapter and bounded browser leases | [Browser Adapter](BROWSER-ADAPTER.md) |
+| Connector ingress for decision-gate answers | [Decision-Gate Connectors](DECISION-GATE-CONNECTORS.md) |
+| Closed ingress for untrusted GitHub tracker evidence | [Tracker Content](TRACKER-CONTENT.md) |
+| Write-ahead records for attempted external tool effects | [Egress Attempts](EGRESS-ATTEMPTS.md) |
+| Opt-in multi-unit work campaigns for the `ulw-work` engine | [Work Campaigns](WORK-CAMPAIGN.md) |
+| Bounded feedback rounds over a closed design-direction set | [Design Direction Iterations](DESIGN-DIRECTION-ITERATIONS.md) |
+| Deterministic comparison of submitted cross-harness machine facts | [Cross-Harness Benchmark](CROSS_HARNESS_BENCHMARK.md) |
+| Freshness identity behind `omh goal checkpoint` and quality-evidence assessment | [Working-Tree Fingerprint](WORKING-TREE-FINGERPRINT.md) |
+| Bounded retry/replan/stop/escalate decisions for an observed error | [Failure Mender](failure-mender.md) |
+
 ## Documentation Checks
 
 When a public claim changes, check the README, site, capabilities, direction,
@@ -133,5 +156,24 @@ architecture, generated workflow reference, and agent contract together.
 PYTHONPATH=tests uv run python -m unittest tests/test_router_content.py -v
 uv run python -m omh.cli harness validate
 uv run python -m omh.cli docs workflows --check
+uv run python -m omh.cli docs navigation --check
 git diff --check
 ```
+
+Three separate evidence classes answer three different questions, and a failure
+in one is repaired differently from a failure in another:
+
+| Question | Command | Repair |
+| --- | --- | --- |
+| Does a generated page still equal its producer? | `docs workflows`/`roles`/`capability-families`/`ulw-*` `--check` | Regenerate from the catalog |
+| Does a reviewed sentence still match implementation? | [`docs claims --check`](DOCUMENTATION-CLAIMS.md) | Fix the prose or the code the claim names |
+| Can a reader still reach every public page, and does every local link resolve? | `docs navigation --check` | Add the missing link, fix the target, or classify the page |
+
+`docs navigation` starts from the roots declared in
+`src/catalogs/documentation_navigation.py` and requires every top-level `docs/`
+page to be either reachable from one of them or classified there with a reason
+and an owner. A page that is neither fails the check, so an accidental orphan
+cannot pass as an intentional one. It reads local files only: no network, no
+subprocess, and no automatic edit to any documentation file. Reachability is
+discoverability through declared links; it is not evidence that a page's content
+is correct, current, or usable.

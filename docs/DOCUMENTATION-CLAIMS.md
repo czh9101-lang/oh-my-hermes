@@ -67,6 +67,16 @@ unchanged; this does not normalize arbitrary content or grant semantic support.
 Run `omh release drift --json` alongside it for the unchanged generated-file,
 count, and budget checks. The audit never pretends that command ran.
 
+`omh docs navigation --check` is the third evidence class and is deliberately
+not folded into this one. It settles documentation *structure* — whether a page
+is still reachable from a declared root, whether local link targets resolve, and
+whether an unreachable page is classified with a reason — and never inspects
+what a page asserts. A claim can be perfectly true on a page nobody can reach,
+and a page can be reachable while every sentence on it has gone stale; the two
+failures are repaired by different people doing different work. See
+[the documentation checks table](README.md#documentation-checks) for which
+command answers which question.
+
 `release checklist` only prepares an audit command (`observed=false`).
 `release product-readiness` runs the deterministic audit and includes its
 observed rows; `release evidence-bundle` packages that same result. The
