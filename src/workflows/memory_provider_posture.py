@@ -16,11 +16,15 @@ rather than a quiet pass.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
-import re
+from .memory_sync_fidelity import MemorySyncFidelity, build_memory_sync_fidelity, parse_memory_sync_fidelity
+from .memory_sync_fidelity_validation import (
+    Assessment, EVIDENCE_CLASSES, FIELD_STATUSES,
+    assessments as _assessments, closed_value as _closed_value,
+    observed_at as _observed_at, provider_id as _provider_id,
+)
 
 from ..local_store import atomic_write_json, ensure_dir
 from ..paths import OmhPaths
@@ -29,23 +33,6 @@ from ..system.metadata_safety import require_opaque_metadata_ref
 
 MEMORY_PROVIDER_POSTURE_INPUT_SCHEMA_VERSION = "memory_provider_posture_input/v1"
 MEMORY_PROVIDER_POSTURE_SCHEMA_VERSION = "memory_provider_posture/v1"
-
-# The closed status vocabulary. `unknown` is deliberately distinct from
-# `not_observed`: not_observed means a claim exists and no observation backs it,
-# unknown means the provider never stated the behaviour at all.
-FIELD_STATUSES: tuple[str, ...] = ("ready", "missing", "risky", "not_observed", "unknown")
-
-# What kind of evidence a field's status rests on. Documentation is a declared
-# contract, never an observed remote postcondition.
-EVIDENCE_CLASSES: tuple[str, ...] = (
-    "declared_documentation",
-    "declared_package_metadata",
-    "operator_statement",
-    "observed_local_runtime",
-    "observed_trial_receipt",
-    "none",
-)
-_OBSERVED_EVIDENCE_CLASSES = frozenset({"observed_local_runtime", "observed_trial_receipt"})
 
 # Open package code is not the hosted service that runs it: package license,
 # tests, and interfaces establish neither storage nor retention nor deletion.
@@ -137,8 +124,6 @@ _PORTABILITY_OPERATIONS: tuple[str, ...] = ("export", "import", "provider_switch
 _SETTLED_STATUSES = frozenset({"ready", "missing", "risky"})
 _UNSETTLED_STATUSES = frozenset({"unknown", "not_observed"})
 
-_PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-_ASSESSMENT_KEYS = {"status", "evidence_class"}
 _RECEIPT_KEYS = {"receipt_id", "provider_id", "scope", "operation", "observed_at", "postcondition"}
 _INPUT_REQUIRED_KEYS = {"schema_version", "provider_id", "observed_version_boundary", "storage_boundary"}
 _INPUT_OPTIONAL_KEYS = {
@@ -148,19 +133,9 @@ _INPUT_OPTIONAL_KEYS = {
     "synchronization",
     "generic_readiness",
     "observed_trials",
+    "input_fidelity",
 }
 _MAX_RECEIPTS = 24
-
-
-@dataclass(frozen=True)
-class Assessment:
-    """One field's status plus the class of evidence that status rests on."""
-
-    status: str
-    evidence_class: str
-
-    def to_dict(self) -> dict[str, str]:
-        return {"status": self.status, "evidence_class": self.evidence_class}
 
 
 @dataclass(frozen=True)
@@ -196,6 +171,7 @@ class MemoryProviderPostureInput:
     synchronization: dict[str, Assessment]
     generic_readiness: dict[str, Assessment]
     observed_trials: tuple[TrialReceipt, ...]
+    input_fidelity: MemorySyncFidelity | None = None
 
 
 def parse_memory_provider_posture_input(raw: object) -> MemoryProviderPostureInput:
@@ -215,10 +191,12 @@ def parse_memory_provider_posture_input(raw: object) -> MemoryProviderPostureInp
         _assessments(raw.get("synchronization", {}), SYNCHRONIZATION_DIMENSIONS, "synchronization"),
         _assessments(raw.get("generic_readiness", {}), GENERIC_READINESS_DIMENSIONS, "generic_readiness"),
         _trial_receipts(raw.get("observed_trials", [])),
+        parse_memory_sync_fidelity(raw["input_fidelity"]) if "input_fidelity" in raw else None,
     )
 
 
 def build_memory_provider_posture(value: MemoryProviderPostureInput) -> dict[str, object]:
+    fidelity = build_memory_sync_fidelity(value.input_fidelity, value.provider_id) if value.input_fidelity is not None else None
     accepted, rejected = _partition_receipts(value)
     lifecycle = _lifecycle_block(value, accepted)
     identity = _complete(value.identity_scopes, IDENTITY_SCOPES)
@@ -236,6 +214,7 @@ def build_memory_provider_posture(value: MemoryProviderPostureInput) -> dict[str
         "automatic_behaviors": automatic,
         "lifecycle_operations": lifecycle,
         "synchronization": synchronization,
+        **({"input_fidelity": fidelity} if fidelity is not None else {}),
         "generic_readiness": generic,
         "observed_trials": [receipt.to_dict() for receipt in accepted],
         "rejected_trials": rejected,
@@ -249,6 +228,10 @@ def build_memory_provider_posture(value: MemoryProviderPostureInput) -> dict[str
             "unknown_provider_effect": "omh_memory_unaffected",
         },
         "memory_sync_handoff": {
+            **({"input_fidelity_summary": {
+                "readiness": fidelity["synchronization_readiness"],
+                "unknown_count": fidelity["unknown_field_count"],
+            }} if fidelity is not None else {}),
             "review_status": "not_omh_reviewed",
             "imports_provider_records": False,
             "authorizes_native_memory_mutation": False,
@@ -423,37 +406,6 @@ def _partition_receipts(
     return tuple(accepted), rejected
 
 
-def _provider_id(value: object) -> str:
-    if not isinstance(value, str) or not _PROVIDER_ID.fullmatch(value):
-        raise ValueError("provider_id must match [a-z0-9][a-z0-9._-]{0,63}")
-    return require_opaque_metadata_ref(value, field="provider_id")
-
-
-def _closed_value(value: object, allowed: tuple[str, ...], field: str) -> str:
-    if not isinstance(value, str) or value not in allowed:
-        raise ValueError(f"{field} must be one of {', '.join(allowed)}")
-    return value
-
-
-def _assessments(raw: object, dimensions: tuple[str, ...], field: str) -> dict[str, Assessment]:
-    if not isinstance(raw, dict):
-        raise ValueError(f"{field} must be a mapping of supported dimensions to status metadata")
-    unsupported = sorted(set(raw) - set(dimensions))
-    if unsupported:
-        raise ValueError(f"{field} contains unsupported dimensions: {', '.join(unsupported)}")
-    assessments: dict[str, Assessment] = {}
-    for dimension, item in raw.items():
-        if not isinstance(item, dict) or set(item) != _ASSESSMENT_KEYS:
-            raise ValueError(f"{field} entry must contain only status and evidence_class")
-        status = _closed_value(item.get("status"), FIELD_STATUSES, f"{field} status")
-        evidence_class = _closed_value(item.get("evidence_class"), EVIDENCE_CLASSES, f"{field} evidence_class")
-        if status == "ready" and evidence_class not in _OBSERVED_EVIDENCE_CLASSES:
-            # Documentation is a declared contract, not an observed postcondition.
-            raise ValueError(f"{field} status ready requires observed evidence, not {evidence_class}")
-        assessments[dimension] = Assessment(status, evidence_class)
-    return assessments
-
-
 def _trial_receipts(raw: object) -> tuple[TrialReceipt, ...]:
     if not isinstance(raw, list) or len(raw) > _MAX_RECEIPTS:
         raise ValueError(f"observed_trials must contain at most {_MAX_RECEIPTS} items")
@@ -477,16 +429,6 @@ def _trial_receipts(raw: object) -> tuple[TrialReceipt, ...]:
     if len({receipt.receipt_id for receipt in receipts}) != len(receipts):
         raise ValueError("observed trial receipt ids must be unique")
     return tuple(receipts)
-
-
-def _observed_at(value: object) -> str:
-    if not isinstance(value, str) or not value.endswith("Z"):
-        raise ValueError("observed trial observed_at must be an ISO-8601 UTC timestamp")
-    try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError("observed trial observed_at must be an ISO-8601 UTC timestamp") from exc
-    return value
 
 
 def _managed_memory_provider_postures_dir(paths: OmhPaths) -> Path:
