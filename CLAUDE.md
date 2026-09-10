@@ -26,6 +26,7 @@ uv run python -m compileall -q src tests                          # syntax gate
 uv run python -m omh.cli docs workflows --check                   # byte gate
 uv run python -m omh.cli docs roles --check                       # byte gate
 uv run python -m omh.cli docs claims --check --json               # selected claims
+uv run python -m omh.cli docs navigation --check                  # docs structure gate
 uv run --group lint ruff check src tests                          # static-analysis gate
 git diff --check
 ```
@@ -162,6 +163,14 @@ Rules:
   with the reason written at the entry: the per-skill Hangul freeze in
   `tests/test_routing_language_policy.py` and
   `FULL_PROFILE_SKILL_BODY_CHAR_LIMIT` in `src/maintenance/release.py`.
+- Adding a page under `docs/` and stopping there. `docs navigation --check`
+  requires every top-level `docs/*.md` to be reachable from a declared root or
+  classified in `src/catalogs/documentation_navigation.py` with a reason and an
+  owner; a page that is neither fails, which is the whole point — an accidental
+  orphan must not pass as an intentional one. Link it from a page a reader
+  actually reaches before reaching for the classification list, and delete the
+  classification entry when a page later becomes reachable (a reachable page
+  still marked exempt is its own failure).
 - Grepping the repo and matching stale strings under `build/lib/` — it is a
   gitignored copy of old sources. Scope searches to `src/`, `tests/`, `docs/`,
   `skills/`.
