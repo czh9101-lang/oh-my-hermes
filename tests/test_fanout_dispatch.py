@@ -2736,6 +2736,36 @@ class FanoutDispatchTelemetryTests(unittest.TestCase):
             result_events = [e for e in shown["journal_events"] if e["event"] == "executor_result_observed"]
             self.assertIn("limit-shaped failure (usage_limit)", result_events[-1]["summary"])
 
+    def test_a_session_limit_is_limit_shaped_and_not_a_crash(self) -> None:
+        # Observed 2026-09-11: two real dispatches ended with this exact line and
+        # were recorded as `crash`, so the recoverable lane never opened for a
+        # condition that clears by itself at a stated time. Quoted verbatim,
+        # middle dot and timezone included, because the earlier patterns missed
+        # it on wording alone.
+        with TemporaryDirectory() as tmp:
+            units = [
+                {"unit_id": "core", "title": "Core", "owner": "codex", "file_scope": ["src/core/"]},
+            ]
+            paths, repo, sha, contract = self._setup(tmp, units=units)
+
+            def runner(argv, **kwargs):
+                if argv[0] == "git":
+                    return subprocess.run(argv, **kwargs)
+                if argv[0] == "codex":
+                    return _FakeCompleted(
+                        1, "You've hit your session limit \u00b7 resets 6:10pm (Asia/Seoul)"
+                    )
+                return _FakeCompleted(0, "done")
+
+            summary = dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                runner=runner, readiness=_ready,
+            )
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertTrue(core["limit_shaped"])
+            self.assertEqual(core["limit_pattern"], "session_limit")
+            self.assertEqual(core["failure_kind"], "limit_shaped")
+
     def test_unrelated_429_and_disk_quota_text_are_not_limit_shaped(self) -> None:
         with TemporaryDirectory() as tmp:
             units = [

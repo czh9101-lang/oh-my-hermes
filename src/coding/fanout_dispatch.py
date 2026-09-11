@@ -678,6 +678,16 @@ _LIMIT_SHAPED_PATTERNS: tuple[tuple[str, str], ...] = (
     ("credit", "insufficient credit"),
     ("credit", "out of credits"),
     ("limit_reached", "limit reached"),
+    # Observed 2026-09-11: two dispatches ended with "You've hit your session
+    # limit · resets 6:10pm (Asia/Seoul)" and classified as `crash`, because
+    # every pattern above wants "rate", "usage", "quota", a 429, a credit, or
+    # the exact words "limit reached". A session limit is the same thing those
+    # describe -- the provider declining to serve this owner until a stated
+    # reset -- so it belongs in the recoverable lane, not the terminal one.
+    # Anchored on the possessive phrasing and on "session limit" together:
+    # a bare "session" matches half of this repo's own narration.
+    ("session_limit", "session limit"),
+    ("session_limit", "hit your limit"),
 )
 
 # Spawnability is a data property: profiles listed here have a local headless

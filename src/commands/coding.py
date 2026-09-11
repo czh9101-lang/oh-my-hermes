@@ -2308,15 +2308,29 @@ def _write_stderr_line(line: str) -> None:
 
 
 def _fanout_dispatch_exit_code(summary: dict) -> int:
-    """130 for a cut-short batch, 1 for a refusal, 0 otherwise.
+    """130 for a cut-short batch, 1 for a refusal or any failed unit, 0 otherwise.
 
     A spawn-guard refusal exits non-zero on purpose: the summary is still
     printed as JSON so a wrapper can read `refusal_reason`, but a shell that
     only checks the status must not read "nothing was dispatched" as success.
+
+    The same sentence applies to a unit that ran and failed, and until
+    2026-09-11 it did not: a batch whose every unit failed exited 0, so a
+    caller reading only the status was told the work succeeded. That is how a
+    real limit-exhausted run came back "ok" to its wrapper while the inner
+    dispatch had exit 1 and no report. `failure_kind` is the closed enum
+    `classify_failure_kind` sets on a failed unit and leaves empty on a
+    successful one, so presence is the signal and no status vocabulary is
+    duplicated here.
     """
     if summary.get("interrupted"):
         return 130
     if summary.get("refused"):
+        return 1
+    units = summary.get("units")
+    if isinstance(units, list) and any(
+        isinstance(unit, dict) and unit.get("failure_kind") for unit in units
+    ):
         return 1
     return 0
 
