@@ -14101,6 +14101,43 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
         self.assertEqual(status, 2)
         self.assertIn("cannot be combined", stderr)
 
+    def test_docs_chain_table_command_generates_checks_and_names_stale_rows(self) -> None:
+        status, stdout, stderr = run_cli(["docs", "chain-table", "--check"])
+        self.assertEqual(stderr, "")
+        self.assertEqual(status, 0)
+        self.assertTrue(json.loads(stdout)["ok"])
+
+        with TemporaryDirectory() as tmp:
+            stale_copy = Path(tmp) / "INSTALLATION.md"
+            stale_copy.write_text(
+                Path("docs/INSTALLATION.md")
+                .read_text(encoding="utf-8")
+                .replace("| `ultrabrain` | Deepest reasoning |", "| `ultrabrain` | Deepest thinking |"),
+                encoding="utf-8",
+            )
+            status, _, stderr = run_cli(["docs", "chain-table", "--check", "--path", str(stale_copy)])
+            self.assertEqual(status, 2)
+            self.assertIn("stale", stderr)
+            # The row and both strings, not just the file: a reader must not
+            # have to diff the document to learn which chain moved.
+            self.assertIn("`ultrabrain`", stderr)
+            self.assertIn("Deepest thinking", stderr)
+            self.assertIn("Deepest reasoning", stderr)
+            self.assertIn("docs chain-table", stderr)
+
+            status, stdout, stderr = run_cli(["docs", "chain-table", "--path", str(stale_copy)])
+            self.assertEqual(stderr, "")
+            self.assertEqual(status, 0)
+            self.assertTrue(json.loads(stdout)["rewritten"])
+            status, _, stderr = run_cli(["docs", "chain-table", "--check", "--path", str(stale_copy)])
+            self.assertEqual(status, 0)
+
+            no_markers = Path(tmp) / "NO_MARKERS.md"
+            no_markers.write_text("no generated region here\n", encoding="utf-8")
+            status, _, stderr = run_cli(["docs", "chain-table", "--check", "--path", str(no_markers)])
+            self.assertEqual(status, 2)
+            self.assertIn("markers", stderr)
+
     def test_harness_cli_lists_inspects_and_validates_contracts(self) -> None:
         status, stdout, stderr = run_cli(["harness", "list"])
         self.assertEqual(stderr, "")

@@ -233,7 +233,8 @@ Files that move together (grep the old id to find every site):
 | Maestro-lane built-in table + executor option rows | `src/coding/model_routing.py` (`BUILTIN_CATEGORY_MODELS`, `EXECUTOR_MODEL_OPTIONS`) |
 | `model-setup` skill text naming the chains verbatim | `src/skills/catalog_definitions.py` → regenerate `skills/omh-model-setup/SKILL.md` and `docs/WORKFLOWS.md` |
 | Skill body budget note | `src/maintenance/release.py` (`FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`, add the `old -> new` line) |
-| Public chain tables | `README.md`, `README.ko.md`, `README.ja.md`, `README.zh.md`, `docs/INSTALLATION.md`, `site/index.html`, `site/docs/model-routing/index.html` (`tests/test_model_recommendations.py` reads all seven) |
+| Hand-maintained public chain tables | `README.md`, `README.ko.md`, `README.ja.md`, `README.zh.md`, `site/index.html`, `site/docs/model-routing/index.html` (`tests/test_model_recommendations.py` reads those six and checks alias order inside each category row) |
+| Generated public chain table | `docs/INSTALLATION.md` is not hand-edited: its marked region renders from `SHIPPED_MODEL_RECOMMENDATIONS` through `src/catalogs/model_chain_table.py`. Run `uv run python -m omh.cli docs chain-table` and add the new alias to `MODEL_DISPLAY_LABELS` there — the renderer raises with the key to add when it is missing |
 | Pinned-chain and fallback-count tests | `tests/test_model_recommendations.py`, `tests/test_model_recommendation_routing.py`, `tests/test_model_routing_journey.py`, `tests/test_delegate_route_tool.py`, `tests/test_model_routing.py`, `tests/test_category_maestro.py`, `tests/test_task_scale_routing.py`, `tests/test_model_chains_command.py`, `tests/test_provider_entitlements.py` (chain-shaping cases), `tests/test_plugin_hermes_delegation.py` (route-provenance and reader fixtures name a chain member) — pins live in fixtures as well as assertions, so grep `tests/` for the old id and start the full suite in the background before the first doc edit, not after |
 | Retired-alias list (an alias that left every chain but stays routable) | `_RECOGNITION_ONLY_ALIAS_FAMILIES` in `tests/test_provider_entitlements.py` |
 | Contract audit doc paths | `_MODEL_DOCS` in `src/coding/model_contract_coverage.py` |
@@ -295,6 +296,7 @@ uv run python -m omh.cli docs roles --check
 uv run python -m omh.cli docs capability-families --check
 uv run python -m omh.cli docs ulw-inventory --check
 uv run python -m omh.cli docs ulw-site --check
+uv run python -m omh.cli docs chain-table --check
 uv run python -m omh.cli release drift
 uv run --group lint ruff check src tests
 git diff --check

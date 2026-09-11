@@ -264,23 +264,25 @@ applied.
 
 The shipped catalog is editorial policy, not benchmark output:
 
+<!-- omh:model-chain-table:begin (generated: uv run python -m omh.cli docs chain-table; source: src/coding/model_recommendations.py) -->
 | Surface | What it is for | Shipped editable order |
 | --- | --- | --- |
-| Hermes `main` suggestion | The session's own model | Kimi K3, Claude Fable 5.1, Claude Opus 5, GPT-6 Astra, GPT-5.6 Terra |
+| Hermes `main` suggestion | The session's own model | Kimi K3, Claude Fable 5.1, Claude Opus 5, GPT-6 Astra (`xhigh`), GPT-5.6 Terra (`high`) |
 | `ultrabrain` | Deepest reasoning | GPT-6 Astra (`xhigh`) |
-| `deep` | Strong default tier | GPT-5.6 Terra, DeepSeek Flash (V4.1) (`high`) |
-| `architect` | Architecture and system design | Claude Fable 5.1, GPT-6 Astra, Kimi K3 (`xhigh`) |
-| `unspecified-high` | Default working model | Kimi K3, Claude Opus 5 |
-| `unspecified-low` | Cheaper fallback | GLM 5.3, DeepSeek Flash (V4.1), Claude Opus 5 (low) |
-| `visual-engineering` | Frontend and visual | Claude Fable 5.1, Kimi K3 |
-| `quick` | Short tasks | GLM 5.3 Flash, Kimi K3, GPT-5.6 Luna, Claude Fable 5.1 (low) |
-| `writing` | Prose and docs | Kimi K3, Qwen3-Coder, Gemini 3.1 Pro |
-| `artistry` | Unconventional work | Gemini 3.1 Pro, Claude Fable 5.1, Kimi K3 |
-| `capable` | Strong general work | Claude Fable 5.1, Claude Opus 5, Kimi K3, GLM 5.3 (`medium`) |
-| `simple-work` | Small everyday tasks | GPT-5.6 Luna, DeepSeek Flash (V4.1), Claude Haiku 4.5 (`low`) |
+| `deep` | Strong default tier | GPT-5.6 Terra (`high`), DeepSeek Flash (V4.1) (`high`) |
+| `architect` | Architecture and system design | Claude Fable 5.1 (`xhigh`), GPT-6 Astra (`xhigh`), Kimi K3 (`xhigh`) |
+| `unspecified-high` | Default working model | Kimi K3 (`medium`), Claude Opus 5 (`medium`) |
+| `unspecified-low` | Cheaper fallback | GLM 5.3 (`low`), DeepSeek Flash (V4.1) (`low`), Claude Opus 5 (`low`) |
+| `quick` | Short tasks | GLM 5.3 Flash (`low`), Kimi K3 (`low`), GPT-5.6 Luna (`low`), Claude Fable 5.1 (`low`) |
+| `writing` | Prose and docs | Kimi K3 (`medium`), Qwen3-Coder (`medium`), Gemini 3.1 Pro (`medium`) |
+| `visual-engineering` | Frontend and visual | Claude Fable 5.1 (`high`), Kimi K3 (`high`) |
+| `artistry` | Unconventional work | Gemini 3.1 Pro (`high`), Claude Fable 5.1 (`high`), Kimi K3 (`high`) |
+| `capable` | Strong general work | Claude Fable 5.1 (`medium`), Claude Opus 5 (`medium`), Kimi K3 (`medium`), GLM 5.3 (`medium`) |
+| `simple-work` | Small everyday tasks | GPT-5.6 Luna (`low`), DeepSeek Flash (V4.1) (`low`), Claude Haiku 4.5 (`low`) |
 | `deep-work` | Long tasks at frontier depth | GPT-6 Astra (`high`) |
-| `x_platform_data` affinity | X-platform data affinity | Grok, Kimi K3, Gemini |
-| Shared final order (`last_resort.any`) | Last resort when a chain is exhausted | Claude Opus 5, GPT-5.6 Sol |
+| `x_platform_data` affinity | X-platform data affinity | Grok Code Fast, Kimi K3, Gemini 3.1 Pro |
+| Shared final order (`last_resort.any`) | Last resort when a chain is exhausted | Claude Opus 5, GPT-5.6 Sol (`medium`) |
+<!-- omh:model-chain-table:end -->
 
 Chain customization is a config edit, not a source edit — `omh model-chains
 show` prints the current per-category state, `omh model-chains interview`
