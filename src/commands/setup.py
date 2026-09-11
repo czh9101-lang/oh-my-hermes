@@ -2447,6 +2447,46 @@ def _ask_maestro_delegation_choice(args: argparse.Namespace, paths: OmhPaths, la
         category_maestro_interview(paths)
 
 
+def _stdin_is_tty() -> bool:
+    return sys.stdin.isatty()
+
+
+def _ask_model_chains_interview(args: argparse.Namespace, paths: OmhPaths, language: str) -> None:
+    """Ask, at most once, whether to walk the native lane's model chains now.
+
+    The Hermes harness is the default coding path, so its per-category chains
+    deserve the same inline offer the Maestro lane's category dial already
+    gets. Only reached from the interactive wizard (`_setup_should_interact`),
+    so `--yes`, `--no-interactive`, `--json`, `--dry-run`, and every flag in
+    that gate's list never see this question. A "no" changes nothing: step 3
+    still seeds the empty override document and the shipped chains stay in
+    effect until the operator opts in.
+
+    The offer needs a terminal of its own because the interview refuses
+    without one -- a question whose "yes" could only print a refusal is not
+    worth asking, which is the same reason the maestro question stays silent
+    when no external CLI is on PATH.
+    """
+    if hasattr(args, "_model_chains_interview_choice"):
+        return
+    if not _stdin_is_tty():
+        args._model_chains_interview_choice = None
+        return
+    accepted = _ask_yes_no(
+        tr(language, "model_chains_interview_prompt"),
+        default=False,
+        use_color=_use_color(),
+        note=tr(language, "model_chains_interview_note"),
+        language=language,
+    )
+    args._model_chains_interview_choice = accepted
+    if not accepted:
+        return
+    from .model_chains import model_chains_interview
+
+    model_chains_interview(paths)
+
+
 # Env-key hints for Hermes' builtin providers. Hermes reaches these through a
 # key in `$HERMES_HOME/.env` (or the process environment) rather than through
 # a `providers:` block, so config keys alone never surface them. Only the
@@ -2972,6 +3012,13 @@ def _run_setup_wizard(args: argparse.Namespace, paths, language: str) -> None:
     _ask_tui_identity_choice(args, paths, language)
     _ask_maestro_delegation_choice(args, paths, language)
     _ask_provider_entitlements(args, paths, language)
+    # Last of the prompting block: the entitlement answers are what reorder
+    # the chains, so the operator meets the chain editor right after the
+    # explanation of how chains get shaped on this machine. Ordering against
+    # `_seed_model_chains_result` (step 3) is non-destructive either way --
+    # the seed early-returns `already_present` when the interview has just
+    # written the document, and seeds it empty when nothing changed.
+    _ask_model_chains_interview(args, paths, language)
 
     if not args.profile and not getattr(args, "default_executor", None):
         # No upfront coding-owner question: safety-first records "choose" so

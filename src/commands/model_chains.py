@@ -215,11 +215,15 @@ def _stdin_is_tty() -> bool:
     return sys.stdin.isatty()
 
 
-def cmd_model_chains_interview(args: argparse.Namespace) -> int:
+def model_chains_interview(paths) -> int:
     """Numbered per-category interview on a terminal.
 
     Non-interactive callers (agents, pipes) get a refusal that names the
     scriptable path instead of a hanging prompt.
+
+    Takes resolved paths rather than the parsed args so the interactive
+    `omh setup` wizard can offer the same walk inline, exactly the way
+    `category_maestro_interview` serves the Maestro lane's category dial.
     """
     if not _stdin_is_tty():
         print(
@@ -228,7 +232,7 @@ def cmd_model_chains_interview(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    omh_home = _paths(args).omh_home
+    omh_home = paths.omh_home
     overrides, _ = load_mixture_chain_overrides(omh_home)
     document = _read_document(omh_home)
     categories = document["categories"]
@@ -285,6 +289,10 @@ def cmd_model_chains_interview(args: argparse.Namespace) -> int:
     print(f"\nSaved {changed} categor{'y' if changed == 1 else 'ies'} to {path}.")
     _print_state(_state(omh_home))
     return 0
+
+
+def cmd_model_chains_interview(args: argparse.Namespace) -> int:
+    return model_chains_interview(_paths(args))
 
 
 def _add_model_chains_commands(sub) -> None:
