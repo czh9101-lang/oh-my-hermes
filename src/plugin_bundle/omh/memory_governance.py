@@ -71,8 +71,9 @@ SOURCE_CLASSES = frozenset({
     "external",
 })
 
-# Allowed scope kinds
-SCOPE_KINDS = frozenset({"project", "target", "thread", "run"})
+# User-global is explicit profile-local authority, never inferred from a
+# record's location or a foreign project ref. Existing scope labels stay valid.
+SCOPE_KINDS = frozenset({"user-global", "project", "target", "thread", "run"})
 
 # Default TTL days for retention classes
 DEFAULT_VOLATILE_TTL_DAYS = 7
@@ -107,7 +108,7 @@ def canonical_memory_scope(scope: dict[str, object]) -> dict[str, object]:
     if not isinstance(kind, str) or kind not in SCOPE_KINDS:
         raise ValueError(f"scope.kind must be one of {SCOPE_KINDS}, got {kind!r}")
     
-    if not isinstance(ref, str) or not ref:
+    if not isinstance(ref, str) or not ref.strip():
         raise ValueError(f"scope.ref must be a non-empty string, got {ref!r}")
     
     return {"kind": kind, "ref": ref}
