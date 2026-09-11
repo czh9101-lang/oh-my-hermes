@@ -74,10 +74,13 @@ class SignalSafeRunnerTests(unittest.TestCase):
     def setUp(self) -> None:
         # The interrupt flag is process-global (one dispatch per process is
         # the supported shape); direct runner tests must not inherit a
-        # sibling test's interrupt.
+        # sibling test's interrupt — and must not bequeath their own:
+        # `terminate_live_unit_groups` below sets it, and a later test's
+        # direct spawn would be terminated on register-then-check (#1482).
         from omh.coding.fanout_dispatch import _INTERRUPT_FLAG
 
         _INTERRUPT_FLAG.clear()
+        self.addCleanup(_INTERRUPT_FLAG.clear)
 
     @posix_only
     def test_unit_runs_as_its_own_group_leader(self) -> None:
@@ -256,6 +259,13 @@ class SignalSafeRunnerTests(unittest.TestCase):
 
 
 class InterruptedDispatchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Same process-global flag; the interrupted dispatches below set it.
+        from omh.coding.fanout_dispatch import _INTERRUPT_FLAG
+
+        _INTERRUPT_FLAG.clear()
+        self.addCleanup(_INTERRUPT_FLAG.clear)
+
     def _fixture(self, tmp: str):
         root = Path(tmp)
         paths = _paths(tmp)
