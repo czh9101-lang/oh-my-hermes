@@ -255,6 +255,29 @@ class MaestroObserveToTerminalStateTests(unittest.TestCase):
         self.assertIn("needs intervention NOW, not more waiting", combined)
         self.assertIn('Never end a turn on "waiting for the worker"', combined)
 
+    def test_the_quality_bar_names_the_rosters_own_stop_condition(self) -> None:
+        # Derived from the producer: the supervisor is told to read the stop
+        # condition the roster computes, so if those keys are ever renamed the
+        # skill stops describing a payload that exists and this fails.
+        import inspect
+
+        from omh.coding.fanout_status import project_fanout_status
+
+        produced = inspect.getsource(project_fanout_status)
+        combined = " ".join(_maestro_definition().quality_bar)
+        for key in ("all_units_terminal", "stuck_units"):
+            self.assertIn(f'"{key}"', produced)
+            self.assertIn(f"`{key}`", combined)
+
+    def test_the_quality_bar_bounds_the_poll_loop_on_a_unit_with_no_evidence(self) -> None:
+        # `all_units_terminal` is false for a unit with neither marker nor
+        # summary row, which is the safe direction and also an unbounded wait:
+        # without this sentence the poll loop is itself the stall it was added
+        # to catch.
+        combined = " ".join(_maestro_definition().quality_bar)
+        self.assertIn("still `unknown` after about ten minutes", combined)
+        self.assertIn("a poll loop with no bound is the stall it was meant to catch", combined)
+
     def test_the_completion_chain_is_stated_as_one_turns_work(self) -> None:
         combined = " ".join(_maestro_definition().quality_bar)
         self.assertIn(
