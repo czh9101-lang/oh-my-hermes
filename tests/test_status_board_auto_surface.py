@@ -25,7 +25,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from _local_package import load_local_package
-from _platform_support import requires_fcntl_locks
+from _platform_support import requires_enforced_file_lock
 
 load_local_package()
 
@@ -206,7 +206,7 @@ class RunningWorkBoardReaderTests(unittest.TestCase):
 
 
 class RunningWorkBoardSuppressionLedgerTests(unittest.TestCase):
-    @requires_fcntl_locks
+    @requires_enforced_file_lock
     def test_mixed_process_writers_preserve_every_bucket_count_and_latest_fingerprint(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

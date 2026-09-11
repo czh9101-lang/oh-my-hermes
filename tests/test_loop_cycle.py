@@ -9,7 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from _local_package import load_local_package
-from _platform_support import requires_fcntl_locks
+from _platform_support import requires_enforced_file_lock
 
 load_local_package()
 import omh.goal_loop as goal_loop_module
@@ -2452,7 +2452,7 @@ class LoopCycleMutationGuardTests(unittest.TestCase):
             self.assertIn("loop_cycle record_revision must be a non-negative integer", revision_errors)
             self.assertIn("loop_cycle applied_mutations must be an object", applied_errors)
 
-    @requires_fcntl_locks
+    @requires_enforced_file_lock
     def test_concurrent_feedback_does_not_revert_a_guarded_queue_observation(self) -> None:
         # The confirmed probe: a guarded observation was reverted by a stale
         # record_loop_feedback write, after which the observation's own

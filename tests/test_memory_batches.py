@@ -9,7 +9,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from _local_package import load_local_package
-from _platform_support import requires_fcntl_locks, requires_symlinks
+from _platform_support import requires_enforced_file_lock, requires_symlinks
 
 load_local_package()
 from omh.paths import resolve_paths
@@ -1546,7 +1546,7 @@ class MemoryBatchTests(TestCase):
 
             self.assertEqual(item["replay_evaluation"]["reason_code"], "review_required_legacy")
 
-    @requires_fcntl_locks
+    @requires_enforced_file_lock
     def test_two_process_apply_serializes_same_scope_and_preserves_different_scopes(self) -> None:
         for distinct_scopes in (False, True):
             with self.subTest(distinct_scopes=distinct_scopes), TemporaryDirectory() as home:
