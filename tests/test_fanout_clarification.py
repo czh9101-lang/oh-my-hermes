@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -19,6 +20,7 @@ load_local_package()
 from _cli_harness import run_cli  # noqa: E402
 from test_fanout_dispatch import _make_repo, _prompted_sidecar, _ready  # noqa: E402
 from omh.coding.fanout import build_fanout_contract  # noqa: E402
+from omh.coding.fanout_contracts import verification_command_argv  # noqa: E402
 from omh.coding.fanout_artifacts import write_fanout_contract, fanout_dispatch_summary_path  # noqa: E402
 from omh.coding.fanout_dispatch import dispatch_fanout, stdout_fenced_json_blocks  # noqa: E402
 from omh.coding.fanout_journal import read_fanout_run_journal  # noqa: E402
@@ -48,7 +50,7 @@ class LocalFanout:
         self.paths = OmhPaths(omh_home=root / "qa-profile", hermes_home=root / "hermes")
         self.repo, self.sha = _make_repo(root)
         units = [{"unit_id": "unit-" + letter, "title": "unit-" + letter, "owner": "codex",
-            "file_scope": [letter + "/"], "verification_commands": [sys.executable + " -c pass"],
+            "file_scope": [letter + "/"], "verification_commands": [shlex.join([sys.executable, "-c", "pass"])],
             **({"role": "review"} if review and letter == "b" else {}),
             **({"depends_on": ["unit-b"]} if letter == "c" else {})} for letter in "abc"]
         self.contract = write_fanout_contract(self.paths, build_fanout_contract(GOAL, units))
@@ -110,6 +112,18 @@ class ParentClarificationTests(unittest.TestCase):
             "XDG_CONFIG_HOME": home.name, "OMH_FANOUT_DEPTH": "0"})
         environment.start()
         self.addCleanup(environment.stop)
+
+    def test_verification_executable_survives_command_parsing(self):
+        # Given a real contract built with a Windows executable path.
+        executable = r"C:\Program Files\Python312\python.exe"
+        with TemporaryDirectory() as tmp, patch.object(sys, "executable", executable):
+            fixture = LocalFanout(Path(tmp))
+            commands = fixture.units[0]["verification_commands"]
+            assert isinstance(commands, list)
+            # When the dispatcher parses its declared verification command.
+            _, argv = verification_command_argv(commands[0])
+            # Then it still names the same executable, not an agent prompt.
+            self.assertEqual(argv, [executable, "-c", "pass"])
 
     def test_bounded_input_required_validation(self):
         # Given a documented child request; When validated; Then bounded consistent metadata only.

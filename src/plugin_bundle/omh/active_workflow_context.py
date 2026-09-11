@@ -72,7 +72,7 @@ def active_workflow_context(omh_home: str = "", session_id: str = "") -> ActiveW
                     record = parse_workflow_record(raw, entry.name[:-len("-state.json")])
                     if record.active:
                         active.append(record)
-                except (OSError, ValueError, UnicodeError) as exc:
+                except (OSError, ValueError, UnicodeError, RecursionError) as exc:
                     errors.add(type(exc).__name__)
     except FileNotFoundError:
         return None
