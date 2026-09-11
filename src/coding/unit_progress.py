@@ -91,6 +91,15 @@ UNIT_STALL_AFTER_SECONDS: Final[float] = 15 * 60.0
 # cannot be a pair of adjacent identical log lines.
 UNIT_REPEAT_THRESHOLD: Final[int] = 3
 
+# How long output must have been still before a trailing question counts as a
+# unit waiting on an answer. Without it the rule fires on one poll step (five
+# seconds): a headless CLI that prints a sentence ending in "?" and then spends
+# ten seconds inside a tool call would read as blocked on a human. Sixty
+# seconds is well past any single tool call and well short of the stall
+# threshold, so a real prompt is still caught fourteen minutes before silence
+# alone would report it.
+UNIT_PROMPT_QUIET_SECONDS: Final[float] = 60.0
+
 # Lines of tail the repetition rule looks at. Long enough to hold several
 # turns of a retry loop, short enough that an hour of unrelated output ahead
 # of it cannot dilute the count.
@@ -195,6 +204,42 @@ _DATA_MISSING_PATTERNS: Final[tuple[tuple[str, str], ...]] = (
     ("bad_object", "fatal: bad object"),
 )
 
+# Words that make a line a report of something going WRONG. The repeat rule
+# counts only lines matching one of these, because the incident's signal was
+# the same FAILURE repeating -- not repetition as such. Healthy runs repeat
+# lines constantly: verbose unittest prints `... ok` once per test, pytest
+# prints `PASSED`, a compiler prints one warning per file, and the digit
+# collapse above folds `test (3.11, 0)` and `test (3.12, 1)` into one line. Any
+# of those would otherwise pin a green run at `progress_stalled` for the rest
+# of its life, since this rule outranks `running`.
+#
+# Matched case-insensitively as substrings of the canonical line. One row per
+# thing that emits it; the table is deliberately small, because a word added
+# here silently converts a class of healthy output into a stall verdict.
+_FAILURE_SHAPED_WORDS: Final[tuple[tuple[str, str], ...]] = (
+    # git, compilers, and most CLIs prefix a diagnostic line with these.
+    ("error", "error"),
+    ("fatal", "fatal"),
+    # Test runners and build tools reporting a failed step.
+    ("failed", "failed"),
+    ("failure", "failure"),
+    # Permission and capability refusals, in the spellings tools use.
+    ("cannot", "cannot"),
+    ("could_not", "could not"),
+    ("unable", "unable"),
+    ("denied", "denied"),
+    ("refused", "refused"),
+    ("rejected", "rejected"),
+    # The loop itself: a worker announcing it is going round again is the
+    # single clearest sign that the same workaround is being retried.
+    ("retry", "retry"),
+    ("retrying", "retrying"),
+    # A step that ran out of time, and a merge/checkout that could not apply.
+    ("timed_out", "timed out"),
+    ("timeout", "timeout"),
+    ("conflict", "conflict"),
+)
+
 # A prompt the unit is sitting at. Matched against the LAST non-empty line
 # only, and only once output has stopped growing -- a model that merely
 # prints a sentence ending in `?` keeps producing bytes and stays `running`.
@@ -249,6 +294,7 @@ def assess_progress(
     result_record_present: bool = False,
     stall_after_seconds: float = UNIT_STALL_AFTER_SECONDS,
     repeat_threshold: int = UNIT_REPEAT_THRESHOLD,
+    prompt_quiet_seconds: float = UNIT_PROMPT_QUIET_SECONDS,
 ) -> dict[str, Any]:
     """Derive one unit's progress evidence from its stdout so far.
 
@@ -258,11 +304,16 @@ def assess_progress(
     1. A limit, permission, or missing-object shape in the tail. Each is a
        condition retrying under the same conditions cannot clear, so it must
        be reported the moment it is seen rather than waited out.
-    2. The same canonical line repeating `repeat_threshold` times in the
-       tail -- EVEN WHILE bytes grow. This is the 2026-09-11 incident:
-       36 minutes of new output that was the same workaround again.
-    3. A prompt at the end of output with no new bytes since the previous
-       assessment: `awaiting_input`.
+    2. The same FAILURE-SHAPED canonical line repeating `repeat_threshold`
+       times in the tail -- EVEN WHILE bytes grow. This is the 2026-09-11
+       incident: 36 minutes of new output that was the same workaround again.
+       Only lines matching `_FAILURE_SHAPED_WORDS` are counted; a healthy run
+       repeats `... ok` or one warning per file endlessly and must stay
+       `running`.
+    3. A prompt at the end of output with no new bytes for
+       `prompt_quiet_seconds`: `awaiting_input`. The quiet window is the whole
+       guard -- one poll step of silence after a question mark is just a tool
+       call in progress.
     4. No new bytes for `stall_after_seconds`: `progress_stalled`.
     5. Otherwise `running`.
 
@@ -306,11 +357,12 @@ def assess_progress(
         evidence["state"] = UNIT_STATE_PROGRESS_STALLED
         evidence["reason"] = f"{REASON_REPEATED_ERROR_PREFIX}{repeated_line[:_REASON_LINE_LIMIT]}"
         return evidence
-    if prior is not None and not grew and _ends_at_prompt(text):
+    quiet_for = float(now) - last_new_output_at
+    if prior is not None and quiet_for >= float(prompt_quiet_seconds) and _ends_at_prompt(text):
         evidence["state"] = UNIT_STATE_AWAITING_INPUT
         evidence["reason"] = REASON_PROMPT_AT_END
         return evidence
-    if float(now) - last_new_output_at >= float(stall_after_seconds):
+    if quiet_for >= float(stall_after_seconds):
         evidence["state"] = UNIT_STATE_PROGRESS_STALLED
         evidence["reason"] = REASON_NO_NEW_OUTPUT
     return evidence
@@ -404,11 +456,16 @@ def _ends_at_prompt(text: str) -> bool:
 
 
 def _most_repeated_line(text: str) -> tuple[str, int]:
-    """The tail's most frequent canonical non-empty line, and its count."""
+    """The tail's most frequent canonical FAILURE-SHAPED line, and its count.
+
+    Non-failure lines are not counted at all, rather than counted and then
+    filtered: a green run's `... ok` would otherwise be the most common line
+    and would mask a failure repeating underneath it.
+    """
     counts = Counter(
         canonical
         for canonical in (_canonical_line(line) for line in text.splitlines()[-_TAIL_LINES:])
-        if canonical
+        if canonical and _is_failure_shaped(canonical)
     )
     if not counts:
         return "", 0
@@ -416,6 +473,12 @@ def _most_repeated_line(text: str) -> tuple[str, int]:
     # order, so the same text always names the same line.
     line, count = counts.most_common(1)[0]
     return (line, count) if count > 1 else ("", 0)
+
+
+def _is_failure_shaped(canonical_line: str) -> bool:
+    """True when the line reports something going wrong. See the table."""
+    lowered = canonical_line.casefold()
+    return any(needle in lowered for _label, needle in _FAILURE_SHAPED_WORDS)
 
 
 def _canonical_line(line: str) -> str:

@@ -21,6 +21,7 @@ from omh.coding.unit_progress import (
     REASON_REPEATED_ERROR_PREFIX,
     UNIT_PROGRESS_MID_RUN_STATES,
     UNIT_PROGRESS_SCHEMA_VERSION,
+    UNIT_PROMPT_QUIET_SECONDS,
     UNIT_STALL_AFTER_SECONDS,
     assess_progress,
     empty_progress_evidence,
@@ -82,20 +83,58 @@ class AssessProgressTests(unittest.TestCase):
         # Output grew, so the stall clock was NOT what fired here.
         self.assertEqual(growing["last_new_output_at"], 30.0)
 
-    def test_a_trailing_prompt_with_no_new_output_is_awaiting_input(self) -> None:
+    def test_a_trailing_prompt_needs_a_real_quiet_window_to_be_awaiting_input(self) -> None:
         asked = "applying patch\nOverwrite existing file? (y/n) "
         first = assess_progress(None, asked, now=0.0)
         self.assertEqual(first["state"], UNIT_STATE_RUNNING)
 
-        waiting = assess_progress(first, asked, now=5.0)
+        # One poll step of silence after a question is a tool call in
+        # progress, not a unit blocked on a human.
+        soon = assess_progress(first, asked, now=5.0)
+        self.assertEqual(soon["state"], UNIT_STATE_RUNNING)
+
+        waiting = assess_progress(soon, asked, now=UNIT_PROMPT_QUIET_SECONDS + 30.0)
         self.assertEqual(waiting["state"], UNIT_STATE_AWAITING_INPUT)
         self.assertEqual(waiting["reason"], REASON_PROMPT_AT_END)
 
     def test_a_bare_question_mark_only_counts_once_output_stopped(self) -> None:
         first = assess_progress(None, "Should I rebase onto main?\n", now=0.0)
         self.assertEqual(first["state"], UNIT_STATE_RUNNING)
-        moved_on = assess_progress(first, "Should I rebase onto main?\nrebasing\n", now=5.0)
+        moved_on = assess_progress(
+            first, "Should I rebase onto main?\nrebasing\n", now=UNIT_PROMPT_QUIET_SECONDS + 30.0
+        )
         self.assertEqual(moved_on["state"], UNIT_STATE_RUNNING)
+
+    def test_a_green_test_run_repeating_ok_forever_stays_running(self) -> None:
+        # Verbose unittest prints one `... ok` per test. Counting repetition
+        # as such would pin every green run at progress_stalled for the rest
+        # of its life, since the repeat rule outranks `running`.
+        text = "".join(f"test_case_{index} (tests.test_x.Suite) ... ok\n" for index in range(50))
+        evidence = assess_progress(None, text, now=0.0)
+        self.assertEqual(evidence["state"], UNIT_STATE_RUNNING)
+        self.assertEqual(evidence["repeat_count"], 0)
+        self.assertEqual(evidence["repeated_line"], "")
+
+    def test_a_repeated_compiler_warning_stays_running(self) -> None:
+        # Same shape, different producer: one identical warning per file is
+        # noisy, not stuck.
+        text = "".join(
+            f"src/mod_{index}.py:12: warning: unused import\n" for index in range(5)
+        ) + "building\n"
+        self.assertEqual(assess_progress(None, text, now=0.0)["state"], UNIT_STATE_RUNNING)
+
+    def test_a_repeated_passing_pytest_line_stays_running(self) -> None:
+        text = "".join(f"tests/test_x.py::test_{index} PASSED\n" for index in range(40))
+        self.assertEqual(assess_progress(None, text, now=0.0)["state"], UNIT_STATE_RUNNING)
+
+    def test_digit_collapsed_matrix_rows_do_not_read_as_a_stall(self) -> None:
+        # The digit collapse folds `(3.11, 0)` and `(3.12, 1)` into one
+        # canonical line. Healthy matrix output must survive that.
+        text = "".join(
+            f"ok  test_matrix ({major}.{minor}, {minor})\n"
+            for major, minor in ((3, 11), (3, 12), (3, 13))
+        )
+        self.assertEqual(assess_progress(None, text, now=0.0)["state"], UNIT_STATE_RUNNING)
 
     def test_a_session_limit_refusal_is_an_account_limit(self) -> None:
         first = assess_progress(None, "thinking\n", now=0.0)
