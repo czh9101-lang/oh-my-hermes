@@ -12,6 +12,7 @@ from ..plugin_bundle.omh.hermes_memory import HERMES_MEMORY_FILES, read_hermes_m
 from ..system.local_store import atomic_write_json, read_json_object_result
 from ..system.paths import OmhPaths
 from . import memory
+from ._memory_lifecycle_scan import json_files, read_json
 from .memory_recall_incident_model import (
     EvidenceSurface, Incident, RecallIncidentRequest, diagnosis, digest,
     diagnose_synthetic_recall_stage,
@@ -83,10 +84,33 @@ def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest
 
     matches = [value for value in records if anchored(value)]
     pending = [value for value in candidates if anchored(value)]
+    history: list[dict[str, object]] = []
+    history_error = False
+    for relative, error in json_files(paths.memory_dir, 'history'):
+        if error:
+            history_error = True
+            continue
+        value, error = read_json(paths.memory_dir, relative)
+        if error or value is None:
+            history_error = True
+            continue
+        if value.get('schema_version') != memory.PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
+            history_error = True
+            continue
+        if anchored(value) and value.get('superseded_by'):
+            history.append(value)
+    surfaces['omh_history'] = {
+        'status': 'unavailable' if history_error else 'observed',
+        'basis': 'partial_unreadable_store' if history_error else 'local_store',
+    }
+    # Current records take precedence over their older revisions. History can
+    # explain a removed claim without admitting it back into recall selection.
+    if not matches:
+        matches = history
     anchor = {'requested_digest': digest(request.record_id) if request.record_id else request.claim_digest}
     reason = 'not_found'
     last = 'none'
-    if unreadable or candidate_error or native_error:
+    if unreadable or candidate_error or native_error or history_error:
         reason = 'store_unavailable'
     if native_match:
         reason = 'native_only_not_omh_reviewed'
@@ -114,6 +138,8 @@ def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest
             observed=(request.observed.strip().lower() if request.observed else None),
         ):
             reason = 'perspective_mismatch'
+        elif record.get('superseded_by'):
+            reason = 'superseded'
         else:
             reason = 'selection_unresolved'
             # Legacy pack API returns object-valued JSON; narrow at that boundary.
