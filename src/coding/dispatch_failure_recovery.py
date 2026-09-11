@@ -39,6 +39,16 @@ Three pieces live here.
    picks one on the operator's behalf; the default mode prints the card and the
    options and changes nothing.
 
+4. **The cause-specific plan**, computed in `cause_recovery` and attached here.
+   The three actions above answer "where else could this run"; the plan answers
+   "may it run again at all, and what has to be true first". They are different
+   questions and the plan is allowed to close an option: a unit whose objects
+   are missing, whose permissions are denied, or whose worker is still alive
+   would hand any new worker the same condition, so retarget and the Hermes
+   lane are listed unavailable with the requirement named, instead of spending
+   a second worker to reproduce the first one's failure. A quota and a stall
+   are not inherited that way, so both lanes stay open for them.
+
 Nothing in this module spawns anything. It classifies, it persists metadata, and
 it renders choices. Acting on a choice is the dispatcher's job.
 """
@@ -52,6 +62,14 @@ from ..executors import executor_label
 from ..system.local_store import locked_json_update, read_json_object_result, utc_now
 from ..system.paths import OmhPaths
 from .executor_auth_signals import LIMIT_SIGNAL_STALE_AFTER_SECONDS, signal_age_seconds
+from .unit_execution_state import UNIT_STUCK_STATES
+
+# `cause_recovery` is imported inside the three functions that use it, never at
+# module level. It needs `FAILURE_KIND_WORKSPACE_BLOCKED` from here, and the
+# closed enum belongs with the classifier that produces it, so the cycle is
+# broken on this side: a module-level import in both directions fails outright
+# when `cause_recovery` is the one imported first. Same deferred-import pattern
+# `spawn_cooldown` already uses for `executor_auth_signals`.
 
 # The closed enum. Every failed unit envelope carries exactly one of these.
 FAILURE_KIND_AUTH_SHAPED = "auth_shaped"
@@ -275,11 +293,19 @@ def build_repair_card(
     failure_kind: str,
     detail: str = "",
     remaining_seconds: int | None = None,
+    plan: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The deterministic repair card for one recoverable dispatch failure.
 
     Two kinds, two repair steps, one shape: a reader branches on `failure_kind`
     and `reason_code`, never on the prose.
+
+    `plan` is the cause-specific answer from `cause_recovery.recovery_plan`.
+    When it is supplied the card also carries the cause, the required condition,
+    and whether a rerun is allowed yet, so the operator surface that renders the
+    card states the precondition instead of leaving it to be inferred from the
+    two generic repair steps. An absent plan leaves the card byte-identical to
+    what it was before, which is what keeps every existing caller honest.
     """
     card: dict[str, Any] = {
         "schema_version": DISPATCH_REPAIR_CARD_SCHEMA_VERSION,
@@ -330,6 +356,11 @@ def build_repair_card(
         ]
     if remaining_seconds is not None:
         card["cooldown_remaining_seconds"] = int(remaining_seconds)
+    if isinstance(plan, Mapping) and plan.get("cause"):
+        from .cause_recovery import plan_summary_line
+
+        card["recovery_plan"] = dict(plan)
+        card["required_condition"] = plan_summary_line(plan)
     return card
 
 
@@ -387,11 +418,24 @@ def _cooldown(
         f"this machine observed {owner} fail as {failure_kind} "
         f"({signal.get('pattern_label') or 'unlabelled'}) at {signal.get(observed_key) or 'an unrecorded time'}"
     )
+    # Which account it happened under, and the provider's own reset phrase,
+    # when the signal recorded them. This is the line the operator reads on a
+    # refused spawn, and "wait for a window" is a different instruction
+    # depending on whose window it was — an operator who has since switched
+    # accounts is being told to wait for one that is no longer theirs.
+    account_tag = str(signal.get("account_tag", "") or "")
+    reset_text = str(signal.get("reset_text", "") or "")
+    if account_tag:
+        detail = f"{detail} under account {account_tag}"
+    if reset_text:
+        detail = f"{detail}, provider said it resets {reset_text}"
     return {
         "status": status,
         "failure_kind": failure_kind,
         "pattern_label": str(signal.get("pattern_label", "")),
         "observed_at": str(signal.get(observed_key, "")),
+        **({"account_tag": account_tag} if account_tag else {}),
+        **({"reset_text": reset_text} if reset_text else {}),
         "cooldown_remaining_seconds": remaining,
         "reason": (
             f"{detail}; the spawn is refused inside the staleness window. "
@@ -462,20 +506,53 @@ def parse_on_failure(value: str, *, known_owners: Sequence[str] = ()) -> tuple[s
     )
 
 
-def recovery_candidates(units: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """The failed units a recovery choice is offered for, in summary order."""
-    return [
-        {
-            "unit_id": str(entry.get("unit_id", "")),
-            "owner": str(entry.get("owner", "")),
-            "failure_kind": str(entry.get("failure_kind", "")),
-            "status": str(entry.get("status", "")),
-        }
-        for entry in units
-        if isinstance(entry, Mapping)
-        and str(entry.get("failure_kind", "")) in RECOVERABLE_FAILURE_KINDS
-        and not entry.get("process_succeeded")
-    ]
+def recovery_candidates(
+    units: Sequence[Mapping[str, Any]],
+    *,
+    inflight: Sequence[Mapping[str, Any]] = (),
+) -> list[dict[str, Any]]:
+    """The failed units a recovery choice is offered for, in summary order.
+
+    Two admissions, not one. The original: a `failure_kind` the provider's
+    refusal produced, which another owner or a later attempt can answer. The
+    second: a `unit_state` in `UNIT_STUCK_STATES` — a unit whose process is
+    alive or gone but whose WORK is blocked, which is the state the 2026-09-11
+    incident spent thirty-six minutes in without ever being offered a choice.
+    That second admission is what carries a workspace-blocked unit here:
+    `workspace_blocked` is deliberately NOT in `RECOVERABLE_FAILURE_KINDS` — no
+    other owner and no later attempt answers a denied write or an absent object
+    — but the preflight stamps the unit's `unit_state`, and a stuck unit with a
+    cause-specific plan belongs in the interview even when every spawning option
+    in it is closed.
+
+    Each candidate carries its `plan` — the cause-specific answer that decides
+    which of the offered options is real. `inflight` is the marker listing the
+    live-worker rule is checked against; passing none means that rule cannot
+    fire, so a caller that can read markers should.
+    """
+    from .cause_recovery import attempt_conditions, recovery_plan
+
+    candidates: list[dict[str, Any]] = []
+    for entry in units:
+        if not isinstance(entry, Mapping) or entry.get("process_succeeded"):
+            continue
+        failure_kind = str(entry.get("failure_kind", ""))
+        unit_state = str(entry.get("unit_state", ""))
+        if failure_kind not in RECOVERABLE_FAILURE_KINDS and unit_state not in UNIT_STUCK_STATES:
+            continue
+        candidates.append(
+            {
+                "unit_id": str(entry.get("unit_id", "")),
+                "owner": str(entry.get("owner", "")),
+                "failure_kind": failure_kind,
+                "unit_state": unit_state,
+                "status": str(entry.get("status", "")),
+                "plan": recovery_plan(
+                    entry, inflight=inflight, last_attempt=attempt_conditions(entry)
+                ),
+            }
+        )
+    return candidates
 
 
 def retarget_candidates(
@@ -519,6 +596,7 @@ def recovery_options(
     candidate: Mapping[str, Any],
     retargets: Sequence[Mapping[str, Any]],
     hermes_available: bool,
+    plan: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """The numbered choices offered for one failed unit, in a fixed order.
 
@@ -526,23 +604,44 @@ def recovery_options(
     `available: false` and the reason, rather than silently dropped: an operator
     who was told there were three ways out should be told which one is closed
     and why.
+
+    `plan` closes the two spawning options — retarget and Hermes — for a cause a
+    new worker would inherit (a live worker on this scope, a permission denial,
+    missing objects, an unanswered question). That is the one place this module
+    refuses something the operator asked for, and it refuses it by listing the
+    option with the requirement rather than by removing it. `plan` defaults to
+    the candidate's own, so a caller that built the candidate through
+    `recovery_candidates` gets the closure without passing anything.
     """
+    plan = plan if plan is not None else candidate.get("plan")
+    blocked_reason = ""
+    if isinstance(plan, Mapping) and plan.get("blocks_new_worker") and not plan.get("allowed_rerun"):
+        blocked_reason = (
+            f"cause {plan.get('cause')}: a new worker on this scope inherits the same condition "
+            f"({plan.get('reason')})"
+        )
     options: list[dict[str, Any]] = [
         {
             "key": "1",
             "choice": CHOICE_RETARGET,
             "title": "Retarget this unit to another coding owner and re-dispatch it now.",
-            "available": bool(retargets),
-            "unavailable_reason": "" if retargets else "no other locally-installed coding owner is offered",
+            "available": bool(retargets) and not blocked_reason,
+            "unavailable_reason": (
+                blocked_reason
+                if blocked_reason
+                else "" if retargets else "no other locally-installed coding owner is offered"
+            ),
             "candidates": [dict(row) for row in retargets],
         },
         {
             "key": "2",
             "choice": CHOICE_HERMES,
             "title": "Re-run this unit through the Hermes subagent lane (separate auth and quota).",
-            "available": bool(hermes_available),
+            "available": bool(hermes_available) and not blocked_reason,
             "unavailable_reason": (
-                ""
+                blocked_reason
+                if blocked_reason
+                else ""
                 if hermes_available
                 else "supply --hermes-model, --hermes-provider, and --hermes-reasoning to offer this lane"
             ),
@@ -579,10 +678,18 @@ def prompt_recovery_choice(
     a value outside the set re-asks; exhausting the attempts (or an input stream
     that ended) falls back to `report`, which changes nothing.
     """
+    from .cause_recovery import plan_summary_line
+
     unit_id = str(candidate.get("unit_id", ""))
     owner = str(candidate.get("owner", ""))
     kind = str(candidate.get("failure_kind", ""))
     write_line(f"Unit {unit_id} failed on {owner} as {kind}. Choose a recovery action:")
+    # The cause and its precondition, before the options: an operator choosing
+    # between three lanes needs to know which of them the cause has already
+    # closed, and why, rather than discovering it on the unavailable line.
+    summary = plan_summary_line(candidate.get("plan"))
+    if summary:
+        write_line(f"  {summary}")
     for option in options:
         suffix = "" if option.get("available") else f"  (unavailable: {option.get('unavailable_reason')})"
         write_line(f"  [{option.get('key')}] {option.get('title')}{suffix}")
@@ -720,7 +827,12 @@ def recovery_decision(
     consent: str = "",
     reason: str = "",
 ) -> dict[str, Any]:
-    """One recorded recovery decision, before any action is carried out."""
+    """One recorded recovery decision, before any action is carried out.
+
+    The candidate's plan is recorded alongside the choice. A decision that says
+    only "the operator chose wait" cannot later be read for whether waiting was
+    the right answer; one that carries the cause and the unmet requirement can.
+    """
     decision: dict[str, Any] = {
         "unit_id": str(candidate.get("unit_id", "")),
         "owner": str(candidate.get("owner", "")),
@@ -728,6 +840,9 @@ def recovery_decision(
         "choice": choice,
         "decided_at": utc_now(),
     }
+    plan = candidate.get("plan")
+    if isinstance(plan, Mapping) and plan.get("cause"):
+        decision["plan"] = dict(plan)
     if target_owner:
         decision["target_owner"] = target_owner
     if consent:

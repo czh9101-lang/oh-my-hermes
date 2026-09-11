@@ -43,6 +43,7 @@ from ..workflows.observation_journal import project_run_failure_diagnostic
 from ..system.paths import OmhPaths
 from ._hermes_child_process import terminate_process_group
 from .action_gate import recheck_safety_profile_revision
+from .cause_recovery import attempt_conditions, limit_reset_text, plan_summary_line, recovery_plan
 from .coding_contracts import STRUCTURAL_SEARCH_GUIDANCE
 from .dispatch_failure_recovery import (
     HERMES_LANE_CONSENT,
@@ -131,7 +132,13 @@ from .fanout_review_budget import (
     ReviewDispatchBudget,
     normalized_review_role,
 )
-from .inflight import InflightMarkerError, clear_inflight_marker, write_inflight_marker
+from .executor_account import observed_account_tag
+from .inflight import (
+    InflightMarkerError,
+    clear_inflight_marker,
+    read_inflight_markers,
+    write_inflight_marker,
+)
 from .parallelism_policy import FANOUT_MAX_DEPTH_DEFAULT, FANOUT_RUN_SPAWN_CEILING_DEFAULT
 from .fanout_retry import (
     FANOUT_MAX_RETRIES,
@@ -2617,7 +2624,14 @@ def _run_failure_recovery(
     switched without an explicit choice — an interview answer, or an explicit
     `--on-failure=retarget:<owner>` on the command line.
     """
-    candidates = recovery_candidates([results[unit_id] for unit_id in order if unit_id in results])
+    # Markers for THIS fanout only, read once. They are what the plan's
+    # live-worker rule is checked against: a unit whose scope another session
+    # still occupies must be waited on, never given a second worker. Marker
+    # presence is not liveness and the plan says so when it fires.
+    candidates = recovery_candidates(
+        [results[unit_id] for unit_id in order if unit_id in results],
+        inflight=_recovery_inflight(paths, str(unit_dispatch_kwargs["fanout_id"])),
+    )
     if not candidates:
         return None
     emit = write_line if write_line is not None else _silent_write_line
@@ -2757,6 +2771,12 @@ def _report_recovery_options(
         f"Unit {candidate.get('unit_id')} failed on {candidate.get('owner')} as "
         f"{candidate.get('failure_kind')}. Recovery options (none taken; pass --on-failure to choose):"
     )
+    # Same line the interview prints: the operator reading a non-interactive
+    # report needs the cause and its precondition as much as the one answering
+    # a prompt does.
+    plan_line = plan_summary_line(candidate.get("plan"))
+    if plan_line:
+        emit(f"  {plan_line}")
     for option in options:
         suffix = "" if option.get("available") else f"  (unavailable: {option.get('unavailable_reason')})"
         emit(f"  [{option.get('key')}] {option.get('title')}{suffix}")
@@ -3211,6 +3231,18 @@ def _clear_inflight(paths: OmhPaths, fanout_id: str, unit_id: str) -> None:
         clear_inflight_marker(paths, fanout_id, unit_id)
     except (InflightMarkerError, OSError):
         return
+
+
+def _recovery_inflight(paths: OmhPaths, fanout_id: str) -> list[dict[str, Any]]:
+    """Markers for one fanout, for the recovery plan's live-worker rule.
+
+    `read_inflight_markers` already never raises and skips what it cannot
+    parse, so the empty list here means only "no marker was listed" — which the
+    plan reads as "no live worker was observed", never as "the scope is free".
+    """
+    if not fanout_id:
+        return []
+    return read_inflight_markers(paths, fanout_id=fanout_id)
 
 
 DISPATCH_MODEL_PREFERENCE_SCHEMA_VERSION = "omh_dispatch_model_preferences/v1"
@@ -4058,6 +4090,14 @@ def _dispatch_unit(
     stdout_text = ""
     exit_code = 1
     owner_host = omo_runtime_host() or "" if owner == "omo-runtime" else ""
+    # Which account this owner's CLI is configured as, read once here from that
+    # CLI's own config file and redacted on the way out. Read at spawn rather
+    # than at failure time because the failure is what makes it interesting and
+    # by then the operator may already have switched: without the tag recorded
+    # beside the limit, "wait for the reset" is the only recovery omh can offer,
+    # including to the operator for whom that window no longer applies. No
+    # token or key is read, and an unreadable file is an empty tag.
+    account_tag = observed_account_tag(owner)
     unit_title = str(unit.get("title") or unit.get("unit_id", unit_id))
     # Written BEFORE the spawn and cleared in `finally`. This call blocks for
     # the whole unit, so the dispatching process cannot report on itself; the
@@ -4409,7 +4449,18 @@ def _dispatch_unit(
             paths, owner, run_ref=run_ref, unit_id=unit_id, pattern_label=auth_label
         )
     elif limit_label:
-        _record_limit_signal(paths, owner, run_ref=run_ref, unit_id=unit_id, pattern_label=limit_label)
+        _record_limit_signal(
+            paths,
+            owner,
+            run_ref=run_ref,
+            unit_id=unit_id,
+            pattern_label=limit_label,
+            account_tag=account_tag,
+            # The literal reset phrase the provider wrote ("resets 6:10pm
+            # (Asia/Seoul)"), carried for display only. Nothing converts it to
+            # an instant; the elapsed answer stays the cooldown window's.
+            reset_text=limit_reset_text(output_tail, stderr_tail),
+        )
     elif exit_code == 0:
         # A successful dispatch to this executor is the freshest evidence the
         # provider is serving it again; a stale limit or auth signal must not
@@ -4601,6 +4652,11 @@ def _dispatch_unit(
         _record_capacity(paths, unit, result['capacity'])
     result['worktree_created'] = bool(worktree_record.get('created'))
     result['worktree_reused'] = bool(worktree_record.get('reused'))
+    if account_tag:
+        # Only when observed. An absent key is "no account was readable"; an
+        # empty string recorded as a value would compare equal to the next
+        # unreadable one and make an account switch look like no switch at all.
+        result["account_tag"] = account_tag
     if owner_host:
         result["owner_host"] = owner_host
     result['attempt_id'] = attempt_id
@@ -4637,6 +4693,11 @@ def _dispatch_unit(
             owner=owner,
             failure_kind=failure_kind,
             detail=f"unit {unit_id} exited {exit_code} on {owner} with a {failure_kind} output shape",
+            # The cause-specific precondition, computed from this envelope. No
+            # in-flight markers are consulted: this unit's own marker is being
+            # cleared in the `finally` above, so a live-worker verdict here
+            # would be about a worker that is on its way out.
+            plan=recovery_plan(result, last_attempt=attempt_conditions(result)),
         )
     if retry_decisions:
         # Only when something actually failed once: a unit that succeeded on
@@ -5472,7 +5533,25 @@ def _limit_shaped_label(output_tail: str, stderr_tail: str) -> str:
     return ""
 
 
-def _record_limit_signal(paths: OmhPaths, owner: str, *, run_ref: str, unit_id: str, pattern_label: str) -> None:
+def _record_limit_signal(
+    paths: OmhPaths,
+    owner: str,
+    *,
+    run_ref: str,
+    unit_id: str,
+    pattern_label: str,
+    account_tag: str = "",
+    reset_text: str = "",
+) -> None:
+    """Persist one owner's limit observation, with the account it happened under.
+
+    `account_tag` and `reset_text` are written only when they were observed: an
+    empty tag is "nothing readable named an account", and recording it as a
+    value would let a later comparison read two unknowns as the same account.
+    `last_limit_signal_for_profile` copies every stored key, so both reach the
+    readiness advisory without a second reader.
+    """
+
     def _update(state: dict[str, Any]) -> dict[str, Any]:
         state["schema_version"] = EXECUTOR_LIMIT_SIGNALS_SCHEMA_VERSION
         profiles = state.setdefault("profiles", {})
@@ -5481,6 +5560,8 @@ def _record_limit_signal(paths: OmhPaths, owner: str, *, run_ref: str, unit_id: 
             "run_ref": run_ref,
             "unit_id": unit_id,
             "pattern_label": pattern_label,
+            **({"account_tag": account_tag} if account_tag else {}),
+            **({"reset_text": reset_text} if reset_text else {}),
         }
         state["claim_boundary"] = EXECUTOR_LIMIT_SIGNALS_CLAIM_BOUNDARY
         return state
