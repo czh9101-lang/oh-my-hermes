@@ -1,11 +1,21 @@
 """Safety classification for memory governance (internal module).
 
-Deterministic patterns only. Protected values (credential keywords and the
-documented bare token shapes) block; temporary progress, imperative
-prompt-injection-shaped content, unknown opaque values, and pasted
-log/transcript history route to review. Nothing here reads meaning: a
-classifier that cannot be sure defers to a person rather than blocking or
-auto-approving.
+Deterministic patterns only, and only for protected values: credential
+keywords, the documented bare token shapes, a PEM private-key header, and a
+URL carrying inline basic-auth credentials block; temporary progress,
+imperative prompt-injection-shaped content, credential-shaped assignments,
+and unknown opaque values route to review.
+
+Raw logs and transcripts are deliberately NOT screened here, though the
+capture lane refuses them. This function is a shared primitive -- action
+gates, handoff manifests, batch identifiers, and reviewer labels all call it,
+and several of them turn any non-safe verdict into a raise -- so a line-shape
+heuristic placed here would fail a plain note whose lines happen to open with
+"Error", "Warning" or "User:", and would fail it by exception. The shape gate
+for that material lives beside the path that can afford to refuse:
+`_ensure_vocabulary_safe` in `src/workflows/domain_intelligence_admission.py`
+matches raw-log markers, three or more full `YYYY-MM-DD HH:MM:SS` line
+openings, and an anchored role marker.
 """
 
 from __future__ import annotations
@@ -59,24 +69,6 @@ _NEEDS_REVIEW_PATTERNS = (
     # as an opaque value while keeping this gate deterministic.
     _CREDENTIAL_REVIEW_PATTERN,
 )
-# Pasted logs and transcripts are the bulk history memory should not carry:
-# every retained record is context the next turn pays for, and Hermes' own
-# session store already holds the conversation. A paste is recognizable by
-# repetition rather than by any single line, so this asks for several lines
-# that each open with a timestamp, a log level, or a speaker label. One quoted
-# log line inside a written note stays safe, and the verdict is review, not a
-# block -- shape is evidence of a paste, never proof of one.
-_HISTORY_LINE_OPENING = re.compile(
-    r"^[ \t]*(?:"
-    r"[\[(]?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}"
-    r"|[\[(]?\d{2}:\d{2}:\d{2}"
-    r"|(?:DEBUG|INFO|WARN|WARNING|ERROR|TRACE|FATAL)\b"
-    r"|(?:user|assistant|human|system)[ \t]*:"
-    r")",
-    re.IGNORECASE,
-)
-_PASTED_HISTORY_MIN_LINES = 3
-
 _OPAQUE_TOKEN_PATTERN = re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9+/=_-]{32,}(?![A-Za-z0-9])")
 _HEX_DIGEST_PATTERN = re.compile(
     r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{56}|[0-9A-Fa-f]{64}|[0-9A-Fa-f]{96}|[0-9A-Fa-f]{128})"
@@ -656,11 +648,12 @@ def classify_memory_admission(content: str) -> dict[str, object]:
     """Classify memory content for safety admission.
 
     Returns a dict with "status" field:
-    - "blocked": protected values (credential keywords, documented token shapes)
+    - "blocked": protected values (credential keywords, the documented bare
+      token shapes, a PEM private-key header, inline basic-auth in a URL)
     - "needs_review": ambiguous content (temporary progress, prompt injection,
-      credential-shaped assignments, unknown opaque values, pasted
-      log/transcript history)
-    - "safe": safe to auto-approve
+      credential-shaped assignments, unknown opaque values)
+    - "safe": everything else, including pasted logs and transcripts -- see the
+      module docstring for where that shape is screened instead
     """
     if not isinstance(content, str):
         return {"status": "blocked"}
@@ -678,18 +671,7 @@ def classify_memory_admission(content: str) -> dict[str, object]:
     if _looks_like_opaque_token(content):
         return {"status": "needs_review"}
 
-    if _looks_like_pasted_history(content):
-        return {"status": "needs_review"}
-
     return {"status": "safe"}
-
-
-def _looks_like_pasted_history(content: str) -> bool:
-    """Whether the text reads as pasted log or transcript lines, not a fact."""
-    opening_lines = sum(
-        1 for line in content.splitlines() if _HISTORY_LINE_OPENING.match(line)
-    )
-    return opening_lines >= _PASTED_HISTORY_MIN_LINES
 
 
 def evaluate_renderable_strings(artifact: dict[str, object]) -> dict[str, object]:

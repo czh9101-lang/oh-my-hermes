@@ -4221,7 +4221,14 @@ def _project_memory_safety(
         "status": status,
         "safe_to_auto_approve": status == "safe",
         "review_reasons": [] if status == "safe" else [status],
-        "protected_inputs": ["credentials", "raw_logs", "full_transcripts", "temporary_task_progress"],
+        # What this classification actually screens, not what the lane asks a
+        # person to refuse. Raw logs and transcripts belong in the second list:
+        # the capture lane declines them and points at the session store, and
+        # the domain-vocabulary gate matches their shape, but no pattern here
+        # reads them, so naming them as screened here would be a claim the
+        # verdict above cannot support.
+        "protected_inputs": ["credentials", "prompt_injection_shaped_text", "temporary_task_progress"],
+        "lane_refused_inputs": ["raw_logs", "full_transcripts"],
     }
 
 
