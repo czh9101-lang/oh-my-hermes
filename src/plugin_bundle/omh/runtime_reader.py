@@ -20,7 +20,11 @@ from .subagent_graph_contract import (
     GRAPH_CONTRACT_UNIT_LIMIT,
     recorded_contract_blocker,
 )
-from .tool_bursts import tool_call_projection
+from .tool_bursts import (
+    TOOL_CALL_OPEN_TTL_SECONDS,
+    tool_call_activity,
+    tool_call_projection,
+)
 from .metadata import (
     OPTIONAL_HOOKS,
     PROVIDED_HOOKS,
@@ -50,6 +54,21 @@ HUD_PRESETS = {"minimal", "focused", "full"}
 # How long a fully-done plan keeps rendering after its last update.
 ALL_DONE_TODO_LINGER_SECONDS = 15 * 60
 TODO_DISPLAY_ITEM_LIMIT = 3
+# How long an established plan's checklist may sit unchanged before the reader
+# reports that it has stopped moving. NOT a guessed threshold: it is the tool
+# ledger's own bound for how long an unclosed call may still be presumed in
+# flight (`TOOL_CALL_OPEN_TTL_SECONDS`), so past it the wait cannot be
+# explained by one long tool call this install observed. Deriving it from that
+# constant keeps the two rules from drifting apart.
+TODO_UNCHANGED_SECONDS = TOOL_CALL_OPEN_TTL_SECONDS
+# The two statuses that ARE the finding; every other value is a way of being
+# silent. Named once so a caller cannot cover one and miss the other.
+TODO_UNCHANGED_STATUSES: frozenset[str] = frozenset({"unchanged", "unchanged_while_busy"})
+TODO_STALL_CLAIM_BOUNDARY = (
+    "Elapsed time since this checklist last changed, paired with whether this OMH "
+    "install currently has a tool call open. Not evidence that work failed, that "
+    "the session stopped, or that the plan should be resumed."
+)
 # Merged activity rows carried to HUD surfaces. Matches the native reader's
 # own per-source bound (`hermes_delegation._ROW_LIMIT`); the TUI widget
 # applies its viewport clamp on top and names anything hidden with `+N more`.
@@ -802,7 +821,9 @@ def read_omh_hud(
         "runtime": _hud_runtime_summary(status_payload, latest_run),
         "achievements": _achievements_summary(hermes),
         "tokens": _token_summary(token_metadata or {}),
-        "todo": _todo_summary(home, hermes, session_ref, tui_session_ref),
+        "todo": _todo_summary(
+            home, hermes, session_ref, tui_session_ref, activity=tool_calls["activity"]
+        ),
         # Concurrent tool-call batches observed by the pre_tool_call hook;
         # the [OMH] status line brands a fresh batch as a parallel shot.
         "parallel_shot": tool_calls["parallel_shot"],
@@ -1769,12 +1790,108 @@ def default_omh_home() -> Path:
     return _default_omh_home()
 
 
+def elapsed_text(seconds: float) -> str:
+    """``12s`` / ``4m 3s`` / ``2h 01m``.
+
+    Byte-identical to the widget's own ``elapsedText``, so the same elapsed
+    figure reads the same whether it arrives through the TUI panel, the text
+    HUD line, or the per-turn reminder.
+    """
+    total = max(0, int(seconds))
+    if total < 60:
+        return f"{total}s"
+    if total < 3600:
+        return f"{total // 60}m {total % 60}s"
+    return f"{total // 3600}h {total // 60 % 60:02d}m"
+
+
+def _todo_stall(activity: dict[str, Any] | None, age: float | None) -> dict[str, Any]:
+    """Whether an established plan's checklist has visibly stopped moving.
+
+    One finding and four ways of being silent, each of which names WHY it is
+    silent rather than collapsing into a bare false:
+
+    * ``unobserved`` -- there is no established plan to say anything about.
+    * ``unanswerable`` -- this install has never observed ``post_tool_call``
+      fire, so the in-flight ledger can only expire entries, never
+      legitimately close them. Liveness cannot be read either way here and
+      inverting that silence into a stall would brand a working agent stopped.
+    * ``live`` -- a tool call this install opened is still open AND the
+      checklist changed recently enough that the open call explains the gap.
+      Liveness excuses a short pause, never an indefinite one.
+    * ``unchanged_while_busy`` -- past the threshold with a call open. This is
+      a finding, not silence: calls are being made and the plan is not moving.
+    * ``idle`` -- nothing is open, but the checklist changed recently enough
+      that one tool call could still account for the gap.
+    * ``unchanged`` -- nothing is open AND the checklist has not changed for
+      at least ``TODO_UNCHANGED_SECONDS``. This is the finding.
+
+    Every ambiguity resolves toward silence. The ledger is machine-wide (see
+    ``tool_bursts``), so a sibling session holding one call open suppresses
+    this session's finding: a false negative, which is the safe direction for
+    a signal that must not cry wolf.
+    """
+    past_threshold = age is not None and age >= TODO_UNCHANGED_SECONDS
+    if activity is None:
+        status = "unobserved"
+    elif not activity.get("post_tool_call_observed"):
+        status = "unanswerable"
+    elif past_threshold:
+        # A live call explains a SHORT gap and nothing longer. Suppressing the
+        # finding whenever anything is open would read "a process is alive" as
+        # "the work is advancing", which is the exact substitution that let a
+        # real run spend 36 minutes retrying git workarounds while its plan sat
+        # on one item: tool calls opened and closed the whole time, so a
+        # liveness-gated signal would have stayed silent through the thing it
+        # exists to catch. Past the threshold the checklist not moving IS the
+        # finding, and whether something is open only changes which sentence
+        # is true about it.
+        status = "unchanged_while_busy" if activity.get("live") else "unchanged"
+    elif activity.get("live"):
+        status = "live"
+    else:
+        status = "idle"
+    return {
+        "status": status,
+        "threshold_seconds": TODO_UNCHANGED_SECONDS,
+        "claim_boundary": TODO_STALL_CLAIM_BOUNDARY,
+    }
+
+
+def todo_unchanged_text(todo: dict[str, Any]) -> str:
+    """How long this checklist has been unchanged, when that is the finding.
+
+    Empty for every other stall status, so a caller renders the hint by
+    appending this and nothing else; the projection's own status stays the
+    single place the rule lives.
+    """
+    stall = todo.get("stall")
+    # Both findings carry the age. `unchanged_while_busy` is the same fact with
+    # calls running, and dropping it here would have silently reinstated the
+    # liveness suppression the status split exists to remove.
+    if not isinstance(stall, dict) or stall.get("status") not in TODO_UNCHANGED_STATUSES:
+        return ""
+    seconds = todo.get("updated_age_seconds")
+    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+        return ""
+    return elapsed_text(seconds)
+
+
 def _todo_summary(
     home: Path,
     hermes: Path | None = None,
     session_ref: str = "",
     tui_session_ref: str = "",
+    activity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Project the reading session's plan todo.
+
+    ``activity`` is the tool-call liveness projection the stall finding pairs
+    the checklist's age with. ``read_omh_hud`` already reads it for its own
+    block and passes it in so one poll sees one ledger state; a caller that
+    has none (``read_omh_todo``) makes the reader take its own read, and only
+    for a plan that is actually established.
+    """
     empty = {
         "status": "absent",
         "title": "",
@@ -1785,6 +1902,7 @@ def _todo_summary(
         "display_items": [],
         "display_phase": "",
         "more_count": 0,
+        "stall": _todo_stall(None, None),
     }
     session_id, session = _reading_session(hermes, session_ref or tui_session_ref)
     record, own_record = _own_todo_record(home, session_id)
@@ -1905,6 +2023,17 @@ def _todo_summary(
     # on every read_omh_hud call, so shipping it as a field keeps the number
     # honest; VOLATILE_KEYS carries it forward on the metrics repaint cadence.
     summary["updated_age_seconds"] = age
+    # The finding the age was already enough to support and nobody stated:
+    # computed once here, so the TUI panel, the text HUD line, the per-turn
+    # reminder and `omh runtime todo show` all read one verdict instead of
+    # each re-deriving it (only the TUI ever did). The block carries no
+    # elapsed number of its own -- `updated_age_seconds` above is the one
+    # figure, and it is the one VOLATILE_KEYS already throttles, so the
+    # status flip stays structural and repaints promptly while the seconds
+    # keep ticking on the metrics cadence.
+    summary["stall"] = _todo_stall(
+        activity if activity is not None else tool_call_activity(str(home)), age
+    )
     return summary
 
 
@@ -2006,6 +2135,15 @@ def _hud_todo_lines(todo: dict[str, Any], *, preset: str = "focused") -> list[st
     full = preset == "full"
     shown = todo.get("items", []) if full else todo.get("display_items", [])
     marker = {"done": "[✓]", "active": "[•]", "pending": "[ ]"}
+    # The stall finding rides the item it is about. Silent unless the reader
+    # actually observed it -- an unanswerable host, a live tool call, or a
+    # checklist that moved recently all render exactly as they did before.
+    unchanged = todo_unchanged_text(todo)
+
+    def item_line(item: dict[str, Any], indent: str) -> str:
+        line = f"{indent}{marker[item['state']]} {item['text']}"
+        return f"{line} (unchanged {unchanged})" if unchanged and item["state"] == "active" else line
+
     lines = [header]
     if full:
         # Full preset walks every phase in declaration order with headers;
@@ -2020,14 +2158,14 @@ def _hud_todo_lines(todo: dict[str, Any], *, preset: str = "focused") -> list[st
             elif not phase and depth == 0:
                 last_phase = ""
             indent_depth = depth + (1 if last_phase else 0)
-            lines.append(f"{'  ' * indent_depth}{marker[item['state']]} {item['text']}")
+            lines.append(item_line(item, "  " * indent_depth))
     else:
         display_phase = str(todo.get("display_phase", ""))
         if display_phase:
             lines.append(display_phase)
         base_depth = 1 if display_phase else 0
         lines.extend(
-            f"{'  ' * (base_depth + int(item.get('depth', 0) or 0))}{marker[item['state']]} {item['text']}"
+            item_line(item, "  " * (base_depth + int(item.get("depth", 0) or 0)))
             for item in shown
         )
     more = 0 if full else int(todo.get("more_count", 0) or 0)
