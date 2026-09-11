@@ -17,8 +17,12 @@ WAS read, and an absent protocol states why.
 
 from __future__ import annotations
 
+import os
+import shutil
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from _local_package import load_local_package
 
@@ -65,30 +69,47 @@ class HelpProbeBudgetTests(unittest.TestCase):
         self.assertEqual(reason, "probe_output_limited")
 
 
-def _fake_cli(version: str, help_text: str) -> str:
-    """A python one-liner that answers --version and --help like a CLI."""
-    return (
-        "import sys;"
-        f"v={version!r};h={help_text!r};"
-        "sys.stdout.write(v if '--version' in sys.argv else h)"
+def _fake_cli_wrapper(directory: Path, version: str, help_text: str) -> str:
+    """An executable that answers `--version` and `--help` like a real CLI.
+
+    The negotiation runs the path it is given as a program, so the fixture has
+    to be one on both platforms: a POSIX shell script will not execute on
+    Windows, and a `.cmd` will not on POSIX. Both wrappers call the same
+    Python file, and the two answers live in their own files so no quoting
+    rule of either shell can touch them.
+    """
+    (directory / "version.txt").write_text(version, encoding="utf-8")
+    (directory / "help.txt").write_text(help_text, encoding="utf-8")
+    program = directory / "fake_cli.py"
+    program.write_text(
+        "import sys\n"
+        "from pathlib import Path\n"
+        "here = Path(__file__).resolve().parent\n"
+        "name = 'version.txt' if '--version' in sys.argv else 'help.txt'\n"
+        "sys.stdout.write((here / name).read_text(encoding='utf-8'))\n",
+        encoding="utf-8",
     )
+    if os.name == "nt":
+        wrapper = directory / "fake-cli.cmd"
+        wrapper.write_text(
+            f'@echo off\r\n"{sys.executable}" "{program}" %*\r\n', encoding="utf-8"
+        )
+        return str(wrapper)
+    wrapper = directory / "fake-cli"
+    wrapper.write_text(
+        f'#!/bin/sh\nexec "{sys.executable}" "{program}" "$@"\n', encoding="utf-8"
+    )
+    wrapper.chmod(0o755)
+    return str(wrapper)
 
 
 class NegotiationOutcomeTests(unittest.TestCase):
     def _negotiate(self, version: str, help_text: str):
-        import os
-        import tempfile
-        from pathlib import Path
-
-        directory = tempfile.mkdtemp()
-        script = Path(directory) / "fake-cli"
-        script.write_text(
-            "#!/bin/sh\nexec " + sys.executable + ' -c "$OMH_FAKE_CLI_PROGRAM" "$@"\n',
-            encoding="utf-8",
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, True)
+        return negotiate_session_capability(
+            "claude-code", _fake_cli_wrapper(directory, version, help_text), env=os.environ
         )
-        script.chmod(0o755)
-        env = dict(os.environ, OMH_FAKE_CLI_PROGRAM=_fake_cli(version, help_text))
-        return negotiate_session_capability("claude-code", str(script), env=env)
 
     def test_a_help_page_past_the_old_cap_still_negotiates_the_protocol(self) -> None:
         flags = "--output-format stream-json --resume"
