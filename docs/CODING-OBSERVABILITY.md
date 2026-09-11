@@ -57,6 +57,39 @@ executor reported. An absent count renders as the literal `unknown`, never as
 identical to one left by a process still working, so the board reports an
 observed start without an observed end rather than claiming the unit is alive.
 
+**A live process is not moving work.** On 2026-09-11 a unit stayed alive for
+36 minutes retrying the same git workaround while its supervisor read "PID
+alive" as progress. So "a process exists" and "the work is moving" are now two
+different readings with two different words. The dispatch word (`running`,
+`completed`, `failed`, …) stays on the row's `status`, and what the unit's own
+stdout showed goes in `unit_state` beside it — see the table below. Anything
+`unit_state` calls stuck replaces the dispatch word wherever a row is rendered:
+the status board, the plugin running-work block, and the DAG line in the TUI
+widget. A unit with no assessed snapshot carries no `unit_state` at all, which
+is not the same as "moving".
+
+### Unit execution states
+
+Vocabulary in `src/coding/unit_execution_state.py`; the mid-run verdict is
+derived by `src/coding/unit_progress.py` from the stdout snapshots the dispatch
+already takes, and the two terminal states are assigned only after exit.
+
+| State | What was observed | Terminal |
+| --- | --- | --- |
+| `running` | The work is producing new evidence: output growing, tests starting and ending, result records appearing. The only state that means progressing. | no |
+| `awaiting_input` | The output ends at a question or a prompt and has stopped growing. Nobody is going to answer it. | no |
+| `permission_blocked` | A permission or sandbox denial stopped the work. Retrying under the same permissions cannot clear it. | no |
+| `account_limit` | The provider refused for account reasons: session or usage limit, quota, credits. | no |
+| `data_missing` | Objects the work needs are absent in its isolation — partial-clone blobs, a missing base commit, a ref that was described but never fetched. | no |
+| `progress_stalled` | The process is alive and the work is not moving: no new output past the threshold (15 minutes, `UNIT_STALL_AFTER_SECONDS`), **or** the same line repeating three times even while bytes grow. | no |
+| `failed` | The process ended without a verified result. Exit code 0 with the required result record missing is this state, with reason `result_missing` — never `verified`. | yes |
+| `verified` | The result record validated against the contract and its verification was observed. The only success state. | yes |
+
+The three non-`running` mid-run states above the stall are conditions retrying
+cannot clear, so they are reported the moment the tail matches rather than
+waited out. A matched shape is not provider, filesystem, or repository truth —
+it is what the output looked like.
+
 **Runtimes without structured output report `unknown` and say so.** The
 omo-runtime lane (pi / senpi / opencode) has no structured token surface, so
 its token columns stay unknown by design rather than being filled with a guess.
@@ -93,7 +126,7 @@ normalizes both vocabularies onto one set of keys.
 
 | Source | Provides |
 | --- | --- |
-| `~/.omh/coding/fanout/<id>/inflight/<unit>.json` | mid-flight `running` state and start time |
+| `~/.omh/coding/fanout/<id>/inflight/<unit>.json` | start time, and the last assessed `unit_state` with its reason, stall age, repeat count, and phase markers |
 | `dispatch_summary.json` | owner, model, effort, status, duration, tokens, session |
 | executor progress bindings | live cross-unit state and latest observed event |
 

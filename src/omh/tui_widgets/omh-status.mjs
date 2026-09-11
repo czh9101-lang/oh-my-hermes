@@ -639,29 +639,48 @@ export default function register(sdk) {
       ),
       ...nodes.map((node, index) => {
         const blockedBy = Array.isArray(node.blocked_by) ? node.blocked_by : []
-        const state = safeText(node.state) || 'unknown'
-        const marker = node.in_frontier
-          ? '[R]'
-          : failedStates.has(state)
-            ? '[!]'
-            : successStates.has(state)
-              ? '[+]'
-              : '[.]'
+        // `node.state` is the DISPATCH word: `running` means a marker exists,
+        // not that the work is moving. When the reader has assessed the
+        // unit's own output and found it stuck, that word REPLACES `running`
+        // on this line and carries its reason and stall age -- a supervisor
+        // reading `running` over a unit that has repeated one error for half
+        // an hour is the whole failure this surface exists to stop.
+        const dispatchState = safeText(node.state) || 'unknown'
+        const stuckState = safeText(node.unit_state)
+        const state = stuckState || dispatchState
+        const stallSeconds = Number(node.stalled_for_seconds) || 0
+        const stuckReason = stuckState
+          ? [safeText(node.state_reason), stallSeconds > 0 ? `${elapsedText(stallSeconds)} since new output` : '']
+              .filter(Boolean)
+              .join(', ')
+          : ''
+        const stuckSuffix = stuckReason ? ` (${stuckReason})` : ''
+        const marker = stuckState
+          ? '[~]'
+          : node.in_frontier
+            ? '[R]'
+            : failedStates.has(state)
+              ? '[!]'
+              : successStates.has(state)
+                ? '[+]'
+                : '[.]'
         const suffix = blockedBy.length ? ` · blocked_by ${blockedBy.map(safeText).join(' + ')}` : ''
         return h(
           Text,
           {
-            color: node.in_frontier
-              ? t.color.ok
-              : marker === '[!]'
-                ? t.color.error
-                : marker === '[+]'
-                  ? t.color.muted
-                  : t.color.text,
+            color: stuckState
+              ? t.color.warn
+              : node.in_frontier
+                ? t.color.ok
+                : marker === '[!]'
+                  ? t.color.error
+                  : marker === '[+]'
+                    ? t.color.muted
+                    : t.color.text,
             key: `${safeText(node.node_id)}-${index}`,
             wrap: 'truncate-end',
           },
-          graphLine(`  ${marker} ${safeText(node.node_id)} · ${state}${suffix}`),
+          graphLine(`  ${marker} ${safeText(node.node_id)} · ${state}${stuckSuffix}${suffix}`),
         )
       }),
     )
