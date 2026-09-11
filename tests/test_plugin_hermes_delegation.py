@@ -426,12 +426,26 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
             mixture_category_for("gpt-6-astra-2026-08-01", "xhigh", parent_model="kimi-k3"),
             mixture_category_for("gpt-6-astra", "xhigh", parent_model="kimi-k3"),
         )
-        # Either side dated: the child is on the parent's own model.
+        # A child on a dated snapshot of the parent's model is on the parent's
+        # model; the parent's own id is the base the reader knows, so this
+        # holds for an alias no table describes as well.
         self.assertEqual(
             mixture_category_for("gpt-5.6-terra-2026-07-09", "high", parent_model="gpt-5.6-terra"), "inherit"
         )
         self.assertEqual(
-            mixture_category_for("gpt-5.6-terra", "high", parent_model="openai/gpt-5.6-terra-2026-07-09"), "inherit"
+            mixture_category_for("zzz-mystery-2026-08-01", "high", parent_model="zzz-mystery"), "inherit"
+        )
+        # One direction only, like the resolver's explicit match: an unpinned
+        # child under a date-pinned parent, or a different date, is not the
+        # parent's run and falls through to the chain match.
+        self.assertEqual(
+            mixture_category_for("gpt-5.6-terra", "high", parent_model="openai/gpt-5.6-terra-2026-07-09"), "deep"
+        )
+        self.assertEqual(
+            mixture_category_for("gpt-5.6-terra-2026-08-01", "high", parent_model="gpt-5.6-terra-2026-07-09"), "deep"
+        )
+        self.assertEqual(
+            mixture_category_for("zzz-mystery-2026-08-01", "high", parent_model="zzz-mystery-2026-07-09"), ""
         )
         # Bounds: an unknown base, a non-trailing date, and a compact shape.
         for spelling in ("gpt-7-nova-2026-07-09", "gpt-5.6-terra-2026-07-09-fast", "gpt-5.6-terra-20260709"):

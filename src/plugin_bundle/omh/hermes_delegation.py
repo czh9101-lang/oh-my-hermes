@@ -1253,10 +1253,11 @@ def mixture_category_for(
     if not observed_model:
         return ""
     parent_key = _unqualified_model_alias(_text(parent_model))
-    # A dated snapshot of the parent's model is the parent's model.
-    if parent_key and (_dated_snapshot_base(observed_model) or observed_model) == (
-        _dated_snapshot_base(parent_key) or parent_key
-    ):
+    # A child on a dated snapshot of the parent's model is on the parent's
+    # model; the parent's own id is the base this reader knows. One direction
+    # only, like the resolver's explicit match: a child on the unpinned base
+    # of a date-pinned parent, or on a different date, is not the same run.
+    if parent_key and parent_key in (observed_model, _dated_snapshot_base(observed_model)):
         return "inherit"
 
     # Some explicitly declared catalog aliases represent a model contract plus
@@ -1279,12 +1280,13 @@ def mixture_category_for(
     # same model at the same mode and tier — projects this way; a `-pro` /
     # `-fast` / `-flex` entry is a different mode or price and never labels
     # the base id. A dated snapshot of the exact id reaches the pointer
-    # through its projected base.
-    for root in tuple(candidates):
+    # through its snapshot base; a mode or tier variant's projected base is
+    # deliberately not a root here, or `-fast` would reach the pointer.
+    for root in (observed_model, snapshot_base):
         candidates.extend(
             alias
             for alias in EXACT_CONTRACT_POINTER_ALIASES.get(root, ())
-            if alias not in candidates
+            if root and alias not in candidates
         )
     if observed_model not in EXACT_MODEL_CONTRACT_ALIASES:
         for speed_suffix in ("-ultrafast", "-highspeed", "-fast"):
