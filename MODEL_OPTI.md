@@ -471,9 +471,8 @@ pairing so a benchmark claim can never mix in other prompt changes.
   only what the criteria name and report adjacent findings; keep scratch
   checks out of the repo and commit tests only where a criterion or the
   repo's own convention asks for them; add no helpers, fallbacks,
-  validation, flags, or shims beyond what the criteria name; privately list
-  what you need next and request every independent item in one response; no
-  one is watching in real time, so proceed on reversible actions and finish
+  validation, flags, or shims beyond what the criteria name; no one is
+  watching in real time, so proceed on reversible actions and finish
   a last paragraph that is a plan or a promise instead of ending on it;
   every progress claim points at a tool result, a failed check is reported
   with its output, a skipped step as skipped. The block sits exactly on the

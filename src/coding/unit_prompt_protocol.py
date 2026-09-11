@@ -540,8 +540,9 @@ def unit_protocol_lines(unit: Mapping[str, Any]) -> list[str]:
 
     The unit-invariant blocks (goal echo, verification stop, failure kind)
     live in `shared_unit_preamble_lines()` so sibling prompts keep a
-    byte-identical head; only content that genuinely varies per unit belongs
-    here.
+    byte-identical head; content that varies per unit belongs here, and so
+    does an invariant line the frozen head cannot afford, such as
+    `TOOL_BATCHING_PROTOCOL` (see the note at that constant).
     """
     criteria = completion_criteria_for_unit(unit)
     lines = ["Done means, and only means:"]
