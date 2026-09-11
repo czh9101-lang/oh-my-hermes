@@ -290,13 +290,36 @@ def _apply_unit_progress(paths: OmhPaths, fanout_id: str, units: list[dict[str, 
             state, reason, stalled, source = observed
         unit["unit_state"] = state
         unit["unit_state_source"] = source
-        unit["terminal"] = is_terminal(state)
+        unit["terminal"] = _row_is_terminal(state, source)
         unit["progress"] = {
             "reason": reason,
             # None, never 0, when no assessment recorded one: a zero here
             # would read as "output moved this instant".
             "seconds_since_new_output": stalled,
         }
+
+
+def _row_is_terminal(state: str, source: str) -> bool:
+    """Whether anything will ever move this unit again.
+
+    The SOURCE decides, not the state word alone. `is_terminal` answers for the
+    execution vocabulary, where every stuck state is non-terminal because a
+    stuck unit is one a supervisor can still act on. A dispatch-summary row is
+    different: that file is written once, after the whole dispatch has ended
+    (see the write site at the foot of `dispatch_fanout`), so a unit recorded
+    in it is over whatever word it carries.
+
+    The case that forces this is the workspace preflight (#1489): a unit
+    refused before its spawn is recorded with a stuck `unit_state`, no marker
+    and no progress evidence, and nothing exists to move it. Reporting it as
+    non-terminal would hang a supervisor's poll loop forever on a unit that
+    never started -- the precise failure this whole lane exists to prevent.
+
+    A marker means the unit is in flight NOW, so its state is read literally.
+    """
+    if source == "dispatch_summary":
+        return True
+    return is_terminal(state)
 
 
 def _marker_progress(paths: OmhPaths, fanout_id: str) -> dict[str, tuple[str, str, int | None, str]]:
@@ -342,7 +365,17 @@ def _summary_progress(paths: OmhPaths, fanout_id: str) -> dict[str, tuple[str, s
         progress = entry.get("progress")
         rows[unit_id] = (
             state,
-            str(entry.get("unit_state_reason", "") or ""),
+            # `unit_state_reason` is what a dispatched unit's record carries.
+            # A unit refused before its spawn never reached that code and
+            # carries the preflight's own `reason` instead, so both are read
+            # rather than the pre-spawn case rendering with no explanation at
+            # all; `failure_kind` is the last resort, and is still a word.
+            str(
+                entry.get("unit_state_reason", "")
+                or entry.get("reason", "")
+                or entry.get("failure_kind", "")
+                or ""
+            ),
             _non_negative_int(progress.get("stalled_for_seconds")) if isinstance(progress, Mapping) else None,
             "dispatch_summary",
         )

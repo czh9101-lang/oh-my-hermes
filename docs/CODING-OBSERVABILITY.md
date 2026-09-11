@@ -75,7 +75,11 @@ A supervisor polls the same answer machine-readably with
 exits, `none` when nothing observed it), and `progress.reason` /
 `progress.seconds_since_new_output`. The roster carries `all_units_terminal`
 and `stuck_units` so the loop's stop condition is computed once rather than
-re-derived per caller. None of this moves `lifecycle_state`, which still
+re-derived per caller. `terminal` follows the SOURCE, not the state word: a
+dispatch-summary row is written after the dispatch ended, so it is terminal
+whatever word it carries — including a unit the workspace preflight refused
+before its spawn, which is stuck, needs a human, and will never move on its
+own. A marker means the unit is in flight now, so its state is read literally. None of this moves `lifecycle_state`, which still
 advances on journal events alone — and `all_units_terminal` is false for an
 empty roster, because "nothing to wait for" and "everything finished" are
 different answers.
@@ -89,11 +93,11 @@ already takes, and the two terminal states are assigned only after exit.
 | State | What was observed | Terminal |
 | --- | --- | --- |
 | `running` | The work is producing new evidence: output growing, tests starting and ending, result records appearing. The only state that means progressing. | no |
-| `awaiting_input` | The output ends at a question or a prompt and has stopped growing. Nobody is going to answer it. | no |
+| `awaiting_input` | The output ends at a question or a prompt and has been still for `UNIT_PROMPT_QUIET_SECONDS` (60s). The quiet window is the guard: one poll step of silence after a question mark is a tool call in progress, not a unit blocked on a human. | no |
 | `permission_blocked` | A permission or sandbox denial stopped the work. Retrying under the same permissions cannot clear it. | no |
 | `account_limit` | The provider refused for account reasons: session or usage limit, quota, credits. | no |
 | `data_missing` | Objects the work needs are absent in its isolation — partial-clone blobs, a missing base commit, a ref that was described but never fetched. | no |
-| `progress_stalled` | The process is alive and the work is not moving: no new output past the threshold (15 minutes, `UNIT_STALL_AFTER_SECONDS`), **or** the same line repeating three times even while bytes grow. | no |
+| `progress_stalled` | The process is alive and the work is not moving: no new output past the threshold (15 minutes, `UNIT_STALL_AFTER_SECONDS`), **or** the same *failure-shaped* line repeating three times even while bytes grow. Repetition alone is not a stall — a green run prints `... ok` endlessly — so only lines matching `_FAILURE_SHAPED_WORDS` are counted. | no |
 | `failed` | The process ended without a verified result. Exit code 0 with the required result record missing is this state, with reason `result_missing` — never `verified`. | yes |
 | `verified` | The result record validated against the contract and its verification was observed. The only success state. | yes |
 
