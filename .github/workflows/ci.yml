@@ -110,6 +110,12 @@ jobs:
       - name: Generated ULW site region check
         if: matrix.shard == 0
         run: python -m omh.cli docs ulw-site --check
+      # The public shipped-chain table in docs/INSTALLATION.md agreed with the
+      # catalog only because whoever retired a model generation remembered the
+      # doc too. This step is what fails when they do not; it names the rows.
+      - name: Generated chain table region check
+        if: matrix.shard == 0
+        run: python -m omh.cli docs chain-table --check
       # Structure, not equality: a page can stay byte-identical to its producer
       # and still have left the public map. This gate is the one that notices.
       # The windows leg reaches the same verdict through
