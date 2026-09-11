@@ -68,6 +68,18 @@ the status board, the plugin running-work block, and the DAG line in the TUI
 widget. A unit with no assessed snapshot carries no `unit_state` at all, which
 is not the same as "moving".
 
+A supervisor polls the same answer machine-readably with
+`omh coding fanout status --fanout-id <id> --json`. Every roster row carries
+`unit_state`, `terminal` (via `is_terminal`), `unit_state_source`
+(`inflight_marker` while the unit is in flight, `dispatch_summary` after it
+exits, `none` when nothing observed it), and `progress.reason` /
+`progress.seconds_since_new_output`. The roster carries `all_units_terminal`
+and `stuck_units` so the loop's stop condition is computed once rather than
+re-derived per caller. None of this moves `lifecycle_state`, which still
+advances on journal events alone — and `all_units_terminal` is false for an
+empty roster, because "nothing to wait for" and "everything finished" are
+different answers.
+
 ### Unit execution states
 
 Vocabulary in `src/coding/unit_execution_state.py`; the mid-run verdict is
