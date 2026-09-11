@@ -644,6 +644,99 @@ class UnmappedStatusPluginParityTests(unittest.TestCase):
 
         self.assertEqual(STATUS_VOCABULARY, plugin_vocabulary)
 
+    def test_neither_headline_folds_a_stuck_unit_into_the_running_count(self) -> None:
+        from omh.coding.status_board import render_status_board_text
+        from omh.plugin_bundle.omh.status_board_reader import (
+            read_running_work_board,
+            render_running_work_block_text,
+        )
+
+        # Two markers, two live-looking processes, one of them stuck. The
+        # headline is the line a supervisor reads at a glance, and "2 running"
+        # is the exact reading the 2026-09-11 incident acted on.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            fanout_id = "fanout-0123456789ab"
+            write_inflight_marker(paths, fanout_id, "core", {
+                "owner": "claude-code", "run_ref": "run-1", "worktree": str(root),
+                "started_at": "2026-09-11T10:00:00Z",
+                "unit_state": "progress_stalled", "state_reason": "no_new_output",
+                "stalled_for_seconds": "1920",
+            })
+            write_inflight_marker(paths, fanout_id, "docs", {
+                "owner": "codex", "run_ref": "run-2", "worktree": str(root),
+                "started_at": "2026-09-11T10:00:00Z", "unit_state": "running",
+            })
+            board = build_status_board(paths, now="2026-09-11T10:35:00Z")
+            plugin = read_running_work_board(paths.omh_home)
+
+        # The dispatch tally itself does not move -- both units have a marker.
+        self.assertEqual(board["running_count"], 2)
+        self.assertEqual(board["stuck_count"], 1)
+        self.assertEqual(plugin["running_count"], 2)
+        self.assertEqual(plugin["stuck_count"], 1)
+        self.assertIn("1 running, 1 stuck of 2 observed", render_status_board_text(board))
+        self.assertIn("1 running, 1 stuck of 2 observed", render_running_work_block_text(plugin))
+
+    def test_a_board_with_nothing_stuck_keeps_its_original_headline(self) -> None:
+        from omh.coding.status_board import render_status_board_text
+        from omh.plugin_bundle.omh.status_board_reader import (
+            read_running_work_board,
+            render_running_work_block_text,
+        )
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            write_inflight_marker(paths, "fanout-0123456789ab", "core", {
+                "owner": "codex", "run_ref": "run-1", "worktree": str(root),
+                "started_at": "2026-09-11T10:00:00Z", "unit_state": "running",
+            })
+            board = build_status_board(paths, now="2026-09-11T10:35:00Z")
+            plugin = read_running_work_board(paths.omh_home)
+
+        self.assertEqual(board["stuck_count"], 0)
+        self.assertIn("(1 running of 1 observed)", render_status_board_text(board))
+        self.assertIn("1 running of 1 observed.", render_running_work_block_text(plugin))
+        self.assertNotIn("stuck", render_status_board_text(board))
+        self.assertNotIn("stuck", render_running_work_block_text(plugin))
+
+    def test_the_two_stuck_state_sets_are_the_same(self) -> None:
+        from omh.coding.unit_execution_state import UNIT_STUCK_STATES
+        from omh.plugin_bundle.omh.status_board_reader import _STUCK_STATES as plugin_stuck
+
+        self.assertEqual(UNIT_STUCK_STATES, plugin_stuck)
+
+    def test_neither_reader_renders_running_for_a_stuck_unit(self) -> None:
+        from omh.coding.status_board import status_text_for
+        from omh.plugin_bundle.omh.status_board_reader import _status_text as plugin_status_text
+
+        # A live process whose work stopped moving: `status` still says a
+        # marker exists, and both cells must say what the WORK is doing.
+        unit = {
+            "status": "running",
+            "unit_state": "progress_stalled",
+            "state_reason": "repeated_error:error: unable to read file, retrying (n=<n>)",
+            "stalled_for_seconds": "1920",
+        }
+        rendered = status_text_for(unit)
+        self.assertEqual(rendered, plugin_status_text(unit))
+        self.assertIn("progress_stalled", rendered)
+        self.assertIn("repeated_error:", rendered)
+        self.assertIn("1920s since new output", rendered)
+        self.assertNotIn("· running", rendered)
+
+    def test_a_running_unit_state_leaves_the_status_cell_untouched(self) -> None:
+        from omh.coding.status_board import status_text_for
+        from omh.plugin_bundle.omh.status_board_reader import _status_text as plugin_status_text
+
+        for unit_state in ("running", ""):
+            with self.subTest(unit_state=unit_state):
+                unit = {"status": "running", "unit_state": unit_state}
+                self.assertEqual(status_text_for(unit), status_text_for({"status": "running"}))
+                self.assertEqual(status_text_for(unit), plugin_status_text(unit))
+
 
 if __name__ == "__main__":
     unittest.main()

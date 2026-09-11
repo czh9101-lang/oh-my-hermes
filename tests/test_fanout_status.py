@@ -14,7 +14,11 @@ load_local_package()
 from _cli_harness import run_cli  # noqa: E402
 
 from omh.coding.fanout import build_fanout_contract  # noqa: E402
-from omh.coding.fanout_artifacts import write_fanout_contract  # noqa: E402
+from omh.coding.fanout_artifacts import (  # noqa: E402
+    fanout_dispatch_summary_path,
+    write_fanout_contract,
+)
+from omh.coding.inflight import write_inflight_marker  # noqa: E402
 from omh.coding.fanout_dispatch import dispatch_fanout  # noqa: E402
 from omh.coding.fanout_status import (  # noqa: E402
     FANOUT_STATUS_SCHEMA_VERSION,
@@ -455,6 +459,217 @@ class FanoutStatusCliTests(unittest.TestCase):
 
             self.assertNotEqual(status, 0)
             self.assertIn("nope", stdout + stderr)
+
+
+class FanoutStatusUnitProgressTests(unittest.TestCase):
+    """The supervisor poll loop's inputs: is this unit's WORK moving, and is
+    it over? Neither question is a ladder rung, and neither can move
+    `lifecycle_state` -- see the module docstring's scoped exception."""
+
+    def _stalled_marker(self, paths: OmhPaths, unit_id: str = "core") -> None:
+        write_inflight_marker(paths, _FANOUT_ID, unit_id, {
+            "owner": "codex",
+            "run_ref": f"{_FANOUT_ID}-{unit_id}",
+            "worktree": f"/tmp/wt/{unit_id}",
+            "started_at": _stamp(40),
+            "unit_state": "progress_stalled",
+            "state_reason": "repeated_error:error: unable to read file, retrying (n=<n>)",
+            "stalled_for_seconds": "1920",
+        })
+
+    def test_a_stalled_marker_reaches_the_json_roster_as_non_terminal(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            _seed_journal(paths, _roster_fixture())
+            self._stalled_marker(paths)
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+
+            status, stdout, stderr = run_cli(
+                base + ["coding", "fanout", "status", "--fanout-id", _FANOUT_ID, "--json"]
+            )
+
+            self.assertEqual(status, 0, stderr)
+            payload = json.loads(stdout)
+            core = {unit["unit_id"]: unit for unit in payload["units"]}["core"]
+            self.assertEqual(core["unit_state"], "progress_stalled")
+            self.assertIs(core["terminal"], False)
+            self.assertEqual(core["unit_state_source"], "inflight_marker")
+            self.assertTrue(core["progress"]["reason"].startswith("repeated_error:"))
+            self.assertEqual(core["progress"]["seconds_since_new_output"], 1920)
+            # The roster-level stop condition the poll loop reads.
+            self.assertIn("core", payload["stuck_units"])
+            self.assertIs(payload["all_units_terminal"], False)
+            # The ladder is untouched: the marker moved no rung.
+            self.assertEqual(core["lifecycle_state"], "unit_verification_observed")
+
+    def test_the_text_roster_names_the_stuck_unit(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            _seed_journal(paths, _roster_fixture())
+            self._stalled_marker(paths)
+            base = ["--omh-home", str(root / ".omh"), "--hermes-home", str(root / ".hermes")]
+
+            status, stdout, stderr = run_cli(
+                base + ["coding", "fanout", "status", "--fanout-id", _FANOUT_ID],
+                output_json=False,
+            )
+
+            self.assertEqual(status, 0, stderr)
+            self.assertIn("progress_stalled", stdout)
+            self.assertIn("1920s since new output", stdout)
+            self.assertIn("not terminal", stdout)
+            self.assertIn("Stuck, needs intervention: core", stdout)
+
+    def test_a_dispatch_summary_supplies_the_state_after_exit(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            _seed_journal(paths, _roster_fixture())
+            summary_path = fanout_dispatch_summary_path(paths, _FANOUT_ID)
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(json.dumps({
+                "fanout_id": _FANOUT_ID,
+                "units": [
+                    {"unit_id": "core", "unit_state": "verified", "unit_state_reason": "",
+                     "progress": {"stalled_for_seconds": 0}},
+                    {"unit_id": "docs", "unit_state": "failed", "unit_state_reason": "result_missing",
+                     "progress": {"stalled_for_seconds": 12}},
+                ],
+            }), encoding="utf-8")
+
+            roster = project_fanout_status(paths, _FANOUT_ID)
+            by_unit = {unit["unit_id"]: unit for unit in roster["units"]}
+
+            self.assertEqual(by_unit["core"]["unit_state"], "verified")
+            self.assertIs(by_unit["core"]["terminal"], True)
+            self.assertEqual(by_unit["core"]["unit_state_source"], "dispatch_summary")
+            self.assertEqual(by_unit["docs"]["unit_state"], "failed")
+            self.assertEqual(by_unit["docs"]["progress"]["reason"], "result_missing")
+            self.assertIs(by_unit["docs"]["terminal"], True)
+            self.assertEqual(roster["stuck_units"], [])
+            # `flaky` has neither marker nor summary row, so the fanout is not
+            # done -- absent evidence must never read as finished.
+            self.assertEqual(by_unit["flaky"]["unit_state"], "unknown")
+            self.assertIs(by_unit["flaky"]["terminal"], False)
+            self.assertEqual(by_unit["flaky"]["unit_state_source"], "none")
+            self.assertIsNone(by_unit["flaky"]["progress"]["seconds_since_new_output"])
+            self.assertIs(roster["all_units_terminal"], False)
+
+    def test_a_unit_refused_before_its_spawn_is_terminal_and_named(self) -> None:
+        # The workspace preflight (#1489) refuses a unit before it spawns: the
+        # summary row carries a stuck `unit_state` and the preflight's own
+        # `reason`, with no marker and no progress evidence. Nothing exists to
+        # move it, so reporting it non-terminal would hang a poll loop forever
+        # on a unit that never started.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            _seed_journal(paths, _roster_fixture())
+            summary_path = fanout_dispatch_summary_path(paths, _FANOUT_ID)
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(json.dumps({
+                "fanout_id": _FANOUT_ID,
+                "units": [{
+                    "unit_id": "core",
+                    "status": "worktree_failed",
+                    "reason_code": "workspace_preflight_blocked",
+                    "failure_kind": "workspace_blocked",
+                    "unit_state": "permission_blocked",
+                    "reason": "worktree is not writable",
+                }],
+            }), encoding="utf-8")
+
+            roster = project_fanout_status(paths, _FANOUT_ID)
+            core = {unit["unit_id"]: unit for unit in roster["units"]}["core"]
+
+            self.assertEqual(core["unit_state"], "permission_blocked")
+            self.assertIs(core["terminal"], True)
+            self.assertEqual(core["unit_state_source"], "dispatch_summary")
+            # The preflight's own wording survives; a pre-spawn refusal never
+            # reached the code that writes `unit_state_reason`.
+            self.assertEqual(core["progress"]["reason"], "worktree is not writable")
+            self.assertIsNone(core["progress"]["seconds_since_new_output"])
+            # Terminal and still needing a human: both are true at once, and
+            # the roster says so rather than picking one.
+            self.assertIn("core", roster["stuck_units"])
+            self.assertIn("needs intervention: core", render_fanout_status_text(roster))
+
+    def test_a_blocked_unit_with_only_a_failure_kind_still_explains_itself(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            _seed_journal(paths, _roster_fixture())
+            summary_path = fanout_dispatch_summary_path(paths, _FANOUT_ID)
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(json.dumps({
+                "fanout_id": _FANOUT_ID,
+                "units": [{"unit_id": "core", "unit_state": "data_missing",
+                           "failure_kind": "workspace_blocked"}],
+            }), encoding="utf-8")
+
+            core = {u["unit_id"]: u for u in project_fanout_status(paths, _FANOUT_ID)["units"]}["core"]
+
+            self.assertEqual(core["progress"]["reason"], "workspace_blocked")
+            self.assertIs(core["terminal"], True)
+
+    def test_a_live_marker_outranks_a_stale_summary_row(self) -> None:
+        # A marker means this unit is in flight NOW; a summary row from an
+        # earlier dispatch of the same id must not report over it.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            _seed_journal(paths, _roster_fixture())
+            summary_path = fanout_dispatch_summary_path(paths, _FANOUT_ID)
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(json.dumps({
+                "fanout_id": _FANOUT_ID,
+                "units": [{"unit_id": "core", "unit_state": "verified"}],
+            }), encoding="utf-8")
+            self._stalled_marker(paths)
+
+            roster = project_fanout_status(paths, _FANOUT_ID)
+            core = {unit["unit_id"]: unit for unit in roster["units"]}["core"]
+
+            self.assertEqual(core["unit_state"], "progress_stalled")
+            self.assertEqual(core["unit_state_source"], "inflight_marker")
+            self.assertIs(core["terminal"], False)
+
+    def test_a_roster_with_no_progress_evidence_renders_as_it_always_did(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            _seed_journal(paths, _roster_fixture())
+
+            roster = project_fanout_status(paths, _FANOUT_ID)
+            text = render_fanout_status_text(roster)
+
+            for unit in roster["units"]:
+                self.assertEqual(unit["unit_state"], "unknown")
+                self.assertIs(unit["terminal"], False)
+            self.assertNotIn("  work:", text)
+            self.assertNotIn("Stuck, needs intervention", text)
+            self.assertIs(roster["all_units_terminal"], False)
+
+    def test_a_marker_with_no_assessed_state_claims_nothing(self) -> None:
+        # Written before the first stdout snapshot: it proves a spawn, not
+        # that the work is moving.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            _seed_journal(paths, _roster_fixture())
+            write_inflight_marker(paths, _FANOUT_ID, "core", {
+                "owner": "codex", "run_ref": f"{_FANOUT_ID}-core",
+                "worktree": "/tmp/wt/core", "started_at": _stamp(1),
+            })
+
+            roster = project_fanout_status(paths, _FANOUT_ID)
+            core = {unit["unit_id"]: unit for unit in roster["units"]}["core"]
+
+            self.assertEqual(core["unit_state"], "unknown")
+            self.assertEqual(core["unit_state_source"], "none")
+            self.assertIs(core["terminal"], False)
 
 
 if __name__ == "__main__":

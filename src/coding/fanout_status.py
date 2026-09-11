@@ -6,7 +6,19 @@ restart a unit would be a control plane, and the only durable evidence this
 layer trusts is what the dispatcher already recorded.
 
 Only the observation journal supplies lifecycle and session evidence. Executor
-stdout, dispatch summaries, and in-flight markers are NOT evidence inputs.
+stdout, dispatch summaries, and in-flight markers are NOT evidence inputs for
+any lifecycle rung -- `lifecycle_state` still advances on journal events alone,
+and nothing below can move it.
+
+One narrowly-scoped exception, added for the supervisor poll loop: the
+`unit_state` / `terminal` / `progress` fields answer "is this unit's WORK
+moving, and is it over?", which the journal cannot answer while a unit is still
+running. Those three come from the in-flight marker while the unit is in flight
+and from the dispatch summary record after it exits, and they are kept in their
+own keys so no reader can mistake them for a ladder rung. The marker is read
+through `inflight.read_inflight_markers` -- the same single reader the status
+board uses -- rather than a second parser.
+
 Copy-only session actions additionally require a bounded frozen-contract read
 and fresh, read-only workspace and executable observations. The unit rows therefore carry exactly what the journal knows:
 which rung of the dispatch ladder has dispatcher-observed backing, who ran it,
@@ -49,14 +61,19 @@ from .fanout_executor_sessions import (
 from .executor_readiness import observe_session_binary
 from .fanout_capacity import read_capacity_fields
 from .fanout_artifacts import fanout_contract_digest, fanout_dispatch_summary_path
+from ..system.local_store import read_json_object_result
+from .inflight import read_inflight_markers
+from .unit_execution_state import UNIT_STUCK_STATES, is_terminal
 from ..workflows.observation_journal import project_run_executor_session
 import json
 
 FANOUT_STATUS_SCHEMA_VERSION = "fanout_status_roster/v1"
 FANOUT_STATUS_CLAIM_BOUNDARY = (
-    "A fanout status roster projects dispatcher-observed journal events only. It is not verification, "
-    "review, CI, merge-readiness, or merge evidence, and a unit's state never advances on an executor's "
-    "own report."
+    "A fanout status roster projects dispatcher-observed journal events; `lifecycle_state` advances on "
+    "those alone and never on an executor's own report. The `unit_state` / `terminal` / `progress` keys "
+    "are a separate reading of whether the work is moving, taken from the in-flight marker while a unit "
+    "runs and the dispatch summary after it exits, and they move no rung. It is not verification, review, "
+    "CI, merge-readiness, or merge evidence."
 )
 # The ladder todo 3 froze for dispatch summaries, restated here as the roster's
 # display vocabulary plus the two pre-success rungs a roster must be able to
@@ -71,6 +88,11 @@ FANOUT_UNIT_STATES = (
     "integration_ready",
 )
 _UNKNOWN = "unknown"
+# Marker read ceiling for one fanout. `read_inflight_markers` filters by
+# fanout id BEFORE this slice, so a busy machine's other fanouts cannot push
+# this one's units off the end; the number only bounds a single fanout's own
+# unit count, which the contract builder already caps well below it.
+_MARKER_READ_LIMIT = 200
 
 _FANOUT_ID_RE = re.compile(FANOUT_ID_PATTERN)
 # Journal events that name a dispatched unit. `worker_dispatch` /
@@ -136,6 +158,7 @@ def project_fanout_status(paths: OmhPaths, fanout_id: str, *, unit_id: str | Non
             if attempt == current and event.get('event') == 'capacity_admission_observed':
                 capacity = read_capacity_fields(event)
         unit.update(capacity)
+    _apply_unit_progress(paths, validated_id, units)
     if unit_id is not None:
         units = [unit for unit in units if unit['unit_id'] == unit_id]
         if not units:
@@ -149,6 +172,14 @@ def project_fanout_status(paths: OmhPaths, fanout_id: str, *, unit_id: str | Non
             unit["unit_id"] for unit in units if unit["lifecycle_state"] == "integration_ready"
         ],
         "journal_event_count": len(fanout_events),
+        # The supervisor poll loop's own stop condition, computed once rather
+        # than re-derived by every caller: a fanout with no units is NOT done,
+        # because "nothing to wait for" and "everything finished" are different
+        # answers and only one of them means the work happened.
+        "all_units_terminal": bool(units) and all(bool(unit.get("terminal")) for unit in units),
+        "stuck_units": [
+            str(unit["unit_id"]) for unit in units if unit.get("unit_state") in UNIT_STUCK_STATES
+        ],
         "claim_boundary": FANOUT_STATUS_CLAIM_BOUNDARY,
     }
     if read_errors:
@@ -173,6 +204,9 @@ def render_fanout_status_text(roster: Mapping[str, Any]) -> str:
             f"{_age_phrase(unit.get('last_event_age_seconds'))} "
             f"| evidence refs {unit.get('evidence_ref_count', 0)}"
         )
+        progress_line = _unit_progress_phrase(unit)
+        if progress_line:
+            lines.append(f"  work: {progress_line}")
         capacity = read_capacity_fields(unit).get('capacity')
         if is_string_map(capacity):
             lines.append(f"  capacity: {capacity['status']}; next action: {capacity['next_action']}")
@@ -188,8 +222,174 @@ def render_fanout_status_text(roster: Mapping[str, Any]) -> str:
         )
         if diagnostic is not None:
             lines.append(f"  diagnostic: {failure_diagnostic_text(diagnostic)}")
+    stuck = [str(name) for name in roster.get("stuck_units", []) if name]
+    if stuck:
+        # Named on its own line, because the per-unit rows scroll and this is
+        # the line a supervisor has to act on.
+        lines.append(f"Stuck, needs intervention: {', '.join(stuck)}")
     lines.append(str(roster.get("claim_boundary", FANOUT_STATUS_CLAIM_BOUNDARY)))
     return "\n".join(lines)
+
+
+def _unit_progress_phrase(unit: Mapping[str, object]) -> str:
+    """`progress_stalled (no_new_output, 1920s since new output)`, or "".
+
+    Empty when nothing observed the unit's work, so a roster projected from a
+    journal that predates progress evidence renders exactly as it did before.
+    """
+    state = str(unit.get("unit_state", "") or "")
+    if not state or state == _UNIT_STATE_UNKNOWN:
+        return ""
+    progress = unit.get("progress")
+    parts: list[str] = []
+    if isinstance(progress, Mapping):
+        reason = str(progress.get("reason", "") or "")
+        if reason:
+            parts.append(reason)
+        stalled = progress.get("seconds_since_new_output")
+        if isinstance(stalled, int) and not isinstance(stalled, bool) and stalled > 0:
+            parts.append(f"{stalled}s since new output")
+    detail = f" ({', '.join(parts)})" if parts else ""
+    return f"{state}{detail}" if unit.get("terminal") else f"{state}{detail}, not terminal"
+
+
+# `unit_state` when nothing has observed the unit's work yet. Distinct from
+# every real state: absent evidence is not `running`, and it is not terminal.
+_UNIT_STATE_UNKNOWN = "unknown"
+# Where a row's `unit_state` came from, so a reader can tell a live reading
+# from a post-exit record from no reading at all.
+_PROGRESS_SOURCES = ("inflight_marker", "dispatch_summary", "none")
+
+
+def _apply_unit_progress(paths: OmhPaths, fanout_id: str, units: list[dict[str, Any]]) -> None:
+    """Attach `unit_state`, `terminal`, and `progress` to every roster row.
+
+    The supervisor poll loop (`omh coding fanout status --json`, driven by the
+    ulw-maestro skill) needs two things the journal cannot give it: whether a
+    still-running unit's WORK is moving, and whether a unit is over. Neither is
+    a ladder rung and neither touches `lifecycle_state` -- see the module
+    docstring's exception.
+
+    An in-flight marker wins over the dispatch summary for the same unit, the
+    same precedence the status board's `SOURCE_ORDER` already uses: a marker
+    means this unit is in flight NOW, and a summary row from an earlier
+    dispatch of the same id must not report over it.
+
+    Best-effort: an unreadable marker directory or summary leaves every row at
+    `unknown`, which is honest and keeps a poll loop waiting rather than
+    concluding the work finished.
+    """
+    from_markers = _marker_progress(paths, fanout_id)
+    from_summary = _summary_progress(paths, fanout_id)
+    for unit in units:
+        row_id = str(unit.get("unit_id", ""))
+        observed = from_markers.get(row_id) or from_summary.get(row_id)
+        if observed is None:
+            state, reason, stalled, source = _UNIT_STATE_UNKNOWN, "", None, "none"
+        else:
+            state, reason, stalled, source = observed
+        unit["unit_state"] = state
+        unit["unit_state_source"] = source
+        unit["terminal"] = _row_is_terminal(state, source)
+        unit["progress"] = {
+            "reason": reason,
+            # None, never 0, when no assessment recorded one: a zero here
+            # would read as "output moved this instant".
+            "seconds_since_new_output": stalled,
+        }
+
+
+def _row_is_terminal(state: str, source: str) -> bool:
+    """Whether anything will ever move this unit again.
+
+    The SOURCE decides, not the state word alone. `is_terminal` answers for the
+    execution vocabulary, where every stuck state is non-terminal because a
+    stuck unit is one a supervisor can still act on. A dispatch-summary row is
+    different: that file is written once, after the whole dispatch has ended
+    (see the write site at the foot of `dispatch_fanout`), so a unit recorded
+    in it is over whatever word it carries.
+
+    The case that forces this is the workspace preflight (#1489): a unit
+    refused before its spawn is recorded with a stuck `unit_state`, no marker
+    and no progress evidence, and nothing exists to move it. Reporting it as
+    non-terminal would hang a supervisor's poll loop forever on a unit that
+    never started -- the precise failure this whole lane exists to prevent.
+
+    A marker means the unit is in flight NOW, so its state is read literally.
+    """
+    if source == "dispatch_summary":
+        return True
+    return is_terminal(state)
+
+
+def _marker_progress(paths: OmhPaths, fanout_id: str) -> dict[str, tuple[str, str, int | None, str]]:
+    """Live progress readings, keyed by unit id, from this fanout's markers."""
+    rows: dict[str, tuple[str, str, int | None, str]] = {}
+    for marker in read_inflight_markers(paths, fanout_id=fanout_id, limit=_MARKER_READ_LIMIT):
+        if not isinstance(marker, Mapping) or marker.get("marker_status") != "present":
+            continue
+        unit_id = str(marker.get("unit_id", "") or "")
+        state = str(marker.get("unit_state", "") or "")
+        if not unit_id or not state:
+            # A marker written before the first stdout snapshot carries no
+            # state. It proves a spawn, not that the work is moving, so it
+            # contributes nothing here rather than a fabricated `running`.
+            continue
+        rows[unit_id] = (
+            state,
+            str(marker.get("state_reason", "") or ""),
+            _non_negative_int(marker.get("stalled_for_seconds")),
+            "inflight_marker",
+        )
+    return rows
+
+
+def _summary_progress(paths: OmhPaths, fanout_id: str) -> dict[str, tuple[str, str, int | None, str]]:
+    """Post-exit progress readings, keyed by unit id, from the dispatch summary."""
+    summary, error = read_json_object_result(fanout_dispatch_summary_path(paths, fanout_id))
+    if error is not None or not isinstance(summary, Mapping):
+        return {}
+    entries = summary.get("units")
+    if not isinstance(entries, list):
+        return {}
+    rows: dict[str, tuple[str, str, int | None, str]] = {}
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        unit_id = str(entry.get("unit_id", "") or "")
+        state = str(entry.get("unit_state", "") or "")
+        if not unit_id or not state:
+            # A record written before this contract existed. Absent, not
+            # `unknown`, so the caller's fallback chain stays in one place.
+            continue
+        progress = entry.get("progress")
+        rows[unit_id] = (
+            state,
+            # `unit_state_reason` is what a dispatched unit's record carries.
+            # A unit refused before its spawn never reached that code and
+            # carries the preflight's own `reason` instead, so both are read
+            # rather than the pre-spawn case rendering with no explanation at
+            # all; `failure_kind` is the last resort, and is still a word.
+            str(
+                entry.get("unit_state_reason", "")
+                or entry.get("reason", "")
+                or entry.get("failure_kind", "")
+                or ""
+            ),
+            _non_negative_int(progress.get("stalled_for_seconds")) if isinstance(progress, Mapping) else None,
+            "dispatch_summary",
+        )
+    return rows
+
+
+def _non_negative_int(value: object) -> int | None:
+    """A whole-second count, or None. A string marker field parses; junk does not."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    text = str(value or "").strip()
+    return int(text) if text.isdigit() else None
 
 
 def _validated_fanout_id(value: object) -> str:

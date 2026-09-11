@@ -135,14 +135,22 @@ def project_subagent_graph(
             frontier.append(unit_id)
     nodes: list[dict[str, object]] = []
     for unit_id in visible_ids:
-        nodes.append(
-            {
-                "node_id": unit_id,
-                "state": effective_states[unit_id],
-                "blocked_by": blocked_by_by_id[unit_id],
-                "in_frontier": unit_id in frontier,
-            }
-        )
+        node: dict[str, object] = {
+            "node_id": unit_id,
+            "state": effective_states[unit_id],
+            "blocked_by": blocked_by_by_id[unit_id],
+            "in_frontier": unit_id in frontier,
+        }
+        # `state` above is the DISPATCH word the topology reasons about --
+        # a `running` node is one whose marker exists. Whether its work is
+        # moving is a separate observation the roster row carries when a
+        # stdout snapshot has been assessed (`omh.coding.unit_progress`), and
+        # it rides alongside rather than replacing `state`: the frontier,
+        # blocked-by, and success/failure arithmetic above is defined on the
+        # dispatch vocabulary, and widening that would change the topology.
+        # The renderer is what must never show a stuck unit as `running`.
+        node.update(_roster_progress_fields(roster_by_id.get(unit_id)))
+        nodes.append(node)
 
     edges = [
         [dependency, unit["unit_id"]]
@@ -233,6 +241,40 @@ def _depends_on(
         seen.add(dependency)
         pending.extend(unit_by_id[dependency]["depends_on"])
     return False
+
+
+# Hand-mirror of `omh.coding.unit_execution_state.UNIT_STUCK_STATES`, which
+# this bundle cannot import. Parity gated in `tests/test_subagent_graph_roster.py`.
+_STUCK_UNIT_STATES: Final[frozenset[str]] = frozenset(
+    {
+        "awaiting_input",
+        "permission_blocked",
+        "account_limit",
+        "data_missing",
+        "progress_stalled",
+    }
+)
+
+
+def _roster_progress_fields(unit: Mapping[str, object] | None) -> dict[str, object]:
+    """A stuck unit's observed state, reason, and stall age -- or nothing.
+
+    Absent keys mean no stdout snapshot has been assessed for this unit, which
+    a reader must not confuse with "the work is moving".
+    """
+    if not isinstance(unit, Mapping):
+        return {}
+    state = str(unit.get("unit_state", "") or "")
+    if state not in _STUCK_UNIT_STATES:
+        return {}
+    fields: dict[str, object] = {"unit_state": state}
+    reason = str(unit.get("state_reason", "") or "")
+    if reason:
+        fields["state_reason"] = reason
+    elapsed = str(unit.get("stalled_for_seconds", "") or "")
+    if elapsed.isdigit() and int(elapsed) > 0:
+        fields["stalled_for_seconds"] = int(elapsed)
+    return fields
 
 
 def _paired_roster(

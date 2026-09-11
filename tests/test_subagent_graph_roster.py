@@ -144,3 +144,41 @@ class SubagentGraphRosterTests(unittest.TestCase):
         self.assertEqual(len(graph["nodes"]), 8)
         self.assertEqual(len(graph["frontier"]), 9)
         self.assertEqual(graph["hidden_nodes"], 2)
+
+    def test_a_stuck_roster_row_rides_beside_the_dispatch_state(self) -> None:
+        # The topology's arithmetic (frontier, blocked_by, success/failure) is
+        # defined on the dispatch vocabulary, so `state` must not change; what
+        # the unit's own output showed rides alongside it for the renderer.
+        contract = _contract()
+        roster = _roster(contract, {"root-0": "running"})
+        row = next(unit for unit in roster["units"] if unit["unit_id"] == "root-0")
+        row["unit_state"] = "progress_stalled"
+        row["state_reason"] = "repeated_error:error: unable to read file"
+        row["stalled_for_seconds"] = "1920"
+
+        graph = project_subagent_graph(contract, roster, preference="auto")
+        node = next(node for node in graph["nodes"] if node["node_id"] == "root-0")
+
+        self.assertEqual(node["state"], "running")
+        self.assertEqual(node["unit_state"], "progress_stalled")
+        self.assertEqual(node["state_reason"], "repeated_error:error: unable to read file")
+        self.assertEqual(node["stalled_for_seconds"], 1920)
+
+    def test_a_running_or_absent_unit_state_adds_no_node_keys(self) -> None:
+        contract = _contract()
+        for unit_state in ("running", "verified", ""):
+            with self.subTest(unit_state=unit_state):
+                roster = _roster(contract, {"root-0": "running"})
+                row = next(unit for unit in roster["units"] if unit["unit_id"] == "root-0")
+                row["unit_state"] = unit_state
+                graph = project_subagent_graph(contract, roster, preference="auto")
+                node = next(node for node in graph["nodes"] if node["node_id"] == "root-0")
+                self.assertNotIn("unit_state", node)
+                self.assertNotIn("state_reason", node)
+                self.assertNotIn("stalled_for_seconds", node)
+
+    def test_the_two_stuck_state_sets_are_the_same(self) -> None:
+        from omh.coding.unit_execution_state import UNIT_STUCK_STATES
+        from omh.plugin_bundle.omh.subagent_graph import _STUCK_UNIT_STATES
+
+        self.assertEqual(UNIT_STUCK_STATES, _STUCK_UNIT_STATES)

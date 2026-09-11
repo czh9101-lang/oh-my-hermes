@@ -403,6 +403,24 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertNotIn("'open_call_count',", widget)
         self.assertNotIn("'live',", widget)
 
+    def test_a_stuck_unit_never_renders_as_the_dispatch_state(self) -> None:
+        # "Process alive" and "work progressing" are different states and must
+        # never render the same. A graph node whose reader assessed its own
+        # output and found it stuck replaces the dispatch word outright and
+        # carries the reason and the stall age beside it.
+        widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
+
+        self.assertIn("const stuckState = safeText(node.unit_state)", widget)
+        self.assertIn("const state = stuckState || dispatchState", widget)
+        self.assertIn("const stallSeconds = Number(node.stalled_for_seconds) || 0", widget)
+        self.assertIn("safeText(node.state_reason)", widget)
+        self.assertIn("since new output", widget)
+        # Its own marker and the warn tone, so a stuck node is visible before
+        # the line is read at all.
+        self.assertIn("const marker = stuckState\n          ? '[~]'", widget)
+        self.assertIn("color: stuckState\n              ? t.color.warn", widget)
+        self.assertIn("${state}${stuckSuffix}${suffix}", widget)
+
     def test_widget_is_bottom_docked_and_omits_host_status_fields(self) -> None:
         widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
 

@@ -3950,6 +3950,11 @@ class FanoutDispatchVerificationTests(unittest.TestCase):
             self.assertTrue(_unit_verification_is_observed(paths, core["run_ref"]))
             self.assertTrue(core["unit_verification_observed"])
             self.assertTrue(core["integration_ready"])
+            # The one state that means the work is done: a validated result
+            # record AND an observed verification. Nothing below both rungs
+            # reaches it -- see `FanoutDispatchUnitProgressTests`.
+            self.assertEqual(core["unit_state"], "verified")
+            self.assertEqual(core["unit_state_reason"], "")
             self.assertEqual(len(runner.verified), 2)
 
     def test_verification_receives_only_its_declared_capability_not_the_owner_capability(self) -> None:
@@ -5607,6 +5612,87 @@ class FanoutDispatchLiveUnitTelemetryTests(unittest.TestCase):
         # Absent counts stay absent, and bools never read as counts.
         self.assertIsNone(_reported_unit_tokens({}))
         self.assertIsNone(_reported_unit_tokens({"tokens_total": True}))
+
+
+class FanoutDispatchUnitProgressTests(unittest.TestCase):
+    """The in-flight marker and the unit record answer "is the WORK moving?",
+    which no dispatch surface could answer before: every one of them could
+    only say that a process existed. See `omh.coding.unit_progress`."""
+
+    def _setup(self, tmp: str):
+        root = Path(tmp)
+        paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+        repo, sha = _make_repo(root)
+        contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, _UNITS))
+        return paths, repo, sha, contract
+
+    def _marker_spy(self, dispatch_module):
+        """Every marker write, snapshotted. The dispatch mutates one fields
+        dict for the unit's whole lifetime and clears the file in `finally`,
+        so neither the live dict nor the filesystem survives to be asserted on
+        afterwards -- only a copy taken at each write does."""
+        recorded: list[dict[str, str]] = []
+        original = dispatch_module._write_inflight
+
+        def spy(paths, fanout_id, unit_id, fields):
+            recorded.append(dict(fields))
+            return original(paths, fanout_id, unit_id, fields)
+
+        return recorded, spy
+
+    def test_the_marker_reports_progress_stalled_when_one_line_repeats(self) -> None:
+        from omh.coding import fanout_dispatch as dispatch_module
+
+        # Output grows on every snapshot and says the same thing each time:
+        # the 2026-09-11 incident's shape, and the one a byte-growth rule
+        # alone reads as healthy progress.
+        line = "error: unable to read file, retrying (n={n})\n"
+        loop = [
+            "preparing worktree\n" + "".join(line.format(n=turn) for turn in range(1, count + 1))
+            for count in range(0, 4)
+        ]
+        runner = _live_output_runner({"core": loop})
+        recorded, spy = self._marker_spy(dispatch_module)
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            with mock.patch.object(dispatch_module, "_write_inflight", spy):
+                dispatch_fanout(
+                    paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                    only_units=["core"], runner=runner, readiness=_ready,
+                )
+
+        self.assertIn("progress_stalled", [fields.get("unit_state", "") for fields in recorded])
+        stalled = next(fields for fields in recorded if fields.get("unit_state") == "progress_stalled")
+        self.assertTrue(stalled["state_reason"].startswith("repeated_error:"))
+        # The retry counter is collapsed, which is what makes three turns of
+        # the same failure countable as one repeated line.
+        self.assertIn("retrying (n=<n>)", stalled["state_reason"])
+        self.assertEqual(stalled["repeat_count"], "3")
+        # A progress write must never erase the dispatch bookkeeping an
+        # earlier write recorded.
+        self.assertEqual(stalled["run_ref"], recorded[0]["run_ref"])
+        # The first write happens before any snapshot and claims nothing about
+        # the work -- absent is not "moving".
+        self.assertEqual(recorded[0].get("unit_state", ""), "")
+
+    def test_exit_zero_without_a_result_record_is_a_failed_unit(self) -> None:
+        # `_agent_runner` exits 0 and writes no sidecar. That combination read
+        # as success on every surface; the ladder's answer is that nothing was
+        # verified because nothing was returned.
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            summary = dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["core"], runner=_agent_runner(), readiness=_ready,
+            )
+        entry = summary["units"][0]
+        self.assertEqual(entry["exit_code"], 0)
+        self.assertEqual(entry["unit_state"], "failed")
+        self.assertEqual(entry["unit_state_reason"], "result_missing")
+        self.assertFalse(entry["result_schema_valid"])
+        # The evidence rides along, so no reader has to re-derive it.
+        self.assertEqual(entry["progress"]["schema_version"], "omh_unit_progress/v1")
+        self.assertFalse(entry["progress"]["result_record_present"])
 
 
 if __name__ == "__main__":

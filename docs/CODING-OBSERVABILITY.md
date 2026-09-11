@@ -57,6 +57,55 @@ executor reported. An absent count renders as the literal `unknown`, never as
 identical to one left by a process still working, so the board reports an
 observed start without an observed end rather than claiming the unit is alive.
 
+**A live process is not moving work.** On 2026-09-11 a unit stayed alive for
+36 minutes retrying the same git workaround while its supervisor read "PID
+alive" as progress. So "a process exists" and "the work is moving" are now two
+different readings with two different words. The dispatch word (`running`,
+`completed`, `failed`, …) stays on the row's `status`, and what the unit's own
+stdout showed goes in `unit_state` beside it — see the table below. Anything
+`unit_state` calls stuck replaces the dispatch word wherever a row is rendered:
+the status board, the plugin running-work block, and the DAG line in the TUI
+widget. A unit with no assessed snapshot carries no `unit_state` at all, which
+is not the same as "moving".
+
+A supervisor polls the same answer machine-readably with
+`omh coding fanout status --fanout-id <id> --json`. Every roster row carries
+`unit_state`, `terminal` (via `is_terminal`), `unit_state_source`
+(`inflight_marker` while the unit is in flight, `dispatch_summary` after it
+exits, `none` when nothing observed it), and `progress.reason` /
+`progress.seconds_since_new_output`. The roster carries `all_units_terminal`
+and `stuck_units` so the loop's stop condition is computed once rather than
+re-derived per caller. `terminal` follows the SOURCE, not the state word: a
+dispatch-summary row is written after the dispatch ended, so it is terminal
+whatever word it carries — including a unit the workspace preflight refused
+before its spawn, which is stuck, needs a human, and will never move on its
+own. A marker means the unit is in flight now, so its state is read literally. None of this moves `lifecycle_state`, which still
+advances on journal events alone — and `all_units_terminal` is false for an
+empty roster, because "nothing to wait for" and "everything finished" are
+different answers.
+
+### Unit execution states
+
+Vocabulary in `src/coding/unit_execution_state.py`; the mid-run verdict is
+derived by `src/coding/unit_progress.py` from the stdout snapshots the dispatch
+already takes, and the two terminal states are assigned only after exit.
+
+| State | What was observed | Terminal |
+| --- | --- | --- |
+| `running` | The work is producing new evidence: output growing, tests starting and ending, result records appearing. The only state that means progressing. | no |
+| `awaiting_input` | The output ends at a question or a prompt and has been still for `UNIT_PROMPT_QUIET_SECONDS` (60s). The quiet window is the guard: one poll step of silence after a question mark is a tool call in progress, not a unit blocked on a human. | no |
+| `permission_blocked` | A permission or sandbox denial stopped the work. Retrying under the same permissions cannot clear it. | no |
+| `account_limit` | The provider refused for account reasons: session or usage limit, quota, credits. | no |
+| `data_missing` | Objects the work needs are absent in its isolation — partial-clone blobs, a missing base commit, a ref that was described but never fetched. | no |
+| `progress_stalled` | The process is alive and the work is not moving: no new output past the threshold (15 minutes, `UNIT_STALL_AFTER_SECONDS`), **or** the same *failure-shaped* line repeating three times even while bytes grow. Repetition alone is not a stall — a green run prints `... ok` endlessly — so only lines matching `_FAILURE_SHAPED_WORDS` are counted. | no |
+| `failed` | The process ended without a verified result. Exit code 0 with the required result record missing is this state, with reason `result_missing` — never `verified`. | yes |
+| `verified` | The result record validated against the contract and its verification was observed. The only success state. | yes |
+
+The three non-`running` mid-run states above the stall are conditions retrying
+cannot clear, so they are reported the moment the tail matches rather than
+waited out. A matched shape is not provider, filesystem, or repository truth —
+it is what the output looked like.
+
 **Runtimes without structured output report `unknown` and say so.** The
 omo-runtime lane (pi / senpi / opencode) has no structured token surface, so
 its token columns stay unknown by design rather than being filled with a guess.
@@ -93,7 +142,7 @@ normalizes both vocabularies onto one set of keys.
 
 | Source | Provides |
 | --- | --- |
-| `~/.omh/coding/fanout/<id>/inflight/<unit>.json` | mid-flight `running` state and start time |
+| `~/.omh/coding/fanout/<id>/inflight/<unit>.json` | start time, and the last assessed `unit_state` with its reason, stall age, repeat count, and phase markers |
 | `dispatch_summary.json` | owner, model, effort, status, duration, tokens, session |
 | executor progress bindings | live cross-unit state and latest observed event |
 
