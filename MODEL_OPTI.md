@@ -895,8 +895,15 @@ gate requires a completed paired run on the intended execution surface.
   instead of relying on projection.
 - **Cost approximation** — `APPROX_PRICE_PER_MTOK` in
   `src/plugin_bundle/omh/hermes_delegation.py` supplies `~$` estimates only
-  when the host recorded no cost; models absent from the table show no
-  approximation (never a fabricated number). Cache reads are priced at a
+  when the host recorded no cost — no per-call figure at all, or Hermes' own
+  `unknown` no-figure status (`agent/usage_pricing.py:549`, persisted into
+  the usage table by `agent/turn_usage.py:236,257`), which says its pricing
+  produced no amount rather than naming a billing outcome. That second case
+  is what every child served through a custom gateway provider lands in. A
+  row where the host DID record an outcome keeps its figure exactly,
+  and models absent from the table show no approximation at all — a
+  gateway child on an unpriced model still renders `$0.0000 (unknown)`,
+  never a fabricated number. Cache reads are priced at a
   tenth of input unless `APPROX_CACHE_READ_RATIO` names the model: Claude
   Fable 5.1 lists $10 / $50 per MTok with cache reads at $0.25 (0.025x) and
   cache writes at $12.50 (5-minute TTL) / $20 (1-hour TTL); Opus 5 reads at

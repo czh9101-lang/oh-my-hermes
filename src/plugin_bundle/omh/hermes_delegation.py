@@ -786,11 +786,16 @@ def _child_is_inherit(
     parent_models: Mapping[str, str],
     provider_routes: Mapping[str, tuple[str, str]],
 ) -> bool:
-    """Mirror the projection's inherit test: child alias == parent model."""
+    """Mirror the projection's inherit test: child alias == parent model.
+
+    The projection routes the model it resolved, so this reads the same
+    resolved model; testing the raw `sessions.model` made the two disagree
+    on a child whose model is only recorded in its usage rows.
+    """
     parent_model = _text(parent_models.get(child.get("parent_id", ""), ""))
     if not parent_model:
         return False
-    alias, _ = configured_route_for_wire(child["model"], provider_routes)
+    alias, _ = configured_route_for_wire(_observed_wire_model(child), provider_routes)
     return _text(alias).casefold() == parent_model.casefold()
 
 
@@ -1327,6 +1332,77 @@ def _conversation_session_ids(connection: sqlite3.Connection, session_ref: str) 
     return {row[0] for row in rows}
 
 
+def _informative_cost_row_sql(columns: set[str]) -> str:
+    """One SQL predicate: does this usage row say anything about cost?
+
+    OMH still does not enumerate a host's BILLING words -- "included",
+    "billed_zero" and the rest stay unknown to this reader, and any of them
+    vouches for the zero it annotates. The one word named here is not a
+    billing word at all: `unknown` is the host's own NO-FIGURE status, the
+    one `usage_pricing._unknown_cost` stamps whenever it produced no amount
+    (`agent/usage_pricing.py:549`, returning `amount_usd=None`), whether the
+    route had no pricing entry at all (`:565`, paired with source `none`) or
+    only a partial rate (`:583`, which pairs it with an informative source).
+    The status is what carries the "no figure" meaning, so the source is not
+    part of the test. `agent/turn_usage.py:236,257` is what persists the pair
+    into `session_model_usage`; `agent/agent_init.py:2140` only seeds the
+    session attribute default.
+
+    Treating that status as provenance is what made every child on a custom
+    gateway provider render `$0.0000 (unknown)` -- a stated zero the host
+    never claimed. Evaluating it PER ROW instead of reducing with MAX is what
+    keeps a MIXED group safe: one row carrying a real billing word is enough
+    to stop the approximation, exactly as before.
+    """
+    status = "COALESCE(cost_status, '')" if "cost_status" in columns else "''"
+    source = "COALESCE(cost_source, '')" if "cost_source" in columns else "''"
+    return f"({status} <> '' OR {source} <> '') AND {status} <> 'unknown'"
+
+
+def _preferred_provenance_sql(column: str, informative: str, columns: set[str]) -> str:
+    """Read one provenance column from an informative row when the group has one.
+
+    `MAX` over a mixed group answers alphabetically, so a session with one
+    `included` row beside one `unknown` row reported `unknown` and rendered a
+    vouched zero as `$0.0000 (unknown)`. Prefer the informative rows; with
+    none, the host's no-figure status is the honest answer and `MAX` supplies
+    it unchanged.
+    """
+    if column not in columns:
+        return "NULL"
+    return f"COALESCE(MAX(CASE WHEN {informative} THEN {column} END), MAX({column}))"
+
+
+def _sole_distinct_value(value: Any, *, limit: int = 80) -> str:
+    """The single value a `GROUP_CONCAT(DISTINCT ...)` returned, else "".
+
+    `GROUP_CONCAT` joins distinct values with a comma, so more than one
+    arrives as a list this reader cannot resolve into a single row field. The
+    comma test runs on the WHOLE string: truncating first could cut the list
+    down to its first element and pass it off as the only one.
+    """
+    text = str(value or "").strip()
+    if not text or "," in text:
+        return ""
+    return text[:limit]
+
+
+def _observed_wire_model(child: Mapping[str, Any]) -> str:
+    """The model a child ran: recorded on the session, else observed in usage.
+
+    Hermes leaves `sessions.model` empty on a child whose session row was
+    created before the model was known, and the label then had nothing to
+    print. `session_model_usage.model` is written per call from the model
+    that actually answered, so one distinct value there names it. Two
+    distinct values (a child that switched models) or none leave the row
+    exactly as recorded -- this reads an observation, it never infers one.
+    """
+    recorded = _text(child.get("model"))
+    if recorded:
+        return recorded
+    return _text((child.get("usage") or {}).get("model"))
+
+
 def _query_state_db(state_db: Path, *, now: float, session_ref: str | None = None) -> dict[str, Any]:
     """Read child sessions, usage tallies, and delegation states, read-only."""
     result: dict[str, Any] = {"children": [], "delegation_states": {}, "parent_models": {}, "scope": "global"}
@@ -1401,15 +1477,29 @@ def _query_state_db(state_db: Path, *, now: float, session_ref: str | None = Non
                     'PRAGMA table_info("session_model_usage")'
                 ).fetchall()
             }
-            cost_status = "MAX(cost_status)" if "cost_status" in columns else "NULL"
-            cost_source = "MAX(cost_source)" if "cost_source" in columns else "NULL"
+            informative = _informative_cost_row_sql(columns)
+            cost_status = _preferred_provenance_sql("cost_status", informative, columns)
+            cost_source = _preferred_provenance_sql("cost_source", informative, columns)
+            # One distinct value, or nothing. `billing_provider` is part of
+            # the table's primary key, so a session that reached two
+            # providers has two rows and no single answer to give a row.
+            # `NULLIF` drops the column's own empty default first: a real
+            # provider beside an unattributed row is still one provider.
+            billing_provider = (
+                "GROUP_CONCAT(DISTINCT NULLIF(billing_provider, ''))"
+                if "billing_provider" in columns
+                else "NULL"
+            )
             cursor = connection.execute(
                 f"""
                 SELECT session_id, SUM(api_call_count), SUM(input_tokens),
                        SUM(output_tokens), SUM(cache_read_tokens),
                        SUM(actual_cost_usd), SUM(estimated_cost_usd),
                        {cost_status}, {cost_source},
-                       MIN(first_seen), MAX(last_seen)
+                       MIN(first_seen), MAX(last_seen),
+                       SUM(CASE WHEN {informative} THEN 1 ELSE 0 END),
+                       {billing_provider},
+                       GROUP_CONCAT(DISTINCT NULLIF(model, ''))
                 FROM session_model_usage
                 WHERE session_id IN ({placeholders})
                 GROUP BY session_id
@@ -1429,6 +1519,9 @@ def _query_state_db(state_db: Path, *, now: float, session_ref: str | None = Non
                     "cost_source": _text(row[8]) or None,
                     "first_seen": _finite(row[9]),
                     "last_seen": _finite(row[10]),
+                    "informative_cost_rows": int(_finite(row[11]) or 0.0),
+                    "billing_provider": _sole_distinct_value(row[12]),
+                    "model": _sole_distinct_value(row[13]),
                 }
             for child in children:
                 child["usage"] = usage.get(child["session_id"], {})
@@ -1576,6 +1669,10 @@ def read_hermes_native_subagents(
             row_state = "failed"
             failure_hint = "no model usage observed"
 
+        # An empty `sessions.model` is filled from the one model the child's
+        # usage rows observed, never from a guess; see `_observed_wire_model`.
+        wire_model = _observed_wire_model(child)
+
         input_tokens = usage.get("input_tokens") or 0.0
         output_tokens = usage.get("output_tokens") or 0.0
         cache_read = usage.get("cache_read_tokens") or 0.0
@@ -1599,7 +1696,16 @@ def read_hermes_native_subagents(
         # rows) collapse to a fake zero when MAX(cost_status) surfaced the
         # hardcoded word, and let a host's confirmed billed-zero get
         # approximated over because its status was not that word.
+        #
+        # The single exception is the host's own no-figure status, tested per
+        # usage row by `_informative_cost_row_sql`: `unknown` is what Hermes
+        # stamps when its pricing produced no amount at all, so it says the
+        # host has no figure rather than naming a billing outcome.
+        # `informative_cost_rows` is therefore the count of rows carrying
+        # provenance that IS a claim about cost; zero means every row either
+        # recorded nothing or recorded that it knows nothing.
         cost_provenance = cost_status or cost_source
+        informative_cost_rows = int(usage.get("informative_cost_rows") or 0)
         # A positive observed aggregate always stands as recorded; only a
         # zero consults provenance at all.
         cost = usage.get("actual_cost_usd") or usage.get("estimated_cost_usd")
@@ -1613,33 +1719,37 @@ def read_hermes_native_subagents(
         # this line as the same 0.0 -- cost_status/cost_source are the only
         # fields that tell them apart, and they are nullable, so unlike the
         # summed costs they CAN distinguish "recorded" from "absent". The
-        # approximation therefore fires only on a zero with NO provenance.
+        # approximation therefore fires on a zero that no usage row made an
+        # informative claim about -- none recorded, or every one of them the
+        # host's no-figure status.
         # What must NOT happen is the third case: no recorded cost, no
         # provenance, AND no price for the model (`_approximate_cost_usd`
         # returns None for an unpriced model, and for a run with no tokens).
         # That left `cost` at 0.0 with no approximate flag, so the row
         # claimed the run was free. An unknown cost is unknown: send None and
         # let the surface say nothing rather than state a zero it cannot
-        # support.
+        # support. A no-figure row is the one place the bare zero stays: the
+        # host wrote a word for it, so the surface can still render
+        # `$0.0000 (unknown)` instead of falling silent.
         cost_approximate = False
         # A figure derived from the operator's own rate and one derived from
         # our shipped ballpark are both approximations, but they are not
         # equally arguable: only the first is a number the operator chose.
         # The row says which, so a surface can tell them apart.
-        cost_override = bool(_model_price_override_key(child["model"], price_overrides))
-        if not cost and cost_provenance is None:
+        cost_override = bool(_model_price_override_key(wire_model, price_overrides))
+        if not cost and not informative_cost_rows:
             approx = _approximate_cost_usd(
-                child["model"], input_tokens, output_tokens, cache_read, price_overrides
+                wire_model, input_tokens, output_tokens, cache_read, price_overrides
             )
             if approx is not None:
                 cost = approx
                 cost_approximate = True
-            else:
+            elif cost_provenance is None:
                 cost = None
 
         parent_model = state.get("parent_models", {}).get(child["parent_id"], "")
         route_alias, route_provider = configured_route_for_wire(
-            child["model"],
+            wire_model,
             provider_routes,
         )
         session_tail = child["session_id"].rsplit("_", 1)[-1][:8]
@@ -1655,7 +1765,7 @@ def read_hermes_native_subagents(
             "action": _text(task.get("goal", ""), limit=_ACTION_LIMIT),
             "alias": route_alias,
             "provider": route_provider,
-            "model": child["model"],
+            "model": wire_model,
             "effort": child["effort"],
             # A terminal row's zero is observed, not missing: the failure
             # hint above is derived from this same absence, so sending `None`
@@ -1675,16 +1785,31 @@ def read_hermes_native_subagents(
         }
         if route_provider:
             row["provider_source"] = "model_provider_routes"
+        elif usage.get("billing_provider"):
+            # No `model-providers.json` row names this wire model, so OMH has
+            # no configured provider of its own -- but the host recorded which
+            # provider it billed the calls under, which answers the same
+            # question. This fills the payload field for the `read_omh_hud`
+            # JSON payload; the TUI widget renders the model, not the
+            # provider, so nothing on screen changes. The source marker keeps
+            # an observed billing fact distinguishable from OMH's own
+            # configuration.
+            row["provider"] = usage["billing_provider"]
+            row["provider_source"] = "hermes_billing_provider"
         # Prepared-route provenance is a best-effort label upgrade, never
         # row identity: when the child's identity matches the newest route
         # prepared before its dispatch, a fallback lane says so and an
         # exhausted chain keeps its category with an `inherit` model token
         # (`category(model inherit)`) instead of converging into plain
-        # inherit. The upgrade carries its own source marker.
+        # inherit. The upgrade carries its own source marker. The model that
+        # matches here is the same observed wire model the alias and category
+        # above were derived from, so the three stay one identity; a child
+        # whose model the host never recorded and never used matches nothing,
+        # which is the safe degradation.
         provenance = _provenance_for_dispatch(
             route_provenance,
             started_at=child["started_at"],
-            wire_model=child["model"],
+            wire_model=wire_model,
             alias=route_alias,
             is_inherit=row["category"] == "inherit",
             session_id=child["session_id"],

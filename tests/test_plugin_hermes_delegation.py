@@ -55,6 +55,7 @@ def _build_state_db(
         );
         CREATE TABLE session_model_usage (
             session_id TEXT NOT NULL, model TEXT NOT NULL,
+            billing_provider TEXT NOT NULL DEFAULT '',
             api_call_count INTEGER NOT NULL DEFAULT 0,
             input_tokens INTEGER NOT NULL DEFAULT 0,
             output_tokens INTEGER NOT NULL DEFAULT 0,
@@ -91,20 +92,32 @@ def _build_state_db(
             single = child.get("usage")
             usages = [single] if single else []
         for usage in usages:
+            # Named columns, not positions: the host's real table carries
+            # more of them than this fixture does, and a positional insert
+            # made adding one a rewrite of every call site.
+            values = {
+                "session_id": child["id"],
+                # The usage table records the model each call ran on, which
+                # is not always what the session row holds.
+                "model": usage.get("model", child["model"]),
+                "billing_provider": usage.get("billing_provider", ""),
+                "api_call_count": usage.get("api_calls", 0),
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+                "cache_read_tokens": usage.get("cache_read_tokens", 0),
+                "actual_cost_usd": usage.get("actual_cost_usd", 0.0),
+                "estimated_cost_usd": usage.get("estimated_cost_usd", 0.0),
+                "first_seen": usage.get("first_seen"),
+                "last_seen": usage.get("last_seen"),
+            }
+            if include_cost_provenance:
+                values["cost_status"] = usage.get("cost_status")
+                values["cost_source"] = usage.get("cost_source")
             connection.execute(
-                (
-                    "INSERT INTO session_model_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    if include_cost_provenance
-                    else "INSERT INTO session_model_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO session_model_usage ({}) VALUES ({})".format(
+                    ", ".join(values), ", ".join("?" for _ in values)
                 ),
-                (
-                    child["id"], child["model"], usage.get("api_calls", 0),
-                    usage.get("input_tokens", 0), usage.get("output_tokens", 0),
-                    usage.get("cache_read_tokens", 0), usage.get("actual_cost_usd", 0.0),
-                    usage.get("estimated_cost_usd", 0.0),
-                    *(([usage.get("cost_status"), usage.get("cost_source")] if include_cost_provenance else [])),
-                    usage.get("first_seen"), usage.get("last_seen"),
-                ),
+                tuple(values.values()),
             )
     for delegation_id, state in (delegation_states or {}).items():
         connection.execute(
@@ -883,6 +896,303 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
         self.assertTrue(row["cost_approximate"])
         self.assertNotIn("cost_status", row)
         self.assertNotIn("cost_source", row)
+
+    def test_the_hosts_no_pricing_sentinel_is_approximated_like_an_absence(self):
+        # Given: a child served by a custom gateway provider. Hermes has no
+        # rate for it, so its pricing returns no amount and stamps its own
+        # `unknown` no-figure status (`agent/usage_pricing.py:549`, persisted
+        # by `agent/turn_usage.py:236,257`) -- the host saying it has NO
+        # figure, not a billing outcome.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_gateway1",
+                "model": "anthropic/claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usage": {
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "actual_cost_usd": 0.0,
+                    "cost_status": "unknown",
+                    "cost_source": "none",
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_gw", ["gateway lane"], started=NOW - 65, log_mtime=NOW - 5)
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: the token-derived figure fires exactly as it does for a row
+        # with no provenance at all. Fable 5.1 lists $10/M input, $50/M
+        # output, cache reads at $0.25/M.
+        self.assertTrue(row["cost_approximate"])
+        self.assertAlmostEqual(
+            row["cost_usd"], (10_000 * 10.0 + 4_000 * 50.0) / 1_000_000
+        )
+        # And: the host's own words stay on the row as recorded -- OMH
+        # reports what the host wrote, it does not rewrite it.
+        self.assertEqual(row["cost_status"], "unknown")
+        self.assertEqual(row["cost_source"], "none")
+
+    def test_an_unpriceable_sentinel_keeps_the_zero_the_host_can_render(self):
+        # Given: the same no-pricing sentinel on a model OMH has no rate for
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_gateway2",
+                "model": "og/some-unlisted-model",
+                "started_at": NOW - 60,
+                "usage": {
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "actual_cost_usd": 0.0,
+                    "cost_status": "unknown",
+                    "cost_source": "none",
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_gw2", ["gateway lane"], started=NOW - 65, log_mtime=NOW - 5)
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: nothing is invented and nothing is taken away -- the row
+        # renders exactly as it did before this rule existed,
+        # `$0.0000 (unknown)`. Only a SUCCESSFUL approximation changes it.
+        self.assertEqual(row["cost_usd"], 0.0)
+        self.assertNotIn("cost_approximate", row)
+        self.assertEqual(row["cost_status"], "unknown")
+        self.assertEqual(row["cost_source"], "none")
+
+    def test_one_informative_row_stops_the_sentinel_approximation(self):
+        # Given: a group that mixes the host's no-pricing sentinel with one
+        # row that DID record a billing outcome, and whose summed cost is
+        # still zero. MAX(cost_status) over this group answers "unknown",
+        # which is exactly the reduction a per-row count has to survive.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_mixedsen",
+                "model": "gpt-5.6-sol",
+                "started_at": NOW - 60,
+                "usages": [
+                    {
+                        "input_tokens": 10_000,
+                        "output_tokens": 4_000,
+                        "actual_cost_usd": 0.0,
+                        "cost_status": "unknown",
+                        "cost_source": "none",
+                        "first_seen": NOW - 55,
+                        "last_seen": NOW - 30,
+                    },
+                    {
+                        "input_tokens": 5_000,
+                        "output_tokens": 1_000,
+                        "actual_cost_usd": 0.0,
+                        "cost_status": "included",
+                        "cost_source": "subscription",
+                        "first_seen": NOW - 25,
+                        "last_seen": NOW - 5,
+                    },
+                ],
+            }],
+        )
+        _write_manifest(self.home, "deleg_ms", ["mixed lane"], started=NOW - 65, log_mtime=NOW - 5)
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: the confirmed zero stands. One row vouching for the figure
+        # is enough, whatever the other rows recorded.
+        self.assertEqual(row["cost_usd"], 0.0)
+        self.assertNotIn("cost_approximate", row)
+        # And: the WORD the surface renders is the one that vouched for the
+        # zero. A plain MAX answers alphabetically, which put "unknown"
+        # ahead of "included" and made a vouched zero read as unpriced.
+        self.assertEqual(row["cost_status"], "included")
+        self.assertEqual(row["cost_source"], "subscription")
+
+    def test_an_empty_session_model_is_filled_from_the_observed_usage_model(self):
+        # Given: a child whose `sessions.model` is empty -- the row was
+        # created before the model was known -- while its usage rows record
+        # the model every call actually ran on
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_nomodel1",
+                "model": "",
+                "effort": "high",
+                "started_at": NOW - 60,
+                "usage": {
+                    "model": "claude-fable-5-1",
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_nm", ["unnamed lane"], started=NOW - 65, log_mtime=NOW - 5)
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: the label names the observed model instead of the bare
+        # `:high` the empty recording used to produce, and everything keyed
+        # off the model follows it -- category here, and pricing below.
+        self.assertEqual(row["model"], "claude-fable-5-1")
+        self.assertEqual(row["effort"], "high")
+        self.assertEqual(row["category"], "visual-engineering")
+        self.assertTrue(row["cost_approximate"])
+
+    def test_two_observed_usage_models_leave_an_empty_model_untouched(self):
+        # The negative control: a child whose usage rows name two models has
+        # no single answer, so the row stays exactly as recorded. Nothing is
+        # inferred from the parent -- Hermes does not copy its model down.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_twomodel",
+                "model": "",
+                "started_at": NOW - 60,
+                "usages": [
+                    {"model": "claude-fable-5-1", "output_tokens": 10, "last_seen": NOW - 20},
+                    {"model": "gpt-5.6-sol", "output_tokens": 10, "last_seen": NOW - 5},
+                ],
+            }],
+        )
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["model"], "")
+        self.assertEqual(row["category"], "")
+
+    def test_a_recorded_session_model_wins_over_the_usage_model(self):
+        # The session row is the child's own identity when it has one; the
+        # usage fill only covers the absence.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_ownmodel",
+                "model": "claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usage": {"model": "gpt-5.6-sol", "output_tokens": 10, "last_seen": NOW - 5},
+            }],
+        )
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["model"], "claude-fable-5-1")
+
+    def test_an_unrouted_child_shows_the_provider_the_host_billed_it_under(self):
+        # Given: a wire model no `model-providers.json` row names, whose
+        # usage the host recorded against a billing provider
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_billprov",
+                "model": "anthropic/claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usage": {
+                    "billing_provider": "og",
+                    "output_tokens": 10,
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: the provider column shows the observed billing provider,
+        # marked with the origin that earned it rather than passed off as
+        # OMH's own configuration.
+        self.assertEqual(row["provider"], "og")
+        self.assertEqual(row["provider_source"], "hermes_billing_provider")
+
+    def test_two_billing_providers_leave_the_provider_column_empty(self):
+        # The negative control: a session billed under two providers has no
+        # single answer, and a guessed one would be worse than none.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_twoprovs",
+                "model": "anthropic/claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usages": [
+                    {"billing_provider": "og", "output_tokens": 10, "last_seen": NOW - 20},
+                    {"billing_provider": "custom", "output_tokens": 10, "last_seen": NOW - 5},
+                ],
+            }],
+        )
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["provider"], "")
+        self.assertNotIn("provider_source", row)
+
+    def test_one_billing_provider_beside_an_unattributed_row_is_still_one(self):
+        # The column defaults to the empty string, so a session with one
+        # attributed row and one unattributed row must not read as two
+        # providers -- there is exactly one, and it is the one to show.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_oneprov1",
+                "model": "anthropic/claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usages": [
+                    {"billing_provider": "og", "output_tokens": 10, "last_seen": NOW - 20},
+                    {"billing_provider": "", "output_tokens": 10, "last_seen": NOW - 5},
+                ],
+            }],
+        )
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["provider"], "og")
+        self.assertEqual(row["provider_source"], "hermes_billing_provider")
+
+    def test_the_no_figure_status_is_the_test_whatever_source_it_carries(self):
+        # Hermes stamps `unknown` whenever its pricing produced no amount,
+        # and a partially-rated route pairs that status with an informative
+        # source instead of `none`. The STATUS is what says "no figure", so
+        # the source must not rescue it into a vouched zero.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_partial1",
+                "model": "gpt-5.6-sol",
+                "started_at": NOW - 60,
+                "usage": {
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "actual_cost_usd": 0.0,
+                    "cost_status": "unknown",
+                    "cost_source": "litellm",
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_pr", ["partial lane"], started=NOW - 65, log_mtime=NOW - 5)
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertTrue(row["cost_approximate"])
+        self.assertGreater(row["cost_usd"], 0.0)
+        self.assertEqual(row["cost_status"], "unknown")
+        self.assertEqual(row["cost_source"], "litellm")
+
+    def test_a_configured_route_still_wins_over_the_billing_provider(self):
+        # The other negative control: OMH's own configuration is the answer
+        # whenever it has one, so the fallback never overrides a route.
+        route_path = self.home / "routing" / "model-providers.json"
+        route_path.parent.mkdir(parents=True)
+        route_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "model_provider_routes/v1",
+                    "models": {
+                        "fable": {"provider": "gateway", "model": "anthropic/claude-fable-5-1"}
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_routewin",
+                "model": "anthropic/claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usage": {"billing_provider": "og", "output_tokens": 10, "last_seen": NOW - 5},
+            }],
+        )
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["provider"], "gateway")
+        self.assertEqual(row["provider_source"], "model_provider_routes")
 
     def test_legacy_schema_preserves_usage_and_approximates_zero(self):
         _build_state_db(
