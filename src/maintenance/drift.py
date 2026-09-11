@@ -242,7 +242,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # billing receipt.
             # Protected-reference controls remain alongside the upstream corpus;
             # merged totals are re-derived from build_routing_precision_demo().
-            expected=202,
+            expected=204,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",
@@ -261,7 +261,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # receipt, turn integrity with barge-in, and the Korean phrasing.
             # Direct and mixed-reference interventions remain alongside the
             # upstream corpus; the merged producer determines the exact total.
-            expected=345,
+            expected=347,
             sites=(
                 "tests/test_cli.py",
                 "tests/test_hermes_ux_quality.py",

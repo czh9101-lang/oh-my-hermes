@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+from _credential_fixtures import AWS_ACCESS_KEY_ID
 from _local_package import load_local_package
 
 load_local_package()
@@ -119,7 +120,7 @@ class ParentClarificationTests(unittest.TestCase):
                 validate_unit_result({**payload(), "input_required": request})
         mutations = [{key: None} for key in QUESTION] + [
             {"question": "q" * 301}, {"answer_shape": {"kind": "options", "options": ["x"] * 9}},
-            {"redacted_context": ["AKIA1234567890123456"]}, {"question": "$(touch /tmp/escape)"},
+            {"redacted_context": [AWS_ACCESS_KEY_ID]}, {"question": "$(touch /tmp/escape)"},
             {"affected_unit_ids": ["unit-a"]}, {"authority": "approve"},
             {"answer_shape": {"kind": "text", "max_chars": True}}]
         for changes in mutations:
@@ -218,6 +219,7 @@ class ParentClarificationTests(unittest.TestCase):
             self.assertEqual(refused["units"][1]["status"], "review_dispatch_budget_exhausted")
             from omh.coding.fanout_clarification import read_clarification, clarification_path
             record = read_clarification(clarification_path(fixture.paths, fixture.fanout_id, "unit-b"))
+            assert record is not None
             self.assertEqual(record["state"], "answered")
             unselected = dispatch_fanout(fixture.paths, fixture.contract, goal_text=GOAL, repo_root=fixture.repo,
                 base_sha=fixture.sha, runner=fixture.runner, readiness=_ready, resume_journal=fixture.journal(refused))
