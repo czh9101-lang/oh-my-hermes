@@ -1091,6 +1091,21 @@ _DEFINITIONS = [
             "Capture the executor's session id at dispatch (`--output-format json` -> `session_id` for Claude "
             "Code, `--json` -> `thread_id` for Codex) and carry it into every status line; a missing id is "
             "reported as unsteerable, never silently attached.",
+            "Observe to a terminal state: after dispatch, poll `omh coding fanout status --fanout-id "
+            "<fanout-id> --json` about every 60 seconds until every unit is terminal -- a `lifecycle_state` of "
+            "`unit_verification_observed` or `integration_ready`, or a recorded `failure_diagnostic` -- reading "
+            "`last_event_age_seconds` as the time since that unit's last observed output and "
+            "`capacity.next_action` as the reason a refused unit was refused. A unit that is "
+            "`progress_stalled`, `awaiting_input`, `account_limit`, `permission_blocked`, or `data_missing` "
+            "needs intervention NOW, not more waiting: a live process with no new evidence is not progress, and "
+            "re-running under the same account, the same credentials, or the same missing objects repeats the "
+            "failure exactly. Never end a turn on \"waiting for the worker\" while a unit sits in one of those "
+            "states.",
+            "A finished dispatch is an event to act on in the same turn, not a status to report: verify that "
+            "unit's result, record the outcome on the plan (done, or blocked with its reason), then run the "
+            "recovery or start the next item. Never announce a continuation that has not actually started -- a "
+            "closing sentence promising the next step, with no dispatch and no plan change in the same turn, "
+            "is the failure this rule exists for.",
             "Write every steering delta as more than a restated brief: name the changed constraint, the new "
             "evidence, the required action, and whether the verification target moved.",
             ENGINE_INTERJECTION_RESUME_RULE,
