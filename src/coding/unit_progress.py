@@ -164,16 +164,6 @@ _PHASE_MARKER_PATTERNS: Final[tuple[tuple[str, str], ...]] = (
     (PHASE_MARKER_COMMIT_CREATED, r"^\[\S+ [0-9a-f]{7,40}\] "),
 )
 
-# Additional limit shapes this lane needs that
-# `fanout_dispatch._LIMIT_SHAPED_PATTERNS` does not carry on this branch. The
-# incident's exact refusal was "You've hit your session limit · resets
-# 6:10pm", which matches none of that tuple's anchors. PR #1486 adds the same
-# classification there; the union below is de-duplicated by label and text,
-# so the two landing together is a no-op rather than a double entry.
-_ADDITIONAL_LIMIT_PATTERNS: Final[tuple[tuple[str, str], ...]] = (
-    ("session_limit", "session limit"),
-)
-
 # Permission and sandbox denials. Retrying under the same permissions cannot
 # clear any of these, which is why they are their own state rather than a
 # stall to be waited out.
@@ -381,26 +371,26 @@ _LIMIT_PATTERN_CACHE: list[tuple[str, str]] = []
 
 
 def _limit_shaped_patterns() -> tuple[tuple[str, str], ...]:
-    """`fanout_dispatch`'s limit shapes, plus this module's supplement.
+    """`fanout_dispatch`'s limit shapes, case-folded once and cached.
 
-    Imported lazily and cached: `fanout_dispatch` imports THIS module for the
-    on-output assessment, so a module-level import here would be a cycle.
-    An import failure degrades to the supplement alone rather than raising --
-    this runs on an observability path that must never fail a dispatch.
+    The single source of those shapes, including the `session_limit` rows PR
+    #1486 added for the 2026-09-11 refusal ("You've hit your session limit").
+    Imported lazily: `fanout_dispatch` imports THIS module for the on-output
+    assessment, so a module-level import here would be a cycle. An import
+    failure degrades to no limit patterns rather than raising -- this runs on
+    an observability path that must never fail a dispatch, and a missed limit
+    shape reads as `running` rather than taking the process down.
     """
     if _LIMIT_PATTERN_CACHE:
         return tuple(_LIMIT_PATTERN_CACHE)
-    rows: list[tuple[str, str]] = []
     try:
         from .fanout_dispatch import _LIMIT_SHAPED_PATTERNS
     except ImportError:
         _LIMIT_SHAPED_PATTERNS = ()
-    for label, needle in tuple(_LIMIT_SHAPED_PATTERNS) + _ADDITIONAL_LIMIT_PATTERNS:
-        row = (str(label), str(needle).casefold())
-        if row not in rows:
-            rows.append(row)
-    _LIMIT_PATTERN_CACHE.extend(rows)
-    return tuple(rows)
+    _LIMIT_PATTERN_CACHE.extend(
+        (str(label), str(needle).casefold()) for label, needle in _LIMIT_SHAPED_PATTERNS
+    )
+    return tuple(_LIMIT_PATTERN_CACHE)
 
 
 def _ends_at_prompt(text: str) -> bool:
