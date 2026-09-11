@@ -174,6 +174,26 @@ Rules:
 - Grepping the repo and matching stale strings under `build/lib/` — it is a
   gitignored copy of old sources. Scope searches to `src/`, `tests/`, `docs/`,
   `skills/`.
+- Letting an exit code report success over work that failed. On 2026-09-11
+  every unit of a dispatch failed on a provider session limit and
+  `omh coding fanout dispatch` exited `0`, so a wrapper reading only the status
+  was told the batch succeeded. The mapper had a case for a refusal, with a
+  docstring saying a shell that only checks the status must not read "nothing
+  was dispatched" as success — the sentence was right and had been applied to
+  only one of the ways work fails to happen.
+  `tests/test_exit_code_truthfulness_policy.py` now re-derives every
+  `*_exit_code` mapper under `src/commands/` and fails when one maps a summary
+  carrying a failure signal to `0`. It says nothing about which code to return,
+  so a new command keeps its own vocabulary and its own recoverable lane; it
+  only may not call failure success.
+- Matching a provider's refusal by wording alone. The limit-shape patterns in
+  `src/coding/fanout_dispatch.py` are how a failure becomes recoverable rather
+  than terminal, and the same day the exit code lied, `You've hit your session
+  limit` matched none of the twelve patterns and classified as `crash` — a
+  condition that clears at a stated time, recorded as a permanent fault. When a
+  provider adds a phrasing, add the pattern and a verbatim regression case; when
+  you add a pattern, check it against ordinary narration in the same commit, the
+  way the existing anchors are deliberately multi-word.
 - Trusting a red run before clearing `build/`. A `ModuleNotFoundError` whose
   traceback names a `build/__editable__…` path is the gitignored editable
   install, not the tree you are editing: your venv's copy predates a module the
