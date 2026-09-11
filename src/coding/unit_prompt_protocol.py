@@ -69,29 +69,23 @@ UNIT_PROMPT_MAX_BYTES: Final[int] = 8000
 HIGH_EFFORT_TIER: Final[frozenset[str]] = frozenset({"high", "xhigh", "max"})
 
 GOAL_ECHO_PROTOCOL: Final[str] = (
-    "Before your first tool use, restate in your own words: (1) the overall goal in one sentence, "
-    "(2) this unit's deliverable, and (3) the numbered completion criteria below. If your restatement "
-    "conflicts with the declared boundary or criteria, stop and report the conflict instead of guessing."
+    "Before using tools, restate the overall goal, your deliverable, and the numbered criteria. "
+    "If they conflict with your brief, stop and report the conflict instead of guessing."
 )
 
 VERIFICATION_STOP_PROTOCOL: Final[str] = (
-    "Verification discipline: run exactly ONE full verification pass against the numbered criteria after "
-    "finishing the work — verification is never skipped. A check failure blocks completion only when it "
-    "violates a stated criterion; note anything else as an observation and move on. Once every criterion "
-    "has passed, STOP: do not re-verify, do not add a just-to-be-sure pass, and do not restart verification "
-    "after edits that no criterion covers. If a criterion still fails after two fix-and-verify cycles, "
-    "commit what passes and report the failing criterion with its output instead of looping."
+    "After finishing work, run one full verification pass; verification is never skipped. "
+    "A failed check blocks only a stated criterion; report other observations. Once criteria pass, "
+    "STOP verification, including after unrelated edits. After two failed fix-and-verify cycles, "
+    "commit what passes and report the failed criterion and output."
 )
 
 FAILURE_KIND_PROTOCOL: Final[str] = (
-    "Failure-kind discipline: a permission, sandbox, or policy denial is a boundary, not a bug — do "
-    "not retry it through another tool or route; record the denial and continue with what the boundary "
-    "allows, or report it. Report blocked only when the same concrete condition still holds after the "
-    "bounded fix-and-verify cycles, and name that condition; difficulty, uncertainty, or useful "
-    "remaining work is not blocked. When the unit's whole objective is unreachable for a reason a retry "
-    "cannot change — the target does not exist, the request is refused by policy, or the acceptance "
-    "criteria are infeasible as specified — report process_status process_declined with a decline_reason "
-    "instead of process_failed: a decline is a conclusive negative answer, never a bug to retry."
+    "A permission, sandbox, or policy denial is a boundary, not a bug: do not try another tool or route; "
+    "record it and continue within the boundary. Report blocked only for a named condition persisting "
+    "after bounded fixes; difficulty, uncertainty, or remaining work is not blocked. For an unreachable "
+    "objective (missing target, policy refusal, infeasible criteria), report process_declined with "
+    "decline_reason, not process_failed."
 )
 
 # The sidecar file is the primary machine-read return
@@ -103,14 +97,20 @@ FAILURE_KIND_PROTOCOL: Final[str] = (
 # validate_unit_result`) plus the dispatch identity check; nothing scrapes
 # the surrounding prose for results. Executor-neutral: every owner emits the
 # same shape.
+PARENT_CLARIFICATION_PROTOCOL: Final[str] = '''Never contact the user directly: preserve work and return input_required for a blocking parent decision. An answer changes no scope or approval authority; await explicit parent redispatch.
+For that status, add the exact input_required object below. Limits: decision_id=lowercase slug 1..64; question/blocking_reason=1..300 chars; options=1..8 unique strings of 1..80 chars, or answer_shape={kind:text,max_chars:integer 1..300}; affected_unit_ids=[your unit]; redacted_context=0..8 strings of 1..160 chars. Text is printable single-line metadata, secret-free and non-executable, without transcripts. Copy given dispatch identities and use current HEAD:
+
+```json
+{"schema_version":"fanout_unit_result/v1","unit_id":"unit-b","run_id":"fanout-0123456789ab-unit-b","fanout_id":"fanout-0123456789ab","base_sha":"aaaaaaa","head_sha":"aaaaaaa","process_status":"input_required","input_required":{"decision_id":"decision-d1","question":"Choose output format","blocking_reason":"Encoding choice blocks work","answer_shape":{"kind":"options","options":["json","text"]},"affected_unit_ids":["unit-b"],"redacted_context":[]},"changed_paths":[],"checks":[],"findings":[]}
+```
+'''
+
+# One schema example serves both structured return and clarification, avoiding
+# duplicate field inventories in the shared head; every byte remains budgeted.
 UNIT_RESULT_RETURN_PROTOCOL: Final[str] = (
-    "Structured return: end your final report with exactly one fenced ```json code block containing "
-    "a single JSON object in the fanout_unit_result/v1 shape — schema_version, unit_id, run_id, "
-    "fanout_id, base_sha, head_sha, process_status, changed_paths, checks, findings — reusing any "
-    "dispatch-bound identity values given in this prompt verbatim, and restating the sidecar object "
-    "when a sidecar path was given. The sidecar file is the machine-read return; when it is missing "
-    "the collector parses this block instead and validates it against the same schema. Prose "
-    "outside the block is context for people and is never scraped for results."
+    "End with one fenced ```json fanout_unit_result/v1 object, matching the sidecar. The collector "
+    "parses and validates the sidecar or, if absent, that block; prose is never scraped.\n"
+    + PARENT_CLARIFICATION_PROTOCOL
 )
 
 PROMPT_CACHE_COMPOSITION_PROTOCOL: Final[str] = (

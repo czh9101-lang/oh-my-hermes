@@ -2069,6 +2069,31 @@ def cmd_coding_fanout_brief(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coding_fanout_clarifications(args: argparse.Namespace) -> int:
+    """Root control-plane question/answer surface; answering never dispatches."""
+    from ..coding.fanout_clarification import project_clarifications, answer_clarification, ClarificationAnswer
+    try:
+        if args.fanout_command == "answer":
+            _print_json(answer_clarification(_paths(args), args.fanout_id,
+                ClarificationAnswer(args.unit, args.decision, args.attempt_id, args.round, args.answer)))
+            return 0
+        result = project_clarifications(_paths(args), args.fanout_id)
+    except (OSError, ValueError) as exc:
+        raise OmhError(f"fanout clarification unavailable: {exc}") from exc
+    if _wants_json(args):
+        _print_json(dict(result))
+    elif result["renderable"] is not None:
+        question = result["renderable"]
+        print(f"{question['unit_id']} / {question['decision_id']} (round {question['round']}): {question['question']}")
+        shape = question["answer_shape"]
+        if shape["kind"] == "options":
+            print("Options: " + ", ".join(shape["options"]))
+        print("This answer changes no scope or approval authority.")
+    else:
+        print("No pending parent question.")
+    return 0
+
+
 def cmd_coding_fanout_status(args: argparse.Namespace) -> int:
     """Render one fanout's unit roster from observed journal events.
 
@@ -2918,6 +2943,20 @@ def _add_coding_commands(sub) -> None:
         help="Validate and freeze a proposed parallel work split into a fanout contract (agent/backend surface).",
     )
     fanout_sub = fanout.add_subparsers(dest="fanout_command", required=True)
+    clarifications = fanout_sub.add_parser("clarifications", help="Root session: render one bounded delegated question.")
+    clarifications.add_argument("fanout_id")
+    clarifications.add_argument("--json", action="store_true")
+    clarifications.set_defaults(func=cmd_coding_fanout_clarifications)
+    answer = fanout_sub.add_parser("answer", help="Root session: record an answer without dispatch or approval.")
+    answer.add_argument("fanout_id")
+    answer.add_argument("--unit", required=True)
+    answer.add_argument("--decision", required=True)
+    answer.add_argument("--attempt-id", required=True, help="Exact child attempt from the rendered question, not the goal attempt.")
+    answer.add_argument("--round", required=True, type=int)
+    answer_value = answer.add_mutually_exclusive_group(required=True)
+    answer_value.add_argument("--answer")
+    answer_value.add_argument("--cancel", action="store_true")
+    answer.set_defaults(func=cmd_coding_fanout_clarifications)
 
     fanout_prepare = fanout_sub.add_parser("prepare")
     fanout_prepare.add_argument("--goal", nargs="+", required=True, help="Accepted user goal being split.")

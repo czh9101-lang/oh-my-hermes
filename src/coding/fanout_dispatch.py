@@ -118,6 +118,12 @@ from .fanout_contracts import (
     FanoutContractError,
     verification_command_argv,
 )
+from .fanout_clarification_dispatch import (
+    bind_clarification, clarification_resume_journal, claim_answered_worktree,
+    record_answer_redispatch, parent_decision_prompt, reported_producer_head,
+)
+from .fanout_clarification_schema import ClarificationError
+from .fanout_clarification import read_clarification, clarification_path
 from .fanout_journal import (
     RESUME_HOLD_ACTIONS,
     RESUME_HOLD_SUCCEEDED,
@@ -1947,6 +1953,10 @@ def dispatch_fanout(
     # Read once, before any unit is considered: the plan is a pure function of
     # the prior journal and the contract's own dependency edges, so it is the
     # same plan on every machine and can be printed before anything spawns.
+    resume_journal = clarification_resume_journal(paths, contract, {
+        "journal": resume_journal, "base_sha": base_sha,
+        "goal_attempt_id": goal_attempt_id, "only_units": list(only_units or []),
+    })
     resume_plan = (
         None
         if resume_journal is None
@@ -3664,8 +3674,11 @@ def _dispatch_unit(
         if preference:
             routed_model = preference
             effective_model_route = {**(model_route or {}), "selected_model": preference}
-    argv = build_dispatch_argv(owner, prompt, effective_model_route)
     worktree = _worktree_path(repo_root, unit_id)
+    clarification = None
+    if not dry_run and fanout_id:
+        clarification = read_clarification(clarification_path(paths, fanout_id, unit_id))
+    argv = build_dispatch_argv(owner, prompt, effective_model_route)
     child_environment = fanout_child_environment(
         os.environ if base_env is None else base_env,
         depth=dispatch_depth,
@@ -3803,14 +3816,24 @@ def _dispatch_unit(
         "attempt_id": attempt_id, "worktree_ref": str(worktree), "base_sha": base_sha,
         "observed_revision": None,
     }
+    prior = project_run_executor_session(read_observation_events(paths, run_id=run_ref), run_id=run_ref)
+    previous_receipt = read_session_receipt(prior.get('executor_session')).receipt
+    predecessor_attempt_id = previous_receipt.binding.attempt_id if previous_receipt is not None else None
+    if clarification is not None:
+        clarification = claim_answered_worktree(paths, fanout_id, {
+            "unit_id": unit_id, "run_ref": run_ref, "base_sha": base_sha,
+            "contract_digest": session_contract_digest, "goal_attempt_id": review_budget.attempt_id,
+            "worktree_path": str(worktree), "attempt_id": clarification["attempt_id"],
+        })
+        # The early read is not authority: serialize only the atomically validated claim.
+        prompt += parent_decision_prompt(clarification)
+        argv = build_dispatch_argv(owner, prompt, effective_model_route)
     known_secrets = (goal_text, prompt, *tuple(
         value for key, value in child_env.items()
         if any(marker in key.upper() for marker in ('TOKEN', 'SECRET', 'PASSWORD', 'API_KEY'))
     )[:126])
-    prior = project_run_executor_session(read_observation_events(paths, run_id=run_ref), run_id=run_ref)
-    previous_receipt = read_session_receipt(prior.get('executor_session')).receipt
-    predecessor_attempt_id = previous_receipt.binding.attempt_id if previous_receipt is not None else None
-    worktree_record = ensure_fanout_unit_worktree(
+    worktree_record = ({"created": False, "reused": True, "worktree_path": str(worktree)}
+        if clarification is not None else ensure_fanout_unit_worktree(
         paths,
         repo_root=repo_root,
         unit_id=unit_id,
@@ -3822,7 +3845,7 @@ def _dispatch_unit(
         failure_diagnostic_context={**diagnostic_context, "known_secrets": known_secrets},
         capacity_resume=(capacity_resume_rows or {}).get(unit_id),
         contract_digest=session_contract_digest,
-    )
+    ))
     if not worktree_record.get("created") and not worktree_record.get('reused'):
         return {
             "unit_id": unit_id,
@@ -3909,6 +3932,10 @@ def _dispatch_unit(
         if attempt_id in dispatch_recorded:
             return
         dispatch_recorded.add(attempt_id)
+        # One decision claim can cover bounded process retries; each attempt
+        # still receives its own worker_dispatch observation below.
+        if clarification is not None and len(dispatch_recorded) == 1:
+            record_answer_redispatch(paths, clarification)
         append_journal_observation(paths, {
             'target_type': 'run', 'target_id': run_ref, 'run_id': run_ref,
             'event': 'worker_dispatch', 'attempt_id': attempt_id, 'status': 'observed',
@@ -4285,23 +4312,6 @@ def _dispatch_unit(
         summary = f"auth-shaped failure ({auth_label}); {summary}"
     elif limit_label:
         summary = f"limit-shaped failure ({limit_label}); {summary}"
-    append_journal_observation(
-        paths,
-        {
-            "target_type": "run",
-            "target_id": run_ref,
-            "run_id": run_ref,
-            "event": "worker_result",
-            "status": status,
-            "summary": summary,
-            "evidence_refs": [],
-            "attempt_id": attempt_id,
-            **({'failure_diagnostic': failure_diagnostic} if failure_diagnostic is not None else {}),
-            "worker_ref": unit_id,
-            "worktree_ref": str(worktree),
-            "runtime_profile": owner,
-        },
-    )
     unit_result = _intake_unit_result(
         paths,
         runner=runner,
@@ -4315,6 +4325,22 @@ def _dispatch_unit(
         stdout_text=stdout_text,
         known_secrets=known_secrets,
     )
+    input_required = (unit_result.get("result_schema_valid")
+                      and unit_result.get("unit_result", {}).get("process_status") == "input_required")
+    if input_required:
+        bind_clarification(paths, unit_result["unit_result"], {
+            "fanout_id": fanout_id, "unit_id": unit_id, "run_ref": run_ref,
+            "attempt_id": attempt_id, "goal_attempt_id": review_budget.attempt_id,
+            "base_sha": base_sha, "contract_digest": session_contract_digest,
+            "worktree_path": str(worktree),
+        })
+    append_journal_observation(paths, {
+        "target_type": "run", "target_id": run_ref, "run_id": run_ref,
+        "event": "worker_result", "status": "blocked" if input_required else status,
+        "summary": summary, "evidence_refs": [], "attempt_id": attempt_id,
+        **({'failure_diagnostic': failure_diagnostic} if failure_diagnostic is not None else {}),
+        "worker_ref": unit_id, "worktree_ref": str(worktree), "runtime_profile": owner,
+    })
     if failure_diagnostic is None and not unit_result.get('result_schema_valid'):
         failure_diagnostic = diagnostic('unit_result', 'malformed_result', exit_code, 'process')
         append_journal_observation(paths, {
@@ -4328,7 +4354,7 @@ def _dispatch_unit(
     # reported what it did. Runs before the ladder is built, so the journal
     # event it may append is visible to `_unit_verification_is_observed`.
     verification: dict[str, Any] = {}
-    if run_verification and exit_code == 0 and unit_result.get("result_schema_valid"):
+    if run_verification and exit_code == 0 and unit_result.get("result_schema_valid") and not input_required:
         verification_task = f"{unit_id}:verification"
         producer_revision = str(unit_result["producer_head_sha"])
         if health_events is not None:
@@ -4403,7 +4429,7 @@ def _dispatch_unit(
         "owner": owner,
         "model": routed_model,
         "reasoning_effort": routed_effort,
-        "status": "completed" if exit_code == 0 else "failed",
+        "status": "input_required" if input_required else "completed" if exit_code == 0 else "failed",
         "exit_code": exit_code,
         "worktree_path": str(worktree),
         "filesystem_confinement": filesystem_confinement,
@@ -4411,7 +4437,7 @@ def _dispatch_unit(
         "verification_environment_policy": verification_environment.receipt,
         "shared_artifacts": shared_artifacts,
         **_dispatch_status_ladder(
-            process_succeeded=exit_code == 0,
+            process_succeeded=exit_code == 0 and not input_required,
             result_schema_valid=bool(unit_result.get("result_schema_valid")),
             unit_verification_observed=_unit_verification_is_observed(paths, run_ref),
         ),
@@ -4604,11 +4630,13 @@ def _intake_unit_result(
             fanout_id=fanout_id,
             base_sha=base_sha,
         )
-        producer_head_sha = _observed_clean_producer_head(runner, worktree)
+        producer_head_sha = (reported_producer_head(validated, worktree)
+            if validated['process_status'] == 'input_required' else _observed_clean_producer_head(runner, worktree))
         if producer_head_sha is None:
             raise ValueError("dispatcher could not observe a clean committed producer HEAD")
         if validated["head_sha"] != producer_head_sha:
             raise ValueError("head_sha does not match dispatcher-observed producer HEAD")
+        bounded = _bounded_unit_result(validated, known_secrets=known_secrets)
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, RecursionError) as exc:
         return _unit_result_failure(
             paths,
@@ -4641,7 +4669,7 @@ def _intake_unit_result(
         "result_schema_valid": True,
         "unit_result_source": "sidecar",
         "producer_head_sha": producer_head_sha,
-        "unit_result": _bounded_unit_result(validated, known_secrets=known_secrets),
+        "unit_result": bounded,
     }
 
 
@@ -4704,11 +4732,13 @@ def _intake_stdout_unit_result(
             fanout_id=fanout_id,
             base_sha=base_sha,
         )
-        producer_head_sha = _observed_clean_producer_head(runner, worktree)
+        producer_head_sha = (reported_producer_head(validated, worktree)
+            if validated['process_status'] == 'input_required' else _observed_clean_producer_head(runner, worktree))
         if producer_head_sha is None:
             raise ValueError("dispatcher could not observe a clean committed producer HEAD")
         if validated["head_sha"] != producer_head_sha:
             raise ValueError("head_sha does not match dispatcher-observed producer HEAD")
+        bounded = _bounded_unit_result(validated, known_secrets=known_secrets)
     except (ValueError, TypeError, RecursionError) as exc:
         return _unit_result_failure(
             paths,
@@ -4743,7 +4773,7 @@ def _intake_stdout_unit_result(
         "result_schema_valid": True,
         "unit_result_source": "stdout_fenced_block",
         "producer_head_sha": producer_head_sha,
-        "unit_result": _bounded_unit_result(validated, known_secrets=known_secrets),
+        "unit_result": bounded,
     }
 
 
@@ -4762,6 +4792,8 @@ def _validated_unit_result_payload(
         # the intake contract's stable checks[i].reported_by error.
         _validate_executor_sidecar_checks(payload)
     validated = validate_unit_result(payload)
+    if validated["process_status"] == "input_required" and validated["input_required"]["affected_unit_ids"] != [unit_id]:
+        raise ClarificationError("affected_unit_ids outside reporting unit authority")
     _validate_unit_result_identity(
         validated,
         unit_id=unit_id,
@@ -4855,6 +4887,12 @@ def _bounded_unit_result(validated: Mapping[str, Any], *,
     # Executor-authored free text cannot be proven to be a path/command rather
     # than a prompt or source body. Preserve report shape and provenance, not
     # those bodies. Actual changed paths remain independently observed recovery.
+    if 'input_required' in validated:
+        request = validated['input_required']
+        text = json.dumps(request)
+        if any(secret and secret in text for secret in known_secrets):
+            raise ClarificationError("input_required contains private dispatch content")
+        bounded['input_required'] = request
     bounded['changed_paths'] = [
         'reported-path-withheld'
         for _value in list(validated.get('changed_paths', []))[:_MAX_UNIT_RESULT_PATHS]
@@ -5159,6 +5197,7 @@ def _dependency_failed(result: dict[str, Any] | None) -> bool:
     return result.get("status") in {
         "capability_snapshot_invalid",
         "failed",
+        "input_required",
         "blocked_by_dependency",
         # A cancelled dependency produced nothing a dependent can build on. It
         # is admitted as a prerequisite by neither this predicate's opposite
@@ -5204,7 +5243,8 @@ def _blocked(unit: Mapping[str, Any], results: Mapping[str, dict[str, Any]]) -> 
     entry["blocked_on"] = failed or [
         dep for dep in deps if not _dependency_satisfied(results.get(dep))
     ]
-    entry['blocked_reasons'] = {dep: ('capacity' if dep in capacity_deps else
+    entry['blocked_reasons'] = {dep: ('awaiting_input' if (results.get(dep) or {}).get('status') == 'input_required' else
+        'capacity' if dep in capacity_deps else
         'cancelled' if dep in cancelled_deps else 'failure') for dep in entry['blocked_on']}
     return entry
 
@@ -5275,6 +5315,9 @@ def _resume_hold(
     entry["resume"] = _resume_note(decision)
     carried = decision.get('carry_forward')
     if isinstance(carried, Mapping):
+        if carried.get('terminal_state') == 'input_required':
+            entry['status'] = 'input_required'
+            entry['attempt_id'] = carried.get('attempt_id')
         capacity = read_capacity_fields(carried)
         if capacity:
             entry.update(capacity)

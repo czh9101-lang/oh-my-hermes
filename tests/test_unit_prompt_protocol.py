@@ -151,11 +151,21 @@ class SharedPreambleCacheTests(unittest.TestCase):
         or the clock — or one changed byte forfeits every sibling's cache."""
         lines = shared_unit_preamble_lines(_GOAL)
         preamble = "\n".join(lines)
-        # `unit_id` is deliberately absent from this list: the structured-return
-        # protocol legitimately names the schema's field names, which are
-        # byte-identical across siblings; only unit-specific VALUES are volatile.
-        for unit_field in ("impl", "Impl", "aux", "agent/impl", "branch_suggestion"):
-            self.assertNotIn(unit_field, preamble)
+        # Given unique machine-consumed unit identities (not common prose substrings).
+        units = [
+            {"unit_id": "volatile-alpha-identity", "title": "volatile-alpha-identity",
+             "owner": "codex", "file_scope": ["src/alpha/"]},
+            {"unit_id": "volatile-beta-identity", "title": "volatile-beta-identity",
+             "owner": "claude-code", "file_scope": ["docs/beta/"]},
+        ]
+        # When sibling prompts are built, then only their suffix carries each identity.
+        for spec in units:
+            unit_id = str(spec["unit_id"])
+            unit = _contract_unit(units, unit_id)
+            prompt = build_unit_prompt(unit, _GOAL)
+            self.assertTrue(prompt.startswith(preamble))
+            self.assertIn(unit_id, prompt[len(preamble):])
+            self.assertNotIn(unit_id, preamble)
         self.assertEqual(lines, shared_unit_preamble_lines(_GOAL))
         import omh.coding.unit_prompt_protocol as module
 
