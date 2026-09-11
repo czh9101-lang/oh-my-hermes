@@ -788,7 +788,14 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # chains (DeepSeek Flash (V4.1) in, the superseded generations out) and
 # gained the one-sentence rule that a chain names the current generation
 # of each line (net +14 chars); warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 925059
+# 925059 -> 925284: `model-setup` names the three categories added on
+# 2026-09-11 (capable, simple-work, deep-work) in the same sentence that
+# already enumerates every other shipped chain. This belongs in the
+# always-loaded body because that sentence IS the shipped-recommendation
+# enumeration the lane reads to a user choosing a category: one missing from
+# it reads as a category that does not exist. The chains themselves live in
+# the catalog, outside this budget; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 925284
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

@@ -403,6 +403,9 @@ credential, dispatch, or execution evidence:
 | `writing` | Prose and docs | Kimi K3, then Qwen3-Coder, then Gemini 3.1 Pro (medium) |
 | `visual-engineering` | Frontend and visual | Claude Fable 5.1, then Kimi K3 (high) |
 | `artistry` | Unconventional work | Gemini 3.1 Pro, then Claude Fable 5.1, then Kimi K3 (high) |
+| `capable` | Strong general work | Claude Fable 5.1, then Claude Opus 5, then Kimi K3, then GLM 5.3 (medium) |
+| `simple-work` | Small everyday tasks | GPT-5.6 Luna, then DeepSeek Flash (V4.1), then Claude Haiku 4.5 (low) |
+| `deep-work` | Long tasks at frontier depth | GPT-6 Astra, then GPT-5.6 Sol (high) |
 
 Want to try the Ultrafast tier — Kimi K3 Ultrafast (300 TPS) and
 GLM 5.3 Ultrafast? They are served on

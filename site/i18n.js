@@ -629,6 +629,14 @@ window.OMH_I18N = {
     "chain.writing": { en: "Prose and docs", ko: "산문과 문서", ja: "文章とドキュメント", zh: "文案与文档" },
     "chain.visual-engineering": { en: "Frontend and visual", ko: "프런트엔드와 비주얼", ja: "フロントエンドとビジュアル", zh: "前端与视觉" },
     "chain.artistry": { en: "Unconventional work", ko: "관습을 벗어난 작업", ja: "型にはまらない作業", zh: "非常规工作" },
+    "chain.capable": { en: "Strong general work", ko: "범용 고성능 작업", ja: "汎用の高性能作業", zh: "通用高能力工作" },
+    "chain.simple-work": { en: "Small everyday tasks", ko: "간단한 일상 작업", ja: "簡単な日常タスク", zh: "简单的日常任务" },
+    "chain.deep-work": {
+      en: "Long tasks at frontier depth",
+      ko: "최상위 깊이의 긴 작업",
+      ja: "最高深度の長時間タスク",
+      zh: "最高深度的长任务"
+    },
     "chain.note": {
       en: "The result is prepared routing configuration, not provider availability, credential, dispatch, or execution evidence.",
       ko: "그 결과물은 준비된 라우팅 설정일 뿐이며, 제공자 가용성·자격 증명·디스패치·실행의 증거가 아닙니다.",

@@ -286,7 +286,7 @@ SHIPPED_MODEL_RECOMMENDATIONS: Final[dict[str, object]] = {
         # has somewhere to ask for it. Low throughout, matching quick.
         "simple-work": [
             _with_effort(_LUNA, "low"),
-            _with_effort(_DEEPSEEK, "low"),
+            _with_effort(_DEEPSEEK_FLASH, "low"),
             _with_effort(_HAIKU_45, "low"),
         ],
         # deep-work: the GPT frontier pair on a long task. Effort is high,

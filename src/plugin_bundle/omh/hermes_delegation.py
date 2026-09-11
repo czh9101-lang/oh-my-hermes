@@ -128,7 +128,7 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
     # head-matches simple-work.
     "simple-work": (
         ("gpt-5.6-luna", "low"),
-        ("deepseek-v3.2", "low"),
+        ("deepseek-flash", "low"),
         ("claude-haiku-4-5", "low"),
     ),
     # deep-work: the GPT frontier pair held on a long task. Effort is high and
