@@ -137,6 +137,12 @@ def _imported_modules(tree: ast.Module) -> list[tuple[str, tuple[str, ...], int]
 # is reachable only from an explicit operator command; none sits on the chat or
 # handoff-preparation path.
 PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
+    "src/coding/workspace_preflight.py": (
+        "reached only from the explicit `omh coding fanout dispatch` bridge, after that unit's "
+        "worktree exists and before its agent CLI is spawned; runs only the bounded local git "
+        "probes enumerated in GIT_ARGV_ALLOWLIST below, under GIT_NO_LAZY_FETCH=1 so a partial "
+        "clone cannot reach its promisor remote, and starts no executor and no network client."
+    ),
     "src/coding/fanout_dispatch.py": (
         "`omh coding fanout dispatch` -- the one opt-in bridge that spawns local agent CLIs, "
         "documented as the scoped exception in CLAUDE.md."
@@ -634,6 +640,52 @@ FORGE_PROGRAMS = frozenset({"gh", "hub", "glab", "tea"})
 # The complete set of git argv literals in `src/`, keyed by file and by the run
 # of literal words that follow `git`. Every one is local; none names a remote.
 GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
+    ("src/coding/workspace_preflight.py", ("rev-parse",)): (
+        "`git rev-parse --absolute-git-dir` locates the git directory of the unit's own worktree so "
+        "the index-write probe can put its temporary index and scratch blob there; read-only and "
+        "names no remote"
+    ),
+    ("src/coding/workspace_preflight.py", ("hash-object",)): (
+        "`git hash-object -w -- <scratch blob>` is the pre-spawn observation that this isolation's "
+        "object store accepts a write at all; it writes one unreferenced loose object from a scratch "
+        "file the probe creates and removes, and names no remote"
+    ),
+    ("src/coding/workspace_preflight.py", ("read-tree", "HEAD")): (
+        "`git read-tree HEAD` under a temporary GIT_INDEX_FILE, so the index-write probe never "
+        "touches the index the unit will use; read-only against local objects"
+    ),
+    ("src/coding/workspace_preflight.py", ("update-index",)): (
+        "`git update-index --add --cacheinfo` into that same temporary index: the one command that "
+        "actually proves an index entry can be written, which is what the 2026-09-11 incident could "
+        "not do for 36 minutes; local-only and discarded with the temporary index"
+    ),
+    ("src/coding/workspace_preflight.py", ("cat-file",)): (
+        "`git cat-file -e <ref>^{commit}` asks whether the commits the unit was told to work from "
+        "are actually present in this isolation; read-only and names no remote"
+    ),
+    ("src/coding/workspace_preflight.py", ("merge-base",)): (
+        "`git merge-base <base> <target>` proves the two sides share history before a unit starts "
+        "rather than after its merge fails; read-only, local-only, and not the forbidden `merge` verb"
+    ),
+    ("src/coding/workspace_preflight.py", ("rev-list",)): (
+        "`git rev-list --objects --missing=print -n <bound>` is the partial-clone scan: it PRINTS "
+        "absent objects rather than fetching them, runs under GIT_NO_LAZY_FETCH=1, and is the check "
+        "that turns the incident's silent blob:none clone into a named pre-spawn blocker"
+    ),
+    ("src/coding/workspace_preflight.py", ("config",)): (
+        "`git config --get` on extensions.partialClone, remote.origin.promisor and "
+        "remote.origin.partialclonefilter reads whether this clone promises objects it does not "
+        "hold; read-only, and reading a remote's config key is not contacting it"
+    ),
+    ("src/coding/workspace_preflight.py", ("config", "core.repositoryFormatVersion")): (
+        "`git config --get core.repositoryFormatVersion` is reported alongside the promisor keys "
+        "above, because a partial clone needs format version 1 and the number is what tells a "
+        "reader the detection is not a misread; read-only local config and names no remote"
+    ),
+    ("src/coding/workspace_preflight.py", ("ls-tree", "HEAD")): (
+        "`git ls-tree -r --name-only HEAD` lists the tracked paths whose casefolds are compared for "
+        "collisions on a case-insensitive filesystem; read-only and local-only"
+    ),
     ("src/coding/worktree_creator.py", ("worktree", "add")): (
         "creates a local isolated workspace for an executor; touches no remote"
     ),
