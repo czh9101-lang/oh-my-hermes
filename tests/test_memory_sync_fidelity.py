@@ -155,6 +155,51 @@ class MemorySyncFidelityTests(unittest.TestCase):
         # Then the CLI-facing error cannot echo the untrusted body.
         self.assertNotIn(sentinel, str(error.exception))
 
+    def test_backpressure_idempotency(self) -> None:
+        from omh.workflows.memory_sync_reservations import SyncScope, claim_sync, report_sync_outcome
+
+        active = SyncScope(provider_id="provider-local", **{key: value for key, value in _BINDING.items() if key != "input_digest"})
+        first_input = _BINDING["input_digest"]
+        second_input = "sha256:" + "c" * 64
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reservations.json"
+            writes: list[tuple[str, ...]] = []
+            decisions: list[str] = []
+            for attempt, inputs in (
+                ("attempt-1", (first_input, second_input)),
+                ("attempt-1", (first_input, second_input)),
+                ("attempt-2", (first_input,)),
+                ("attempt-3", (second_input,)),
+                ("attempt-1", ("sha256:" + "d" * 64,)),
+            ):
+                result = claim_sync(path, active, attempt, inputs)
+                decisions.append(result.decision)
+                self.assertFalse(result.authorizes_provider_write)
+                if result.decision == "claimed":
+                    # Independent fixture host approval; no provider callback in OMH.
+                    writes.append(inputs)
+            self.assertEqual(len(writes), 1)
+            self.assertEqual(decisions, ["claimed", "held", "held", "held", "held"])
+            _ = report_sync_outcome(path, active, "attempt-1", (first_input, second_input), "written")
+            skipped = claim_sync(path, active, "attempt-4", ("sha256:" + "e" * 64,), skip_reason="skipped_timeout")
+            self.assertEqual(skipped.decision, "skipped")
+            complete_row = receipt(evidence="observed_local_runtime")
+            coalesced = {**receipt("skipped_queue", "observed_local_runtime"),
+                         "receipt_id": "receipt-2", "attempt_id": "attempt-2", "coalesced_into": "receipt-1"}
+            result = posture(fidelity_input([complete_row, coalesced]))["input_fidelity"]
+            self.assertEqual(at(result, ("attempts",)), [complete_row, coalesced])
+            self.assertEqual(at(result, ("synchronization_readiness",)), "unknown")
+            timeout = {**receipt("skipped_timeout", "observed_local_runtime"),
+                       "receipt_id": "receipt-3", "attempt_id": "attempt-4",
+                       "input_digest": "sha256:" + "e" * 64}
+            payload = fidelity_input([timeout])
+            fidelity = metadata_mapping(payload["input_fidelity"], "fixture")
+            fidelity["binding"] = {**_BINDING, "input_digest": timeout["input_digest"]}
+            payload["input_fidelity"] = fidelity
+            result = posture(payload)["input_fidelity"]
+            self.assertEqual(at(result, ("attempts",)), [timeout])
+            self.assertEqual(at(result, ("synchronization_readiness",)), "unknown")
+
     def test_unknown_caps_and_portability(self) -> None:
         # Given no cap evidence, opaque extraction and a partial receipt.
         payload = fidelity_input([receipt("truncated_head")])

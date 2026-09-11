@@ -151,7 +151,9 @@ null and its `entered_provider_state` may be `unknown`. Grouping rows by
 were classified. It doesn't bound provider traffic in either direction, and
 it is not a billing figure. A `coalesce` policy with
 `duplicate_prevention: input_digest` is a declared intent to avoid repeats;
-the posture cannot prove that intent held (see the gaps below).
+the posture cannot prove that intent held (see the gaps below). A host that
+wants the intent enforced on its own machine can route its writes through
+the local reservation gate described under "Host-side duplicate prevention".
 
 Failure and skips. `skipped_queue`, `skipped_timeout`, and `rejected`
 receipts cannot claim that the selected input entered provider state; the
@@ -331,16 +333,212 @@ authorizes no `MEMORY.md` or `USER.md` write. Lifecycle questions about
 enabling, pausing, deleting, or exporting provider memory belong to
 `external-connector-readiness`.
 
+## Host-side duplicate prevention
+
+The posture records what a host tells it about backpressure. It can't stop a
+host from submitting the same turn twice. For a host that wants that stop,
+OMH provides a small local gate in `omh.workflows.memory_sync_reservations`.
+It's a Python API for wrapper and host integrators. There is no CLI for it,
+and a normal user never touches it.
+
+The gate is a metadata-only ledger of reservations. Before a host performs a
+provider write that it has already approved through its own path, it claims
+the write's identity. A fresh claim comes back once. Every later call for the
+same identity, whether a retry, a duplicate under a new attempt id, or a
+member of an earlier coalesced batch, comes back `held`. The host acts only
+on a fresh claim, so at most one write is admitted per identity. OMH itself
+never calls the provider, never schedules or waits for anything, and never
+writes memory. A claim is admission to act once. It isn't approval, and it
+isn't proof that the write happened.
+
+### Scope and identities
+
+`SyncScope(provider_id, provider_mode, profile_ref, session_ref,
+policy_digest)` names the partition. All five fields are required and pass
+the same opaque-reference rules as the posture binding; `policy_digest` must
+be `sha256:` followed by 64 lowercase hex digits. Nothing is inherited or
+defaulted. Two scopes that differ in any field keep separate reservations and
+cannot see each other's claims.
+
+An input identity is a `sha256:` digest of the material the host would send.
+One claim declares between one and 24 of them. Order doesn't matter; the set
+is sorted and deduplicated before it is compared or stored. A coalesced batch
+must declare every member's stable digest rather than a batch-level hash that
+changes with membership. Otherwise the gate can't recognize a member when it
+shows up alone later.
+
+### Calls and return values
+
+`claim_sync(path, scope, attempt_id, input_digests, *, skip_reason=None)`
+reserves the declared set atomically while holding the existing OS file lock
+on a `.<name>.lock` sidecar next to `path`. The host picks `path` under its
+own private local operations storage; it isn't a memory store. The call
+returns a `SyncReservation` with three fields: `decision`, `reason`, and
+`host_outcome`. Nothing else comes back. A held call doesn't reveal which
+other attempt owns the identity.
+
+| `decision` | `reason` | Meaning |
+| --- | --- | --- |
+| `claimed` | `reserved` | Fresh. The host may perform its one approved action for this set. |
+| `held` | `duplicate_attempt` | Same attempt id and same set as an earlier call. `host_outcome` repeats whatever the host last reported for it. |
+| `held` | `conflicting_attempt` | Same attempt id with a different set or a different skip declaration. Never a fresh claim. |
+| `held` | `duplicate_input` | A new attempt overlapping any digest already declared in this scope. The whole new set is recorded as held, so partial overlap doesn't free the rest. |
+| `skipped` | `skipped_queue` or `skipped_timeout` | The host declared the skip through `skip_reason`. The digests are consumed; no write is admitted, now or on replay. |
+
+`authorizes_provider_write` and `submission_observed` are properties on every
+`SyncReservation`, and both are always `False`: on a fresh claim, on a held
+call, and after a host report. They exist so that code reading the object
+can't mistake it for approval or for a receipt.
+
+`report_sync_outcome(path, scope, attempt_id, input_digests, outcome)` lets
+the host record `written`, `not_written`, or `unknown` against an exact
+claimed identity. The return is `held` with reason `host_report_recorded` and
+the outcome echoed in `host_outcome`. This is the host's unauthenticated
+assertion, not something OMH observed, and it never releases the reservation:
+a `not_written` report still leaves the identity held. An `unknown` outcome
+may be resolved later by the same host. Two contradictory terminal reports
+raise `ValueError` and leave the row unchanged, and a report against a held
+or skipped row raises as well.
+
+### Worked example
+
+The calls below were run against a temporary directory; the comments show
+the returned values. `host_submit` and `host_approved` stand for the host's
+own code, which OMH neither supplies nor calls.
+
+```python
+from pathlib import Path
+
+from omh.workflows.memory_sync_reservations import SyncScope, claim_sync, report_sync_outcome
+
+scope = SyncScope(
+    provider_id="provider-local",
+    provider_mode="local",
+    profile_ref="qa-profile",
+    session_ref="session-a",
+    policy_digest="sha256:" + "a" * 64,
+)
+ledger = Path(operations_dir) / "sync-reservations.json"
+turn = "sha256:" + "b" * 64
+
+first = claim_sync(ledger, scope, "attempt-1", (turn,))
+# SyncReservation(decision='claimed', reason='reserved', host_outcome='unknown')
+if first.decision == "claimed" and host_approved:
+    host_submit(turn)  # the host's separately approved provider write
+    report_sync_outcome(ledger, scope, "attempt-1", (turn,), "written")
+    # SyncReservation(decision='held', reason='host_report_recorded', host_outcome='written')
+
+retry = claim_sync(ledger, scope, "attempt-1", (turn,))
+# SyncReservation(decision='held', reason='duplicate_attempt', host_outcome='written')
+other = claim_sync(ledger, scope, "attempt-2", (turn,))
+# SyncReservation(decision='held', reason='duplicate_input', host_outcome='unknown')
+skipped = claim_sync(ledger, scope, "attempt-3", ("sha256:" + "c" * 64,), skip_reason="skipped_timeout")
+# SyncReservation(decision='skipped', reason='skipped_timeout', host_outcome='unknown')
+replay = claim_sync(ledger, scope, "attempt-4", ("sha256:" + "c" * 64,))
+# SyncReservation(decision='held', reason='duplicate_input', host_outcome='unknown')
+```
+
+After those calls the ledger holds four rows, one per attempt id, with the
+scope repeated on each. Keys are stored sorted. The `entries` list is
+trimmed here to the first two rows; the skipped and replayed rows have the
+same shape.
+
+```json
+{
+  "entries": [
+    {
+      "attempt_id": "attempt-1",
+      "decision": "claimed",
+      "host_outcome": "written",
+      "input_digests": ["sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+      "reason": "reserved",
+      "scope": {
+        "policy_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "profile_ref": "qa-profile",
+        "provider_id": "provider-local",
+        "provider_mode": "local",
+        "session_ref": "session-a"
+      }
+    },
+    {
+      "attempt_id": "attempt-2",
+      "decision": "held",
+      "host_outcome": "unknown",
+      "input_digests": ["sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+      "reason": "duplicate_input",
+      "scope": {
+        "policy_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "profile_ref": "qa-profile",
+        "provider_id": "provider-local",
+        "provider_mode": "local",
+        "session_ref": "session-a"
+      }
+    }
+  ],
+  "schema_version": "memory_sync_reservations/v1"
+}
+```
+
+The file contains scope fields, opaque attempt ids, digests, and closed
+category values. There is no field for the turn text, the provider response,
+or a credential, and the loader rejects any row with extra keys.
+
+### Interruptions and uncertainty
+
+This is at-most-once admission, not exactly-once delivery. Two failures look
+the same from the ledger. A host that claims and then dies before writing
+leaves a `claimed` row with `host_outcome: unknown`; the write never happened
+and any replay comes back `held`. A host that writes and then dies before
+reporting leaves the same row; the write did happen and any replay comes back
+`held`. The ledger can't tell the two apart and won't guess. There is no
+release, expiry, lease takeover, provider reconciliation, or background
+worker. Deciding whether a lost write should be resent is the host's call,
+made with its own provider evidence, outside this gate. Losing an uncertain
+write is the chosen trade; resubmitting it blindly is what the gate exists to
+prevent.
+
+The ledger is written by atomic replacement through the shared
+`atomic_write_json` primitive, which does not fsync. That covers a process
+being killed mid-write. It does not cover power loss or a storage rollback,
+and neither is claimed. Keep the ledger and its lock sidecar for as long as
+any identity in it could be replayed; the API has no cleanup or reset
+operation on purpose. At most 1,024 rows are kept, and a ledger larger than
+4 MiB is refused. When the ledger is full, `claim_sync` raises instead of
+evicting an identity.
+A malformed ledger, an inconsistent row, a platform where the OS lock can't
+be enforced, or any I/O error also raises. None of those paths returns a
+fresh claim, so a host that treats exceptions as "go ahead" is defeating the
+gate.
+
+The ledger is private local storage for a cooperating host. A host that
+bypasses the gate, reuses a stale fresh result, declares dishonest identities,
+switches the ledger path mid-lifetime, or deletes the file is outside the
+contract. This is not a multi-tenant access-control service and not an
+authenticated provider journal.
+
+### What the gate changes in the posture
+
+Nothing. A host that ran through the gate and hands in receipts for its own
+local fixture carries `evidence_class: observed_local_runtime` on them, and
+the readiness table above keeps `synchronization_readiness` at `unknown` for
+that class. `review_status` stays `not_omh_reviewed`,
+`authorizes_native_memory_mutation` stays `false`, and `export` and
+`provider_side_deletion` stay `unknown`. No Hermes hook was patched to add
+this: the plugin's `queue_prefetch` renders the next pack and
+`on_memory_write` records a write after Hermes has made it, and both were
+left as they are.
+
 ## What this contract does not prove
 
 - It does not install a provider, inspect credentials, call a hosted API, or
   upload memory. Readiness inspection adds no egress.
 - It does not count provider writes. Receipt ids are unique inside one posture
   and `duplicate_prevention` is a declared policy; neither proves that a retry
-  or a coalesced submission avoided a duplicate write. That proof needs an
-  eligible submission adapter with an independent write-count oracle, which
-  this tree does not have. The related backpressure criterion (F7 in the
-  delivery plan) is recorded as blocked, not passed.
+  or a coalesced submission avoided a duplicate write. The local reservation
+  gate lets a cooperating host prevent duplicate admission. Its regression
+  fixtures check the production gate against an independent write counter.
+  These are local fixture observations: live provider write counts and native
+  Hermes write counts remain `null`, not zero.
 - It does not authenticate receipts. `evidence_intake` says so on every posture.
 - It does not answer export or provider-side deletion; both stay `unknown`
   here and are owned by the lifecycle posture.
