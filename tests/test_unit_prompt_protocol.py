@@ -20,6 +20,7 @@ from omh.coding.unit_prompt_protocol import (  # noqa: E402
     PROMPT_CACHE_COMPOSITION_PROTOCOL,
     REVIEW_ROLE_PROTOCOL,
     STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE,
+    TOOL_BATCHING_PROTOCOL,
     UNIT_PROMPT_MAX_BYTES,
     UNIT_RESULT_RETURN_PROTOCOL,
     VERIFICATION_STOP_PROTOCOL,
@@ -67,6 +68,27 @@ class ProtocolContentTests(unittest.TestCase):
 
     def test_structural_search_discipline_rides_the_shared_invariant_preamble(self) -> None:
         self.assertIn(STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE, shared_unit_preamble_lines(_GOAL))
+
+    def test_tool_batching_rides_every_unit_section_and_stays_out_of_the_frozen_head(self) -> None:
+        # Independent work batches, dependent work serializes, and shell output
+        # carries no separator noise into the bounded capture (Codex Desktop
+        # prompt review, 2026-09-11 — adopted as executor-neutral discipline).
+        # It is a unit-section line on purpose: the shared head is frozen at
+        # its measured small-model budget, and a batching rule is the first a
+        # weak lane may drop, so it never displaces a stop rule there.
+        self.assertNotIn(TOOL_BATCHING_PROTOCOL, shared_unit_preamble_lines(_GOAL))
+        for role in MODEL_ROLES:
+            unit = _contract_unit(
+                [{"unit_id": "u", "title": "U", "owner": "codex", "file_scope": ["src/"], "role": role}],
+                "u",
+            )
+            self.assertIn(TOOL_BATCHING_PROTOCOL, unit_protocol_lines(unit), role)
+        self.assertIn("independent reads and searches together", TOOL_BATCHING_PROTOCOL)
+        self.assertIn("sequential", TOOL_BATCHING_PROTOCOL)
+        self.assertIn("separator commands", TOOL_BATCHING_PROTOCOL)
+        # Nothing in the batching rule pushes the unit to keep working.
+        for push in ("keep going", "to completion", "persist"):
+            self.assertNotIn(push, TOOL_BATCHING_PROTOCOL)
 
     def test_structured_return_names_the_shape_and_the_parse_rule(self) -> None:
         """The report must end in a fenced fanout_unit_result/v1 JSON object so

@@ -94,6 +94,22 @@ FAILURE_KIND_PROTOCOL: Final[str] = (
     "instead of process_failed: a decline is a conclusive negative answer, never a bug to retry."
 )
 
+# Tool batching (2026-09-11, from the Codex Desktop prompt review in
+# MODEL_OPTI.md — a community source adopted for the discipline it states):
+# independent reads and searches go out together; anything that depends on
+# a result, mutates, needs approval, or waits goes one at a time. Decorative
+# shell separators are noise inside a bounded output capture. It rides the
+# unit section, not the shared head: the head is frozen at its measured
+# small-model budget (`src/quality/small_model_prompt_budget.py`), and a
+# batching rule is the first thing a weak lane may drop, so it must never
+# displace a stop rule there. Every unit still receives it.
+TOOL_BATCHING_PROTOCOL: Final[str] = (
+    "Tool discipline: issue independent reads and searches together in one turn and inspect every "
+    "result; keep dependent steps, edits, approvals, waits, and follow-ups that adapt to a result "
+    "sequential. Do not decorate shell output with separator commands (echo '====', printf '---'); the "
+    "capture is bounded and the noise displaces evidence."
+)
+
 # The sidecar file is the primary machine-read return
 # (`fanout_dispatch._intake_unit_result`). The block restates the sidecar
 # object when a sidecar path was given, so the two returns cannot disagree,
@@ -147,8 +163,7 @@ HIGH_EFFORT_CALIBRATIONS: Final[dict[str, str]] = {
         "checks out of the repository, and commit tests only where a criterion asks for them or the repo "
         "already keeps tests for this kind of change, sized like their neighbors. Add no helpers, "
         "fallbacks, validation, flags, or shims beyond what the criteria name; when you can just change "
-        "the code, change it. Before each tool turn, privately list what you need next and request every "
-        "independent item in that one response. No one is watching this unit in real time: proceed on "
+        "the code, change it. No one is watching this unit in real time: proceed on "
         "every reversible action inside the boundary without asking, and if your last paragraph is a "
         "plan, a question, or a promise, do that work now. Every progress claim points at a tool result "
         "from this run — a failed check is reported with its output, a skipped step as skipped."
@@ -525,8 +540,9 @@ def unit_protocol_lines(unit: Mapping[str, Any]) -> list[str]:
 
     The unit-invariant blocks (goal echo, verification stop, failure kind)
     live in `shared_unit_preamble_lines()` so sibling prompts keep a
-    byte-identical head; only content that genuinely varies per unit belongs
-    here.
+    byte-identical head; content that varies per unit belongs here, and so
+    does an invariant line the frozen head cannot afford, such as
+    `TOOL_BATCHING_PROTOCOL` (see the note at that constant).
     """
     criteria = completion_criteria_for_unit(unit)
     lines = ["Done means, and only means:"]
@@ -536,6 +552,7 @@ def unit_protocol_lines(unit: Mapping[str, Any]) -> list[str]:
     # Contract units carry the declared role inside the recorded route, not as
     # a top-level key; accept both so pre-contract unit dicts behave the same.
     role = str(unit.get("role", "") or "") or (str(model_route.get("role", "") or "") if model_route else "")
+    lines.append(TOOL_BATCHING_PROTOCOL)
     if role == "review":
         lines.append(REVIEW_ROLE_PROTOCOL)
     calibration = calibration_for_route(model_route)
