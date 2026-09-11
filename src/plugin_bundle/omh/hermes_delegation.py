@@ -702,8 +702,10 @@ def configured_route_for_wire(
 # chain exhaustion clearing back to parent inheritance. omh_delegate_route
 # records each successful route write here so the HUD can label a fallback
 # lane as a fallback instead of rendering it indistinguishable from a head
-# route (and an exhausted chain as `category(model inherit)` — the category
-# names the lane and never changes — instead of plain inherit). The record is preparation evidence only: a label upgrade for an
+# route, an exhausted chain as `category(model inherit)`, and a lane routed
+# to the model the parent session itself runs as `category(model =parent)`
+# — the category names the lane and never changes — instead of plain
+# inherit. The record is preparation evidence only: a label upgrade for an
 # observed child whose wire identity matches, never execution evidence and
 # never a routing input.
 DELEGATION_ROUTE_PROVENANCE_SCHEMA_VERSION = "delegation_route_provenance/v1"
@@ -887,11 +889,13 @@ def _provenance_for_dispatch(
                 return None
             claimed = (exhaustion_claims or {}).get(index, "")
             return record if session_id and session_id == claimed else None
-        if is_inherit:
-            # `inherit` wins over any chain match (the projection's
-            # documented invariant): a child on the parent session's own
-            # model was not routed, whatever the prepared route said.
-            return None
+        # A child on the parent session's own model may still have been
+        # ROUTED there: the owner's `deep` chain heads on the model the
+        # session itself runs, so every deep lane looked unrouted and the
+        # category the tool prepared was thrown away. The chain projection
+        # alone still says inherit (it cannot tell the two apart); a fresh
+        # record whose identity matches is what tells them apart, and the
+        # caller marks the row `same_as_parent` so the label says both.
         matched = (wire_model and wire_model == record["wire_model"]) or (
             alias and alias == record["alias"]
         )
@@ -1199,7 +1203,10 @@ def mixture_category_for(
     """Project an observed child model+effort onto a mixture category label.
 
     ``inherit`` wins over any chain match: a child on the parent session's own
-    model was not routed, whatever chain its model also appears in. Otherwise
+    model looks unrouted, whatever chain its model also appears in — the
+    projection cannot tell "routed to the model the parent also runs" from
+    "not routed"; a fresh matching provenance record can, and the reader
+    upgrades the row from it (`same_as_parent`). Otherwise
     the first category (canonical chain order) whose head matches wins, then
     the category where the model sits earliest in its chain (a shallow
     fall-through entry is a likelier route than a deep one; canonical order
@@ -1845,12 +1852,13 @@ def read_hermes_native_subagents(
         # row identity: when the child's identity matches the newest route
         # prepared before its dispatch, a fallback lane says so and an
         # exhausted chain keeps its category with an `inherit` model token
-        # (`category(model inherit)`) instead of converging into plain
-        # inherit. The upgrade carries its own source marker. The model that
-        # matches here is the same observed wire model the alias and category
-        # above were derived from, so the three stay one identity; a child
-        # whose model the host never recorded and never used matches nothing,
-        # which is the safe degradation.
+        # (`category(model inherit)`), and a lane routed to the parent's own
+        # model keeps its category with a `=parent` token, instead of
+        # converging into plain inherit. The upgrade carries its own source
+        # marker. The model that matches here is the same observed wire
+        # model the alias and category above were derived from, so the three
+        # stay one identity; a child whose model the host never recorded and
+        # never used matches nothing, which is the safe degradation.
         provenance = _provenance_for_dispatch(
             route_provenance,
             started_at=child["started_at"],
@@ -1868,6 +1876,16 @@ def read_hermes_native_subagents(
                     row["category_source"] = "route_provenance"
             else:
                 if provenance["category"]:
+                    if row["category"] == "inherit":
+                        # Routed to the model the parent also runs: the
+                        # category is the lane's, and the row says the
+                        # model is the parent's own so nobody reads the
+                        # label as a cheaper dispatch than it was. Gated on
+                        # the record carrying a category by decision: an
+                        # explicit bare-model route (`set` with a model and
+                        # no category) onto the parent's model has no lane
+                        # to name, so it stays the plain `inherit(model)`.
+                        row["same_as_parent"] = True
                     row["category"] = provenance["category"]
                     row["category_source"] = "route_provenance"
                 if provenance["origin"] == "fallback":
