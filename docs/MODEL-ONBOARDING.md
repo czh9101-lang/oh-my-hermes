@@ -49,12 +49,24 @@ When the vendor or host exposes multiple spellings for one documented model,
 do not infer inheritance by stripping suffixes. Add only the reviewed catalog
 ids to `DECLARED_MODEL_CONTRACT_PROJECTIONS`, preserve the requested/provider-
 qualified id in the route receipt, and resolve a separate canonical contract
-id, reasoning mode, service tier, and `exact`/`declared_inheritance`
-provenance. Keep the plugin bundle's explicit mirror parity-tested for
+id, reasoning mode, service tier, and `exact`/`declared_inheritance`/
+`dated_snapshot` provenance. Keep the plugin bundle's explicit mirror parity-tested for
 provider eligibility, category projection, and approximate pricing. The host
 or runtime owns wire translation. A catalog row is neither entitlement nor
 execution evidence, and a malformed or future suffix remains uncontracted
-until it receives an explicit declaration.
+until it receives an explicit declaration. The one shape that projects
+without a declared row is a vendor's dated snapshot (`<base>-YYYY-MM-DD`,
+OpenAI's convention; a provider that serves only `gpt-5.6-terra-2026-07-09`
+was reported 2026-09-11): `dated_snapshot_base()` in
+`src/coding/model_contracts.py` and its plugin mirror strip only that
+trailing shape (month and day ranges, not a calendar), and every caller
+projects it only onto a base it already knows — a contract, a declared row, a
+priced or provider-mapped alias, a chain entry, or for the HUD's `inherit`
+reading the parent session's own model — at that base's own mode and tier,
+with `dated_snapshot` provenance. The direction is one way: a snapshot meets
+its base, an unpinned base never meets a date-pinned request or parent.
+Probe the dated form in this step too; an unknown base with a date must stay
+unknown.
 
 A bare name that classifies `unknown` gets generic discipline; add it to
 `_CLAUDE_TIER_ALIASES` (Claude) or the prefix tables in
@@ -104,7 +116,8 @@ outside OMH's contract scope. Input is bounded local JSON (1 MiB maximum), and
 the command performs no network calls, configuration writes, route changes,
 or issue creation. Its stable `model_contract_coverage/v1` comparison body has
 no timestamps and includes inventory source/digest plus per-id exact,
-`declared_inheritance`, `intentional_exclusion`, or `missing` status. The
+`declared_inheritance`, `dated_snapshot`, `intentional_exclusion`, or
+`missing` status. The
 per-id dimensions cover family recognition, contract, effort, high-effort and
 composition calibration, provider eligibility, category projection, price
 source/absence, and docs. Required missing contracts return nonzero;
