@@ -52,7 +52,10 @@ class HelpProbeBudgetTests(unittest.TestCase):
             [sys.executable, "-c", program], limit_bytes=SESSION_HELP_PROBE_BYTES
         )
         self.assertEqual(reason, "observed")
-        self.assertEqual(len(data or b""), 20_001)
+        # Count the payload, not the bytes: the child's own line ending is
+        # platform-native, so a CRLF run is two bytes longer than the same
+        # output on POSIX and an exact length would fail only on Windows.
+        self.assertEqual((data or b"").count(b"x"), 20_000)
 
     def test_keep_partial_hands_back_what_was_read_without_calling_it_complete(self) -> None:
         # The reason still says the read was cut off: the caller decides what a
