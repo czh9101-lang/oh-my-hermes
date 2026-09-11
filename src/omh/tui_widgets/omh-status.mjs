@@ -161,6 +161,18 @@ export default function register(sdk) {
   // host recorded. A zero with no provenance renders nothing: the reader
   // only sends a bare zero it can vouch for, but the check stays so this
   // surface never states a billing fact the row does not carry.
+  //
+  // A child the host could not price (a custom gateway provider, where
+  // Hermes' pricing produces no amount and stamps its `unknown` no-figure
+  // status -- `agent/usage_pricing.py:549`, persisted into the usage table
+  // by `agent/turn_usage.py:236,257`) reaches this function one of two
+  // ways, and the reader decides which. When OMH knows a rate for the
+  // model it sends the token-derived figure with the approximate flag, so
+  // the row reads `~$0.0431`. When it does not, the recorded zero and the
+  // host's own word arrive untouched and the row still reads
+  // `$0.0000 (unknown)`. Nothing here matches on that word -- the rule is
+  // the one above, and only a successful approximation changes what
+  // renders.
   function costSegmentText(row) {
     if (!Number.isFinite(row.cost_usd)) return ''
     if (row.cost_usd > 0) return `${row.cost_approximate ? '~' : ''}$${row.cost_usd.toFixed(4)}`

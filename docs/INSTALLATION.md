@@ -436,6 +436,18 @@ approximated figure still renders with its `~` marker. A row whose figure
 came from your own rate is marked `cost_override` beside `cost_approximate`,
 so a number you chose can be told apart from our shipped ballpark.
 
+"Nothing was recorded" covers two shapes, both of them the host declining to
+state a cost: no cost provenance at all, and Hermes' own `unknown` status,
+which it stamps whenever its pricing produced no amount
+(`agent/usage_pricing.py:549`, persisted into the usage table by
+`agent/turn_usage.py:236,257`). Every child served through a custom gateway
+provider carries that status, because Hermes prices only the routes it has
+rates for. A row where the host did record an outcome — `included`, a billed
+zero, any word it chose — keeps that figure untouched, and in a session whose
+rows mix the two the recorded outcome is what the row reports. When the model
+has no rate on either side, the row keeps rendering `$0.0000 (unknown)` rather
+than gaining a figure OMH cannot support.
+
 Every shipped rate carries the vendor page it was read from and the month, so
 a reader can tell a current price from one that drifted.
 
