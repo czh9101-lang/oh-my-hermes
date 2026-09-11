@@ -332,7 +332,7 @@ OMH에는 다음과 같이 편집 가능한 순서형 recommendation chain이 �
 | `artistry` | 비정형 창작 | Gemini 3.1 Pro, 다음 Claude Fable 5.1, 다음 Kimi K3 (high) |
 | `capable` | 범용 고성능 작업 | Claude Fable 5.1, 다음 Claude Opus 5, 다음 Kimi K3, 다음 GLM 5.3 (medium) |
 | `simple-work` | 간단한 일상 작업 | GPT-5.6 Luna, 다음 DeepSeek Flash (V4.1), 다음 Claude Haiku 4.5 (low) |
-| `deep-work` | 최상위 깊이의 긴 작업 | GPT-6 Astra, 다음 GPT-5.6 Sol (high) |
+| `deep-work` | 최상위 깊이의 긴 작업 | GPT-6 Astra (high) |
 
 Ultrafast 티어가 궁금하다면 — Kimi K3 Ultrafast(300 TPS), GLM 5.3 Ultrafast — [OpenGateway](https://opengateway.ai/)에서 만나볼 수 있습니다.
 

@@ -278,7 +278,7 @@ The shipped catalog is editorial policy, not benchmark output:
 | `artistry` | Unconventional work | Gemini 3.1 Pro, Claude Fable 5.1, Kimi K3 |
 | `capable` | Strong general work | Claude Fable 5.1, Claude Opus 5, Kimi K3, GLM 5.3 (`medium`) |
 | `simple-work` | Small everyday tasks | GPT-5.6 Luna, DeepSeek Flash (V4.1), Claude Haiku 4.5 (`low`) |
-| `deep-work` | Long tasks at frontier depth | GPT-6 Astra, GPT-5.6 Sol (`high`) |
+| `deep-work` | Long tasks at frontier depth | GPT-6 Astra (`high`) |
 | `x_platform_data` affinity | X-platform data affinity | Grok, Kimi K3, Gemini |
 | Shared final order (`last_resort.any`) | Last resort when a chain is exhausted | Claude Opus 5, GPT-5.6 Sol |
 

@@ -327,7 +327,7 @@ OMH 随附以下可编辑的有序 recommendation chain。guided model setup 只
 | `artistry` | 非常规创作 | Gemini 3.1 Pro，其次 Claude Fable 5.1，其次 Kimi K3 (high) |
 | `capable` | 通用高能力工作 | Claude Fable 5.1，其次 Claude Opus 5，其次 Kimi K3，其次 GLM 5.3 (medium) |
 | `simple-work` | 简单的日常任务 | GPT-5.6 Luna，其次 DeepSeek Flash (V4.1)，其次 Claude Haiku 4.5 (low) |
-| `deep-work` | 最高深度的长任务 | GPT-6 Astra，其次 GPT-5.6 Sol (high) |
+| `deep-work` | 最高深度的长任务 | GPT-6 Astra (high) |
 
 想试试 Ultrafast 档? Kimi K3 Ultrafast(300 TPS)与 GLM 5.3 Ultrafast都在 [OpenGateway](https://opengateway.ai/) 上提供。
 

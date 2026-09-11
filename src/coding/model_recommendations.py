@@ -289,16 +289,16 @@ SHIPPED_MODEL_RECOMMENDATIONS: Final[dict[str, object]] = {
             _with_effort(_DEEPSEEK_FLASH, "low"),
             _with_effort(_HAIKU_45, "low"),
         ],
-        # deep-work: the GPT frontier pair on a long task. Effort is high,
-        # NOT xhigh: at xhigh this chain would be byte-identical to
-        # ultrabrain, and since head-match resolves in canonical order the
-        # earlier category would take every projection and leave deep-work a
-        # label nothing could ever carry. High also mirrors `deep`, which is
-        # the same shape one price rung down.
-        "deep-work": [
-            _with_effort(_ASTRA, "high"),
-            _with_effort(_SOL, "high"),
-        ],
+        # deep-work: the GPT frontier model on a long task. Effort is high,
+        # NOT xhigh: at xhigh this chain's head would be ultrabrain's head,
+        # and since head-match resolves in canonical order the earlier
+        # category would take every projection and leave deep-work a label
+        # nothing could ever carry. High also mirrors `deep`, the same shape
+        # one price rung down. The original request named Sol behind Astra;
+        # the owner dropped it (2026-09-11, after that request) for
+        # consistency with the same-day superseded-generation retirement, so
+        # the single entry is deliberate.
+        "deep-work": [_with_effort(_ASTRA, "high")],
     },
     "role_suggestions": {
         "main": [

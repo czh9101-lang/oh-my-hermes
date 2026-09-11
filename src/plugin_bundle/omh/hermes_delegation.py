@@ -131,26 +131,22 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
         ("deepseek-flash", "low"),
         ("claude-haiku-4-5", "low"),
     ),
-    # deep-work: the GPT frontier pair held on a long task. Effort is high and
+    # deep-work: the GPT frontier model held on a long task. Effort is high and
     # deliberately NOT xhigh -- at xhigh this chain's head would be
     # ("gpt-6-astra", "xhigh"), which is ultrabrain's head, and because a head
     # match resolves in canonical order the earlier category wins every
     # projection; deep-work would be a label nothing could ever carry. High
     # also mirrors `deep`, the same shape one price rung down.
     #
-    # Sol is named here at the owner's explicit request, and it is the one
-    # shipped chain that still names it: the 2026-09-11 decision above moved
-    # superseded generations out of the chains and cites "GPT-5.6 Sol behind
-    # Astra" as its example. The two instructions point opposite ways, so this
-    # is the owner's explicit chain winning over an inference from a rule
-    # written for stale fall-throughs -- raised, not resolved here. Dropping
-    # Sol leaves deep-work reachable (high still separates it from
-    # ultrabrain's xhigh), so it is a one-line change if the owner prefers the
-    # rule intact.
-    "deep-work": (
-        ("gpt-6-astra", "high"),
-        ("gpt-5.6-sol", "high"),
-    ),
+    # The original request named GPT-5.6 Sol behind Astra here. The owner
+    # dropped it (decision 2026-09-11, taken after that request) for
+    # consistency with the same-day retirement of superseded generations from
+    # the shipped chains: a chain naming Sol behind Astra is the exact case
+    # that rule cites, so keeping it would have made a rule printed in the
+    # shipped model-setup text false. Single-entry is therefore deliberate,
+    # not an omission -- like ultrabrain and architect, which the same decision
+    # shortened.
+    "deep-work": (("gpt-6-astra", "high"),),
 }
 
 # User-editable chain overrides. The document replaces only the chains of the

@@ -355,13 +355,12 @@ BUILTIN_CATEGORY_MODELS: Final[dict[str, dict[str, tuple[dict[str, str], ...]]]]
         "artistry": ({"model_id": "gpt-5.6-sol", "reasoning_effort": ""},),
         # The three appended categories keep this profile's rule: Sol at the
         # effort the tier wants, and Astra only where the category is about
-        # depth rather than cost. deep-work is the one that earns Astra here.
+        # depth rather than cost. deep-work is the one that earns Astra here,
+        # and Sol does not trail it -- same shape as ultrabrain and architect
+        # above, for the same reason.
         "capable": ({"model_id": "gpt-5.6-sol", "reasoning_effort": "medium"},),
         "simple-work": ({"model_id": "gpt-5.6-sol", "reasoning_effort": "low"},),
-        "deep-work": (
-            {"model_id": "gpt-6-astra", "reasoning_effort": "high"},
-            {"model_id": "gpt-5.6-sol", "reasoning_effort": "high"},
-        ),
+        "deep-work": ({"model_id": "gpt-6-astra", "reasoning_effort": "high"},),
     },
     # Claude Code: every frontier category runs the owner-ordered Claude chain
     # (Fable 5.1 -> Opus, 2026-09-06). Fable 5.1 is the most capable widely
