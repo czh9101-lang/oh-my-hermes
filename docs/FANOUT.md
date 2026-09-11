@@ -728,6 +728,40 @@ Rules:
   work that cannot resolve an executor becomes an explicit user choice, not
   retained Hermes implementation).
 
+## Workspace preflight
+
+`git worktree add` creating the isolation, and an executor readiness probe
+saying the binary runs, together answer neither of the questions that matter
+next: can a file be written in that worktree, and does it hold the objects the
+work names? On 2026-09-11 both said yes and the unit spent 36 minutes unable to
+write a git index, against a `blob:none` partial clone with fetching forbidden
+and case-only filename collisions on a case-insensitive filesystem.
+
+So immediately after the worktree exists and before any process is spawned,
+dispatch runs `coding/workspace_preflight.py::probe_workspace` **in that
+worktree**, with a bounded timeout on every command and no network call. Four
+checks, in this order:
+
+| Check | What it observes |
+| --- | --- |
+| `file_write` | A scratch file is created, read back and removed in the worktree. |
+| `git_index_write` | A scratch blob is written to the object store and an index entry through a **temporary** `GIT_INDEX_FILE`, so the unit's real index is never touched. |
+| `objects_present` | `HEAD` and the base ref are commits that exist here, a merge base exists when both sides are named, and — when the clone is partial — no object the work needs is absent. A partial clone is reported, not failed; only an actually missing object blocks. |
+| `case_collision` | Whether the filesystem is case-insensitive is *observed*, not inferred from the platform; if it is, no two tracked paths in `HEAD` may differ only in case. |
+
+A failing check stops the unit **before the spawn**. It reports
+`status: worktree_failed` with `reason_code: workspace_preflight_blocked`,
+`failure_kind: workspace_blocked`, the `unit_state` the first blocking check
+implies (`permission_blocked` for a write refusal or a case collision,
+`data_missing` for absent objects), and the full `workspace_preflight/v1`
+payload naming every check and its detail. None of the four is cleared by
+running the unit again under the same conditions, which is why this is a
+refusal rather than a retry: the repair belongs at the preparation step, on the
+worktree that is left exactly as it is.
+
+Everything the probe writes it removes again — scratch paths only, inside the
+worktree or the git directory, never a tracked file and never the real index.
+
 ## Failure recovery
 
 A spawned agent CLI that dies because the provider quota is spent or the stored
@@ -737,8 +771,13 @@ way. This section is what dispatch does about that. It applies identically to
 funnel into the same engine.
 
 - **`failure_kind` is a closed enum on every failed unit envelope**:
-  `auth_shaped`, `limit_shaped`, `timeout`, `binary_missing`, or `crash` as the
-  fallback. Precedence is fixed and deterministic. The dispatcher's own
+  `auth_shaped`, `limit_shaped`, `timeout`, `binary_missing`,
+  `workspace_blocked`, or `crash` as the fallback. Precedence is fixed and
+  deterministic. `workspace_blocked` outranks everything because it is decided
+  before the spawn (see **Workspace preflight** above): there is no process, no
+  exit code and no output to classify, and it is never offered a recovery
+  retry because retrying is what cannot clear it. Among the rest, the
+  dispatcher's own
   synthetic exit codes classify first — 127 is `binary_missing`, 124 is
   `timeout` — because they are observations of the process rather than text the
   provider wrote. Text then classifies as `auth_shaped` **before**

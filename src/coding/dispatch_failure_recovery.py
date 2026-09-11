@@ -58,6 +58,11 @@ FAILURE_KIND_AUTH_SHAPED = "auth_shaped"
 FAILURE_KIND_LIMIT_SHAPED = "limit_shaped"
 FAILURE_KIND_TIMEOUT = "timeout"
 FAILURE_KIND_BINARY_MISSING = "binary_missing"
+# The one kind no exit code can produce. The workspace preflight found a
+# blocker inside the unit's isolation and the spawn never happened, so there is
+# no process, no exit code and no output to classify -- the dispatcher assigns
+# this kind directly. See `coding/workspace_preflight.py`.
+FAILURE_KIND_WORKSPACE_BLOCKED = "workspace_blocked"
 FAILURE_KIND_CRASH = "crash"
 
 FAILURE_KINDS: tuple[str, ...] = (
@@ -65,22 +70,29 @@ FAILURE_KINDS: tuple[str, ...] = (
     FAILURE_KIND_LIMIT_SHAPED,
     FAILURE_KIND_TIMEOUT,
     FAILURE_KIND_BINARY_MISSING,
+    FAILURE_KIND_WORKSPACE_BLOCKED,
     FAILURE_KIND_CRASH,
 )
 
 # The two kinds a recovery choice is offered for: both describe the provider
 # refusing to serve this owner right now, which another owner or a later attempt
-# can answer. A crash, a timeout, or a missing binary is not that.
+# can answer. A crash, a timeout, a missing binary, or a blocked workspace is
+# not that -- a workspace blocker in particular is the one failure retrying is
+# guaranteed not to clear, which is why it is refused before the spawn rather
+# than offered a retry after one.
 RECOVERABLE_FAILURE_KINDS: frozenset[str] = frozenset(
     {FAILURE_KIND_AUTH_SHAPED, FAILURE_KIND_LIMIT_SHAPED}
 )
 
 FAILURE_KIND_PRECEDENCE = (
-    "binary_missing (synthetic exit 127) and timeout (synthetic exit 124) are the dispatcher's own "
-    "observations of the process and classify before any text match. Text then classifies as "
-    "auth_shaped before limit_shaped: an invalid credential must be repaired before any attempt can "
-    "succeed, while a limit clears on its own, so an overlapping message belongs in the lane that "
-    "waiting cannot clear. Everything else is crash."
+    "workspace_blocked outranks every other kind because it is decided BEFORE the spawn: the "
+    "workspace preflight found a blocker in the unit's isolation, so no process exists and no "
+    "output can be classified. Among the kinds a finished process can produce, binary_missing "
+    "(synthetic exit 127) and timeout (synthetic exit 124) are the dispatcher's own observations of "
+    "the process and classify before any text match. Text then classifies as auth_shaped before "
+    "limit_shaped: an invalid credential must be repaired before any attempt can succeed, while a "
+    "limit clears on its own, so an overlapping message belongs in the lane that waiting cannot "
+    "clear. Everything else is crash."
 )
 
 # Deterministic auth-shape patterns, matched case-insensitively over the

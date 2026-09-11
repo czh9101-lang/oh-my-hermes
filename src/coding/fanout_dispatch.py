@@ -59,6 +59,7 @@ from .dispatch_failure_recovery import (
     ON_FAILURE_WAIT,
     FAILURE_KIND_AUTH_SHAPED,
     FAILURE_KIND_LIMIT_SHAPED,
+    FAILURE_KIND_WORKSPACE_BLOCKED,
     FAILURE_RECOVERY_CLAIM_BOUNDARY,
     FAILURE_RECOVERY_SCHEMA_VERSION,
     auth_shaped_label,
@@ -140,6 +141,11 @@ from .fanout_retry import (
     evaluate_unit_retry,
 )
 from .unit_prompt_protocol import shared_unit_preamble_lines, unit_protocol_lines
+from .workspace_preflight import (
+    probe_workspace,
+    workspace_preflight_reason,
+    workspace_preflight_unit_state,
+)
 from .verification_execution import VerificationExecutionGate
 from .verification_integration import run_post_integration_verification
 from .verification_plan import VERIFICATION_PLAN_SCHEMA_VERSION, compile_verification_plan
@@ -3847,6 +3853,43 @@ def _dispatch_unit(
             **_dispatch_status_ladder(),
         }
     worktree = Path(str(worktree_record["worktree_path"]))
+    # The isolation now exists; whether the work can be DONE in it is a
+    # separate question, and the 2026-09-11 incident is what happens when only
+    # the first one is asked. A readiness probe says the executor binary runs.
+    # It cannot say that this worktree takes a file write, that its index can
+    # be written, that the commits the unit merges are present rather than
+    # promised by a partial clone, or that its tracked filenames survive a
+    # case-insensitive filesystem. Those four are observed HERE, in the path
+    # the unit was handed, before any process is spawned -- because none of
+    # them is cleared by running the unit and finding out.
+    #
+    # `target_ref` is deliberately None: the worktree was just created at
+    # `base_sha`, so the unit has no head of its own yet and HEAD is the only
+    # other commit there is to check.
+    workspace_preflight = probe_workspace(
+        worktree, base_ref=base_sha or None, target_ref=None, runner=runner
+    )
+    if not workspace_preflight["ok"]:
+        # `worktree_failed` rather than a new status word: the closed status
+        # vocabulary is a wire contract external wrappers gate on, and this IS
+        # a setup-phase failure of the worktree. `reason_code` is what
+        # separates "the worktree could not be created" from "the worktree was
+        # created and cannot be worked in"; `workspace_preflight` carries which
+        # check failed and why. The worktree is left exactly as it is -- the
+        # repair happens at the preparation step, on what is on disk.
+        return {
+            "unit_id": unit_id,
+            "run_ref": run_ref,
+            "owner": owner,
+            "status": "worktree_failed",
+            "attempt_id": attempt_id,
+            "reason_code": "workspace_preflight_blocked",
+            "failure_kind": FAILURE_KIND_WORKSPACE_BLOCKED,
+            "unit_state": workspace_preflight_unit_state(workspace_preflight),
+            "workspace_preflight": workspace_preflight,
+            "reason": workspace_preflight_reason(workspace_preflight),
+            **_dispatch_status_ladder(),
+        }
     session_capability = (negotiate_session_capability(owner, argv[0], env=child_env)
                           if argv and getattr(runner, 'accepts_output_capture', False) else None)
     if session_capability is not None:

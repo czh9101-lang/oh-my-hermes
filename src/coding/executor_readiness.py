@@ -105,6 +105,29 @@ EXECUTOR_VERSION_POLICY = (
     "output at run time; the probe reports every PATH resolution it observed so a stale "
     "binary shadowing a newer install is visible instead of silently selected."
 )
+
+# What this probe actually observed, stated as a value so no reader has to
+# infer it from the absence of anything else. The probe runs one command and
+# reads its version line; it has no worktree, touches no repository, and
+# therefore cannot answer whether the work can be done anywhere.
+READINESS_OBSERVED_BINARY_VERSION_ONLY = "binary_version_only"
+
+# Appended to a ready summary. The workspace question is not left unanswered --
+# it is answered LATER, by `workspace_preflight` running in the unit's own
+# isolation immediately before the spawn, which is the only place a worktree
+# exists to probe.
+READINESS_WORKSPACE_PROBE_NOTE = (
+    "Binary runs; workspace not yet probed — the dispatch runs `workspace_preflight` in the unit's "
+    "isolation before spawning."
+)
+
+READINESS_BINARY_ONLY_CLAIM_BOUNDARY = (
+    "`available: true` means one command was run and it exited 0. It is not a claim that the work "
+    "can be done: file writes, git index writes, the presence of the commits the work needs, and "
+    "case-collision safety are properties of the unit's isolation, which this probe never sees. "
+    "The dispatch observes those four with `workspace_preflight` before it spawns anything. "
+    "Readiness is not dispatch, execution, verification, review, CI, or merge evidence."
+)
 _COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "codex": ("codex", ("--version",)),
     "claude-code": ("claude", ("--version",)),
@@ -269,7 +292,15 @@ def probe_executor_readiness(
         )
         result = dict(cached)
         result["pre_handoff_readiness"] = verdict
-        result["claim_boundary"] = contract["claim_boundary"]
+        # A cached command probe keeps the boundary that describes what it
+        # observed. Replacing it with the generic contract sentence would put
+        # the "binary runs; the workspace was never probed" qualification back
+        # out of reach of exactly the readers who read a cached `ready`.
+        result["claim_boundary"] = (
+            READINESS_BINARY_ONLY_CLAIM_BOUNDARY
+            if result.get("observed") == READINESS_OBSERVED_BINARY_VERSION_ONLY
+            else contract["claim_boundary"]
+        )
         if verdict["usable"]:
             result["cache_status"] = "cached"
             result["first_use_skipped"] = True
@@ -492,6 +523,7 @@ def _run_probe(contract: dict[str, object]) -> dict[str, object]:
             {
                 "status": "missing",
                 "available": False,
+                "observed": READINESS_OBSERVED_BINARY_VERSION_ONLY,
                 "observed_once": True,
                 "summary": f"`{command}` was not found on PATH.",
                 "next_action": "choose_executor_or_configure_path",
@@ -511,6 +543,7 @@ def _run_probe(contract: dict[str, object]) -> dict[str, object]:
             {
                 "status": "blocked",
                 "available": False,
+                "observed": READINESS_OBSERVED_BINARY_VERSION_ONLY,
                 "observed_once": True,
                 "summary": str(exc),
                 "next_action": "choose_executor_or_configure_path",
@@ -527,10 +560,19 @@ def _run_probe(contract: dict[str, object]) -> dict[str, object]:
             f"{row['path']} ({row['observed_version']})" for row in resolutions[1:]
         )
         summary = f"{summary} — PATH also resolves: {others}"[:400]
+    if completed.returncode == 0:
+        # `available: true` used to be read as "this executor can do the work".
+        # It never meant that, and on 2026-09-11 the gap cost 36 minutes: the
+        # binary ran, and the isolation it was pointed at could not take a git
+        # index write. The sentence is appended to the summary rather than kept
+        # only in a field because the summary is what a person reads.
+        summary = f"{summary} {READINESS_WORKSPACE_PROBE_NOTE}"[:600]
     result.update(
         {
             "status": "ready" if completed.returncode == 0 else "blocked",
             "available": completed.returncode == 0,
+            "observed": READINESS_OBSERVED_BINARY_VERSION_ONLY,
+            "claim_boundary": READINESS_BINARY_ONLY_CLAIM_BOUNDARY,
             "observed_once": True,
             "exit_code": completed.returncode,
             "command_path": resolved,

@@ -25,7 +25,9 @@ from omh.coding.dispatch_failure_recovery import (  # noqa: E402
     FAILURE_KIND_CRASH,
     FAILURE_KIND_LIMIT_SHAPED,
     FAILURE_KIND_TIMEOUT,
+    FAILURE_KIND_WORKSPACE_BLOCKED,
     FAILURE_KINDS,
+    RECOVERABLE_FAILURE_KINDS,
     OnFailureModeError,
     auth_repair_command,
     auth_shaped_label,
@@ -112,7 +114,19 @@ class FailureKindClassificationTests(unittest.TestCase):
             classify_failure_kind(exit_code=1, limit_label="rate_limit"),
             classify_failure_kind(exit_code=1),
         }
-        self.assertEqual(answers, set(FAILURE_KINDS))
+        # `workspace_blocked` is the one kind the classifier can never answer:
+        # it is assigned before the spawn, when there is no exit code and no
+        # output to classify. Every OTHER member of the enum must still come
+        # out of the classifier, or the enum has grown a value nothing sets.
+        self.assertEqual(answers, set(FAILURE_KINDS) - {FAILURE_KIND_WORKSPACE_BLOCKED})
+        self.assertNotIn(FAILURE_KIND_WORKSPACE_BLOCKED, answers)
+
+    def test_workspace_blocked_is_never_offered_a_recovery_retry(self) -> None:
+        # A blocked workspace is the one failure another attempt cannot clear:
+        # the objects are still missing, the denial is still a denial, and the
+        # case collision is still in the tree.
+        self.assertIn(FAILURE_KIND_WORKSPACE_BLOCKED, FAILURE_KINDS)
+        self.assertNotIn(FAILURE_KIND_WORKSPACE_BLOCKED, RECOVERABLE_FAILURE_KINDS)
 
     def test_synthetic_exit_codes_map_before_any_text_match(self) -> None:
         # 127 and 124 are the dispatcher's own observations of the process, so
