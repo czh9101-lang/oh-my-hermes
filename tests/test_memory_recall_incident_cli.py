@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from _cli_harness import run_cli
+from omh.plugin_bundle.omh.memory_provider import OmhMemoryProvider
 
 
 class MemoryRecallIncidentCliTests(unittest.TestCase):
@@ -65,3 +66,53 @@ class MemoryRecallIncidentCliTests(unittest.TestCase):
                     self.assertEqual(json.loads(saved.read_text()), incident)
                 else:
                     self.assertFalse(incidents.exists())
+
+    def test_live_receipt_binds_only_to_its_session_and_configuration(self) -> None:
+        with TemporaryDirectory() as directory:
+            # Given: an approved record and the actual provider's served receipt in this home.
+            root = Path(directory)
+            home = root / "omh"
+            prefix = ["--omh-home", str(home), "--hermes-home", str(root / "hermes")]
+            status, stdout, stderr = run_cli(prefix + ["memory", "capture", "LIVE_CLAIM_SENTINEL"])
+            self.assertEqual(status, 0, stderr)
+            candidate_id = json.loads(stdout)["candidate"]["candidate_id"]
+            status, stdout, stderr = run_cli(prefix + ["memory", "review", "--candidate", candidate_id])
+            self.assertEqual(status, 0, stderr)
+            revision = json.loads(stdout)["cards"][0]["review_revision"]
+            status, stdout, stderr = run_cli(
+                prefix + ["memory", "approve", candidate_id, "--candidate-revision", revision]
+            )
+            self.assertEqual(status, 0, stderr)
+            record_id = json.loads(stdout)["record"]["record_id"]
+            live = OmhMemoryProvider(home, hermes_home=root / "hermes")
+            live.initialize("session-a", hermes_home=str(root / "hermes"), agent_context="primary", cwd=str(root))
+            live.queue_prefetch("")
+            live.prefetch("")
+            receipt = live.latest_prefetch_receipt()
+            live.shutdown()
+            assert receipt is not None
+            self.assertEqual([item["record_id"] for item in receipt["rendering"]["rendered_records"]], [record_id])
+            before = {str(p): p.read_bytes() for p in home.rglob("*") if p.is_file()}
+            expectations = (
+                (["--session-id", "session-a"], "observed", "canonical_1452_receipt_bound", "rendered_delivery_not_observed"),
+                (["--session-id", "session-b"], "not_authoritative", "receipt_session_mismatch", "unresolved"),
+                ([], "not_authoritative", "receipt_session_unbound", "unresolved"),
+                (["--session-id", "session-a", "--limit", "1"], "not_authoritative", "receipt_configuration_mismatch", "unresolved"),
+            )
+            for options, surface_status, basis, stage in expectations:
+                with self.subTest(options=options):
+                    # When: the registered parser/handler diagnoses through the receipt seam.
+                    status, stdout, stderr = run_cli(
+                        prefix + ["memory", "recall-incident", "--record-id", record_id, *options]
+                    )
+                    # Then: identity decides authority; delivery and use stay unknown.
+                    self.assertEqual(status, 0, stderr)
+                    incident = json.loads(stdout)
+                    self.assertEqual(incident["evidence_surfaces"]["live_prefetch_receipt"],
+                                     {"status": surface_status, "basis": basis})
+                    self.assertEqual(incident["stage"], stage)
+                    self.assertIsNone(incident["delivery_observed"])
+                    self.assertFalse(incident["authorizes_mutation"])
+                    self.assertNotIn("LIVE_CLAIM_SENTINEL", stdout)
+                    self.assertNotIn("selected_record_ids", stdout)
+            self.assertEqual({str(p): p.read_bytes() for p in home.rglob("*") if p.is_file()}, before)

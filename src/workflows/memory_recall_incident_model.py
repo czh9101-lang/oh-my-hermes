@@ -1,4 +1,4 @@
-"""Closed, metadata-only recall diagnosis values; no live receipt contract."""
+"""Closed, metadata-only recall diagnosis values over the canonical receipt contract."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,6 +7,7 @@ import hashlib
 import re
 from typing import Final, Literal, TypedDict
 
+from ..plugin_bundle.omh.memory_governance import SCOPE_KINDS
 from ..system.metadata_safety import require_opaque_metadata_ref
 
 Stage = Literal['not_found', 'pending_or_rejected', 'invalid_or_superseded',
@@ -45,7 +46,7 @@ class RecallIncidentRequest:
             raise IncidentInputError('record_id')
         if self.claim_digest and not re.fullmatch(r'[0-9a-f]{64}', self.claim_digest):
             raise IncidentInputError('claim_digest')
-        if self.scope_kind not in ('project', 'target', 'thread', 'run'):
+        if self.scope_kind not in SCOPE_KINDS:
             raise IncidentInputError('scope_kind')
         for field in ('scope_ref', 'observer', 'observed'):
             value = getattr(self, field)
@@ -114,7 +115,8 @@ REASON_STAGES: Final[dict[str, Stage]] = {
     'selected_not_rendered': 'selected_not_rendered',
     'rendered_delivery_not_observed': 'rendered_delivery_not_observed',
     'delivered_model_use_unknown': 'delivered_model_use_unknown', 'used': 'used',
-    'selected_live_evidence_unavailable': 'unresolved', 'store_unavailable': 'unresolved',
+    'selected_live_evidence_unavailable': 'unresolved', 'live_selection_excluded': 'unresolved',
+    'store_unavailable': 'unresolved',
     'native_only_not_omh_reviewed': 'unresolved', 'selection_unresolved': 'unresolved',
     'ambiguous_anchor': 'unresolved', 'project_memory_disabled': 'unresolved',
 }
@@ -155,3 +157,20 @@ def diagnose_synthetic_recall_stage(reason: str) -> Diagnosis:
     if reason not in REASON_STAGES:
         raise IncidentInputError('synthetic_reason')
     return diagnosis(reason, 'synthetic')
+
+
+def recall_delivery_stage(
+    *, rendered: bool, delivery_observed: bool | None, model_use_observed: bool | None,
+) -> tuple[str, str]:
+    """Classify supplied observations without crossing a missing earlier stage.
+
+    The live receipt validator currently admits only None for delivery/use.
+    Synthetic cases can exercise later states without gaining live authority.
+    """
+    if not rendered:
+        return 'selected_not_rendered', 'selected'
+    if delivery_observed is not True:
+        return 'rendered_delivery_not_observed', 'rendered'
+    if model_use_observed is not True:
+        return 'delivered_model_use_unknown', 'delivered'
+    return 'used', 'used'

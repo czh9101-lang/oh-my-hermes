@@ -1,25 +1,110 @@
 """Read-only, expected-record diagnosis over canonical OMH recall selection.
 
 A prepared pack and an aggregate provider count cannot prove rendering,
-delivery, or model use. The canonical live receipt dependency is #1452.
+delivery, or model use. The provider's canonical prefetch receipt (#1452)
+proves local rendering and return for one session, store and configuration;
+host delivery and model use stay unknown even with it.
 """
 from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
 from ..plugin_bundle.omh.hermes_memory import HERMES_MEMORY_FILES, read_hermes_memory_file
+from ..plugin_bundle.omh.memory_prefetch_receipt import (
+    MAX_PREFETCH_RECEIPT_BYTES, prefetch_receipt_path, validate_prefetch_receipt,
+)
+from ..plugin_bundle.omh.memory_recall_selector import select_memory_recall
 from ..system.local_store import atomic_write_json, read_json_object_result
 from ..system.paths import OmhPaths
 from . import memory
 from ._memory_lifecycle_scan import json_files, read_json
 from .memory_recall_incident_model import (
     EvidenceSurface, Incident, RecallIncidentRequest, diagnosis, digest,
-    diagnose_synthetic_recall_stage,
+    diagnose_synthetic_recall_stage, recall_delivery_stage,
 )
 
 __all__ = ['RecallIncidentRequest', 'build_memory_recall_incident',
            'write_memory_recall_incident', 'diagnose_synthetic_recall_stage']
+
+
+def _read_live_receipt(paths: OmhPaths, request: RecallIncidentRequest) -> tuple[EvidenceSurface, dict[str, Any] | None]:
+    """Bind the provider's persisted receipt to this store, session, configuration and scope.
+
+    Absent or unreadable proof is unknown. A receipt that exists but names a
+    foreign schema, session, store, configuration or lens is rejected as
+    evidence; its identities are still returned so the incident can cite them.
+    """
+    path = prefetch_receipt_path(paths.omh_home)
+    try:
+        if path.is_symlink():
+            return {'status': 'unavailable', 'basis': 'receipt_unreadable'}, None
+        if not path.is_file():
+            return {'status': 'unavailable', 'basis': 'no_receipt_persisted'}, None
+        with path.open('rb') as stream:
+            raw = stream.read(MAX_PREFETCH_RECEIPT_BYTES + 1)
+        if len(raw) > MAX_PREFETCH_RECEIPT_BYTES:
+            return {'status': 'unavailable', 'basis': 'receipt_unreadable'}, None
+        value = json.loads(raw.decode('utf-8'))
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+        return {'status': 'unavailable', 'basis': 'receipt_unreadable'}, None
+    errors = validate_prefetch_receipt(value)
+    if errors or not isinstance(value, dict):
+        return {'status': 'not_authoritative', 'basis': f'incompatible_receipt:{errors[0]}'}, None
+    receipt: dict[str, Any] = value
+
+    def rejected(basis: str) -> tuple[EvidenceSurface, dict[str, Any]]:
+        return {'status': 'not_authoritative', 'basis': basis}, receipt
+
+    if receipt['state'] != 'returned_to_host':
+        return rejected('receipt_not_returned_to_host')
+    if not request.session_id:
+        return rejected('receipt_session_unbound')
+    if receipt['session_id'] != request.session_id:
+        return rejected('receipt_session_mismatch')
+    store = receipt.get('store')
+    home_digests = store.get('home_digests') if isinstance(store, dict) else None
+    if not isinstance(home_digests, list) or digest(str(paths.omh_home.resolve())) not in home_digests:
+        return rejected('receipt_store_mismatch')
+    lens = receipt['lens']
+    perspective = lens['perspective']
+    allowlist = [{**scope} for scope in lens['scope_allowlist'] if isinstance(scope, dict)]
+    try:
+        # The canonical selector recomputes the configuration identity for the
+        # receipt's own lens under this profile's policy and the requested
+        # budget; no record is evaluated and no hash logic is duplicated.
+        expected = select_memory_recall(
+            [], allowed_scopes=allowlist, inspection=False,
+            policy=memory.read_project_memory_policy(paths),
+            observer=str(perspective.get('observer', '') or '') or None,
+            observed=str(perspective.get('observed', '') or '') or None,
+            query_intent=str(lens.get('query_intent', '') or '') or None,
+            limit=request.limit, max_chars=request.max_chars, now=request.now,
+        ).configuration_id
+    except (ValueError, TypeError):
+        return rejected('incompatible_receipt:lens')
+    if expected != receipt['configuration_id']:
+        return rejected('receipt_configuration_mismatch')
+    if {'kind': request.scope_kind, 'ref': request.scope_ref} not in allowlist:
+        return rejected('receipt_scope_mismatch')
+    return {'status': 'observed', 'basis': 'canonical_1452_receipt_bound'}, receipt
+
+
+def _receipt_stage(receipt: dict[str, Any], record_id: str, claim_digest: str) -> tuple[str, str] | None:
+    """(reason, last proven stage) for one record, or None when the receipt cites another revision."""
+    rendered = {str(item['record_id']): str(item['content_digest']) for item in receipt['rendering']['rendered_records']}
+    selected = [str(value) for value in receipt['selection']['selected_record_ids']]
+    if record_id in rendered:
+        if rendered[record_id] != claim_digest:
+            return None
+        return recall_delivery_stage(
+            rendered=True, delivery_observed=receipt['delivery_observed'],
+            model_use_observed=receipt['model_use_observed'],
+        )
+    if record_id in selected:
+        return recall_delivery_stage(rendered=False, delivery_observed=None, model_use_observed=None)
+    return 'live_selection_excluded', 'selected'
 
 
 def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest) -> Incident:
@@ -34,13 +119,13 @@ def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest
     surfaces: dict[str, EvidenceSurface] = {
         name: {'status': 'unavailable', 'basis': basis}
         for name, basis in (
-            ('live_prefetch_receipt', 'canonical_1452_contract_unavailable'),
             ('host_delivery', 'no_record_bound_observation'),
             ('model_use', 'no_record_bound_observation'),
             ('provider_availability', 'runtime_not_inspected'),
             ('provider_recall_status', 'not_supplied'),
         )
     }
+    surfaces['live_prefetch_receipt'], receipt = _read_live_receipt(paths, request)
     surfaces['canonical_recall_pack'] = {'status': 'observed', 'basis': 'prepared_local_selection'}
     surfaces['omh_approved_records'] = {
         'status': 'unavailable' if unreadable else 'observed',
@@ -110,6 +195,7 @@ def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest
     anchor = {'requested_digest': digest(request.record_id) if request.record_id else request.claim_digest}
     reason = 'not_found'
     last = 'none'
+    basis = 'local_inspection'
     if unreadable or candidate_error or native_error or history_error:
         reason = 'store_unavailable'
     if native_match:
@@ -152,6 +238,12 @@ def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest
                     reason = str(item['reason'])
             if any(isinstance(item, dict) and item.get('record_id') == record_id for item in included):
                 reason, last = 'selected_live_evidence_unavailable', 'selected'
+                if receipt is not None and surfaces['live_prefetch_receipt']['status'] == 'observed':
+                    staged = _receipt_stage(receipt, record_id, anchor['claim_digest'])
+                    if staged is None:
+                        surfaces['live_prefetch_receipt'] = {'status': 'not_authoritative', 'basis': 'receipt_record_digest_mismatch'}
+                    else:
+                        (reason, last), basis = staged, 'live_prefetch_receipt'
     if not pack['enabled']:
         reason = 'project_memory_disabled'
     config = {
@@ -163,8 +255,12 @@ def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest
             'query_digest': digest(request.query), 'limit': request.limit, 'max_chars': request.max_chars,
         }, sort_keys=True)),
     }
+    if receipt is not None:
+        # Validated sha256 identities only: they cite the receipt without copying it.
+        config['receipt_id'] = str(receipt['receipt_id'])
+        config['receipt_configuration_id'] = str(receipt['configuration_id'])
     result: Incident = {
-        **diagnosis(reason, 'local_inspection'),
+        **diagnosis(reason, basis),
         'schema_version': 'memory_recall_incident/v1',
         'incident_id': 'incident_' + digest(json.dumps([anchor, config, reason], sort_keys=True))[:24],
         'anchor': anchor, 'configuration_identity': config, 'evidence_surfaces': surfaces,

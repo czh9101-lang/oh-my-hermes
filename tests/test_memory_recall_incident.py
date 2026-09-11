@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from importlib import import_module
 from typing import TypedDict
@@ -14,8 +15,13 @@ from _local_package import load_local_package
 
 load_local_package()
 from omh.paths import resolve_paths
+from omh.plugin_bundle.omh import memory_prefetch_receipt as receipts
+from omh.plugin_bundle.omh.memory_provider import OmhMemoryProvider
 from omh.routing.chat import route_chat_message
 from omh.workflows import memory
+
+SESSION = 'session-a'
+LONG_SUMMARY = ('checklist step repeated ' * 19).strip()
 
 
 class CaptureOptions(TypedDict, total=False):
@@ -41,12 +47,37 @@ class MemoryRecallIncidentTests(unittest.TestCase):
         # The repository loader supplies the worktree package dynamically.
         return import_module('omh.workflows.memory_recall_incident')
 
-    def approved(self, summary='Prefer structured response output'):
-        candidate = memory.capture_project_memory_candidate(self.paths, summary)['candidate']
+    def approved(self, summary='Prefer structured response output', *, scope_kind='project', scope_ref='default'):
+        candidate = memory.capture_project_memory_candidate(
+            self.paths, summary, scope_kind=scope_kind, scope_ref=scope_ref)['candidate']
         assert isinstance(candidate, dict)
         record = memory.approve_project_memory_candidate(self.paths, candidate['candidate_id'])['record']
         assert isinstance(record, dict)
         return record
+
+    def serve(self, session_id: str = SESSION) -> dict[str, object]:
+        """The actual provider lifecycle persists the receipt this profile's diagnosis reads."""
+        assert self.root is not None
+        live = OmhMemoryProvider(self.paths.omh_home, hermes_home=self.paths.hermes_home)
+        live.initialize(session_id, hermes_home=str(self.paths.hermes_home), agent_context='primary', cwd=str(self.root))
+        live.queue_prefetch('')
+        live.prefetch('')
+        receipt = live.latest_prefetch_receipt()
+        live.shutdown()
+        assert receipt is not None
+        self.assertEqual(receipts.read_prefetch_receipt(self.paths.omh_home), receipt)
+        return receipt
+
+    def selected_not_rendered(self) -> tuple[dict[str, object], str]:
+        """Eight long summaries: the selector keeps six, the render budget fewer."""
+        for index in range(8):
+            self.approved(f'release detail {index} {LONG_SUMMARY}')
+        receipt = self.serve()
+        rendering = receipt['rendering']
+        assert isinstance(rendering, dict)
+        omitted = rendering['selected_not_rendered']
+        assert isinstance(omitted, list) and omitted
+        return receipt, str(omitted[0]['record_id'])
 
     def test_recall_complaint_routing(self) -> None:
         # Given explicit complaints, including punctuation normalized by the router.
@@ -118,6 +149,7 @@ class MemoryRecallIncidentTests(unittest.TestCase):
             ('perspective', {'observed': 'codex'}, None, 'perspective_mismatch'),
             ('retired', {'ttl_days': 1}, None, 'retired'),
         )
+        anchors: dict[str, str] = {}
         for name, capture_options, tier, reason in fixtures:
             with self.subTest(local_fixture=name), patch.object(memory, 'utc_now', return_value='2000-12-31T00:00:00Z'):
                 # Given public candidate/approval/attention operations, no mocked selector.
@@ -134,6 +166,7 @@ class MemoryRecallIncidentTests(unittest.TestCase):
                         memory.apply_memory_attention_change(self.paths, anchor, tier=tier)
                     if name == 'retired':
                         memory.apply_memory_retirement(self.paths, now=datetime(2001, 1, 1, tzinfo=timezone.utc))
+                anchors[name] = anchor
                 request = api.RecallIncidentRequest(record_id=anchor, observed='claude',
                     now=datetime(2001, 1, 1, tzinfo=timezone.utc))
                 # When
@@ -141,6 +174,57 @@ class MemoryRecallIncidentTests(unittest.TestCase):
                 # Then
                 self.assertEqual(result['reason_code'], reason)
                 self.assertNotEqual(result['stage'], 'unresolved')
+        # Given the live turn over the same store (retirement already archived the expired
+        # records): the provider's reader hands the stale record to the canonical selector,
+        # which classifies it at its own clock and counts it in the receipt beside the
+        # archived and foreign-perspective exclusions.
+        receipt = self.serve()
+        selection = receipt['selection']
+        assert isinstance(selection, dict)
+        self.assertEqual(selection['selected_record_ids'], [record['record_id']])
+        self.assertEqual(selection['exclusion_reason_counts'],
+                         {'archived_tier': 1, 'perspective_mismatch': 1, 'stale_review_required': 1})
+        for name, reason in (('stale', 'stale_review_required'), ('archived', 'archived_tier')):
+            with self.subTest(receipt_backed=name):
+                # When: the same store, session and lens the receipt was bound to.
+                result = api.build_memory_recall_incident(self.paths, api.RecallIncidentRequest(
+                    record_id=anchors[name], session_id=SESSION))
+                # Then: the local selector names the cause; the bound receipt's aggregate
+                # count corroborates it but is never relabelled as per-record evidence.
+                self.assertEqual(result['reason_code'], reason)
+                self.assertEqual(result['stage'], 'stale_expired_or_archived')
+                self.assertEqual(result['last_proven_stage'], 'stored')
+                self.assertEqual(result['evidence_basis'], 'local_inspection')
+                self.assertEqual(result['evidence_surfaces']['live_prefetch_receipt'],
+                                 {'status': 'observed', 'basis': 'canonical_1452_receipt_bound'})
+                self.assertEqual(result['configuration_identity']['receipt_id'], receipt['receipt_id'])
+                self.assertIn(reason, selection['exclusion_reason_counts'])
+        # Given the actual provider's persisted receipt for this profile and session.
+        rendered = self.approved('rendered preference for the live turn')
+        receipt = self.serve()
+        selection = receipt['selection']
+        assert isinstance(selection, dict)
+        self.assertIn(rendered['record_id'], selection['selected_record_ids'])
+        # When
+        result = api.build_memory_recall_incident(self.paths, api.RecallIncidentRequest(
+            record_id=rendered['record_id'], session_id=SESSION))
+        # Then: rendering and return are proven; host delivery and model use stay unknown.
+        self.assertEqual(result['reason_code'], 'rendered_delivery_not_observed')
+        self.assertEqual(result['stage'], 'rendered_delivery_not_observed')
+        self.assertEqual(result['last_proven_stage'], 'rendered')
+        self.assertEqual(result['evidence_basis'], 'live_prefetch_receipt')
+        self.assertIsNone(result['delivery_observed'])
+        self.assertIsNone(result['model_use_observed'])
+        _, omitted = self.selected_not_rendered()
+        result = api.build_memory_recall_incident(self.paths, api.RecallIncidentRequest(
+            record_id=omitted, session_id=SESSION))
+        self.assertEqual(result['reason_code'], 'selected_not_rendered')
+        self.assertEqual(result['stage'], 'selected_not_rendered')
+        self.assertEqual(result['last_proven_stage'], 'selected')
+        self.assertEqual(result['evidence_basis'], 'live_prefetch_receipt')
+        # Delivered and used have no record-bound surface; only the synthetic oracle names them.
+        for reason in ('delivered_model_use_unknown', 'used'):
+            self.assertEqual(api.diagnose_synthetic_recall_stage(reason)['evidence_basis'], 'synthetic')
 
     def test_receipt_absence_is_not_nondelivery(self) -> None:
         # Given selected memory but no record-bound live evidence.
@@ -228,6 +312,150 @@ class MemoryRecallIncidentTests(unittest.TestCase):
             record_id=record['record_id'], provider_served_count=0))
         self.assertEqual(result['fault_domain'], 'unresolved')
         self.assertFalse(result['omh_correction_proposed'])
+        # Given the actual provider omitted a selected record from its rendering.
+        _, omitted = self.selected_not_rendered()
+        # When
+        result = api.build_memory_recall_incident(self.paths, api.RecallIncidentRequest(
+            record_id=omitted, session_id=SESSION))
+        # Then: provider evidence, no OMH correction, no mutation authority.
+        self.assertEqual(result['stage'], 'selected_not_rendered')
+        self.assertEqual(result['fault_domain'], 'provider')
+        self.assertEqual(result['evidence_basis'], 'live_prefetch_receipt')
+        self.assertFalse(result['omh_correction_proposed'])
+        self.assertFalse(result['authorizes_mutation'])
+        self.assertEqual(result['remediation']['action'], 'inspect_provider_rendering')
+        # An aggregate count beside the receipt still proves nothing about delivery.
+        result = api.build_memory_recall_incident(self.paths, api.RecallIncidentRequest(
+            record_id=record['record_id'], session_id=SESSION, provider_served_count=9))
+        self.assertEqual(result['evidence_surfaces']['provider_recall_status']['status'], 'not_authoritative')
+        self.assertIsNone(result['delivery_observed'])
+
+    def test_canonical_receipt_identity(self) -> None:
+        # Given the actual provider receipt on disk and an unrelated second record.
+        api = self.api()
+        record = self.approved()
+        other = self.approved('unrelated user-global preference', scope_kind='user-global', scope_ref='default')
+        receipt = self.serve()
+        path = receipts.prefetch_receipt_path(self.paths.omh_home)
+        request = api.RecallIncidentRequest(record_id=record['record_id'], session_id=SESSION)
+        # When
+        bound = api.build_memory_recall_incident(self.paths, request)
+        # Then: bound by session, store, configuration and record digest.
+        self.assertEqual(bound['evidence_surfaces']['live_prefetch_receipt'],
+                         {'status': 'observed', 'basis': 'canonical_1452_receipt_bound'})
+        self.assertEqual(bound['stage'], 'rendered_delivery_not_observed')
+        self.assertEqual(bound['configuration_identity']['receipt_id'], receipt['receipt_id'])
+        self.assertEqual(bound['configuration_identity']['receipt_configuration_id'], receipt['configuration_id'])
+        self.assertNotIn(other['record_id'], json.dumps(bound))
+        self.assertIsNone(bound['delivery_observed'])
+        self.assertIsNone(bound['model_use_observed'])
+        # The explicit user-global lens is covered by the same live allowlist.
+        global_bound = api.build_memory_recall_incident(self.paths, api.RecallIncidentRequest(
+            record_id=other['record_id'], session_id=SESSION, scope_kind='user-global', scope_ref='default'))
+        self.assertEqual(global_bound['stage'], 'rendered_delivery_not_observed')
+        self.assertNotIn(record['record_id'], json.dumps(global_bound))
+
+        def mutated(changes: Mapping[str, object], *, signed: bool = True) -> str:
+            value = json.loads(json.dumps(receipt))
+            for key, change in changes.items():
+                target, _, field = key.rpartition('.')
+                (value[target] if target else value)[field] = change
+            if signed:
+                # A foreign identity is only reachable behind a valid body digest;
+                # an unsigned edit is a tampered file and is rejected before any identity check.
+                body = {key: item for key, item in value.items() if key not in ('receipt_id', 'state', 'served_at')}
+                value['receipt_id'] = receipts._digest(body)
+            path.write_text(json.dumps(value))
+            return path.read_text()
+
+        rendering = receipt['rendering']
+        assert isinstance(rendering, dict)
+        rendered = [dict(item) for item in rendering['rendered_records']]
+        self.assertEqual({item['record_id'] for item in rendered}, {record['record_id'], other['record_id']})
+        retagged = [{**item, 'content_digest': 'f' * 64} if item['record_id'] == record['record_id'] else item
+                    for item in rendered]
+        rejected = (
+            ('incompatible_receipt:receipt_id', {'prepared_at': '2000-01-01T00:00:00Z'}, request),
+            ('incompatible_receipt:schema_version', {'schema_version': 'foreign_receipt/v9'}, request),
+            ('receipt_not_returned_to_host', {'state': 'prepared'}, request),
+            ('receipt_configuration_mismatch', {'configuration_id': '1' * 64}, request),
+            ('receipt_configuration_mismatch', {}, api.RecallIncidentRequest(record_id=record['record_id'], session_id=SESSION, limit=1)),
+            ('receipt_session_mismatch', {}, api.RecallIncidentRequest(record_id=record['record_id'], session_id='session-b')),
+            ('receipt_session_unbound', {}, api.RecallIncidentRequest(record_id=record['record_id'])),
+            ('receipt_store_mismatch', {'store': {'home_digests': ['0' * 64]}}, request),
+            ('receipt_scope_mismatch', {}, api.RecallIncidentRequest(record_id=record['record_id'], session_id=SESSION, scope_ref='other')),
+            ('receipt_record_digest_mismatch', {'rendering.rendered_records': retagged}, request),
+        )
+        for basis, changes, variant in rejected:
+            with self.subTest(basis=basis):
+                text = mutated(changes, signed=basis != 'incompatible_receipt:receipt_id')
+                result = api.build_memory_recall_incident(self.paths, variant)
+                self.assertEqual(result['evidence_surfaces']['live_prefetch_receipt']['status'], 'not_authoritative')
+                self.assertEqual(result['evidence_surfaces']['live_prefetch_receipt']['basis'], basis)
+                self.assertNotIn(result['stage'], ('rendered_delivery_not_observed', 'selected_not_rendered', 'used'))
+                self.assertIsNone(result['delivery_observed'])
+                self.assertEqual(path.read_text(), text)
+        # Unavailable or unreadable proof stays unknown, never non-delivery.
+        for basis, content in (('receipt_unreadable', '{'), ('no_receipt_persisted', None)):
+            with self.subTest(basis=basis):
+                if content is None:
+                    path.unlink()
+                else:
+                    path.write_text(content)
+                result = api.build_memory_recall_incident(self.paths, request)
+                self.assertEqual(result['evidence_surfaces']['live_prefetch_receipt'], {'status': 'unavailable', 'basis': basis})
+                self.assertEqual(result['reason_code'], 'selected_live_evidence_unavailable')
+                self.assertEqual(result['stage'], 'unresolved')
+                self.assertNotIn('receipt_id', result['configuration_identity'])
+
+    def test_delivery_classifier_uses_observations_not_stage_labels(self) -> None:
+        # Given synthetic observations over a real rendered record's identities.
+        api = self.api()
+        record = self.approved()
+        original = self.serve()
+        claim_digest = hashlib.sha256(str(record['summary']).encode()).hexdigest()
+        for delivered, used, expected in (
+            (None, None, ('rendered_delivery_not_observed', 'rendered')),
+            (None, True, ('rendered_delivery_not_observed', 'rendered')),
+            (True, None, ('delivered_model_use_unknown', 'delivered')),
+            (True, True, ('used', 'used')),
+        ):
+            with self.subTest(delivered=delivered, used=used):
+                synthetic = {**original, 'delivery_observed': delivered, 'model_use_observed': used}
+                # When: exercise the same classifier the validated receipt path calls.
+                result = api._receipt_stage(synthetic, record['record_id'], claim_digest)
+                # Then: evidence gaps cannot be bridged by downstream assertions.
+                self.assertEqual(result, expected)
+                if delivered is not None or used is not None:
+                    self.assertTrue(receipts.validate_prefetch_receipt(synthetic))
+
+    def test_incident_contains_receipt_decoder_recursion_error(self) -> None:
+        # Given a parser recursion failure (parser depth limits vary by Python).
+        api = self.api()
+        record = self.approved()
+        self.serve()
+        # When
+        with patch.object(api.json, 'loads', side_effect=RecursionError):
+            surface, receipt = api._read_live_receipt(
+                self.paths, api.RecallIncidentRequest(record_id=record['record_id'], session_id=SESSION))
+        # Then
+        self.assertIsNone(receipt)
+        self.assertEqual(surface, {'status': 'unavailable', 'basis': 'receipt_unreadable'})
+
+    def test_incident_bounds_receipt_bytes_before_decoding(self) -> None:
+        # Given valid metadata whose on-disk whitespace exceeds the input limit.
+        api = self.api()
+        record = self.approved()
+        original = self.serve()
+        path = receipts.prefetch_receipt_path(self.paths.omh_home)
+        path.write_text(' ' * receipts.MAX_PREFETCH_RECEIPT_BYTES + json.dumps(original))
+        # When
+        result = api.build_memory_recall_incident(
+            self.paths, api.RecallIncidentRequest(record_id=record['record_id'], session_id=SESSION))
+        # Then
+        self.assertEqual(result['stage'], 'unresolved')
+        self.assertEqual(result['evidence_surfaces']['live_prefetch_receipt'],
+                         {'status': 'unavailable', 'basis': 'receipt_unreadable'})
 
     def test_candidate_digest_and_perspective_when_locally_available(self) -> None:
         # Given a pending claim and a perspective-scoped approved claim.
