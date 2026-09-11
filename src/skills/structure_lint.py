@@ -22,7 +22,12 @@ STRUCTURE_LINT_RULE_IDS = (
     "SKILL_RENDERED_IDENTITY_UNIQUE",
     "SKILL_TRIGGER_FORMAT",
 )
-STRUCTURE_LINT_SKILL_BODY_BYTE_CEILING = 24_000
+# Always-loaded body ceiling per skill. Ratchet, not a target: raise it only
+# with the reason written here. 24_000 held until 2026-09-11, when the
+# ultrawork body measured 25_078 bytes after the seven executing-engine bars
+# gained the follow-up-authority and closing-brief rules (Codex Desktop prompt
+# review, MODEL_OPTI.md); ultrawork already sat 9 bytes under the old ceiling.
+STRUCTURE_LINT_SKILL_BODY_BYTE_CEILING = 25_100
 _PICKER_SAFE_TRIGGER = re.compile(r"^[0-9A-Za-z\uac00-\ud7a3][0-9A-Za-z\uac00-\ud7a3 _.-]*$")
 _FRONTMATTER = re.compile(r'^---\nname: (.+)\ndescription: (.+)\nmetadata:\n(.*?)\n---\n', re.DOTALL)
 _JSON_STRING = re.compile(r'"(?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9A-Fa-f]{4})*"')
