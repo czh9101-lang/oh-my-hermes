@@ -85,8 +85,8 @@ from ..release import (
     package_url_for,
     release_artifact_note,
 )
-from ..skin_pack import SKIN_NAME, install_skin, is_omh_skin_name, uninstall_skin
-from ..tui_widget_pack import install_tui_widget, uninstall_tui_widget
+from ..skin_pack import SKIN_NAME, SkinInstallError, install_skin, is_omh_skin_name, uninstall_skin
+from ..tui_widget_pack import TuiWidgetInstallError, install_tui_widget, uninstall_tui_widget
 from ..routing.recommend import recommend_skills
 from ..routing.route_plan import build_workflow_route_plan, compact_workflow_route_plan
 from ..runtime.artifacts import read_state_result, update_state
@@ -483,15 +483,20 @@ def _sync_hermes_profiles(args: argparse.Namespace) -> list[dict[str, object]]:
     puts it back. A profile with no bundle at all is a new bot — it gets the
     full bootstrap, which is what makes bots created after install pick up
     OMH on the next `omh update`.
+
+    The opt-out test asks whether the profile names ANY managed skills
+    directory, not the one this install would write today: see
+    `_managed_workflow_dir_candidates`.
     """
     results: list[dict[str, object]] = []
     for name, profile_dir in _hermes_profile_dirs(_paths(args)):
         clone = argparse.Namespace(**vars(args))
         clone.hermes_home = str(profile_dir)
         profile_paths = _paths(clone)
-        registered = _external_dir_registered(
-            read_config(profile_paths.hermes_config_path),
-            _registered_workflow_dir(profile_paths),
+        config_text = read_config(profile_paths.hermes_config_path)
+        registered = any(
+            _external_dir_registered(config_text, candidate)
+            for candidate in _managed_workflow_dir_candidates(profile_paths)
         )
         if profile_paths.hermes_plugin_dir.is_dir() and not registered:
             results.append({"profile": name, "status": "unregistered_kept"})
@@ -505,7 +510,11 @@ def _sync_hermes_profiles(args: argparse.Namespace) -> list[dict[str, object]]:
             install_tui_widget(profile_paths.hermes_home, dry_run=bool(args.dry_run))
             install_skin(profile_paths.hermes_home, dry_run=bool(args.dry_run))
             _apply_result(clone)
-        except (PluginPackError, OmhError) as exc:
+        # A profile's widget or skin the manifest cannot vouch for refuses,
+        # exactly as the primary home's does. That refusal is one profile's
+        # row, never the end of the update: the primary home and every other
+        # profile still get their refresh.
+        except (PluginPackError, OmhError, TuiWidgetInstallError, SkinInstallError) as exc:
             entry["status"] = "failed"
             entry["error"] = str(exc)
         results.append(entry)
@@ -531,9 +540,9 @@ def _uninstall_hermes_profiles(args: argparse.Namespace, *, remove_all: bool) ->
         profile_paths = _paths(clone)
         entry: dict[str, object] = {"profile": name}
         try:
-            change = remove_external_dir(
+            change = _remove_managed_external_dirs(
                 read_config(profile_paths.hermes_config_path),
-                _registered_workflow_dir(profile_paths),
+                profile_paths,
             )
             if not args.dry_run and change.changed:
                 write_config(profile_paths.hermes_config_path, change.text)
@@ -590,6 +599,57 @@ def _registered_workflow_dir(paths: OmhPaths) -> Path:
     return paths.skills_dir
 
 
+def _managed_workflow_dir_candidates(paths: OmhPaths) -> list[Path]:
+    """Every managed skills directory a registration may legitimately name.
+
+    `_registered_workflow_dir` picks the ONE this install would write today:
+    the shared generation pointer on a managed command install, otherwise the
+    OMH home's own skills directory. Both are OMH-owned, and which of them a
+    given home recorded depends only on when it was registered — so a home
+    naming either one is registered, not opted out. Only a home naming
+    neither has actually opted out.
+
+    Reading "registered" as "names today's path" is what froze the owner's
+    `profiles/miku`: the profile pointed at `~/.omh/skills` while the primary
+    home had moved to the generation pointer, so every `omh update` scored it
+    as the deliberate opt-out (plugin directory present, registration
+    "absent"), skipped the whole profile, and left its plugin bundle and TUI
+    widget on the generation they were installed at.
+    """
+    candidates = [_registered_workflow_dir(paths)]
+    for candidate in (paths.skills_dir, managed_current_workflow_pack_dir()):
+        if candidate is not None and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+def _remove_managed_external_dirs(config_text: str, paths: OmhPaths) -> ConfigChange:
+    """Strip every OMH-managed skills directory this home may carry.
+
+    Removal has to read the same set `_managed_workflow_dir_candidates` reads,
+    or the opt-out becomes unreachable on exactly the installs that need it:
+    removing only today's path left a home registered at the older one with
+    its entry intact and its plugin directory in place, so the next
+    `omh update` scored it registered again and refreshed it. Unregistering
+    means unregistered, whichever managed path recorded it.
+
+    The reported message is the first removal that actually changed the
+    config; with nothing to remove, the last no-op's message stands, exactly
+    as a single-path removal reported before.
+    """
+    changed = False
+    message = ""
+    for candidate in _managed_workflow_dir_candidates(paths):
+        change = remove_external_dir(config_text, candidate)
+        config_text = change.text
+        if change.changed and not changed:
+            changed = True
+            message = change.message
+        elif not changed:
+            message = change.message
+    return ConfigChange(changed, message, config_text)
+
+
 def _external_dir_registered(config: str, path: Path) -> bool:
     entries = external_dirs(config)
     wanted = _external_dir_key(path)
@@ -617,7 +677,14 @@ def _refresh_hermes_registration(args: argparse.Namespace) -> dict[str, object] 
     put it back.
     """
     paths = _paths(args)
-    if not _external_dir_registered(read_config(paths.hermes_config_path), _registered_workflow_dir(paths)):
+    config_text = read_config(paths.hermes_config_path)
+    # Same candidate set the profile sync reads: a primary home registered at
+    # the older managed path is registered, and must be carried forward
+    # rather than read as a deliberate unregistration.
+    if not any(
+        _external_dir_registered(config_text, candidate)
+        for candidate in _managed_workflow_dir_candidates(paths)
+    ):
         return None
     try:
         return _apply_result(args)
@@ -1670,7 +1737,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     paths = _paths(args)
     current = read_config(paths.hermes_config_path)
     try:
-        change = remove_external_dir(current, _registered_workflow_dir(paths))
+        change = _remove_managed_external_dirs(current, paths)
     except ValueError as exc:
         raise OmhError(str(exc)) from exc
     if not args.dry_run and change.changed:

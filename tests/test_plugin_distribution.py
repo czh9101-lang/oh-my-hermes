@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import errno
 import hashlib
 import importlib.resources as resources
@@ -1804,6 +1805,39 @@ class HermesProfileSyncTests(unittest.TestCase):
         profile.mkdir(parents=True, exist_ok=True)
         return profile
 
+    @contextmanager
+    def _managed_install(self, current: Path):
+        """What a managed command install looks like to the setup module.
+
+        Only the two probes are stubbed -- the generation pointer and the
+        managed-runtime answer a test process cannot give truthfully -- so
+        `_registered_workflow_dir` and the candidate list run for real. The
+        self-update plan is pinned off because a managed runtime is exactly
+        what would otherwise send `omh update` into the staged command
+        package transaction, which is not what these tests exercise.
+        """
+        with (
+            mock.patch.object(
+                _setup_module, "managed_current_workflow_pack_dir", return_value=current
+            ),
+            mock.patch.object(
+                _setup_module,
+                "_managed_command_runtime",
+                return_value={
+                    "managed": True,
+                    "reason": "",
+                    "python": sys.executable,
+                    "venv_dir": str(current.parent),
+                },
+            ),
+            mock.patch.object(
+                _setup_module,
+                "_command_package_self_update_plan",
+                return_value={"should_update": False, "reason": "test fixture"},
+            ),
+        ):
+            yield
+
     def test_setup_registers_every_bot_profile(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1879,6 +1913,143 @@ class HermesProfileSyncTests(unittest.TestCase):
             rows = {entry["profile"]: entry["status"] for entry in payload["hermes_profiles"]}
             self.assertEqual(rows, {"politehelper": "unregistered_kept"})
             self.assertEqual((profile / "config.yaml").read_text(encoding="utf-8"), config_before)
+
+    def test_a_profile_registered_at_the_other_managed_dir_is_refreshed(self) -> None:
+        # A managed command install registers the shared generation pointer;
+        # a home registered before that move names the OMH home's own skills
+        # directory. Both are OMH-owned, so a profile carrying the older of
+        # the two is registered — reading it as the deliberate opt-out is
+        # what froze one real profile's plugin bundle and TUI widget at the
+        # generation they were installed at, update after update.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = self._profile(root, "politehelper")
+            status, _, stderr = run_cli(self._base(root) + ["setup"])
+            self.assertEqual(status, 0, stderr)
+            widget = profile / "tui-widgets" / "omh-status.mjs"
+            self.assertTrue(widget.is_file())
+            # The profile stays registered at ~/.omh/skills while the
+            # command install moves on to a generation pointer.
+            self.assertIn(
+                (root / ".omh" / "skills").resolve().as_posix(),
+                (profile / "config.yaml").read_text(encoding="utf-8"),
+            )
+            widget.unlink()
+            generation = root / "generation" / "skills"
+            generation.mkdir(parents=True)
+
+            with self._managed_install(generation):
+                status, stdout, stderr = run_cli(
+                    self._base(root) + ["update"], output_json=False
+                )
+
+            self.assertEqual(status, 0, stderr)
+            self.assertIn("Bot profiles: politehelper (refreshed)", stdout)
+            # Refreshed means artifacts, not just a label.
+            self.assertTrue(widget.is_file())
+
+    def test_opting_out_removes_a_registration_at_the_older_managed_dir(self) -> None:
+        # Reading "registered" across both managed paths only works if
+        # removal reads the same set. Removing today's path alone left the
+        # older entry in place, so the opt-out never took: the profile kept
+        # its plugin directory AND a live registration, and the next update
+        # refreshed it again. This is the miku shape — the one install this
+        # whole change targets — so the opt-out has to be reachable on it.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = self._profile(root, "politehelper")
+            status, _, stderr = run_cli(self._base(root) + ["setup"])
+            self.assertEqual(status, 0, stderr)
+            old_path = (root / ".omh" / "skills").resolve().as_posix()
+            self.assertIn(old_path, (profile / "config.yaml").read_text(encoding="utf-8"))
+            current = root / "generation" / "skills"
+            current.mkdir(parents=True)
+
+            with self._managed_install(current):
+                status, _, stderr = run_cli(
+                    [
+                        "--omh-home",
+                        str(root / ".omh"),
+                        "--hermes-home",
+                        str(profile),
+                        "uninstall",
+                        "--registration-only",
+                    ]
+                )
+                self.assertEqual(status, 0, stderr)
+                config_after = (profile / "config.yaml").read_text(encoding="utf-8")
+                self.assertNotIn(old_path, config_after)
+                self.assertNotIn(current.as_posix(), config_after)
+                # The plugin directory stays: that plus no registration is
+                # the documented opt-out marker the sync must now respect.
+                self.assertTrue((profile / "plugins" / "omh").is_dir())
+
+                status, stdout, stderr = run_cli(
+                    self._base(root) + ["update"], output_json=False
+                )
+
+            self.assertEqual(status, 0, stderr)
+            self.assertIn("Bot profiles: politehelper (left unregistered)", stdout)
+
+    def test_opting_out_removes_a_registration_at_the_current_managed_dir(self) -> None:
+        # The mirror case: a home registered only at the generation pointer,
+        # with the older path absent, opts out identically.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = self._profile(root, "politehelper")
+            current = root / "generation" / "skills"
+            current.mkdir(parents=True)
+
+            with self._managed_install(current):
+                status, _, stderr = run_cli(self._base(root) + ["setup"])
+                self.assertEqual(status, 0, stderr)
+                config = (profile / "config.yaml").read_text(encoding="utf-8")
+                self.assertIn(current.as_posix(), config)
+                self.assertNotIn((root / ".omh" / "skills").resolve().as_posix(), config)
+
+                status, _, stderr = run_cli(
+                    [
+                        "--omh-home",
+                        str(root / ".omh"),
+                        "--hermes-home",
+                        str(profile),
+                        "uninstall",
+                        "--registration-only",
+                    ]
+                )
+                self.assertEqual(status, 0, stderr)
+                self.assertNotIn(
+                    current.as_posix(), (profile / "config.yaml").read_text(encoding="utf-8")
+                )
+
+                status, stdout, stderr = run_cli(
+                    self._base(root) + ["update"], output_json=False
+                )
+
+            self.assertEqual(status, 0, stderr)
+            self.assertIn("Bot profiles: politehelper (left unregistered)", stdout)
+
+    def test_the_primary_home_opts_out_from_the_older_managed_dir_too(self) -> None:
+        # `cmd_uninstall` removes the primary home's own registration on the
+        # same path set, so an old-path primary home is not left registered
+        # and silently re-refreshed by the next update.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            status, _, stderr = run_cli(self._base(root) + ["setup"])
+            self.assertEqual(status, 0, stderr)
+            hermes_config = root / ".hermes" / "config.yaml"
+            old_path = (root / ".omh" / "skills").resolve().as_posix()
+            self.assertIn(old_path, hermes_config.read_text(encoding="utf-8"))
+            current = root / "generation" / "skills"
+            current.mkdir(parents=True)
+
+            with self._managed_install(current):
+                status, _, stderr = run_cli(
+                    self._base(root) + ["uninstall", "--registration-only"]
+                )
+
+            self.assertEqual(status, 0, stderr)
+            self.assertNotIn(old_path, hermes_config.read_text(encoding="utf-8"))
 
     def test_a_dry_run_setup_writes_nothing_into_profiles(self) -> None:
         with TemporaryDirectory() as tmp:
