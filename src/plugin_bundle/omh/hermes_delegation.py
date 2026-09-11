@@ -1203,7 +1203,10 @@ def mixture_category_for(
     """Project an observed child model+effort onto a mixture category label.
 
     ``inherit`` wins over any chain match: a child on the parent session's own
-    model was not routed, whatever chain its model also appears in. Otherwise
+    model looks unrouted, whatever chain its model also appears in — the
+    projection cannot tell "routed to the model the parent also runs" from
+    "not routed"; a fresh matching provenance record can, and the reader
+    upgrades the row from it (`same_as_parent`). Otherwise
     the first category (canonical chain order) whose head matches wins, then
     the category where the model sits earliest in its chain (a shallow
     fall-through entry is a likelier route than a deep one; canonical order
@@ -1852,11 +1855,10 @@ def read_hermes_native_subagents(
         # (`category(model inherit)`), and a lane routed to the parent's own
         # model keeps its category with a `=parent` token, instead of
         # converging into plain inherit. The upgrade carries its own source
-        # marker. The model that
-        # matches here is the same observed wire model the alias and category
-        # above were derived from, so the three stay one identity; a child
-        # whose model the host never recorded and never used matches nothing,
-        # which is the safe degradation.
+        # marker. The model that matches here is the same observed wire
+        # model the alias and category above were derived from, so the three
+        # stay one identity; a child whose model the host never recorded and
+        # never used matches nothing, which is the safe degradation.
         provenance = _provenance_for_dispatch(
             route_provenance,
             started_at=child["started_at"],
@@ -1878,7 +1880,11 @@ def read_hermes_native_subagents(
                         # Routed to the model the parent also runs: the
                         # category is the lane's, and the row says the
                         # model is the parent's own so nobody reads the
-                        # label as a cheaper dispatch than it was.
+                        # label as a cheaper dispatch than it was. Gated on
+                        # the record carrying a category by decision: an
+                        # explicit bare-model route (`set` with a model and
+                        # no category) onto the parent's model has no lane
+                        # to name, so it stays the plain `inherit(model)`.
                         row["same_as_parent"] = True
                     row["category"] = provenance["category"]
                     row["category_source"] = "route_provenance"

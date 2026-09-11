@@ -333,10 +333,12 @@ export default function register(sdk) {
     // is not a category, so it never wears the `category:` prefix.
     const routeOrigin = safeText(row.route_origin)
     const routeCategory = safeText(row.route_category)
-    const routeTag = routeOrigin === 'fallback' ? 'fallback'
+    // A fallback that landed on the parent's own model keeps both tokens:
+    // the fallback is what happened, `=parent` is what it cost.
+    const parentTag = row.same_as_parent === true ? '=parent' : ''
+    const routeTag = routeOrigin === 'fallback' ? ['fallback', parentTag].filter(Boolean).join(' ')
       : routeOrigin === 'exhausted_to_inherit' ? 'inherit'
-        : row.same_as_parent === true ? '=parent'
-          : ''
+        : parentTag
     const routeDetail = [model, routeTag].filter(Boolean).join(' ')
     const displayCategory = routeOrigin === 'exhausted_to_inherit' && routeCategory ? routeCategory : category
     const route = displayCategory === 'inherit'
