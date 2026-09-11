@@ -1681,17 +1681,53 @@ class RouteProvenanceProjectionTest(unittest.TestCase):
         self.assertNotIn("category_source", row)
         self.assertEqual(row["category"], "quick")
 
-    def test_inherit_wins_over_a_matching_routed_record(self):
-        # The parent's own model can also be a chain member; a child that
-        # inherited it was NOT routed, whatever the prepared route said.
+    def test_a_route_to_the_parents_own_model_keeps_its_category_and_says_so(self):
+        # The parent's own model can also be a chain head (the owner's
+        # `deep` heads on the model the session runs). A fresh record whose
+        # identity matches proves the tool routed the lane there; the row
+        # keeps the lane's category and says the model is the parent's own,
+        # so the label is neither "unrouted" nor "a cheaper dispatch".
         _write_provenance(
             self.home,
-            [_record(alias="gpt-5.6-sol", wire_model="gpt-5.6-sol", provider="")],
+            [_record(origin="head", alias="gpt-5.6-sol", wire_model="gpt-5.6-sol", provider="")],
         )
         row = self._row("gpt-5.6-sol")
-        self.assertEqual(row["category"], "inherit")
+        self.assertEqual(row["category"], "visual-engineering")
+        self.assertEqual(row["category_source"], "route_provenance")
+        self.assertIs(row["same_as_parent"], True)
         self.assertNotIn("route_origin", row)
-        self.assertNotIn("category_source", row)
+
+    def test_a_fallback_to_the_parents_own_model_keeps_both_tokens(self):
+        _write_provenance(
+            self.home,
+            [_record(origin="fallback", alias="gpt-5.6-sol", wire_model="gpt-5.6-sol", provider="")],
+        )
+        row = self._row("gpt-5.6-sol")
+        self.assertEqual(row["category"], "visual-engineering")
+        self.assertEqual(row["route_origin"], "fallback")
+        self.assertIs(row["same_as_parent"], True)
+
+    def test_an_unrouted_child_on_the_parents_model_stays_plain_inherit(self):
+        # No record, a stale record, or a cleared route: the chain
+        # projection's inherit stands and nothing claims a category.
+        for records in (
+            [],
+            [_record(alias="gpt-5.6-sol", wire_model="gpt-5.6-sol", provider="", written_at=NOW - 2000)],
+            [_record(alias="gpt-5.6-sol", wire_model="gpt-5.6-sol", provider=""), {"origin": "cleared", "written_at": NOW - 100}],
+        ):
+            with self.subTest(records=records):
+                _write_provenance(self.home, records)
+                (self.home / "state.db").unlink(missing_ok=True)
+                row = self._row("gpt-5.6-sol")
+                self.assertEqual(row["category"], "inherit")
+                self.assertNotIn("same_as_parent", row)
+                self.assertNotIn("category_source", row)
+
+    def test_a_routed_child_on_another_model_never_carries_the_parent_token(self):
+        _write_provenance(self.home, [_record(origin="head")])
+        row = self._row("moonshotai/kimi-k3")
+        self.assertEqual(row["category"], "visual-engineering")
+        self.assertNotIn("same_as_parent", row)
 
     def test_a_newer_unrelated_record_blocks_an_older_matching_one(self):
         # Only the newest record written before the dispatch describes it;

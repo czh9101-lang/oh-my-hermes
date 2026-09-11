@@ -298,10 +298,13 @@ document is ignored whole (defaults apply) and reported by
 Next to those two documents, `omh_delegate_route` maintains
 `~/.omh/routing/route-provenance.json` (`delegation_route_provenance/v1`): a
 capped history of the routes it prepared (head, explicit, fallback, chain
-exhaustion, clear) that the HUD uses to label a fallback lane as a fallback
-and an exhausted chain as `category(model inherit)` — one `category(model
-tag)` shape for every lane, where the category names the lane and only the
-parenthesized model and state token move. It is written automatically,
+exhaustion, clear) that the HUD uses to label a fallback lane as a fallback,
+an exhausted chain as `category(model inherit)`, and a lane routed to the
+model the parent session itself runs as `category(model =parent)` — one
+`category(model tag)` shape for every lane, where the category names the
+lane and only the parenthesized model and state token move. A child on the
+parent's model with no route record at all is the plain `inherit(model)`:
+inherit is not a category. It is written automatically,
 carries its own `claim_boundary` (prepared routes only, never dispatch
 evidence), and is safe to delete — an absent or invalid file only means HUD
 rows fall back to plain category projection.

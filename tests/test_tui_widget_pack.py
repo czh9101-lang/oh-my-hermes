@@ -738,6 +738,13 @@ class TuiWidgetPackTests(unittest.TestCase):
         # its state token (fallback / inherit) move.
         self.assertIn("routeOrigin === 'fallback' ? 'fallback'", widget)
         self.assertIn("routeOrigin === 'exhausted_to_inherit' ? 'inherit'", widget)
+        # A lane routed to the parent's own model keeps its category and
+        # wears `=parent`; a child with no route record on that model is
+        # the plain `inherit(model)` — inherit is not a category, so it
+        # never wears the `category:` prefix.
+        self.assertIn("row.same_as_parent === true ? '=parent'", widget)
+        self.assertIn("displayCategory === 'inherit'", widget)
+        self.assertIn("? `inherit${model ? `(${model})` : ''}`", widget)
         self.assertNotIn("→inherit", widget)
         self.assertIn("row.route_category", widget)
         self.assertIn("tools", widget)

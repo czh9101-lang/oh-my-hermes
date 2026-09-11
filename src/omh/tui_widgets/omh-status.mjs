@@ -324,19 +324,26 @@ export default function register(sdk) {
     // Prepared-route provenance from the reader, rendered as one shape:
     // `category(model tag)`. The category names the LANE and never changes;
     // only the parenthesized model (and its state token) moves — a fallback
-    // lane reads `category(model fallback)`, and an exhausted chain running
-    // the parent's model reads `category(model inherit)` instead of being
-    // relabeled away from its category.
+    // lane reads `category(model fallback)`, an exhausted chain running the
+    // parent's model reads `category(model inherit)`, and a lane the tool
+    // routed to the model the parent itself runs reads
+    // `category(model =parent)` — its category survives, and the token says
+    // the dispatch cost what the parent costs. A child with no route record
+    // at all on the parent's model is the one plain `inherit(model)`: inherit
+    // is not a category, so it never wears the `category:` prefix.
     const routeOrigin = safeText(row.route_origin)
     const routeCategory = safeText(row.route_category)
     const routeTag = routeOrigin === 'fallback' ? 'fallback'
       : routeOrigin === 'exhausted_to_inherit' ? 'inherit'
-        : ''
+        : row.same_as_parent === true ? '=parent'
+          : ''
     const routeDetail = [model, routeTag].filter(Boolean).join(' ')
     const displayCategory = routeOrigin === 'exhausted_to_inherit' && routeCategory ? routeCategory : category
-    const route = displayCategory
-      ? `category:${displayCategory}${routeDetail ? `(${routeDetail})` : ''}`
-      : model
+    const route = displayCategory === 'inherit'
+      ? `inherit${model ? `(${model})` : ''}`
+      : displayCategory
+        ? `category:${displayCategory}${routeDetail ? `(${routeDetail})` : ''}`
+        : model
     const routeKind = routeOrigin === 'fallback' || routeOrigin === 'exhausted_to_inherit' ? 'route-fallback' : 'route'
     return dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route)
   }
