@@ -321,17 +321,17 @@ OMH에는 다음과 같이 편집 가능한 순서형 recommendation chain이 �
 
 | 카테고리 alias | 용도 | 편집 가능한 recommendation 순서 |
 | --- | --- | --- |
-| `ultrabrain` | 가장 깊은 추론 | GPT-6 Astra, 다음 GPT-5.6 Sol (xhigh) |
-| `deep` | 강력한 기본 티어 | GPT-5.6 Terra, 다음 DeepSeek V3.2 (high) |
-| `architect` | 아키텍처·시스템 설계 | Claude Fable 5.1, 다음 Claude Fable 5, 다음 GPT-6 Astra, 다음 GPT-5.6 Sol, 다음 Kimi K3 (xhigh) |
+| `ultrabrain` | 가장 깊은 추론 | GPT-6 Astra (xhigh) |
+| `deep` | 강력한 기본 티어 | GPT-5.6 Terra, 다음 DeepSeek Flash (V4.1) (high) |
+| `architect` | 아키텍처·시스템 설계 | Claude Fable 5.1, 다음 GPT-6 Astra, 다음 Kimi K3 (xhigh) |
 | `unspecified-high` | 기본 작업 모델 | Kimi K3, 다음 Claude Opus 5 (medium) |
-| `unspecified-low` | 저비용 폴백 | GLM 5.3, 다음 GLM 5.2, 다음 GLM 5.2 Ultrafast, 다음 DeepSeek V3.2, 다음 Claude Opus 5 (low) |
-| `quick` | 짧은 작업 | GLM 5.3 Flash, 다음 GLM 5.2 Ultrafast, 다음 Kimi K3, 다음 GPT-5.6 Luna, 다음 Claude Fable 5.1, 다음 Claude Fable 5 (low) |
+| `unspecified-low` | 저비용 폴백 | GLM 5.3, 다음 DeepSeek Flash (V4.1), 다음 Claude Opus 5 (low) |
+| `quick` | 짧은 작업 | GLM 5.3 Flash, 다음 Kimi K3, 다음 GPT-5.6 Luna, 다음 Claude Fable 5.1 (low) |
 | `writing` | 문서·산문 | Kimi K3, 다음 Qwen3-Coder, 다음 Gemini 3.1 Pro (medium) |
-| `visual-engineering` | 프론트엔드·비주얼 | Claude Fable 5.1, 다음 Claude Fable 5, 다음 Kimi K3 (high) |
-| `artistry` | 비정형 창작 | Gemini 3.1 Pro, 다음 Claude Fable 5.1, 다음 Claude Fable 5, 다음 Kimi K3 (high) |
+| `visual-engineering` | 프론트엔드·비주얼 | Claude Fable 5.1, 다음 Kimi K3 (high) |
+| `artistry` | 비정형 창작 | Gemini 3.1 Pro, 다음 Claude Fable 5.1, 다음 Kimi K3 (high) |
 
-Ultrafast 티어가 궁금하다면 — Kimi K3 Ultrafast(300 TPS), GLM 5.2 Ultrafast(600 TPS) — [OpenGateway](https://opengateway.ai/)에서 만나볼 수 있습니다.
+Ultrafast 티어가 궁금하다면 — Kimi K3 Ultrafast(300 TPS), GLM 5.3 Ultrafast — [OpenGateway](https://opengateway.ai/)에서 만나볼 수 있습니다.
 
 위 모든 chain은 코드를 건드리지 않고 편집할 수 있습니다. chain은 파일 하나로 관리되며 `omh setup`이 시드합니다:
 
@@ -355,13 +355,13 @@ $ cat ~/.omh/routing/model-chains.json
     ],
     "quick": [
       {"model": "kimi-k3-ultrafast", "reasoning_effort": "low"},
-      {"model": "glm-5.2-ultrafast", "reasoning_effort": "low"}
+      {"model": "glm-5.3-ultrafast", "reasoning_effort": "low"}
     ]
   }
 }
 ```
 
-현재 적용 중인 chain은 `omh model-chains show`로 확인할 수 있습니다. 파일을 직접 고치는 대신 명령으로 바꾸고 싶다면 `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.2-ultrafast:low"`처럼 실행하면 이 파일이 그대로 수정됩니다.
+현재 적용 중인 chain은 `omh model-chains show`로 확인할 수 있습니다. 파일을 직접 고치는 대신 명령으로 바꾸고 싶다면 `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.3-ultrafast:low"`처럼 실행하면 이 파일이 그대로 수정됩니다.
 alias에 provider 전용 wire ID가 필요하면 `model_provider_routes/v1` 형식의 `~/.omh/routing/model-providers.json`에 한 번 매핑하세요. 이후 `set`, `status`, fallback, HUD가 alias/provider/wire model 전체 route를 표시합니다. OMH는 provider ID만 저장하며 credential은 저장하지 않습니다.
 
 Hermes에게 **모델을 설정해 줘**라고 요청해 검토하거나 변경할 수 있습니다. 이는 편집 가능한 선호이며 benchmark 결과가 아닙니다. 자세한 설정, fallback, provider, 소유권 규칙은 [Guided Model Setup](docs/INSTALLATION.md#guided-model-setup)을 참조하세요.

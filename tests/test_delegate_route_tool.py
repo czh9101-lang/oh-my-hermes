@@ -672,17 +672,12 @@ class DelegateRouteToolTest(unittest.TestCase):
         self.assertEqual(result["status"], "fell_back")
         self.assertEqual(result["category"], "quick")
         self.assertEqual(result["from"], "glm-5.3-flash")
-        # quick runs the owner-ordered Flash -> Ultrafast -> Kimi -> Luna ->
-        # Fable sequence, so a rejected ecosystem cannot exhaust the chain.
+        # quick runs the owner-ordered Flash -> Kimi -> Luna -> Fable 5.1
+        # sequence (the superseded 5.2 Ultrafast and Fable 5 entries left on
+        # 2026-09-11), so a rejected ecosystem cannot exhaust the chain.
         self.assertEqual(
             result["fallback_candidates"],
             [
-                {
-                    "alias": "kimi-k3",
-                    "provider": "",
-                    "model": "kimi-k3",
-                    "reasoning_effort": "low",
-                },
                 {
                     "alias": "gpt-5.6-luna",
                     "provider": "",
@@ -695,17 +690,11 @@ class DelegateRouteToolTest(unittest.TestCase):
                     "model": "claude-fable-5-1",
                     "reasoning_effort": "low",
                 },
-                {
-                    "alias": "claude-fable-5",
-                    "provider": "",
-                    "model": "claude-fable-5",
-                    "reasoning_effort": "low",
-                },
             ],
         )
         self.assertEqual(
             read_delegation_route(self.home),
-            {"model": "glm-5.2-ultrafast", "reasoning_effort": "low"},
+            {"model": "kimi-k3", "reasoning_effort": "low"},
         )
 
     def test_an_exhausted_chain_clears_the_route_to_parent_inheritance(self):
@@ -714,12 +703,12 @@ class DelegateRouteToolTest(unittest.TestCase):
         # fallback past the end restores inheritance instead of routing one
         # more rejection.
         self._call(action="set", category="quick")
-        for _ in range(5):
+        for _ in range(3):
             self._call(action="fallback", category="quick")
         result = self._call(action="fallback", category="quick")
         self.assertEqual(result["status"], "exhausted_to_inherit")
         self.assertEqual(result["category"], "quick")
-        self.assertEqual(result["from"], "claude-fable-5")
+        self.assertEqual(result["from"], "claude-fable-5-1")
         self.assertEqual(read_delegation_route(self.home), {})
 
     def test_fallback_without_a_route_is_an_error(self):
@@ -898,7 +887,7 @@ class RouteProvenanceRecordingTest(unittest.TestCase):
     def test_set_fallback_and_exhaustion_each_record_their_origin(self):
         first = self._call(action="set", category="quick")
         self.assertEqual(first["route_provenance"], "recorded")
-        for _ in range(5):
+        for _ in range(3):
             self._call(action="fallback", category="quick")
         last = self._call(action="fallback", category="quick")
         self.assertEqual(last["status"], "exhausted_to_inherit")
@@ -907,13 +896,13 @@ class RouteProvenanceRecordingTest(unittest.TestCase):
         records = load_delegation_route_provenance(self.omh_home)
         self.assertEqual(
             [record["origin"] for record in records],
-            ["head", *["fallback"] * 5, "exhausted_to_inherit"],
+            ["head", *["fallback"] * 3, "exhausted_to_inherit"],
         )
         self.assertEqual(records[0]["alias"], "glm-5.3-flash")
         self.assertEqual(records[1]["from_alias"], "glm-5.3-flash")
-        self.assertEqual(records[1]["alias"], "glm-5.2-ultrafast")
+        self.assertEqual(records[1]["alias"], "kimi-k3")
         self.assertEqual(records[-1]["category"], "quick")
-        self.assertEqual(records[-1]["from_alias"], "claude-fable-5")
+        self.assertEqual(records[-1]["from_alias"], "claude-fable-5-1")
 
     def test_clear_records_a_superseding_cleared_origin(self):
         # Without this record, a later child on a coincidentally matching

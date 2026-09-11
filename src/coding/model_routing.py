@@ -327,25 +327,20 @@ def _CLAUDE_FRONTIER_CHAIN(effort: str) -> tuple[dict[str, str], ...]:
 
 BUILTIN_CATEGORY_MODELS: Final[dict[str, dict[str, tuple[dict[str, str], ...]]]] = {
     # Codex: the same GPT generation the Hermes lane ships. GPT-6 Astra heads
-    # the two full-depth categories with GPT-5.6 Sol as fall-through; `deep`
-    # is Terra over Sol, mirroring the Hermes lane; every lighter category
-    # names Sol, the Codex CLI's own default, at the effort the tier wants
-    # (Astra lists at 8x Sol, so it never heads a cost-tier slot). The
-    # previous table named the gpt-5 generation, which the CLI no longer
-    # serves on the owner machine (2026-09-05).
+    # the two full-depth categories on its own — Sol no longer trails it, the
+    # same superseded-generation rule the Hermes lane applied on 2026-09-11;
+    # `deep` is Terra over Sol, mirroring the Hermes lane's cost-tier pick
+    # (#1313); every lighter category names Sol, the Codex CLI's own default,
+    # at the effort the tier wants (Astra lists at 8x Sol, so it never heads
+    # a cost-tier slot). The previous table named the gpt-5 generation, which
+    # the CLI no longer serves on the owner machine (2026-09-05).
     "codex": {
-        "ultrabrain": (
-            {"model_id": "gpt-6-astra", "reasoning_effort": "xhigh"},
-            {"model_id": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
-        ),
+        "ultrabrain": ({"model_id": "gpt-6-astra", "reasoning_effort": "xhigh"},),
         "deep": (
             {"model_id": "gpt-5.6-terra", "reasoning_effort": "high"},
             {"model_id": "gpt-5.6-sol", "reasoning_effort": "high"},
         ),
-        "architect": (
-            {"model_id": "gpt-6-astra", "reasoning_effort": "xhigh"},
-            {"model_id": "gpt-5.6-sol", "reasoning_effort": "xhigh"},
-        ),
+        "architect": ({"model_id": "gpt-6-astra", "reasoning_effort": "xhigh"},),
         "unspecified-high": ({"model_id": "gpt-5.6-sol", "reasoning_effort": ""},),
         "unspecified-low": ({"model_id": "gpt-5.6-sol", "reasoning_effort": ""},),
         "quick": ({"model_id": "gpt-5.6-sol", "reasoning_effort": "low"},),

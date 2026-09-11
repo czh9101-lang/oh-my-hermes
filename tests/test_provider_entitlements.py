@@ -55,8 +55,17 @@ class ParityTests(unittest.TestCase):
     # The exception is a named list, not a loosened comparison: an alias may
     # sit here only while it is genuinely absent from every shipped chain, so
     # a chain entry that silently disappears still fails this gate.
+    # The retired generations (owner decision, 2026-09-11) sit here for the
+    # same reason: a machine-level chain override may still name them.
     _RECOGNITION_ONLY_ALIAS_FAMILIES: dict[str, tuple[str, ...]] = {
         "claude-mythos-5-1": ("ccapi", "anthropic", "openrouter"),
+        # The versioned spelling of the shipped `deepseek-flash` pointer;
+        # gateways serve it under this id.
+        "deepseek-v4.1-flash": ("deepseek", "openrouter", "opencode"),
+        "claude-fable-5": ("ccapi", "anthropic", "openrouter"),
+        "deepseek-v3.2": ("deepseek", "openrouter", "opencode"),
+        "glm-5.2": ("zai", "openrouter", "opencode"),
+        "glm-5.2-ultrafast": ("zai", "openrouter", "opencode"),
     }
 
     def _catalog_families(self) -> dict[str, tuple[str, ...]]:
@@ -152,13 +161,18 @@ class ServingRuleTests(unittest.TestCase):
         self.assertFalse(alias_is_served("claude-fable-5", _entitlements({"other": "gateway"}), routes))
 
     def test_shaping_is_a_stable_partition(self) -> None:
-        zai = _entitlements({"zai": "zai"})
-        shaped = entitlement_shaped_chain(HERMES_MIXTURE_CATEGORY_CHAINS["quick"], zai)
+        # A deepseek-only machine serves the second entry of
+        # `unspecified-low`; shaping moves it to the front and keeps the
+        # unserved entries in shipped order behind it — a no-op would fail.
+        deepseek = _entitlements({"deepseek": "deepseek"})
+        chain = HERMES_MIXTURE_CATEGORY_CHAINS["unspecified-low"]
+        self.assertEqual(chain[1][0], "deepseek-flash")
+        shaped = entitlement_shaped_chain(chain, deepseek)
         aliases = [alias for alias, _ in shaped]
-        self.assertEqual(aliases[:2], ["glm-5.3-flash", "glm-5.2-ultrafast"])
-        self.assertEqual(sorted(aliases), sorted(alias for alias, _ in HERMES_MIXTURE_CATEGORY_CHAINS["quick"]))
-        unserved = [alias for alias, _ in HERMES_MIXTURE_CATEGORY_CHAINS["quick"] if alias not in aliases[:2]]
-        self.assertEqual(aliases[2:], unserved)
+        self.assertEqual(aliases[:1], ["deepseek-flash"])
+        self.assertEqual(sorted(aliases), sorted(alias for alias, _ in chain))
+        unserved = [alias for alias, _ in chain if alias != "deepseek-flash"]
+        self.assertEqual(aliases[1:], unserved)
 
     def test_effective_chains_apply_entitlements_after_overrides(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -207,18 +221,18 @@ class ChainSurfaceConsistencyTests(unittest.TestCase):
             self.assertEqual(state["entitlements_path"], str(provider_entitlements_path(home)))
             architect = next(row for row in state["categories"] if row["category"] == "architect")
             self.assertTrue(architect["entitlement_shaped"])
-            # Both GPT entries are served by the confirmed openai-codex
-            # provider and lead in chain order (Astra ahead of Sol); the
-            # Claude entries follow as unserved.
+            # The one GPT entry is served by the confirmed openai-codex
+            # provider and leads; the Claude and Kimi entries follow as
+            # unserved in shipped order.
             self.assertEqual(architect["chain"][0]["model"], "gpt-6-astra")
-            self.assertEqual(architect["chain"][1]["model"], "gpt-5.6-sol")
+            self.assertEqual(architect["chain"][1]["model"], "claude-fable-5-1")
             self.assertTrue(architect["chain"][0]["served"])
-            self.assertTrue(architect["chain"][1]["served"])
+            self.assertFalse(architect["chain"][1]["served"])
             self.assertFalse(architect["chain"][2]["served"])
             out = io.StringIO()
             with redirect_stdout(out):
                 _print_state(state)
-            self.assertIn("architect: gpt-6-astra:xhigh, gpt-5.6-sol:xhigh", out.getvalue())
+            self.assertIn("architect: gpt-6-astra:xhigh, claude-fable-5-1:xhigh, kimi-k3:xhigh", out.getvalue())
             self.assertIn("(reordered by provider entitlements)", out.getvalue())
             self.assertIn(f"Provider entitlements: {provider_entitlements_path(home)} [applied]", out.getvalue())
 
@@ -235,9 +249,9 @@ class ChainSurfaceConsistencyTests(unittest.TestCase):
             self.assertEqual(routed["status"], "routed", routed)
             self.assertEqual(routed["applied"]["alias"], "gpt-6-astra")
             fallback = json.loads(omh_delegate_route_handler({"action": "fallback", "category": "architect", **common}))
-            self.assertEqual(fallback["applied"]["alias"], "gpt-5.6-sol")
-            fallback = json.loads(omh_delegate_route_handler({"action": "fallback", "category": "architect", **common}))
             self.assertEqual(fallback["applied"]["alias"], "claude-fable-5-1")
+            fallback = json.loads(omh_delegate_route_handler({"action": "fallback", "category": "architect", **common}))
+            self.assertEqual(fallback["applied"]["alias"], "kimi-k3")
             status = json.loads(omh_delegate_route_handler({"action": "status", **common}))
             self.assertEqual(status["categories"]["architect"][0]["alias"], "gpt-6-astra")
 

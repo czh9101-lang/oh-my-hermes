@@ -41,6 +41,38 @@ def _inventory(models: tuple[str, ...], *, status: str = "observed") -> dict[str
 
 
 class CoverageMatrixTests(unittest.TestCase):
+    def test_deepseek_pointer_inherits_the_exact_contract_and_routed_legacy_ids_stay_missing(self) -> None:
+        inventory = _inventory(
+            (
+                "deepseek/deepseek-v4.1-flash",
+                "deepseek/deepseek-flash",
+                "deepseek/deepseek-v4-flash",
+            )
+        )
+        rows = {
+            row["requested_model"]: row
+            for row in build_model_contract_coverage(inventory)["comparison"]["models"]
+        }
+        self.assertEqual(rows["deepseek/deepseek-v4.1-flash"]["status"], "exact")
+        pointer = rows["deepseek/deepseek-flash"]
+        self.assertEqual(pointer["status"], "declared_inheritance")
+        self.assertEqual(pointer["contract_model_id"], "deepseek-v4.1-flash")
+        self.assertEqual(pointer["dimensions"]["effort"]["floor"], "low")
+        self.assertEqual(pointer["dimensions"]["effort"]["unsupported_efforts"], {})
+        self.assertEqual(pointer["dimensions"]["calibration"]["high_effort"], "model_specific")
+        self.assertEqual(
+            pointer["dimensions"]["category_projection"]["categories"], ["deep", "unspecified-low"]
+        )
+        self.assertEqual(
+            pointer["dimensions"]["provider_eligibility"]["families"],
+            ["deepseek", "openrouter", "opencode"],
+        )
+        self.assertEqual(pointer["dimensions"]["price"]["status"], "documented_list")
+        self.assertEqual(pointer["dimensions"]["docs"]["status"], "covered")
+        # The vendor routes v4-flash to V4.1 Flash on its own API; the catalog
+        # does not turn that wire routing into an inherited contract.
+        self.assertEqual(rows["deepseek/deepseek-v4-flash"]["status"], "missing")
+
     def test_astra_catalog_reports_exact_declared_and_unknown_rows_by_dimension(self) -> None:
         inventory = _inventory(
             (

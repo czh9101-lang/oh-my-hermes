@@ -162,6 +162,13 @@ class FamilyPrefixParityTests(unittest.TestCase):
         self.assertEqual(model_family("openai/gpt-5.6-sol"), "gpt")
         self.assertEqual(model_family("qwen/qwen3-coder-next"), "qwen")
         self.assertEqual(model_family("deepseek/deepseek-v4-pro"), "deepseek")
+        # DeepSeek V4.1 Flash as served: the versioned gateway id, the
+        # first-party pointer id, and the Hugging Face spelling all classify;
+        # the bare vendor word stays unknown like `minimax` above.
+        self.assertEqual(model_family("deepseek/deepseek-v4.1-flash"), "deepseek")
+        self.assertEqual(model_family("deepseek-flash"), "deepseek")
+        self.assertEqual(model_family("DeepSeek-V4.1-Flash"), "deepseek")
+        self.assertEqual(model_family("deepseek"), "unknown")
         self.assertEqual(model_family("zai/glm-5"), "glm")
         self.assertEqual(model_family("opencode/big-pickle"), "unknown")
 

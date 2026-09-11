@@ -316,17 +316,17 @@ OMH 随附以下可编辑的有序 recommendation chain。guided model setup 只
 
 | 类别 alias | 用途 | 可编辑的 recommendation 顺序 |
 | --- | --- | --- |
-| `ultrabrain` | 最深度推理 | GPT-6 Astra，其次 GPT-5.6 Sol (xhigh) |
-| `deep` | 强力默认层 | GPT-5.6 Terra，其次 DeepSeek V3.2 (high) |
-| `architect` | 架构与系统设计 | Claude Fable 5.1，其次 Claude Fable 5，其次 GPT-6 Astra，其次 GPT-5.6 Sol，其次 Kimi K3 (xhigh) |
+| `ultrabrain` | 最深度推理 | GPT-6 Astra (xhigh) |
+| `deep` | 强力默认层 | GPT-5.6 Terra，其次 DeepSeek Flash (V4.1) (high) |
+| `architect` | 架构与系统设计 | Claude Fable 5.1，其次 GPT-6 Astra，其次 Kimi K3 (xhigh) |
 | `unspecified-high` | 默认工作模型 | Kimi K3，其次 Claude Opus 5 (medium) |
-| `unspecified-low` | 低成本回退 | GLM 5.3，其次 GLM 5.2，其次 GLM 5.2 Ultrafast，其次 DeepSeek V3.2，其次 Claude Opus 5 (low) |
-| `quick` | 短任务 | GLM 5.3 Flash，其次 GLM 5.2 Ultrafast，其次 Kimi K3，其次 GPT-5.6 Luna，其次 Claude Fable 5.1，其次 Claude Fable 5 (low) |
+| `unspecified-low` | 低成本回退 | GLM 5.3，其次 DeepSeek Flash (V4.1)，其次 Claude Opus 5 (low) |
+| `quick` | 短任务 | GLM 5.3 Flash，其次 Kimi K3，其次 GPT-5.6 Luna，其次 Claude Fable 5.1 (low) |
 | `writing` | 文章与文档 | Kimi K3，其次 Qwen3-Coder，其次 Gemini 3.1 Pro (medium) |
-| `visual-engineering` | 前端与视觉 | Claude Fable 5.1，其次 Claude Fable 5，其次 Kimi K3 (high) |
-| `artistry` | 非常规创作 | Gemini 3.1 Pro，其次 Claude Fable 5.1，其次 Claude Fable 5，其次 Kimi K3 (high) |
+| `visual-engineering` | 前端与视觉 | Claude Fable 5.1，其次 Kimi K3 (high) |
+| `artistry` | 非常规创作 | Gemini 3.1 Pro，其次 Claude Fable 5.1，其次 Kimi K3 (high) |
 
-想试试 Ultrafast 档? Kimi K3 Ultrafast(300 TPS)与 GLM 5.2 Ultrafast(600 TPS)都在 [OpenGateway](https://opengateway.ai/) 上提供。
+想试试 Ultrafast 档? Kimi K3 Ultrafast(300 TPS)与 GLM 5.3 Ultrafast都在 [OpenGateway](https://opengateway.ai/) 上提供。
 
 上面的每条 chain 都可以在不改代码的情况下编辑。chain 由一个文件管理，`omh setup` 会生成它:
 
@@ -350,13 +350,13 @@ $ cat ~/.omh/routing/model-chains.json
     ],
     "quick": [
       {"model": "kimi-k3-ultrafast", "reasoning_effort": "low"},
-      {"model": "glm-5.2-ultrafast", "reasoning_effort": "low"}
+      {"model": "glm-5.3-ultrafast", "reasoning_effort": "low"}
     ]
   }
 }
 ```
 
-当前生效的 chain 可用 `omh model-chains show` 查看。不想手动编辑文件的话，也可以运行 `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.2-ultrafast:low"`，同一个文件会被直接修改。
+当前生效的 chain 可用 `omh model-chains show` 查看。不想手动编辑文件的话，也可以运行 `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.3-ultrafast:low"`，同一个文件会被直接修改。
 如果 alias 需要 provider 专用的 wire ID，请在 `~/.omh/routing/model-providers.json` 中按 `model_provider_routes/v1` 映射一次。此后 `set`、`status`、fallback 和 HUD 都会显示完整的 alias/provider/wire model route。OMH 只保存 provider ID，不保存 credential。
 
 请让 Hermes **设置我的模型**，以查看或更改这些推荐。它们是可编辑的偏好，不是 benchmark 结果。详细的设置、fallback、provider 与所有权规则见 [Guided Model Setup](docs/INSTALLATION.md#guided-model-setup)。

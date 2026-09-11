@@ -50,7 +50,7 @@ identical prompt. Nothing else about the pipeline changes per model.
 | `glm` | `glm-` | `glm-5.3`, `glm-5.3-flash`, `glm-5.2-ultrafast` |
 | `grok` | `grok-` | `grok-code-fast-1` |
 | `qwen` | `qwen-`, alias `qwen3-` | `qwen3-coder` |
-| `deepseek` | `deepseek-` | versioned DeepSeek ids |
+| `deepseek` | `deepseek-` | `deepseek-v4.1-flash`, `deepseek-flash` (the first-party pointer), `deepseek/deepseek-v4.1-flash` |
 | `mistral` | `mistral-` | Mistral Large / Medium ids |
 | `llama` | `llama-` | open-weights Llama ids, any serving host |
 | `codestral` | `codestral-` | Codestral coding ids |
@@ -341,10 +341,12 @@ pairing so a benchmark claim can never mix in other prompt changes.
   gated to `*-sol` and the Hermes `ultrawork` overlay stays family-wide;
   neither has an Astra measurement, so Astra on codex gets the base rules.
 - **Routing:** heads `ultrabrain` and the GPT slot of `architect` in both
-  lanes with GPT-5.6 Sol directly behind it as fall-through (the same
-  generation rule as GLM 5.2 behind 5.3); the Terra and Luna lanes are
-  cost-tier picks and stay as they were. An account the staged rollout has
-  not reached gets a provider rejection and the chain falls through.
+  lanes. GPT-5.6 Sol trailed it as fall-through until 2026-09-11, when the
+  superseded generations left every shipped chain (owner decision); Sol
+  stays in the shared last resort and as the codex cost-tier default. The
+  Terra and Luna lanes are cost-tier picks and stay as they were (#1313). An
+  account the staged rollout has not reached gets a provider rejection and
+  the chain falls through to the next ecosystem.
 - **Pricing:** exact operator `model-prices.json` rows win first. A declared
   alias without an exact row inherits the base Astra 10/50 list rates; `fast`
   applies the documented 2x service-tier multiplier and `flex` 0.5x. `pro` is
@@ -574,6 +576,165 @@ pairing so a benchmark claim can never mix in other prompt changes.
   harness), plus the DeepSeek Harness review adopted in #1071 (exact-string
   RL edit contract, priced prefix caching — the priced-prefix fact later
   generalized into the universal prompt-cache protocol above).
+- **Generations:** DeepSeek V4.1 Flash (2026-09-10) has its own exact
+  contract and override below, because on that model the family block's
+  conditionals resolve (thinking is on by default, the reasoning is returned
+  on every tool turn) and the vendor documents a three-rung effort ladder.
+  Every other DeepSeek id — V3.2, V4 Flash, V4 Pro, `deepseek-chat`,
+  `deepseek-reasoner` — keeps this family block.
+
+### `deepseek-v4.1-flash` (DeepSeek V4.1 Flash, exact-model override on the `deepseek` family)
+
+- **Documented contract:** `deepseek-v4.1-flash` (released 2026-09-10) is
+  the exact contract; OMH's alias is the versioned gateway spelling
+  (`deepseek/deepseek-v4.1-flash` on OpenRouter). The first-party API names
+  the current Flash generation `deepseek-flash`, and that pointer is the one
+  declared alias (`DECLARED_MODEL_CONTRACT_PROJECTIONS`): it inherits the
+  contract with `declared_inheritance` provenance and a read date, because
+  the next Flash release moves it. `deepseek-v4-flash` and
+  `deepseek-v4-flash-vision-exp` are routed to V4.1 Flash by the vendor, and
+  `deepseek-v4-pro` routes to it from 2026-09-14 pending a V4.1 Pro; none of
+  those spellings inherits — a routed alias is the vendor's wire concern,
+  not a catalog claim. The contract records a 1,000,000-token context,
+  384,000 max output, thinking on by default at `high`, the documented
+  effort ladder `low` / `high` / `max` with no floor to raise to (the
+  thinking-mode guide publishes the mapping for every other rung —
+  `minimal` → `low`, `medium` → `high`, `xhigh` → `high`, `ultra` → `max` —
+  and nothing returns an error, so `unsupported_efforts` is empty and the
+  route passes `medium` or `xhigh` through on record with the table in the
+  contract saying what it bought), tool calling on Chat Completions, the
+  Responses API, and the Anthropic-compatible endpoint, `reasoning_content`
+  of every earlier turn sent back on every request that carries `tools` —
+  even turns without a tool call, HTTP 400 otherwise — and `temperature` /
+  `presence_penalty` / `frequency_penalty` without effect in thinking mode
+  (`top_p` has a 0.95 floor there). Full record and
+  sources in `src/coding/model_contracts.py`; `omh coding model-contract
+  --model deepseek-flash` prints the declared projection. No
+  `dynamic_effort` mechanism is documented, so `dynamic_effort_guidance()`
+  returns nothing and `floor_raised` never fires for this model.
+- **Model trait (official, model card and API guides):** a 552B-parameter
+  causal encoder-decoder MoE that activates 8B parameters per token in
+  prefill and 16B in decode; post-trained on large-scale synthesized agent
+  tasks and evaluated by the vendor at its maximum reasoning setting with a
+  1M-token context and `max_tokens` of at least 256K; thinking on by
+  default, its chain of thought returned as `reasoning_content` and
+  concatenated back into the context on every later tool turn; cache-hit
+  input priced at a fiftieth of cache-miss input. The vendor's best coding
+  numbers come from its own harness's *Minimal* preset — one persistent
+  shell tool, a one-line persona ("You are a helpful software engineer
+  assistant."), no runtime context, no compaction, effort `max`,
+  `max_tokens` 256,000 — which scored above the Standard and PTC presets on
+  DeepSWE (72.6 / 70.5 / 67.6) and Terminal-Bench 2.1 (90.6 / 85.8 / 85.8).
+  The card's scaffold table says the same thing from the other side: across
+  eight harnesses (Claude Code, Codex, OpenCode, Pi, mini-SWE-agent, and the
+  three DSH presets) DeepSWE stays within 65.5–74.2 and Terminal-Bench 2.1
+  within 84.1–90.6 — the model was trained to depend little on the harness,
+  so scaffolding is not where its pass rate lives. Both facts are why the
+  override below stays three sentences and why OMH's claims for this model
+  are cost claims, not pass-rate claims. The card publishes no per-effort
+  score or token table for the API rungs; a circulating "effort 25 / 50 /
+  100" curve is unsourced until the vendor prints it, and #1463's `low`
+  arm is how OMH measures it instead. Community harness notes
+  (OpenRouter's listing) describe it as strongest on long-horizon tasks that
+  run to completion across many steps — the same "keeps working" trait the
+  Astra measurement found expensive on tasks a model will not pass.
+- **What OMH injects (subagent):** the resolved contract in one sentence —
+  thinking is on and the runtime returns earlier reasoning on every tool
+  turn, so the visible reply carries the change, the verification output,
+  and the stop rather than a restatement of reasoning the context already
+  holds, and a turn that ends without a tool call carries its answer in the
+  visible text, never only in reasoning (the vendor's harness adapter
+  records that the live API rejects an assistant turn whose content is
+  empty because the answer sat in the reasoning channel); the family's
+  exact-literal-string edit rule, kept because the override replaces the
+  family block rather than extending it; and the blocker rule — when the
+  evidence in hand cannot satisfy a criterion, report the blocker with the
+  observed output rather than widening the search, and leave a passed
+  criterion closed. Three sentences; under the per-block ceiling. Nothing
+  in it asks the model to keep going: the Astra round showed that such a
+  sentence costs tokens exactly on the tasks the model fails, so the
+  long-horizon trait gets a stop-shaped counter.
+- **What OMH injects (composer):** the visible composition is the ordered
+  split, not a replay of planning already in context, and carries no
+  synthetic thinking instructions; the shared preamble stays byte-identical
+  across sibling units because a cache miss costs fifty times a hit on this
+  model; a unit routed to this model takes `low`, `high`, or `max` — its
+  documented ladder; the vendor's own table turns `medium` and `xhigh` into
+  `high`, so an undocumented rung is a rung the composer did not choose;
+  validate once and stop.
+- **Why each sentence:** reasoning passback → do not restate reasoning
+  (the context already carries it, restating doubles the tokens); the
+  long-horizon post-training → blocker report instead of widening the
+  search; exact-string edit training → keep the family edit rule; priced
+  cache hits → byte-identical preamble; three-rung ladder with a published
+  mapping → name a documented rung on every unit.
+- **Routing:** takes the slots DeepSeek V3.2 held — the reasoning-capable
+  budget fall-through behind GPT-5.6 Terra on `deep` at `high`, and the
+  DeepSeek entry on `unspecified-low` at `low`. Both efforts are documented
+  rungs. The chain alias is `deepseek-flash`, the id the vendor's API
+  serves and Hermes forwards: the first-party endpoint rejects the
+  versioned spelling `deepseek-v4.1-flash` with HTTP 400 (observed in the
+  Hermes DeepSeek provider profile, 2026-09-11), so a shipped chain naming
+  the versioned id would 400 out of the box on the one provider that is
+  never a gateway. The versioned contract sits behind the pointer as the
+  declared projection; a child observed under the gateway spelling
+  `deepseek/deepseek-v4.1-flash` still labels `deep` / `unspecified-low`
+  because `mixture_category_for` projects an exact id onto its declared
+  *pointer* aliases (`EXACT_CONTRACT_POINTER_ALIASES` — the same model at
+  the contract's own mode and tier) as well as the other way round; a
+  `-pro` / `-fast` / `-flex` variant never labels its base id. V3.2 left the shipped chains
+  with the other superseded generations on 2026-09-11 and stays
+  recognized, priced, and provider-mapped for a machine-level override. It
+  does not head `deep`: that lane stays on Terra by owner decision
+  (#1313), and no OMH measurement of this model exists yet to argue
+  otherwise.
+- **What the Hermes lane does with it (observed in the Hermes Agent source,
+  v0.21.1 and origin/main, 2026-09-11 — recorded so nobody looks for an
+  OMH fix):** Hermes forwards `reasoning_effort` from its own vocabulary,
+  so a prepared `medium` reaches DeepSeek verbatim and the server maps it
+  to `high` (there is no cheaper middle rung), `minimal` is sent as `low`,
+  and `xhigh` is escalated by Hermes to `max` (DeepSeek itself would map
+  `xhigh` to `high`); an unset effort is the server default `high`.
+  Thinking-off is reachable only as `--reasoning none` / `agent.
+  reasoning_effort: false` (sent as `thinking: disabled`); an effort-only
+  "none" leaves thinking on. Hermes stores `reasoning_content` at write
+  time and replays it on every assistant turn for DeepSeek routes, pads it
+  where absent, and persists it across resume — the vendor's passback rule
+  is met, and the cost consequence is that every tool turn re-sends all
+  prior reasoning, mostly as cache hits. On the installed v0.21.1 a typed
+  `deepseek-flash` is folded onto `deepseek-v4-flash`, which the vendor
+  routes to V4.1 Flash; once the installed Hermes Agent moves to a
+  post-2026-09-10 build, `deepseek-flash` is canonical. Hermes sends no
+  `max_tokens` for DeepSeek unless the operator configures one, so the
+  API's own 384K ceiling applies and the small-`max_tokens` trap (the
+  reasoning trace spends the budget and the visible reply comes back
+  empty) does not arise on the default route. Forced `tool_choice` with thinking on
+  returns 400 on the first-party endpoint (community-observed); OMH never
+  writes that shape.
+- **Pricing:** the approximation table carries the peak-hour list rate,
+  0.30 / 1.20 per MTok (cache-miss input / output), with the cache-hit rate
+  as a 0.02 `APPROX_CACHE_READ_RATIO` row (0.006 per MTok). Every rate
+  halves off-peak (outside 01:00–04:00 and 06:00–10:00 UTC, Monday through
+  Friday); the table cannot express a clock, so peak is the honest
+  approximation for a fanout wave, and the off-peak schedule stays in the
+  contract. `deepseek-flash` inherits the row through the declared
+  projection; an exact operator `model-prices.json` row wins first.
+- **Not measured:** no served V4.1 Flash route existed on the owner machine
+  on 2026-09-11 (the gateway listed `deepseek/deepseek-v4-flash` and
+  `deepseek/deepseek-v4-pro`; the vendor routes both to V4.1 Flash on its
+  own API, but a gateway's `/models` row is not that proof). The
+  `family` vs `optimized` pair on `benchmarks/live-model-tools/v1` (the
+  recipe in `docs/MODEL-ONBOARDING.md` §8) is the named follow-up; per §8
+  the override is revised or removed in the change that reports the number.
+- **Source:** official (the DeepSeek-V4.1-Flash model card on Hugging Face,
+  the API change log entry of 2026-09-10, the models-and-pricing page, the
+  thinking-mode guide, and the `deepseek-ai/deepseek-harness` repository's
+  tool catalog and DeepSeek adapter notes, read 2026-09-11); observed (the
+  Hermes Agent DeepSeek provider profile, reasoning-effort table, and
+  `reasoning_content` replay path, read the same day); community
+  (OpenRouter's model listing for the gateway id and the long-horizon
+  characterization, and the oh-my-openagent / oh-my-pi / models.dev
+  handling surveyed for divergence), each labeled as such above.
 
 ### `mistral` (Mistral Large / Medium)
 
@@ -740,7 +901,8 @@ gate requires a completed paired run on the intended execution surface.
   Fable 5.1 lists $10 / $50 per MTok with cache reads at $0.25 (0.025x) and
   cache writes at $12.50 (5-minute TTL) / $20 (1-hour TTL); Opus 5 reads at
   the tenth. Mythos 5.1 carries the Fable figure because its cache-read rate
-  was open at launch — approximate, like every number in the table.
+  was open at launch — approximate, like every number in the table. DeepSeek
+  V4.1 Flash reads at 0.02x (cache hit $0.006 against $0.30 miss, peak).
 - **`max_tokens` is a failure signal, not a stop** — a unit whose final turn
   ended on `stop_reason: max_tokens` is a failed attempt: the output was cut
   mid-thought and nothing after the cut was verified. It is never a done
@@ -774,6 +936,8 @@ gate requires a completed paired run on the intended execution surface.
 | `gpt`, `claude`, `gemini`, `grok`, `kimi`, `glm`, `qwen`, `deepseek`, `mistral`, `llama`, `codestral`, `solar` | yes | yes | full guidance, provenance above (#1051/#1052 closed the last four) |
 | `gpt-6-astra` (exact-model override) | yes → `gpt` | yes, both override tables, resolved before the family block | exact documented contract plus counters for the four official traits; paired measurement is the named follow-up |
 | five declared Astra mode/tier aliases | yes → `gpt` | yes, inherited from canonical `gpt-6-astra` | bounded declared inheritance for contract, effort, calibration, provider/category metadata, and price; unknown suffixes remain missing |
+| `deepseek-v4.1-flash` (exact-model override) | yes → `deepseek` | yes, both override tables, resolved before the family block | exact documented contract (three-rung ladder, no floor) plus stop-shaped counters for the documented traits; the family-vs-optimized pair is the named follow-up, blocked on a served route |
+| `deepseek-flash` (declared pointer alias) | yes → `deepseek` | yes, inherited from canonical `deepseek-v4.1-flash` | the vendor's moving "current Flash" id, declared with a read date; `deepseek-v4-flash`, `deepseek-v4-pro`, and every other DeepSeek id keep the family block |
 | `openai-gpt-`, `anthropic-claude-` (design-qualified aliases) | yes → `gpt` / `claude` | yes, through the design family | concrete models.dev/OpenCode serving ids carry these sub-prefixes; their catalog `base_model` fields establish the underlying design family |
 | other `openai-`, `anthropic-` vendor-qualified ids | recognized as model targets, family `unknown` | no → `generic` | vendor qualification alone does not establish a design; O-series, image, and emerging ids remain uncalibrated |
 | `minimax` | yes | no → `generic` | prefix landed in #1304 (`MiniMax-M3`, released 2026-05-31, and `MiniMax-M2.7`, 2026-03-18, per minimax.io release notes and the platform.minimax.io model list); the calibration pair waits on an observed failure mode or a provider-stated characteristic worth countering |

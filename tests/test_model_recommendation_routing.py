@@ -32,12 +32,15 @@ _KIMI = _active("kimi-k3", "apitopia", "kimi")
 _OPUS = _active("claude-opus-5", "ccapi", "claude")
 _GROK = _active("grok-code-fast", "xai", "grok")
 _GEMINI = _active("gemini-3.1-pro", "google", "gemini")
-_GLM_FAST = _active("glm-5.2-ultrafast", "zai", "glm")
-_FABLE = _active("claude-fable-5", "ccapi", "claude")
+# Shipped chain members (the superseded GLM 5.2 Ultrafast and Fable 5
+# entries left the chains on 2026-09-11): the quick head and the Claude
+# head of visual-engineering.
+_GLM_FLASH = _active("glm-5.3-flash", "zai", "glm")
+_FABLE = _active("claude-fable-5-1", "ccapi", "claude")
 
 
 _CATEGORY_ACTIVE = {
-    "quick": _GLM_FAST,
+    "quick": _GLM_FLASH,
     "writing": _KIMI,
     "artistry": _GEMINI,
     "visual-engineering": _FABLE,
@@ -173,13 +176,13 @@ class HermesRecommendationRoutingTests(unittest.TestCase):
             role="implementation",
             requested_category="quick",
             requested_domain="x_platform_data",
-            active_models=[_GLM_FAST, _OPUS],
+            active_models=[_GLM_FLASH, _OPUS],
         )
 
-        self.assertEqual(route["selected_model"], "zai/glm-5.2-ultrafast")
+        self.assertEqual(route["selected_model"], "zai/glm-5.3-flash")
         self.assertEqual(
             route["recommendation"]["projection"]["binding"],
-            "zai/glm-5.2-ultrafast",
+            "zai/glm-5.3-flash",
         )
         affinity = next(
             entry for entry in route["attempted"] if entry["stage"] == "domain_affinity"
@@ -288,7 +291,7 @@ class HermesRecommendationRoutingTests(unittest.TestCase):
                     {
                         "source": "omo",
                         "provider": "zai",
-                        "model_id": "glm-5.2-ultrafast",
+                        "model_id": "glm-5.3-flash",
                         "variant": "",
                         "timestamp": "",
                         "status": "confirmed_active",
@@ -308,7 +311,7 @@ class HermesRecommendationRoutingTests(unittest.TestCase):
         route = json.loads(stdout)
         self.assertEqual(route["category"], "quick")
         self.assertEqual(route["role"], "implementation")
-        self.assertEqual(route["selected_model"], "zai/glm-5.2-ultrafast")
+        self.assertEqual(route["selected_model"], "zai/glm-5.3-flash")
 
     def test_cli_routes_hermes_from_confirmed_discovery_and_freezes_missing_explicit(self) -> None:
         inventory = {
