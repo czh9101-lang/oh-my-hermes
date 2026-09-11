@@ -4627,6 +4627,19 @@ def _dispatch_unit(
         "unit_state": unit_state,
         "unit_state_reason": unit_state_reason,
         "progress": progress_evidence,
+        # Which output contract this unit actually ran under, and why it was
+        # not the structured one when it was not. `plain` means no token
+        # counts and no session id were obtainable for the whole unit -- an
+        # absence with a cause, rather than an empty token column that reads
+        # like a unit which spent nothing.
+        "session_protocol": ("codex" if owner == "codex" else "claude")
+        if session_capability is not None and session_capability.protocol is not None
+        else "plain",
+        "session_protocol_reason": (
+            "" if session_capability is not None and session_capability.protocol is not None
+            else (session_capability.reason if session_capability is not None
+                  else "no_session_capability_negotiated")
+        ),
         "worktree_path": str(worktree),
         "filesystem_confinement": filesystem_confinement,
         "child_environment_policy": child_environment.receipt,
