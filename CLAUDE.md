@@ -202,6 +202,19 @@ Rules:
   `O_BINARY` returns a text-mode descriptor, and missed that the next line's
   `os.fdopen(fd, 'rb')` re-sets the descriptor to binary before a byte is read.
   Trace the composition to the end, or say the claim is untested.
+- Letting a best-effort `except OSError` decide what a failure was. The swallow
+  in `append_sidecar_line` is deliberate — the sidecar is the record of last
+  resort and must not raise — but it covers every step under it, and
+  `FileLockTimeout` is a `TimeoutError`, hence an `OSError` too. So "the write
+  failed", "the lock timed out" and "Windows denied the chmod while another
+  waiter held the file open" all leave one trace: a line missing and nothing
+  raised. The barrier test above it then reports `13 != 16`, which is exactly
+  what a lock that failed to hold would report, and the Windows run that
+  produced it is over. Two rules follow. A swallow is only as good as what
+  still records the failure, so widen the *report*, not the `except`. And when
+  a guard can fail two ways, put the discriminator in the assertion message —
+  here, whether any surviving line failed to parse, since only an interleave
+  splices one. A count is not a diagnosis.
 - Regenerating docs but forgetting the demo cards (or vice versa) when catalog
   data changes — the parse-equality test catches it late; regenerate all four
   artifact families together.
