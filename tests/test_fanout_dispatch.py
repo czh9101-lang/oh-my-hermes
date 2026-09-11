@@ -1706,6 +1706,79 @@ class FanoutDispatchEngineTests(unittest.TestCase):
             self.assertIn("already exists", by_unit["core"]["reason"])
 
 
+class FanoutWorkspacePreflightTests(unittest.TestCase):
+    """A worktree that cannot take the work must not be handed a spawned CLI."""
+
+    def test_a_failing_preflight_blocks_the_spawn_and_says_which_check_failed(self) -> None:
+        root_runner = _agent_runner()
+
+        def runner(argv, **kwargs):
+            # `git cat-file -e <ref>^{commit}` is the workspace preflight
+            # asking whether the commits the work names are present here. A
+            # non-zero answer is the incident's condition: the ref was
+            # described, and the object is not in this isolation.
+            if argv[:2] == ["git", "cat-file"]:
+                return _FakeCompleted(128, "")
+            return root_runner(argv, **kwargs)
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, _UNITS))
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=runner,
+                readiness=_ready,
+            )
+
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertEqual(core["status"], "worktree_failed")
+            self.assertEqual(core["reason_code"], "workspace_preflight_blocked")
+            self.assertEqual(core["failure_kind"], "workspace_blocked")
+            self.assertEqual(core["unit_state"], "data_missing")
+            self.assertFalse(core["process_succeeded"])
+            preflight = core["workspace_preflight"]
+            self.assertEqual(preflight["schema_version"], "workspace_preflight/v1")
+            self.assertEqual(preflight["blocking"], ["objects_present"])
+            self.assertIn("is not a commit present in", core["reason"])
+            # The point of the whole check: no agent CLI was started.
+            self.assertEqual(root_runner.spawned, [])
+
+    def test_a_healthy_worktree_reports_a_passing_preflight_and_still_spawns(self) -> None:
+        # The negative control for the test above: the same dispatch with git
+        # answering normally must not acquire a new way to refuse.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, _UNITS))
+            runner = _agent_runner()
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=runner,
+                readiness=_ready,
+            )
+
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertNotIn("workspace_preflight", core)
+            self.assertNotIn("failure_kind", core)
+            self.assertTrue(core["process_succeeded"])
+            self.assertEqual(len(runner.spawned), 1)
+
+
 class FanoutUnitRecoveryTests(unittest.TestCase):
     """A failed unit still owns its worktree; the summary must say what survived."""
 
@@ -2105,7 +2178,13 @@ class FanoutUnitRecoveryTests(unittest.TestCase):
         def runner(argv, **kwargs):
             # argv[:2], so `git worktree add` (which creates the unit worktree)
             # is not caught by the `add` arm and the probe is actually reached.
-            if argv[:2] in (["git", "diff"], ["git", "add"], ["git", "rev-parse"]):
+            # `--absolute-git-dir` is excluded for the same reason: that is the
+            # workspace preflight resolving the git directory before the spawn,
+            # and faulting it would block the unit before the recovery probe
+            # this test is about ever runs.
+            if argv[:2] in (["git", "diff"], ["git", "add"], ["git", "rev-parse"]) and argv[2:3] != [
+                "--absolute-git-dir"
+            ]:
                 return _NoReturnCode()
             if argv[0] == "git":
                 return subprocess.run(argv, **kwargs)
