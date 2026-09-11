@@ -69,9 +69,11 @@ import json
 
 FANOUT_STATUS_SCHEMA_VERSION = "fanout_status_roster/v1"
 FANOUT_STATUS_CLAIM_BOUNDARY = (
-    "A fanout status roster projects dispatcher-observed journal events only. It is not verification, "
-    "review, CI, merge-readiness, or merge evidence, and a unit's state never advances on an executor's "
-    "own report."
+    "A fanout status roster projects dispatcher-observed journal events; `lifecycle_state` advances on "
+    "those alone and never on an executor's own report. The `unit_state` / `terminal` / `progress` keys "
+    "are a separate reading of whether the work is moving, taken from the in-flight marker while a unit "
+    "runs and the dispatch summary after it exits, and they move no rung. It is not verification, review, "
+    "CI, merge-readiness, or merge evidence."
 )
 # The ladder todo 3 froze for dispatch summaries, restated here as the roster's
 # display vocabulary plus the two pre-success rungs a roster must be able to
