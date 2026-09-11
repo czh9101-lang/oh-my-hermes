@@ -342,7 +342,15 @@ retention class, and an explicit decision:
   pending review until OMH-local approval and a target write are separately
   observed.
 - **Refuse** covers secrets, raw logs, transcripts, prompt-injection-shaped
-  instructions, and temporary task progress.
+  instructions, and temporary task progress. This is lane guidance, not a
+  pattern verdict: `classify_memory_admission` screens protected values, and
+  the log/transcript shape is matched by the domain-vocabulary gate in
+  `src/workflows/domain_intelligence_admission.py`.
+- **Retrieve instead** covers past-session history. What happened in an earlier
+  conversation stays in Hermes' own session store and is recalled on demand
+  through its native session-search tool when that tool is available. Memory
+  carries what is worth re-reading every turn, because every retained record is
+  context each later turn pays for.
 - **Defer** sends uncertain source, scope, target, retention, and external
   provider/vector material to review rather than retaining it.
 

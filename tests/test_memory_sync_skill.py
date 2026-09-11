@@ -37,6 +37,18 @@ def _template_content(name: str) -> str:
 
 
 class MemorySyncSkillTests(unittest.TestCase):
+    def test_capture_lane_sends_past_session_history_to_the_session_store(self) -> None:
+        # A retained record is context every later turn pays for, so the lane
+        # has to separate a durable fact from conversation archaeology at the
+        # only moment the choice exists. The bullet names the alternative
+        # rather than only refusing, and claims no tool availability.
+        body = _template_content("memory-new")
+        self.assertIn("**Retrieve instead**", body)
+        self.assertIn("session store", body)
+        self.assertIn("when that tool is available", body)
+        decision_block = body.split("## Candidate Decision", 1)[1].split("##", 1)[0]
+        self.assertIn("**Retrieve instead**", decision_block)
+
     def test_memory_new_skill_registered_for_candidate_capture(self) -> None:
         self.assertIn("memory-new", installable_skill_names())
         definition = _definition("memory-new")

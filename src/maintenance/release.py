@@ -823,7 +823,14 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # unavailable, so the note belongs where the lane reads it; warranted growth.
 # Re-derived from the producer after this branch met the maestro entry above,
 # never by adding the two deltas.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 934491
+# 934491 -> 934924: `memory-new` gained a "retrieve instead" bullet
+# sending past-session history to Hermes' own session store rather than a
+# retained record. It belongs in the always-loaded body because the lane
+# applies it at the moment of capture, which is the only moment the choice
+# exists; a record admitted here is context every later turn pays for;
+# warranted growth. Re-derived from the producer after this branch met the
+# dated-snapshot entry above, never by adding the two deltas.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 934924
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
