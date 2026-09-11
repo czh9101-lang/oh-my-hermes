@@ -380,13 +380,48 @@ def _unqualified_model_alias(alias: object) -> str:
     return key.rsplit("/", 1)[-1]
 
 
+# Standalone mirror of coding.model_contracts.dated_snapshot_base: a vendor's
+# `<base>-YYYY-MM-DD` snapshot id (`gpt-5.6-terra-2026-07-09`) is the base
+# model pinned to a release date, the same model at the same mode and tier.
+# Shape only; every caller checks that the base is an alias it already knows
+# (a contract, a declared row, a priced or provider-mapped alias, a chain
+# entry). The parity test pins this pattern against the source copy.
+_DATED_SNAPSHOT_SUFFIX = re.compile(
+    r"^(?P<base>.+)-(?P<date>\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))$"
+)
+
+
+def _dated_snapshot_base(alias: object) -> str:
+    match = _DATED_SNAPSHOT_SUFFIX.match(_unqualified_model_alias(alias))
+    return match.group("base") if match else ""
+
+
+def _catalog_knows_alias(alias: str) -> bool:
+    """Whether the plugin's own tables describe ``alias`` (never a guess)."""
+    return (
+        alias in EXACT_MODEL_CONTRACT_ALIASES
+        or alias in DECLARED_MODEL_ALIAS_PROJECTIONS
+        or alias in HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES
+        or alias in APPROX_PRICE_PER_MTOK
+    )
+
+
 def _projected_model_alias(alias: object) -> tuple[str, str]:
-    """Return (declared base alias, service tier), without suffix guessing."""
+    """Return (declared base alias, service tier), without suffix guessing.
+
+    The one shape that projects without a declared row is a dated snapshot of
+    an alias the tables already describe; it inherits that base's projection.
+    """
     key = _unqualified_model_alias(alias)
     if key in EXACT_MODEL_CONTRACT_ALIASES:
         return key, "standard"
     projection = DECLARED_MODEL_ALIAS_PROJECTIONS.get(key)
-    return (projection[0], projection[2]) if projection is not None else (key, "standard")
+    if projection is not None:
+        return projection[0], projection[2]
+    snapshot_base = _dated_snapshot_base(key)
+    if snapshot_base and _catalog_knows_alias(snapshot_base):
+        return _projected_model_alias(snapshot_base)
+    return key, "standard"
 
 
 def is_provider_id_token(value: object) -> bool:
@@ -1218,29 +1253,41 @@ def mixture_category_for(
     if not observed_model:
         return ""
     parent_key = _unqualified_model_alias(_text(parent_model))
-    if parent_key and observed_model == parent_key:
+    # A child on a dated snapshot of the parent's model is on the parent's
+    # model; the parent's own id is the base this reader knows. One direction
+    # only, like the resolver's explicit match: a child on the unpinned base
+    # of a date-pinned parent, or on a different date, is not the same run.
+    if parent_key and parent_key in (observed_model, _dated_snapshot_base(observed_model)):
         return "inherit"
 
     # Some explicitly declared catalog aliases represent a model contract plus
     # a reasoning mode/service tier. Project only those rows onto the contract
     # alias before retaining the older generic speed-tier category behavior.
     # Unknown suffixes therefore do not gain an Astra contract/category merely
-    # because their spelling looks similar.
+    # because their spelling looks similar. A dated snapshot
+    # (`gpt-5.6-terra-2026-07-09`) is the exception with its own bound: the
+    # base becomes a candidate, and it labels a category only when a chain
+    # entry names that base — an unknown base with a date matches nothing.
     candidates = [observed_model]
     projected_model, _service_tier = _projected_model_alias(observed_model)
-    if projected_model != observed_model:
-        candidates.append(projected_model)
+    snapshot_base = _dated_snapshot_base(observed_model)
+    for alias in (projected_model, snapshot_base):
+        if alias and alias not in candidates:
+            candidates.append(alias)
     # The reverse direction: a chain may name the vendor's served pointer
     # (`deepseek-flash`) while the child ran under the exact contract id
     # (`deepseek/deepseek-v4.1-flash` on a gateway). Only a pointer — the
     # same model at the same mode and tier — projects this way; a `-pro` /
     # `-fast` / `-flex` entry is a different mode or price and never labels
-    # the base id.
-    candidates.extend(
-        alias
-        for alias in EXACT_CONTRACT_POINTER_ALIASES.get(observed_model, ())
-        if alias not in candidates
-    )
+    # the base id. A dated snapshot of the exact id reaches the pointer
+    # through its snapshot base; a mode or tier variant's projected base is
+    # deliberately not a root here, or `-fast` would reach the pointer.
+    for root in (observed_model, snapshot_base):
+        candidates.extend(
+            alias
+            for alias in EXACT_CONTRACT_POINTER_ALIASES.get(root, ())
+            if root and alias not in candidates
+        )
     if observed_model not in EXACT_MODEL_CONTRACT_ALIASES:
         for speed_suffix in ("-ultrafast", "-highspeed", "-fast"):
             if observed_model.endswith(speed_suffix):

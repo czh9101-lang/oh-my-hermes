@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 from typing import Final, Iterable, Mapping
 
+from .model_contracts import dated_snapshot_base
 from .model_routing import MODEL_CATEGORIES, MODEL_ROLES
 
 
@@ -733,16 +734,29 @@ def _normalized_active_models(
     return normalized
 
 
+def _active_spellings(active: Mapping[str, str]) -> set[str]:
+    """Every spelling a confirmed-active model answers to.
+
+    As recorded, unqualified, and — when the provider serves a dated snapshot
+    (`gpt-5.6-terra-2026-07-09`) — the base alias it is a snapshot of, so the
+    chain entry `gpt-5.6-terra` still counts the model as available and the
+    route keeps the id as served.
+    """
+    model_id = active["model_id"]
+    spellings = {active["model_alias"], model_id, model_id.rsplit("/", 1)[-1]}
+    for spelling in tuple(spellings):
+        base = dated_snapshot_base(spelling)
+        if base:
+            spellings.add(base)
+    return spellings
+
+
 def _active_for_candidate(
     candidate: Mapping[str, object],
     active_models: list[dict[str, str]],
 ) -> dict[str, str] | None:
     alias = str(candidate["model_alias"])
-    matches = [
-        active
-        for active in active_models
-        if alias in {active["model_alias"], active["model_id"], active["model_id"].rsplit("/", 1)[-1]}
-    ]
+    matches = [active for active in active_models if alias in _active_spellings(active)]
     if not matches:
         return None
     preferred = [str(item) for item in candidate.get("preferred_provider_families", [])]
@@ -762,16 +776,15 @@ def _active_for_explicit(
     requested: str,
     active_models: list[dict[str, str]],
 ) -> dict[str, str] | None:
+    # An explicit request for the base alias is met by a confirmed dated
+    # snapshot of it; the reverse stays fail-closed — a request pinned to a
+    # date is not met by an unpinned base the provider may serve differently.
     matches = [
         active
         for active in active_models
         if requested
-        in {
-            active["model_alias"],
-            active["model_id"],
-            active["model_id"].rsplit("/", 1)[-1],
-            f"{active['provider']}/{active['model_id']}" if active["provider"] else "",
-        }
+        in _active_spellings(active)
+        | {f"{active['provider']}/{active['model_id']}" if active["provider"] else ""}
     ]
     return min(matches, key=lambda item: (item["provider"], item["model_id"], item["model_alias"])) if matches else None
 

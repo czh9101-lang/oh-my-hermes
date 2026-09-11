@@ -17,6 +17,7 @@ or declared contract gets `None`, never a guess.
 
 from __future__ import annotations
 
+import re
 from typing import Final, Mapping
 
 MODEL_CONTRACT_SCHEMA_VERSION: Final[str] = "model_contract/v1"
@@ -282,8 +283,48 @@ def _unqualified_model_id(model_id: str) -> str:
     return normalized
 
 
+# A vendor's dated snapshot id (OpenAI's `<model>-YYYY-MM-DD`, e.g.
+# `gpt-5.6-terra-2026-07-09`) is the base model pinned to a release date: the
+# same contract at the same reasoning mode and service tier. Some providers
+# serve only the dated form, so a user who confirms it must still be
+# recognized as running the base. This is the one suffix rule the catalog
+# applies without a declared row, and it is bounded twice: only this exact
+# trailing shape matches, and it projects only onto a base the caller already
+# knows (a contract, a declared row, a chain alias). An unknown base with a
+# date stays unknown. Mirrored in the plugin bundle; the parity test pins the
+# pattern.
+_DATED_SNAPSHOT_SUFFIX: Final = re.compile(
+    r"^(?P<base>.+)-(?P<date>\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))$"
+)
+
+
+def dated_snapshot_base(model_id: str) -> str:
+    """Return the base alias of a ``<base>-YYYY-MM-DD`` snapshot id, else ''.
+
+    Shape only: the caller decides whether the base is one it knows.
+    """
+    match = _DATED_SNAPSHOT_SUFFIX.match(_unqualified_model_id(model_id))
+    return match.group("base") if match else ""
+
+
+def _dated_snapshot_projection(canonical: str) -> tuple[str, str, str] | None:
+    """Project a dated snapshot onto the contract its base already resolves to."""
+    base = dated_snapshot_base(canonical)
+    # One date only: a snapshot of a snapshot is not a shape the vendor ships.
+    if not base or dated_snapshot_base(base):
+        return None
+    projection = model_contract_projection(base)
+    if projection is None:
+        return None
+    return (
+        projection["contract_model_id"],
+        projection["reasoning_mode"],
+        projection["service_tier"],
+    )
+
+
 def model_contract_projection(model_id: str) -> dict[str, str] | None:
-    """Resolve an exact or explicitly inherited contract without guessing."""
+    """Resolve an exact, explicitly inherited, or dated-snapshot contract without guessing."""
     requested = str(model_id or "").strip()
     canonical = _unqualified_model_id(requested)
     if not canonical:
@@ -303,7 +344,11 @@ def model_contract_projection(model_id: str) -> dict[str, str] | None:
         service_tier = str(declared["service_tier"])
         provenance = "declared_inheritance"
     else:
-        return None
+        snapshot = _dated_snapshot_projection(canonical)
+        if snapshot is None:
+            return None
+        contract_id, reasoning_mode, service_tier = snapshot
+        provenance = "dated_snapshot"
     return {
         "schema_version": MODEL_CONTRACT_PROJECTION_SCHEMA_VERSION,
         "requested_model": requested,

@@ -30,6 +30,7 @@ MODEL_CONTRACT_COVERAGE_CLAIM_BOUNDARY: Final[str] = (
 MODEL_CONTRACT_COVERAGE_STATUSES: Final[tuple[str, ...]] = (
     "exact",
     "declared_inheritance",
+    "dated_snapshot",
     "intentional_exclusion",
     "missing",
 )

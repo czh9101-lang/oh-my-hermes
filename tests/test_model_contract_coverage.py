@@ -84,6 +84,10 @@ class CoverageMatrixTests(unittest.TestCase):
                 "openai/gpt-6-astra-turbo",
                 "openai/gpt-6-astra-2",
                 "gateway/provider-only-astra",
+                # A provider that serves only the dated snapshot (the shape a
+                # user reported on 2026-09-11 for gpt-5.6-terra); the audit
+                # must count it, not crash on the third provenance.
+                "openai/gpt-6-astra-2026-08-01",
             )
         )
         report = build_model_contract_coverage(
@@ -95,6 +99,10 @@ class CoverageMatrixTests(unittest.TestCase):
         comparison = report["comparison"]
         rows = {row["requested_model"]: row for row in comparison["models"]}
         self.assertEqual(rows[_ASTRA_FORMS[0]]["status"], "exact")
+        snapshot = rows["openai/gpt-6-astra-2026-08-01"]
+        self.assertEqual(snapshot["status"], "dated_snapshot")
+        self.assertEqual(snapshot["contract_model_id"], "gpt-6-astra")
+        self.assertEqual(snapshot["dimensions"]["calibration"]["high_effort"], "model_specific")
         for model_id in _ASTRA_FORMS[1:]:
             row = rows[model_id]
             with self.subTest(model_id=model_id):
@@ -148,6 +156,7 @@ class CoverageMatrixTests(unittest.TestCase):
         self.assertEqual(
             comparison["summary"]["status_counts"],
             {
+                "dated_snapshot": 1,
                 "declared_inheritance": 5,
                 "exact": 1,
                 "intentional_exclusion": 1,
