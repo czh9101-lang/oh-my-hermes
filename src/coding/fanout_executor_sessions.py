@@ -10,6 +10,7 @@ An observed ID proves neither successful work nor durable native session storage
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping
+from typing import Final
 from dataclasses import dataclass
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -20,6 +21,8 @@ import subprocess
 from uuid import NAMESPACE_URL, uuid5
 import re
 import shlex
+
+from ._hermes_child_process import MAX_CAPTURE_BYTES
 from typing import Literal, TypeGuard, TypedDict
 
 SCHEMA_VERSION = 'fanout_executor_session/v1'
@@ -45,6 +48,13 @@ class SessionCapability:
     protocol: str | None
     binary_identity: BinaryIdentity
     version: str | None
+    # Why there is no protocol, when there is none. An absent protocol turns
+    # off the structured-session lane -- no token counts, no session id to
+    # steer with -- and before this field the only trace of that was an empty
+    # column on the HUD, which reads like a unit that spent no tokens rather
+    # than like a capability that was never negotiated. Empty when a protocol
+    # was negotiated, or when the owner has no protocol to negotiate.
+    reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,9 +349,29 @@ def bound_session_fields(record: Mapping[str, object], *, fanout_id: str,
     return result
 
 
+# A CLI's `--help` is a document, not a value, and it grows with the CLI. The
+# shared 16 KiB cap is right for a probe whose answer is a version string and
+# wrong for one whose answer is "does this word appear anywhere in the help":
+# a help page that outgrows the cap reads as an unanswerable probe, and the
+# whole structured-session lane switches off without anything saying so.
+# Observed 2026-09-11: `claude --help` was 21,401 bytes with `--verbose` at
+# byte 17,991, so the negotiation refused a protocol the CLI does support.
+SESSION_HELP_PROBE_BYTES: Final[int] = 262_144
+
+
 def bounded_session_probe(argv: list[str], *, cwd: str | None = None,
-                          env: Mapping[str, str] | None = None) -> tuple[bytes | None, str]:
-    """Read at most 16 KiB per pipe; a failed/partial probe authorizes nothing."""
+                          env: Mapping[str, str] | None = None,
+                          limit_bytes: int = MAX_CAPTURE_BYTES,
+                          keep_partial: bool = False) -> tuple[bytes | None, str]:
+    """Read at most `limit_bytes` per pipe; a failed/partial probe authorizes nothing.
+
+    `keep_partial` hands back the bytes that WERE read alongside the
+    `probe_output_limited` reason, for the one caller whose question can be
+    answered positively from a prefix: finding a flag in the part that was read
+    is a complete observation, and only NOT finding one is ambiguous when the
+    rest was cut off. Every other caller keeps the original contract, where a
+    truncated read authorizes nothing.
+    """
     from ._hermes_child_process import start_pipe_drainers, terminate_process_group
 
     try:
@@ -351,7 +381,7 @@ def bounded_session_probe(argv: list[str], *, cwd: str | None = None,
     except OSError:
         return None, 'probe_launch_failed'
     with process:
-        drainers = start_pipe_drainers(process)
+        drainers = start_pipe_drainers(process, limit_bytes=limit_bytes)
         reason = 'observed'
         try:
             if process.wait(timeout=3) != 0:
@@ -370,7 +400,11 @@ def bounded_session_probe(argv: list[str], *, cwd: str | None = None,
         captures = [drainer.capture() for drainer in drainers]
         if any(capture.truncated for capture in captures):
             reason = 'probe_output_limited'
-        return (captures[0].data if reason == 'observed' else None), reason
+        if reason == 'observed':
+            return captures[0].data, reason
+        if keep_partial and reason == 'probe_output_limited':
+            return captures[0].data, reason
+        return None, reason
 
 
 def observe_session_workspace(path: str) -> WorkspaceSnapshot | None:

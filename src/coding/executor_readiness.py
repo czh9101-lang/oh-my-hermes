@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 import re
 import shutil
@@ -11,7 +12,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .fanout_executor_sessions import BinaryIdentity, SessionCapability, bounded_session_probe
+from .fanout_executor_sessions import (
+    SESSION_HELP_PROBE_BYTES,
+    BinaryIdentity,
+    SessionCapability,
+    bounded_session_probe,
+)
 
 from ..executors import EXECUTOR_PROFILES, executor_label
 from ..local_store import atomic_write_json, read_json_object_result, utc_now
@@ -61,25 +67,48 @@ def negotiate_session_capability(owner: str, binary: str, *, env: Mapping[str, s
     capability = SessionCapability(owner, None, identity, None)
     if owner not in ('codex', 'claude-code'):
         return capability
-    version_bytes, _reason = bounded_session_probe([identity.resolved_path, '--version'], env=env)
+    version_bytes, version_reason = bounded_session_probe([identity.resolved_path, '--version'], env=env)
     help_args = ['exec', '--help'] if owner == 'codex' else ['--help']
-    help_bytes, _reason = bounded_session_probe([identity.resolved_path, *help_args], env=env)
-    if version_bytes is None or help_bytes is None:
-        return capability
+    # The help probe reads a document, so it gets a document-sized budget and
+    # keeps what it read when even that was not enough: finding every flag in
+    # the part that was read settles the question, and only a flag MISSING
+    # from a truncated read is ambiguous. Before this, a help page that
+    # outgrew the shared 16 KiB cap silently switched the whole lane off.
+    help_bytes, help_reason = bounded_session_probe(
+        [identity.resolved_path, *help_args],
+        env=env,
+        limit_bytes=SESSION_HELP_PROBE_BYTES,
+        keep_partial=True,
+    )
+    if version_bytes is None:
+        return replace(capability, reason=f'version_probe_{version_reason}')
+    if help_bytes is None:
+        return replace(capability, reason=f'help_probe_{help_reason}')
     try:
         version, help_text = version_bytes.decode('utf-8').strip(), help_bytes.decode('utf-8')
     except UnicodeError:
-        return capability
+        return replace(capability, reason='probe_output_not_utf8')
     # Retain only the version token, never arbitrary help/version output.
     match = re.fullmatch(r'(?:[A-Za-z][A-Za-z0-9_. -]{0,64}\s+)?([0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)(?: \(Claude Code\))?', version, re.IGNORECASE)
     if match is None:
-        return capability
+        return replace(capability, reason='version_output_unrecognized')
     flags = ('--json', 'resume') if owner == 'codex' else ('--output-format', 'stream-json', '--verbose', '--resume')
-    supported = all(re.search(r'(?<![\w-])' + re.escape(flag) + r'(?![\w-])', help_text) for flag in flags)
+    absent = [flag for flag in flags
+              if not re.search(r'(?<![\w-])' + re.escape(flag) + r'(?![\w-])', help_text)]
     if observe_session_binary(identity.resolved_path) != identity:
-        return capability
-    return SessionCapability(owner, ('codex_exec_json' if owner == 'codex' else 'claude_stream_json')
-                             if supported else None, identity, match[1])
+        return replace(capability, reason='binary_changed_during_probe')
+    if absent:
+        # A flag missing from a help page that was cut off is unanswered, not
+        # answered "no" -- both refuse the protocol, and the reason says which
+        # so an operator knows whether to raise the budget or to update the CLI.
+        detail = 'help_truncated' if help_reason == 'probe_output_limited' else 'help_complete'
+        return replace(capability, reason=f'flags_absent[{detail}]:' + ','.join(absent))
+    return SessionCapability(
+        owner,
+        'codex_exec_json' if owner == 'codex' else 'claude_stream_json',
+        identity,
+        match[1],
+    )
 
 
 EXECUTOR_READINESS_SCHEMA_VERSION = "executor_readiness/v1"
