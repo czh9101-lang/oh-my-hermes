@@ -9,8 +9,13 @@ reconciliation line; a finished, cleared, or absent plan carries none.
 The second half of the same failure is a plan nobody contradicts and
 nobody advances: while the reader's stall finding stands, the line also
 states how long the checklist has been unchanged.
+
+The same file carries the dispatch-completion chain: a finished unit the
+plan does not name gets one line and the rule that names the verbs owed,
+and a turn that promised to continue while nothing moved gets a finding.
 """
 
+import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -18,9 +23,12 @@ from pathlib import Path
 
 from omh.plugin_bundle.omh.hooks.llm_hooks import pre_llm_call
 from omh.plugin_bundle.omh.todo_reconciliation import (
+    CONTINUATION_CLAIM_FINDING,
+    DISPATCH_COMPLETION_RULE,
     TODO_CONTINUATION_RULE,
     TODO_RECONCILIATION_RULE,
     TODO_UNCHANGED_RULE,
+    continuation_claim_without_resume,
     open_todo_reminder,
 )
 from omh.plugin_bundle.omh.todo_store import build_todo_record, todo_path, write_todo
@@ -178,6 +186,239 @@ class TodoReconciliationReminderTest(unittest.TestCase):
             user_message="다 됐어?", omh_home=self.home, include_omh_awareness=False
         )
         self.assertNotIn("[OMH plan todo]", str((payload or {}).get("context", "")))
+
+
+class DispatchOutcomeReminderTest(unittest.TestCase):
+    """The reminder names the finished dispatch nobody has written down."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = Path(self._tmp.name) / "omh"
+
+    def _write_plan(self):
+        record = build_todo_record(
+            "plan",
+            [{"text": "wait for the workers", "state": "active"}, {"text": "merge", "state": "pending"}],
+            source="test",
+        )
+        write_todo(self.home, record)
+        return datetime.fromisoformat(record["updated_at"].replace("Z", "+00:00"))
+
+    def _write_finished_units(self, count):
+        plan_at = self._write_plan()
+        fanout_id = "fanout-0123456789ab"
+        directory = self.home / "coding" / "fanout" / fanout_id
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "dispatch_summary.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "fanout_dispatch_summary/v1",
+                    "fanout_id": fanout_id,
+                    "units": [
+                        {
+                            "unit_id": f"unit-{index}",
+                            "run_ref": f"{fanout_id}-unit-{index}",
+                            "status": "failed",
+                            "failure_kind": "limit_shaped",
+                            "finished_at": (
+                                plan_at + timedelta(seconds=30 + index)
+                            ).isoformat().replace("+00:00", "Z"),
+                        }
+                        for index in range(count)
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return fanout_id
+
+    def test_one_line_per_outcome_carries_the_state_and_the_verb(self):
+        fanout_id = self._write_finished_units(1)
+
+        reminder = open_todo_reminder(omh_home=str(self.home))
+
+        self.assertIn(
+            f"dispatch {fanout_id}-unit-0/unit-0 ended limit_shaped; next: record_blocked",
+            reminder,
+        )
+        self.assertIn(DISPATCH_COMPLETION_RULE, reminder)
+        # The open-plan line stays: both obligations are live at once.
+        self.assertIn("[OMH plan todo] 0/2 done", reminder)
+
+    def test_the_outcome_lines_are_capped_with_a_remainder_count(self):
+        self._write_finished_units(6)
+
+        reminder = open_todo_reminder(omh_home=str(self.home))
+        outcome_lines = [line for line in reminder.splitlines() if line.startswith("dispatch ")]
+
+        self.assertEqual(len(outcome_lines), 3)
+        self.assertIn("(+3 more)", reminder)
+
+    def test_a_plan_that_names_the_run_gets_no_outcome_line(self):
+        fanout_id = "fanout-0123456789ab"
+        record = build_todo_record(
+            "plan",
+            [{"text": f"verify {fanout_id}-unit-0", "state": "active"}],
+            source="test",
+        )
+        write_todo(self.home, record)
+        plan_at = datetime.fromisoformat(record["updated_at"].replace("Z", "+00:00"))
+        directory = self.home / "coding" / "fanout" / fanout_id
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "dispatch_summary.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "fanout_dispatch_summary/v1",
+                    "fanout_id": fanout_id,
+                    "units": [
+                        {
+                            "unit_id": "unit-0",
+                            "run_ref": f"{fanout_id}-unit-0",
+                            "status": "completed",
+                            "process_succeeded": True,
+                            "finished_at": (plan_at + timedelta(seconds=30))
+                            .isoformat()
+                            .replace("+00:00", "Z"),
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        reminder = open_todo_reminder(omh_home=str(self.home))
+
+        self.assertNotIn("dispatch ", reminder)
+        self.assertNotIn(DISPATCH_COMPLETION_RULE, reminder)
+
+    def test_pre_llm_call_carries_the_outcome_line_and_the_rule(self):
+        fanout_id = self._write_finished_units(1)
+
+        payload = pre_llm_call(user_message="상태 어때?", omh_home=str(self.home))
+
+        context = str((payload or {}).get("context", ""))
+        self.assertIn(f"dispatch {fanout_id}-unit-0/unit-0 ended", context)
+        self.assertIn(DISPATCH_COMPLETION_RULE, context)
+
+
+class ContinuationClaimGuardTest(unittest.TestCase):
+    """A promise to continue is a finding only when nothing was started."""
+
+    def test_a_claim_with_a_stalled_plan_is_a_finding(self):
+        # Derived from the reader's own status set rather than a copy of it: a
+        # third unchanged status added there has to reach this guard too.
+        from omh.plugin_bundle.omh.runtime_reader import TODO_UNCHANGED_STATUSES
+
+        self.assertEqual(TODO_UNCHANGED_STATUSES, {"unchanged", "unchanged_while_busy"})
+        for status in sorted(TODO_UNCHANGED_STATUSES):
+            with self.subTest(status=status):
+                self.assertEqual(
+                    continuation_claim_without_resume(
+                        "확인했습니다. 계속 진행하겠습니다.",
+                        todo_stall_status=status,
+                        unacknowledged=0,
+                    ),
+                    CONTINUATION_CLAIM_FINDING,
+                )
+
+    def test_a_claim_with_an_unacknowledged_outcome_is_a_finding(self):
+        self.assertEqual(
+            continuation_claim_without_resume(
+                "Worker 2 finished. Continuing with the remaining lanes.",
+                todo_stall_status="advanced",
+                unacknowledged=1,
+            ),
+            CONTINUATION_CLAIM_FINDING,
+        )
+
+    def test_a_claim_on_a_live_plan_with_nothing_outstanding_is_not_a_finding(self):
+        self.assertIsNone(
+            continuation_claim_without_resume(
+                "다음 항목으로 계속 진행합니다.",
+                todo_stall_status="advanced",
+                unacknowledged=0,
+            )
+        )
+
+    def test_a_stalled_plan_without_a_claim_is_not_a_finding(self):
+        self.assertIsNone(
+            continuation_claim_without_resume(
+                "Unit 3 is blocked on a case-only filename collision; stopping here.",
+                todo_stall_status="unchanged_while_busy",
+                unacknowledged=2,
+            )
+        )
+
+    def test_empty_text_is_never_a_finding(self):
+        self.assertIsNone(
+            continuation_claim_without_resume(
+                "", todo_stall_status="unchanged", unacknowledged=3
+            )
+        )
+
+    def test_pre_llm_call_flags_last_turns_unkept_promise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "omh"
+            fanout_id = "fanout-0123456789ab"
+            record = build_todo_record(
+                "plan", [{"text": "wait", "state": "active"}], source="test"
+            )
+            write_todo(home, record)
+            plan_at = datetime.fromisoformat(record["updated_at"].replace("Z", "+00:00"))
+            directory = home / "coding" / "fanout" / fanout_id
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "dispatch_summary.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "fanout_dispatch_summary/v1",
+                        "fanout_id": fanout_id,
+                        "units": [
+                            {
+                                "unit_id": "unit-0",
+                                "run_ref": f"{fanout_id}-unit-0",
+                                "status": "failed",
+                                "failure_kind": "crash",
+                                "finished_at": (plan_at + timedelta(seconds=30))
+                                .isoformat()
+                                .replace("+00:00", "Z"),
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            payload = pre_llm_call(
+                user_message="어떻게 되고 있어?",
+                omh_home=str(home),
+                conversation_history=[
+                    {"role": "user", "content": "상태 알려줘"},
+                    {"role": "assistant", "content": "워커 2 종료. 계속 진행하겠습니다."},
+                ],
+            )
+
+            self.assertIn("[OMH continuation claim]", str((payload or {}).get("context", "")))
+
+    def test_pre_llm_call_stays_quiet_when_the_last_turn_promised_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "omh"
+            write_todo(
+                home,
+                build_todo_record(
+                    "plan", [{"text": "wait", "state": "active"}], source="test"
+                ),
+            )
+
+            payload = pre_llm_call(
+                user_message="어떻게 되고 있어?",
+                omh_home=str(home),
+                conversation_history=[
+                    {"role": "assistant", "content": "Unit 3 is blocked; stopping here."},
+                ],
+            )
+
+            self.assertNotIn("[OMH continuation claim]", str((payload or {}).get("context", "")))
 
 
 if __name__ == "__main__":

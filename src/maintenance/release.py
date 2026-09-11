@@ -804,7 +804,19 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # each across seven bars) and the shared interjection rule gained the
 # steering-not-objective sentence; harness discipline the engines read every
 # run, so it belongs in the always-loaded body; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 932859
+# 932859 -> 934125: `maestro` gains the two rules that close the dispatch
+# lifecycle -- observe every unit to a terminal state via `omh coding fanout
+# status`, and treat a finished unit as an event to act on in the same turn
+# (verify, record, then recover or advance). These belong in the always-loaded
+# body because both decisions are made while a worker is still running: a
+# supervisor that has already ended its turn on "waiting for the worker"
+# cannot be told afterwards that a live process with no new evidence was never
+# progress, and a completion already answered with a status report has already
+# left the result unverified. The state vocabulary and the reader that surfaces
+# an unacknowledged outcome live in `src/coding/unit_execution_state.py` and
+# `src/plugin_bundle/omh/dispatch_outcomes.py`, outside this budget; warranted
+# growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 934125
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
