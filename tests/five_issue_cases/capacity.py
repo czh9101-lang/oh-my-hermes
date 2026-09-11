@@ -87,7 +87,7 @@ def negative_admission_cases() -> int:
         stdout.replace(b'"thread_id":', b'"extra":true,"thread_id":'),
         stdout.replace(b'"thread_id":', b'"type":"thread.started","thread_id":'),
         stdout + b'forged extra output\n', b'\xff\n')]
-    for out, err in [(stdout, stderr), *variants]:
+    for index, (out, err) in enumerate([(stdout, stderr), *variants]):
         observer = capacity.CodexAdmissionObserver()
         capture = FanoutOutput(protocol='codex', observer=observer.observe)
         result = signal_safe_unit_runner([sys.executable, '-c',
@@ -97,7 +97,16 @@ def negative_admission_cases() -> int:
                                              '/owned', 'invocation-1', 'attempt-1')
         receipt = observer.receipt(capture, binding=binding, source=source, returncode=result.returncode,
                                    process_started=True, fresh_exec=True, artifact_observed=False)
-        assert (receipt is not None) == ((out, err) == (stdout, stderr)), 'admission framing misclassified'
+        # A bare "misclassified" left three hosted-runner failures (#1482)
+        # undiagnosable: the message now names the variant and every input
+        # the receipt consults, so a runner-side capture difference can be
+        # told apart from a framing regression from the CI log alone.
+        assert (receipt is not None) == ((out, err) == (stdout, stderr)), (
+            f'admission framing misclassified: variant={index} out={out!r} err={err!r} '
+            f'returncode={result.returncode} events={observer.events} valid={observer.valid} '
+            f'streams={capture.streams()!r} issues={capture.issues!r} '
+            f'stdout_window={capture.error_window("stdout")!r} stderr_window={capture.error_window("stderr")!r}'
+        )
         if receipt is not None:
             cases: list[tuple[capacity.CodexAdmissionSource | None, int | None, bool, bool, bool]] = [
                 (None, 1, True, True, False), (source, 0, True, True, False),
