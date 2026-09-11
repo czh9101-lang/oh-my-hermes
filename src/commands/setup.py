@@ -615,9 +615,20 @@ def _managed_workflow_dir_candidates(paths: OmhPaths) -> list[Path]:
     as the deliberate opt-out (plugin directory present, registration
     "absent"), skipped the whole profile, and left its plugin bundle and TUI
     widget on the generation they were installed at.
+
+    `<omh_home>/skills` is listed by name, not through `paths.skills_dir`: on
+    a managed command install `resolve_paths` already redirects `skills_dir`
+    to the running generation's pack, so the pre-pointer registration home —
+    the very path the frozen profile carries — would otherwise never be a
+    candidate on exactly the machines that need it (the first fix read
+    `paths.skills_dir` and passed its tests from an unmanaged interpreter).
     """
     candidates = [_registered_workflow_dir(paths)]
-    for candidate in (paths.skills_dir, managed_current_workflow_pack_dir()):
+    for candidate in (
+        paths.omh_home / "skills",
+        paths.skills_dir,
+        managed_current_workflow_pack_dir(),
+    ):
         if candidate is not None and candidate not in candidates:
             candidates.append(candidate)
     return candidates

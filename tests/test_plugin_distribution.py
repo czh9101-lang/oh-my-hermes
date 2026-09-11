@@ -1809,16 +1809,27 @@ class HermesProfileSyncTests(unittest.TestCase):
     def _managed_install(self, current: Path):
         """What a managed command install looks like to the setup module.
 
-        Only the two probes are stubbed -- the generation pointer and the
-        managed-runtime answer a test process cannot give truthfully -- so
+        Only the probes a test process cannot answer truthfully are stubbed
+        -- the generation pointer, the managed-runtime verdict, and the
+        generation the running interpreter lives in -- so
         `_registered_workflow_dir` and the candidate list run for real. The
-        self-update plan is pinned off because a managed runtime is exactly
-        what would otherwise send `omh update` into the staged command
-        package transaction, which is not what these tests exercise.
+        third stub matters: on a real managed install `resolve_paths`
+        redirects `paths.skills_dir` to the running generation's pack, so a
+        helper that leaves it at `<omh_home>/skills` models an unmanaged
+        interpreter and lets a candidate list that forgets the pre-pointer
+        home pass (the first fix did exactly that). The self-update plan is
+        pinned off because a managed runtime is exactly what would otherwise
+        send `omh update` into the staged command package transaction, which
+        is not what these tests exercise.
         """
         with (
             mock.patch.object(
                 _setup_module, "managed_current_workflow_pack_dir", return_value=current
+            ),
+            mock.patch.object(
+                sys.modules[resolve_paths.__module__],
+                "managed_workflow_pack_dir",
+                return_value=current,
             ),
             mock.patch.object(
                 _setup_module,
