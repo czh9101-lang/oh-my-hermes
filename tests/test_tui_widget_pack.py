@@ -377,7 +377,10 @@ class TuiWidgetPackTests(unittest.TestCase):
             widget,
         )
         self.assertIn("color: item.state === 'active' ? (live ? t.color.ok : t.color.warn)", widget)
-        self.assertIn("stallElapsed ? h(Text, { color: t.color.muted }, ` (stalled ${stallElapsed})`)", widget)
+        self.assertIn(
+            "unchangedElapsed ? h(Text, { color: t.color.muted }, ` (unchanged ${unchangedElapsed})`)",
+            widget,
+        )
         self.assertIn("const seconds = todo.updated_age_seconds", widget)
         self.assertNotIn("Date.parse(safeText(todo.updated_at)", widget)
 
@@ -692,7 +695,7 @@ class TuiWidgetPackTests(unittest.TestCase):
             "const live = answerable ? !!(payload.activity && payload.activity.live) : true",
             widget,
         )
-        self.assertIn("stalled ${stallElapsed}", widget)
+        self.assertIn("unchanged ${unchangedElapsed}", widget)
         self.assertNotIn("Number.MAX_SAFE_INTEGER", widget)
         # Changed on purpose: the parallel-shot badge moved off the bottom
         # status line onto the dock-top frame rule — the transcript's
