@@ -507,7 +507,7 @@ Quality bar:
 
 Handoff policy:
 
-{definition.handoff_policy}{_executor_readiness_skill_note(definition)}{_delegation_transparency_skill_note(definition)}
+{definition.handoff_policy}{_executor_readiness_skill_note(definition)}{_delegation_transparency_skill_note(definition)}{_route_capacity_skill_note(definition)}
 
 Required inputs:
 
@@ -551,6 +551,16 @@ def _delegation_transparency_skill_note(definition: SkillDefinition) -> str:
 Delegation transparency:
 
 {rules}"""
+
+
+def _route_capacity_skill_note(definition: SkillDefinition) -> str:
+    if definition.quality_tier != "context-budget-gated":
+        return ""
+    return """
+
+Route binding:
+
+- Bind the plan to the session's published `context_budget_plan/v1` (agent/operator: `omh context budget-plan prepare|rebind|status --session-ref <session>`). Unpublished capacity holds as `capacity_unknown_hold` and inherits nothing; a hold or checkpoint action is a prepared obligation, not compaction, usage, or billing evidence. Rules: `references/route-capacity.md`."""
 
 
 def router_reference_templates() -> list[SkillReferenceTemplate]:
@@ -721,6 +731,34 @@ Finishing one workflow never authorizes starting the next one. An accepted plan,
 brief, or a routing recommendation is planning evidence, not permission: recommend the follow-on
 engine that fits the work's shape with a one-line reason, and start it only after the user's
 explicit go-ahead in this conversation.
+
+## Active Workflow Continuation
+
+A workflow the user explicitly started stays visible to its session until it ends. Durable
+state is written only through the control plane: `omh state start --workflow <name>
+--session-ref <session>` records `activation.source: explicit_api` with
+`observed_by_host: not_observed`. Chat text, quoted workflow names, and routing cues never
+activate, overwrite, or clear state.
+
+On later turns in the same session `pre_llm_call` reprojects `active_workflow_context/v1`
+(payload field `omh_active_workflow`, context line `[OMH Active Workflow]`) even when the
+message carries no cue or the history is a compacted summary. The projection names the
+workflow, its lifecycle state, allowed transition targets, and the claim boundary; it carries
+no prompt or note text, and `compaction_observed` stays `not_observed` because OMH never
+sees the host compact.
+
+Precedence is fixed: an explicit cancel, finish, block, failure, allowed transition, or new
+scope from the user outranks continuation; current-message routing outranks continuation; a
+neutral follow-up or interjection does not. Answer the interjection, then return to the
+active checklist without asking the user to repeat the workflow name.
+
+End or replace the state explicitly: `omh state finish --workflow <name> --outcome
+finished|blocked|failed|cancelled --session-ref <session>` or `omh state start` for an
+allowed transition. A session-bound record refuses any mutation without its matching
+`--session-ref`. Unreadable or multiple active records produce `state: recovery_required`
+with error types and recovery commands, and `omh state status` reports
+`recovery_required: true`; never pick a workflow silently. The projection is metadata-only
+and is not dispatch, execution, review, CI, or merge evidence.
 
 ## Multi-Agent Target Awareness
 
@@ -1116,6 +1154,43 @@ if an update was just sent:
   while no file changed, or a success report alongside a non-zero exit
 - the first occurrence of any new kind of event
 
+## Parent-Owned Clarification
+
+A delegated fanout unit never contacts the user. When one user decision blocks
+it, the child preserves its work and returns `process_status: input_required`
+with an `input_required` object: `decision_id` (slug), `question` and
+`blocking_reason` (300 chars each), `answer_shape` (`options` with 1..8 unique
+entries or `text` with `max_chars` up to 300), `affected_unit_ids` (its own
+unit only), and up to 8 `redacted_context` strings. Secrets, transcripts, and
+executable text are rejected at intake, and a request naming sibling units is
+refused.
+
+The dispatcher journals that unit as `blocked`, records unit status
+`input_required`, skips its verification, and keeps completed siblings
+completed; a dependent unit waits instead of failing. The supervising root
+session is the only user surface:
+
+```sh
+omh coding fanout clarifications <fanout-id>
+omh coding fanout answer <fanout-id> --unit <unit> --decision <decision-id> --attempt-id <attempt> --round <n> --answer <value>
+omh coding fanout answer <fanout-id> --unit <unit> --decision <decision-id> --attempt-id <attempt> --round <n> --cancel
+```
+
+`clarifications` renders at most one question and lists the units queued
+behind it. `answer` validates the value against the answer shape, records it
+against the exact decision, attempt, and round, and reports `dispatch:
+not_observed`; only a depth-zero root session may answer, and an answer changes
+no scope or approval authority. Resuming is a separate explicit act:
+`omh coding fanout dispatch ... --resume-journal <journal> --unit <unit>` reuses
+the same worktree, requires unchanged lineage (run, attempt, base SHA, contract
+digest, goal attempt), and appends the answer as a `[Parent decision]` block.
+
+Terminal states are deterministic: `cancelled`, `exhausted` after two rounds,
+`expired` after 24 hours, and stale answers rejected as `stale_decision_id`,
+`stale_attempt_id`, or `stale_round`. Report the request as prepared, the
+answer as observed only when its journal event exists, the redispatch as
+observed only when its event exists, and execution and verification separately.
+
 ## Completion Verification
 
 After completion, verify the executor self-report against local git status/log,
@@ -1306,34 +1381,35 @@ This is a Hermes-native `{name}` workflow skill.
 
 ## English-Canonical Interview Protocol
 
-- **Inventory (목록)** - Nobody hands you the material: call `omh_memory` with `action="status"` to get the entry inventory - per-file entry counts, per-entry index and size, headroom, and which entries have no OMH record. It returns counts and hashes, never entry text, because the text is already yours.
-- **Claim extraction (추출)** - Break the `USER.md` and `MEMORY.md` material into claims. Quote only observed claims; never invent provenance.
-- **Provenance (출처)** - Ask for the source class and distinguish Hermes-native, provider, and vector material as `not_omh_reviewed`.
-- **Target (대상)** - Review existing native-memory claims only. Route a new project/product fact to `memory-new`.
-- **Candidate selection (후보)** - Default to a short interview, not a census: pick about five candidate entries per pass and say why each was picked. Rank by the signals already on hand — dreaming reminders (duplicate clusters, deadline, `stale_review_required`), the status bridge's OMH-record similarity rows (near-duplicates), and claims that look stale, conflicting, or overgeneralized. Walk the complete inventory only when the user asks for a full review.
-- **Per-entry confirmation (확인)** - Walk the selected candidates one at a time. For each entry, quote it back from your own memory file and state what you take it to mean, then ask the user to keep, revise, or archive it before moving on. Do not summarize the whole file and ask one question about all of it; a review the user cannot correct entry by entry is not a review.
-- **Cursor (이어하기)** - Close every pass by naming what was covered and what was not — reviewed entry indexes, remaining candidates, and the next entry a resumed review would start from — so an interrupted interview resumes instead of restarting. The resume point lives only in the conversation; no store persists it, so name it explicitly rather than assuming the system remembers.
-- **Review (검토)** - Prioritize stale, conflicting, duplicate, and overgeneralized claims. Offer keep, revise, or archive choices; do not describe an archive as removal.
-- **Attention (주의)** - For a reviewed OMH-local record, keep/archive is an attention tier: `active` leads the working context, `reference` stays recallable behind active peers, `archive` leaves default recall. Preview with `omh memory attention <record-id> --tier <tier>`, say which records stay in the working context and which leave it, then apply with `--apply` only after the user agrees. The preview writes nothing.
-- **Diff (차이)** - Prepare one concise native write diff with before/after claims and counts. Keep the caps: MEMORY.md about 2,200 characters and USER.md about 1,375 characters.
+- **Inventory (목록)** - Call `omh_memory` with `action="status"` for the entry inventory: per-file counts, per-entry index and size, headroom, and entries with no OMH record. It returns counts and hashes, never entry text.
+- **Claim extraction (추출)** - Break the `USER.md` and `MEMORY.md` material into claims; quote only observed claims and never invent provenance.
+- **Provenance (출처)** - Ask for the source class and distinguish Hermes-native, provider, and vector material as `not_omh_reviewed`. A provider posture's `input_fidelity_summary.readiness` is literal: only `complete_observed` rests on an observed complete receipt (`docs/MEMORY-SYNC-FIDELITY.md`).
+- **Target (대상)** - Review existing native-memory claims only; route a new project/product fact to `memory-new`.
+- **Candidate selection (후보)** - A short interview, not a census: pick about five candidates per pass and say why. Rank by dreaming reminders (duplicate clusters, deadline, `stale_review_required`), status-bridge similarity rows, and claims that look stale, conflicting, or overgeneralized. Walk the full inventory only on request.
+- **Per-entry confirmation (확인)** - One candidate at a time: quote it back from your own memory file, say what you take it to mean, then ask the user to keep, revise, or archive it before moving on. A review the user cannot correct entry by entry is not a review.
+- **Cursor (이어하기)** - Close every pass with reviewed entry indexes, remaining candidates, and the next entry a resumed review starts from. The resume point lives only in the conversation; name it.
+- **Incident (진단)** - A recall complaint ("my saved preference was not used") is a diagnosis, never an apology or automatic write. Anchor one expected claim and run `omh memory recall-incident --record-id <id> | --claim-digest <sha256> --session-id <session>` (agent reference; JSON only). Explain its `memory_recall_incident/v1` stage, evidence surfaces, and remediation: stored, eligible, selected, rendered, delivered, and used are separate claims; diagnosis today stops at `selected`; a missing receipt is `unavailable`, never non-delivery. Mutation waits for this interview's approvals. Contract: `docs/MEMORY-RECALL-INCIDENT.md`.
+- **Review (검토)** - Prioritize stale, conflicting, duplicate, and overgeneralized claims. Offer keep, revise, or archive; never call an archive a removal.
+- **Attention (주의)** - For a reviewed OMH-local record, keep/archive is an attention tier: `active` leads the working context, `reference` stays recallable behind it, `archive` leaves default recall. Preview with `omh memory attention <record-id> --tier <tier>`, name which records stay in or leave the working context, then add `--apply` only after the user agrees. The preview writes nothing.
+- **Diff (차이)** - Prepare one concise native write diff with before/after claims and counts. Caps: MEMORY.md about 2,200 characters, USER.md about 1,375 characters.
 - **Native-write boundary (쓰기)** - OMH prepares guidance and a native write diff only; no OMH surface invokes, applies, or observes a `MEMORY.md`/`USER.md` write.
-- **Apply after approval (적용)** - The interview does not end at a diff. Per-entry keep/revise/archive answers are input to the diff, not approval of it: ask for one explicit approval of the assembled diff. After that approval, apply the approved entries yourself through the Hermes-native memory tool — the same tool that owns these files — and report what the write observably changed; with the tool available, leaving an approved diff silently unapplied fails the interview. If the native memory tool is unavailable, report the approved diff and stop: that is a completed review with the write pending, never a failed interview and never a reason to edit the files directly. The OMH artifact stays `memory_curation_review/v1` metadata either way: the native write is Hermes's own act and never becomes OMH mutation evidence.
+- **Apply after approval (적용)** - Per-entry answers feed the diff without approving it. Ask for one explicit approval of the assembled diff, then apply the approved entries yourself through the Hermes-native memory tool that owns these files and report what the write observably changed; an approved diff left unapplied while the tool is available fails the interview. Without the tool, report the approved diff and stop; never edit the files directly. The OMH artifact stays `memory_curation_review/v1` metadata either way; the native write is Hermes's own act and never becomes OMH mutation evidence.
 
 ## Memory Boundaries
 
-The prepared artifact is `memory_curation_review/v1`, not native-memory mutation evidence. Hermes-native and external provider/vector context is `not_omh_reviewed`: it can nominate an OMH candidate but never inherits OMH approval. A configured Hermes runtime may transmit rendered OMH prefetch content in its model request.
+The prepared artifact is `memory_curation_review/v1`, not native-memory mutation evidence. Hermes-native and external provider/vector context is `not_omh_reviewed`: it can nominate an OMH candidate but never inherits OMH approval. A configured Hermes runtime may send rendered OMH prefetch content in a model request.
 
-Use lifecycle words literally: expire removes influence only; retire archives recoverably; restore creates a new pending revision while preserving the archive; prune hard-deletes only the manifest-declared OMH-local target set. Report restore and prune first. No lifecycle result proves anything outside that named local target set.
+Lifecycle words are literal: expire removes influence only; retire archives recoverably; restore creates a new pending revision and keeps the archive; prune hard-deletes only the manifest-declared OMH-local target set. Report restore and prune first; no lifecycle result proves anything outside that target set.
 
-An attention tier is not a lifecycle state, and the two uses of "archive" are different: the `archive` tier only stops a record from occupying the default working context, leaving it in the store, readable, and answerable by `omh memory recall --include-archived`, while `retire` moves an expired revision into the local archive directory. Neither is deletion; never describe either as one.
+An attention tier is not a lifecycle state; the two uses of "archive" differ: the `archive` tier only removes a record from the default working context, leaving it stored and answerable by `omh memory recall --include-archived`; `retire` moves an expired revision to the local archive directory. Neither is deletion.
 
-Legacy v1 material is migration/review-required. Present `memory inventory` counts and the report-first per-artifact `memory reactivate ... --apply` path; inventory and reactivation never silently grant replay eligibility.
+Legacy v1 material is migration/review-required: show `memory inventory` counts and the report-first `memory reactivate ... --apply` path; neither silently grants replay eligibility.
 
-Dreaming runs automatically in reminder mode at five scheduler points: `turn` when the interval is due (default five turns), `compaction` before compression discards messages, `session_end` after a productive session, `shutdown` as the final process opportunity, and `session_start_recovery` when the prior session ended without consolidation. It prepares reminders for duplicate clusters, records at or near their deadline, headroom below the configured floor, `stale_review_required`, and `expired_volatile_records`; an unchanged standing condition is suppressed until its value changes. Anything whose source OMH cannot explain is not a candidate. Dreaming never invokes a model or performs consolidation, retirement, restore, or prune.
+Dreaming runs in reminder mode at five scheduler points: `turn` on the due interval (default five turns), `compaction` before compression discards messages, `session_end`, `shutdown`, and `session_start_recovery` after an unconsolidated end. It flags duplicate clusters, records near deadline, headroom below the floor, `stale_review_required`, and `expired_volatile_records`, suppressing an unchanged condition until its value changes; a reminder OMH cannot source is no candidate. Dreaming never invokes a model or performs consolidation, retirement, restore, or prune.
 
-Treat ranking signals within their limits: pins guarantee inclusion but never override expiry, scope, perspective, or review eligibility; attention tiers control working-context occupancy, not truth; `approved_manual` has 100% veracity weight and `approved_auto_safe` 90%, while an unknown approval mode fails closed to the lower weight; age only breaks ties within an equal relevance rank; and usage uses saturating buckets so repeated delivery cannot compound into a permanent lead.
+Ranking limits: pins guarantee inclusion but never override expiry, scope, perspective, or review eligibility; attention tiers control working-context occupancy, not truth; `approved_manual` weighs 100%, `approved_auto_safe` 90%, and an unknown approval mode fails closed to 90%; age only breaks ties within an equal relevance rank; usage buckets saturate, so repeated delivery cannot compound into a permanent lead.
 
-Normal users use natural-language Hermes chat. `omh memory ...` commands are agent/operator control-plane references, not normal-user setup.
+Normal users talk to Hermes in natural language; `omh memory ...` commands are agent/operator references.
 
 ## Use When
 
@@ -2368,7 +2444,107 @@ def _context_budget_reference_templates_cached() -> tuple[SkillReferenceTemplate
         SkillReferenceTemplate(
             "context-budget-review", "references/cache-placement.md", _cache_placement_reference()
         ),
+        SkillReferenceTemplate(
+            "context-budget-review", "references/route-capacity.md", _route_capacity_reference()
+        ),
     )
+
+
+def _route_capacity_reference() -> str:
+    return """# Route-Bound Context Budget
+
+A context plan prepared under one provider/model can look valid after the host
+switches routes even though the window, output allowance, compaction reserve, or
+retained-history target changed. This reference binds `context_budget_plan/v1`
+to the route it was computed for and states what OMH can and cannot observe.
+
+Load it when a long task starts, when the route changes, when the hook prints
+`[OMH Context Budget]`, or when someone asks which route the budget rests on.
+
+## Who publishes what
+
+Hermes never learns provider capacity by itself. An agent or operator publishes
+it for one host session; the commands below are control-plane references, not
+steps a chat user runs.
+
+```sh
+omh context budget-plan prepare --session-ref <session> --executor-profile <profile> --provider <provider> --model <wire-model> --capacity capacity.json --must-keep keep.json
+omh context budget-plan rebind  --session-ref <session> --executor-profile <profile> --provider <provider> --model <wire-model> --capacity capacity.json
+omh context budget-plan status  --session-ref <session> [--json]
+```
+
+`capacity.json` is `route_capacity_input/v1`: `context_window_tokens`,
+`max_output_tokens`, `compaction_reserve_tokens`, and `retained_history_tokens`,
+each `{"value", "class", "source", "observed_at"}`. A field left out stays
+`unknown`. `keep.json` is the must-keep pack as `{"digest", "estimated_tokens_total"}`;
+the pack's text never enters the plan file. `--model` is the exact wire spelling
+the host will send, not a family alias. `--provider` is declared local metadata;
+without it the route stays provider-unknown.
+
+The plan is written under `runtime/context-budget-plans/` keyed by a session
+digest, so a plan for one session is invisible to every other session.
+
+## Evidence classes
+
+| Class | Meaning | Effect on the usable budget |
+| --- | --- | --- |
+| `observed` | A caller-supplied observation with a UTC clock in `observed_at` | Counts toward `usable_budget_tokens` |
+| `assumed` | A user or heuristic value | Stays visible as an operand; the usable budget reports `assumed` with no number |
+| `unknown` | Not stated | The usable budget is `unknown`; nothing is inherited from the previous route |
+
+The usable budget is `context_window - max_output - compaction_reserve -
+retained_history`, and the derivation is recorded next to the result. Clocks in
+`observed_at` are the caller's evidence clocks; OMH adds no TTL and consults no
+documentation to upgrade them.
+
+## Invalidation
+
+`rebind` compares the new effective capacity digest with the active one.
+
+| Outcome | `invalidation.reason` | `invalidation.action` |
+| --- | --- | --- |
+| Same effective values, any identity change | previous reason | previous action; `plan_id` and the pack are preserved |
+| Any effective value changed | `capacity_changed` | `checkpoint_required` |
+| Usable budget shrank | `capacity_shrank` | `checkpoint_required` |
+| Must-keep estimate exceeds the usable budget | `capacity_shrank` or `capacity_changed` | `overflow_recovery_required` |
+| Usable budget or provider unknown | `capacity_unknown` | `capacity_unknown_hold` |
+| Ninth changed rebind | `rebind_limit` | `rebind_loop_hold` |
+
+`stale` is true whenever the action is anything but `continue`. A changed
+rebind gets a new `plan_id` and records the old one in `superseded_plan_id`;
+the last eight route identity digests stay in `route_history`.
+
+## What the hook sees
+
+On every model call `pre_llm_call` reads the plan for the current session and
+adds `omh_context_budget` (`context_budget_continuation/v1`) plus one
+`[OMH Context Budget]` line. The host supplies only the wire model. Only an
+exact match with the published `wire_model` makes the published capacity
+eligible; a mismatch yields `host_route_unbound` and an unreadable file yields
+`plan_unreadable`, both as `capacity_unknown_hold`. `host_route.provider` is
+always `null` and `provider_observation` is always `unknown`: the host never
+tells OMH which provider served the call.
+
+The projection is a prepared obligation. `recovery.max_checkpoint_attempts` is
+1 and `recovery.completion` is `not_observed`: resolve the hold with one
+checkpoint or capacity review, keep the must-keep pack, then publish the plan
+again. The hook does not block the provider call and does not compact anything.
+
+## Status language
+
+`status` prints the route, the usable budget with its class, each capacity field
+with its class, source, and clock, and the continuation action. It always ends
+with the same boundary: provider usage, compaction, and billing are
+`not_observed`. `local_token_estimate` is the pack's estimate and is `assumed`.
+Say which route and evidence the budget rests on and whether a replan is owed;
+do not say the host compacted, the provider counted, or a bill accrued.
+
+## Boundary
+
+No network lookup, no entitlement check, no billing claim, no hidden compaction.
+Digests exclude credentials and prompt text. A published plan is not proof that
+any model received the must-keep pack.
+"""
 
 
 def _cache_placement_reference() -> str:
