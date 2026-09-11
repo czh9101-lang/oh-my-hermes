@@ -243,7 +243,7 @@ class EfficiencyContractTests(unittest.TestCase):
         # `FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`.
         # 928,000 -> 943,000: the two shared engine rules from the Codex Desktop
         # prompt review (follow-up authority, closing brief) plus the extended
-        # interjection rule take the full profile to 931,851 bytes on this tree.
+        # interjection rule take the full profile to 932,859 bytes on this tree.
         # The ceiling restores the ~11k standing headroom; the exact value stays
         # ratcheted in `FULL_PROFILE_SKILL_BODY_CHAR_LIMIT`.
         self.assertLess(full["skill_body"]["bytes"], 943_000)

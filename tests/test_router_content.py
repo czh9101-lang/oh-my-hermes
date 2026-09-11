@@ -1229,7 +1229,7 @@ class RouterContentTests(unittest.TestCase):
             ENGINE_INTERJECTION_RESUME_RULE,
         )
 
-        engines = ("ultrawork", "ultraqa", "loop", "research", "context", "ultraperf")
+        engines = ("ultrawork", "ultraqa", "loop", "research", "context", "ultraperf", "maestro")
         definitions = {definition.name: definition for definition in installable_skill_definitions()}
         for name in engines:
             with self.subTest(engine=name):
@@ -1240,11 +1240,19 @@ class RouterContentTests(unittest.TestCase):
             self.assertIn("persistence never broadens the authorized scope", templates[name].content, name)
             self.assertIn("omit abandoned approaches unless they explain a tradeoff", templates[name].content, name)
             self.assertIn("not automatically a replacement objective", templates[name].content, name)
+            # The brief's scaling never licenses dropping the mandatory close.
+            self.assertIn("Required closing lines stay outside this scaling", templates[name].content, name)
         for planning_name in ("ralplan", "plan", "deep-interview"):
             for rule in (ENGINE_FOLLOW_UP_AUTHORITY_RULE, ENGINE_CLOSING_BRIEF_RULE):
                 self.assertNotIn(rule, definitions[planning_name].quality_bar, planning_name)
-        # The words the review rejected never enter an engine bar.
-        self.assertNotIn("helpful enough", ENGINE_INTERJECTION_RESUME_RULE + ENGINE_FOLLOW_UP_AUTHORITY_RULE + ENGINE_CLOSING_BRIEF_RULE)
+        # The vocabulary the review rejected (the persistence push) never
+        # enters ANY engine bar, whichever constant or bullet carries it.
+        rejected = ("helpful enough", "persist until", "do not stop", "carry them to completion", "keep going")
+        for name in engines:
+            bar_text = " ".join(definitions[name].quality_bar).casefold()
+            for phrase in rejected:
+                self.assertNotIn(phrase, bar_text, f"{name}: {phrase}")
+        self.assertIn("it replaces the objective when the user says so", ENGINE_INTERJECTION_RESUME_RULE)
 
     def test_ultrawork_closes_with_observed_run_summary_or_not_available(self) -> None:
         """The owner reported ultrawork's closing brief showing deploy/verification

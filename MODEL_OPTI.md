@@ -168,6 +168,11 @@ discipline for how those prompts are assembled:
   *Why:* a fan-out unit that serializes independent reads pays a round trip
   per read, and a unit that parallelizes an edit with the read it depends on
   edits stale bytes; separators are noise inside a bounded output capture.
+  It reaches every unit through the unit section, not the shared head: the
+  head is frozen at its measured small-model budget (the section below), and
+  a batching rule is the first thing a weak lane may drop, so it must never
+  displace a stop rule there. The `claude` family block used to carry the
+  batching half itself; that sentence moved here.
 
 The first three originate from the stop-condition techniques the
 oh-my-openagent research surfaced for high-effort models (terminal-condition
@@ -276,9 +281,11 @@ scope (`ENGINE_FOLLOW_UP_AUTHORITY_RULE` — the engine-entry, external
 executor, and delegation-enable gates already asked before their own
 steps, but nothing covered an external state change such as a merge or a
 send); independent reads batch, dependent steps serialize, no decorative
-shell separators (`TOOL_BATCHING_PROTOCOL`, universal); the closing brief
-scales to the change, leads with the result, and omits abandoned approaches
-unless they explain a tradeoff (`ENGINE_CLOSING_BRIEF_RULE`, new).
+shell separators (`TOOL_BATCHING_PROTOCOL`, every unit's section, outside
+the frozen shared head); the closing brief scales to the change, leads with
+the result, and omits abandoned approaches unless they explain a tradeoff,
+while the observed run summary and any prepared-not-observed or unmerged
+work are stated whatever the length (`ENGINE_CLOSING_BRIEF_RULE`, new).
 Deliberately not adopted: the persistence
 push ("do not settle for a partial or 'helpful enough' solution … persist
 until the user's intended goal is complete", "only send a final message

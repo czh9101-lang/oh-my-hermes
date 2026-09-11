@@ -69,13 +69,20 @@ class ProtocolContentTests(unittest.TestCase):
     def test_structural_search_discipline_rides_the_shared_invariant_preamble(self) -> None:
         self.assertIn(STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE, shared_unit_preamble_lines(_GOAL))
 
-    def test_tool_batching_rides_the_shared_preamble_and_names_both_halves(self) -> None:
+    def test_tool_batching_rides_every_unit_section_and_stays_out_of_the_frozen_head(self) -> None:
         # Independent work batches, dependent work serializes, and shell output
         # carries no separator noise into the bounded capture (Codex Desktop
         # prompt review, 2026-09-11 — adopted as executor-neutral discipline).
-        preamble = shared_unit_preamble_lines(_GOAL)
-        self.assertIn(TOOL_BATCHING_PROTOCOL, preamble)
-        self.assertLess(preamble.index(TOOL_BATCHING_PROTOCOL), preamble.index(UNIT_RESULT_RETURN_PROTOCOL))
+        # It is a unit-section line on purpose: the shared head is frozen at
+        # its measured small-model budget, and a batching rule is the first a
+        # weak lane may drop, so it never displaces a stop rule there.
+        self.assertNotIn(TOOL_BATCHING_PROTOCOL, shared_unit_preamble_lines(_GOAL))
+        for role in MODEL_ROLES:
+            unit = _contract_unit(
+                [{"unit_id": "u", "title": "U", "owner": "codex", "file_scope": ["src/"], "role": role}],
+                "u",
+            )
+            self.assertIn(TOOL_BATCHING_PROTOCOL, unit_protocol_lines(unit), role)
         self.assertIn("independent reads and searches together", TOOL_BATCHING_PROTOCOL)
         self.assertIn("sequential", TOOL_BATCHING_PROTOCOL)
         self.assertIn("separator commands", TOOL_BATCHING_PROTOCOL)

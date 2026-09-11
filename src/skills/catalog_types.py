@@ -421,8 +421,8 @@ ENGINE_INTERJECTION_RESUME_RULE = (
     "instead of re-reading status. Only the user's explicit stop or cancel, or the engine's own "
     "completion gate, ends the run; when the interjection changes scope, say so and update the declared "
     "plan or todo instead of silently abandoning it. A mid-run message is the latest steering for the "
-    "active task, not automatically a replacement objective: the objective changes only when the user "
-    "states a new one."
+    "active task, not automatically a replacement objective: it replaces the objective when the user "
+    "says so and steers the current one otherwise."
 )
 
 # Two more rules composed into the same executing-engine bars (2026-09-11,
@@ -443,8 +443,9 @@ ENGINE_CLOSING_BRIEF_RULE = (
     "The closing brief scales to the change: one or two sentences plus the observed validation for a "
     "simple change, more only when the complexity earns it. Lead with the result or decision; omit "
     "abandoned approaches unless they explain a tradeoff the reader needs; narrate no internal "
-    "bookkeeping (todo transitions, follow-up declarations, waits) and add no disclaimers about "
-    "actions not taken."
+    "bookkeeping (todo transitions, follow-up declarations, waits). Required closing lines stay "
+    "outside this scaling: the observed run summary, and any prepared-not-observed or unmerged work, "
+    "are stated whatever the brief's length."
 )
 
 # Shared five-step contract for the Hermes setup-guide skills (model-setup,
