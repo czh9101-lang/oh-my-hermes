@@ -101,6 +101,32 @@ class PathResolutionReportTests(unittest.TestCase):
             # contract encodes an expected version to fall behind.
             self.assertEqual(result["status"], "ready")
 
+    def test_a_ready_probe_says_it_observed_only_the_binary_version(self) -> None:
+        # The 2026-09-11 gap: `available: true` was read as "this executor can
+        # do the work". The probe has no worktree, so it cannot have observed
+        # anything about one, and the payload has to say that out loud.
+        with TemporaryDirectory() as only:
+            _fake_binary(only, "codex", "0.145.0")
+            result = self._probe(only)
+
+            self.assertEqual(result["status"], "ready")
+            self.assertTrue(result["available"])
+            self.assertEqual(result["observed"], "binary_version_only")
+            self.assertIn("workspace not yet probed", result["summary"])
+            self.assertIn("workspace_preflight", result["summary"])
+            self.assertIn("workspace_preflight", result["claim_boundary"])
+            self.assertIn("is not a claim that the work can be done", result["claim_boundary"])
+            # The observed version line is still there; the qualification is
+            # appended to it rather than replacing it.
+            self.assertIn("0.145.0", result["summary"])
+
+    def test_a_missing_binary_also_states_what_was_observed(self) -> None:
+        with TemporaryDirectory() as empty:
+            result = self._probe(empty)
+
+            self.assertEqual(result["status"], "missing")
+            self.assertEqual(result["observed"], "binary_version_only")
+
     def test_no_source_line_hardcodes_an_executor_version(self) -> None:
         # The guard for the structural rule itself: the module may print
         # versions it observed, never carry one of its own.
