@@ -283,8 +283,8 @@ def assess_progress(
     """
     text = stdout_so_far or ""
     prior = dict(previous) if isinstance(previous, Mapping) else None
-    previous_bytes = _int_at(prior, "output_bytes", 0) if prior else 0
-    last_new_output_at = _float_at(prior, "last_new_output_at", float(now)) if prior else float(now)
+    previous_bytes = _int_at(prior, "output_bytes", 0)
+    last_new_output_at = _float_at(prior, "last_new_output_at", float(now))
     grew = len(text) > previous_bytes
     if grew or prior is None:
         last_new_output_at = float(now)
