@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from _local_package import load_local_package
+from _platform_support import HAS_FCNTL, requires_enforced_file_lock
 
 load_local_package()
 from omh.local_store import (
@@ -19,14 +20,6 @@ from omh.local_store import (
     read_json_object,
 )
 from omh.system import local_store
-
-try:
-    import fcntl as _fcntl  # noqa: F401 - import used only to probe platform availability
-
-    HAS_FCNTL = True
-except ImportError:
-    HAS_FCNTL = False
-
 
 class FakeMsvcrt:
     """Stand-in for the Windows locking API, exercised on every platform.
@@ -65,7 +58,7 @@ class FakeMsvcrt:
 
 
 class LocalStoreLockingTests(unittest.TestCase):
-    @unittest.skipUnless(HAS_FCNTL, "fcntl advisory locking is POSIX-only")
+    @requires_enforced_file_lock
     def test_concurrent_locked_updates_do_not_lose_writes(self) -> None:
         worker_count = 24
         with TemporaryDirectory() as tmp:
@@ -113,7 +106,7 @@ class LocalStoreLockingTests(unittest.TestCase):
             leftover = list(Path(tmp).glob(".target.json.*.tmp"))
             self.assertEqual(leftover, [])
 
-    @unittest.skipUnless(HAS_FCNTL, "fcntl advisory locking is POSIX-only")
+    @requires_enforced_file_lock
     def test_file_lock_times_out_when_already_held(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "contended.json"
