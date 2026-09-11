@@ -469,6 +469,69 @@ class DeepSeekV41FlashTests(unittest.TestCase):
                 self.assertNotIn(push, lowered, push)
 
 
+class DatedSnapshotTests(unittest.TestCase):
+    """A vendor's `<base>-YYYY-MM-DD` id is the base pinned to a date (a
+    provider that serves only `gpt-5.6-terra-2026-07-09` was reported on
+    2026-09-11). The rule is shape-only and projects only onto a base the
+    tables already resolve; nothing else about suffix guessing changes."""
+
+    def test_dated_snapshot_of_a_contracted_id_resolves_its_contract(self) -> None:
+        from omh.coding.model_contracts import dated_snapshot_base
+
+        base = model_contract("gpt-6-astra")
+        for requested, canonical, mode in (
+            ("gpt-6-astra-2026-08-01", "gpt-6-astra-2026-08-01", "standard"),
+            ("openai/gpt-6-astra-2026-08-01", "gpt-6-astra-2026-08-01", "standard"),
+            ("GPT-6-Astra-2026-08-01", "gpt-6-astra-2026-08-01", "standard"),
+            # A snapshot of a declared row inherits that row's mode.
+            ("gpt-6-astra-pro-2026-08-01", "gpt-6-astra-pro-2026-08-01", "pro"),
+        ):
+            with self.subTest(requested=requested):
+                projection = model_contract_projection(requested)
+                assert projection is not None
+                self.assertEqual(projection["requested_model"], requested)
+                self.assertEqual(projection["canonical_model_id"], canonical)
+                self.assertEqual(projection["contract_model_id"], "gpt-6-astra")
+                self.assertEqual(projection["reasoning_mode"], mode)
+                self.assertEqual(projection["provenance"], "dated_snapshot")
+                self.assertIs(model_contract(requested), base)
+                self.assertEqual(contract_model_id(requested), "gpt-6-astra")
+                self.assertEqual(dated_snapshot_base(requested), canonical.rsplit("-", 3)[0])
+        # The pointer alias projects through to the exact contract as well.
+        projection = model_contract_projection("deepseek/deepseek-flash-2026-09-01")
+        assert projection is not None
+        self.assertEqual(projection["contract_model_id"], "deepseek-v4.1-flash")
+        self.assertEqual(projection["reasoning_mode"], "thinking")
+        self.assertEqual(projection["provenance"], "dated_snapshot")
+
+    def test_dated_snapshot_keeps_the_exact_model_calibration(self) -> None:
+        base_route = {"selected_model": "gpt-6-astra", "selected_reasoning_effort": "xhigh", "model_family": "gpt"}
+        dated_route = {**base_route, "selected_model": "openai/gpt-6-astra-2026-08-01"}
+        self.assertEqual(calibration_for_route(dated_route), calibration_for_route(base_route))
+        self.assertEqual(calibration_for_route(dated_route), MODEL_HIGH_EFFORT_CALIBRATIONS["gpt-6-astra"])
+
+    def test_only_the_exact_trailing_shape_on_a_known_base_projects(self) -> None:
+        from omh.coding.model_contracts import dated_snapshot_base
+
+        for model_id in (
+            "gpt-6-terra-2026-07-09",  # date on a base the tables never met
+            "gpt-6-astra-turbo-2026-08-01",  # date on an undeclared variant
+            "gpt-6-astra-2026-13-01",  # not a calendar month
+            "gpt-6-astra-2026-08-32",  # not a calendar day
+            "gpt-6-astra-20260801",  # a different vendor's compact shape
+            "gpt-6-astra-2026-08",  # no day
+            "gpt-6-astra-2026-08-01-fast",  # date is not trailing
+            "gpt-6-astra-2026-08-01-2026-08-02",  # a snapshot of a snapshot
+        ):
+            with self.subTest(model_id=model_id):
+                self.assertIsNone(model_contract_projection(model_id))
+                self.assertIsNone(model_contract(model_id))
+                self.assertEqual(contract_model_id(model_id), model_id)
+        self.assertEqual(dated_snapshot_base("gpt-6-astra-20260801"), "")
+        self.assertEqual(dated_snapshot_base("gpt-6-astra"), "")
+        self.assertEqual(dated_snapshot_base(""), "")
+
+
 class ModelContractCliTests(unittest.TestCase):
     def test_model_contract_prints_the_record_and_the_per_turn_policy(self) -> None:
         status, stdout, _stderr = run_cli(["coding", "model-contract", "--model", "openai/gpt-6-astra", "--json"])

@@ -804,7 +804,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # each across seven bars) and the shared interjection rule gained the
 # steering-not-objective sentence; harness discipline the engines read every
 # run, so it belongs in the always-loaded body; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 932859
+# 932859 -> 933225: `model-setup` gained one recovery note for a provider
+# that serves only dated snapshot ids (`gpt-5.6-terra-2026-07-09`, reported
+# 2026-09-11): confirm the dated id as served, OMH reads the trailing date as
+# the base alias. The lane otherwise tells such a user their model is
+# unavailable, so the note belongs where the lane reads it; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 933225
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

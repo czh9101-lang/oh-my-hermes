@@ -54,7 +54,16 @@ provenance. Keep the plugin bundle's explicit mirror parity-tested for
 provider eligibility, category projection, and approximate pricing. The host
 or runtime owns wire translation. A catalog row is neither entitlement nor
 execution evidence, and a malformed or future suffix remains uncontracted
-until it receives an explicit declaration.
+until it receives an explicit declaration. The one shape that projects
+without a declared row is a vendor's dated snapshot (`<base>-YYYY-MM-DD`,
+OpenAI's convention; a provider that serves only `gpt-5.6-terra-2026-07-09`
+was reported 2026-09-11): `dated_snapshot_base()` in
+`src/coding/model_contracts.py` and its plugin mirror strip only that
+trailing shape, and every caller projects it only onto a base it already
+knows — a contract, a declared row, a priced or provider-mapped alias, a
+chain entry — at that base's own mode and tier, with `dated_snapshot`
+provenance. Probe the dated form in this step too; an unknown base with a
+date must stay unknown.
 
 A bare name that classifies `unknown` gets generic discipline; add it to
 `_CLAUDE_TIER_ALIASES` (Claude) or the prefix tables in
