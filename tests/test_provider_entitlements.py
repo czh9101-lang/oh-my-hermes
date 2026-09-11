@@ -294,7 +294,7 @@ class MultiChoicePromptTests(unittest.TestCase):
         {"choice": "3", "value": "openrouter", "label": "OpenRouter", "description": "relays every model family"},
     ]
 
-    def _typed(self, answers: list[str], selected: list[str]) -> list[str]:
+    def _typed(self, answers: list[str], selected: list[str], *, exclusive: set[str] | None = None) -> list[str]:
         replies = iter(answers)
         self.defaults = []
         out = io.StringIO()
@@ -307,7 +307,13 @@ class MultiChoicePromptTests(unittest.TestCase):
             setup_module, "_ask", side_effect=ask
         ), redirect_stdout(out):
             chosen = setup_module._ask_multi_choice(
-                "Which?", ["pick some"], self.OPTIONS, selected=selected, use_color=False, language="en"
+                "Which?",
+                ["pick some"],
+                self.OPTIONS,
+                selected=selected,
+                exclusive=exclusive,
+                use_color=False,
+                language="en",
             )
         self.rendered = out.getvalue()
         return chosen
@@ -319,17 +325,48 @@ class MultiChoicePromptTests(unittest.TestCase):
         self.assertIn("1) [x] og", self.rendered)
         self.assertIn("2) [ ] Z.ai (GLM)", self.rendered)
         self.assertEqual(self.defaults, ["1,3"])
-        # With nothing ticked the default is the clear-everything token.
+        # With nothing ticked the default is empty -- there is no token to learn.
         self.assertEqual(self._typed([""], []), [])
-        self.assertEqual(self.defaults, ["0"])
+        self.assertEqual(self.defaults, [""])
 
     def test_numbers_replace_the_selection_and_can_clear_a_preselected_row(self) -> None:
         self.assertEqual(self._typed(["2, 3"], ["og"]), ["zai", "openrouter"])
         self.assertEqual(self._typed(["2"], ["og", "zai", "openrouter"]), ["zai"])
 
-    def test_zero_means_none_which_empty_input_cannot_say(self) -> None:
-        self.assertEqual(self._typed(["0"], ["og", "zai"]), [])
-        self.assertEqual(self._typed(["none"], ["og"]), [])
+    def test_there_is_no_magic_none_token(self) -> None:
+        """"None of these" is a row a caller adds, not a number to know."""
+        self.assertEqual(self._typed(["0", "2"], ["og"]), ["zai"])
+        self.assertEqual(self._typed(["none", "2"], ["og"]), ["zai"])
+
+    def test_an_exclusive_value_may_only_be_picked_alone(self) -> None:
+        exclusive = {"openrouter"}
+        self.assertEqual(self._typed(["3"], ["og"], exclusive=exclusive), ["openrouter"])
+        # Picked beside another row it is contradictory, so the prompt re-asks.
+        self.assertEqual(self._typed(["1, 3", "2"], ["og"], exclusive=exclusive), ["zai"])
+        self.assertIn("cannot be combined", self.rendered)
+        # An empty answer that would confirm a contradictory pre-selection is
+        # caught by the same rule rather than slipping through.
+        self.assertEqual(self._typed(["2"], ["og", "openrouter"], exclusive=exclusive), ["zai"])
+
+    def test_keyboard_path_refuses_a_contradictory_tick_set_and_keeps_the_menu(self) -> None:
+        # Row 1 ticked; tick row 3 (exclusive) too, press Enter -> refused;
+        # untick row 1, Enter -> accepted.
+        keys = iter(["3", "\r", "1", "\r"])
+        out = io.StringIO()
+        with patch.object(setup_module, "_keyboard_menu_available", return_value=True), patch.object(
+            setup_module, "_read_tui_key", side_effect=lambda: next(keys)
+        ), redirect_stdout(out):
+            chosen = setup_module._ask_multi_choice(
+                "Which?",
+                ["pick some"],
+                self.OPTIONS,
+                selected=["og"],
+                exclusive={"openrouter"},
+                use_color=False,
+                language="en",
+            )
+        self.assertEqual(chosen, ["openrouter"])
+        self.assertIn("cannot be combined", out.getvalue())
 
     def test_values_are_accepted_and_an_unknown_token_re_asks(self) -> None:
         self.assertEqual(self._typed(["zai"], []), ["zai"])
@@ -359,15 +396,22 @@ class MultiChoicePromptTests(unittest.TestCase):
             "provider_detected_config",
             "provider_detected_env",
             "provider_recorded_before",
+            "provider_opengateway_desc",
+            "provider_skip_label",
+            "provider_skip_desc",
+            "provider_entitlements_skipped",
+            "exclusive_selection",
         )
         for code in LANGUAGE_CODES:
             for key in keys:
                 with self.subTest(language=code, key=key):
                     self.assertIn(key, MESSAGES[code])
-                    self.assertTrue(tr(code, key, name="X").strip())
-        # The retired per-provider question is gone from every catalog.
+                    self.assertTrue(tr(code, key, name="X", label="Y").strip())
+        # The retired per-provider question and the retired gate question are
+        # gone from every catalog.
         for code in LANGUAGE_CODES:
             self.assertNotIn("provider_hold_prompt", MESSAGES[code])
+            self.assertNotIn("provider_entitlements_prompt", MESSAGES[code])
 
 
 class SetupInterviewTests(unittest.TestCase):
@@ -389,10 +433,11 @@ class SetupInterviewTests(unittest.TestCase):
                 "claude-code": {"binary_present": True, "login_marker": "present"},
                 "codex": {"binary_present": True, "login_marker": "absent"},
             }
-            # record? yes; then one list (og ticked, zai unticked); then
-            # claude-code? yes. Codex is never asked: a Codex login is a
-            # Hermes provider, not a Maestro-only subscription.
-            answers = iter([True, True])
+            # One list (og ticked, zai unticked), then claude-code? yes.
+            # There is no gate question any more, and Codex is never asked: a
+            # Codex login is a Hermes provider, not a Maestro-only
+            # subscription.
+            answers = iter([True])
             with patch.object(setup_module, "_detect_external_cli_profiles", return_value=detected), patch.object(
                 setup_module, "_ask_yes_no", side_effect=lambda *a, **k: next(answers)
             ), patch.object(setup_module, "_ask_multi_choice", return_value=["og"]), patch.object(
@@ -428,12 +473,7 @@ class SetupInterviewTests(unittest.TestCase):
                 {"schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION, "providers": {"zai": "zai"}, "subscription_clis": []},
             )
             args = argparse.Namespace()
-            gate_defaults: list[bool] = []
             rows: dict[str, object] = {}
-
-            def yes_no(_prompt, *, default, **_kwargs):
-                gate_defaults.append(default)
-                return True
 
             def multi_choice(_title, _intro, options, *, selected, **_kwargs):
                 rows["options"] = options
@@ -442,14 +482,14 @@ class SetupInterviewTests(unittest.TestCase):
 
             with patch.object(
                 setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": False}, "codex": {"binary_present": False}}
-            ), patch.object(setup_module, "_ask_yes_no", side_effect=yes_no), patch.object(
+            ), patch.object(setup_module, "_ask_yes_no") as yes_no, patch.object(
                 setup_module, "_ask_multi_choice", side_effect=multi_choice
             ), patch.object(setup_module, "_ask", return_value=""), patch.object(setup_module, "_use_color", return_value=False):
                 setup_module._ask_provider_entitlements(args, paths, "en")
 
-            # The top-level question still defaults to No once a valid document
-            # exists, and it is now the only yes/no left before the list.
-            self.assertEqual(gate_defaults, [False])
+            # No yes/no survives here: the gate is gone and no subscription CLI
+            # is detected, so the list is the whole question.
+            yes_no.assert_not_called()
             # The previously recorded provider is pre-ticked; the configured one
             # the operator declined last time is offered but not.
             values = [option["value"] for option in rows["options"]]
@@ -529,25 +569,19 @@ class SetupInterviewTests(unittest.TestCase):
             self._config(paths, "providers:\n  og:\n    base_url: x\n")
             _write(provider_entitlements_path(paths.omh_home), {"schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION, "providers": {"og": "warp"}})
             args = argparse.Namespace()
-            defaults: list[bool] = []
-
-            def yes_no(_prompt, *, default, **_kwargs):
-                defaults.append(default)
-                return False
-
-            import io
-            from contextlib import redirect_stdout
-
             out = io.StringIO()
             with patch.object(
                 setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": False}, "codex": {"binary_present": False}}
-            ), patch.object(setup_module, "_ask_yes_no", side_effect=yes_no), patch.object(
-                setup_module, "_use_color", return_value=False
-            ), redirect_stdout(out):
+            ), patch.object(setup_module, "_ask_multi_choice", return_value=["og"]), patch.object(
+                setup_module, "_ask", return_value=""
+            ), patch.object(setup_module, "_use_color", return_value=False), redirect_stdout(out):
                 setup_module._ask_provider_entitlements(args, paths, "en")
-            self.assertEqual(defaults, [True])
+            # The warning names why the old document is not in force, and
+            # answering replaces it wholesale.
             self.assertIn("not applied", out.getvalue())
             self.assertIn("kind must be one of", out.getvalue())
+            _parsed, status = load_provider_entitlements(paths.omh_home)
+            self.assertEqual(status, "applied")
 
     def test_unreadable_dispatch_document_is_reported_not_silently_skipped(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -558,9 +592,6 @@ class SetupInterviewTests(unittest.TestCase):
             path.parent.mkdir(parents=True)
             path.write_text("{", encoding="utf-8")
             args = argparse.Namespace()
-            import io
-            from contextlib import redirect_stdout
-
             out = io.StringIO()
             with patch.object(
                 setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": True}, "codex": {"binary_present": False}}
@@ -571,19 +602,107 @@ class SetupInterviewTests(unittest.TestCase):
             self.assertIn("Could not seed", out.getvalue())
             self.assertEqual(path.read_text(encoding="utf-8"), "{")
 
-    def test_declining_writes_nothing(self) -> None:
+    def test_the_skip_row_writes_nothing_and_keeps_the_shipped_order(self) -> None:
+        """Skip is the whole "leave it alone" contract: no document, no seed.
+
+        It has to hold even when a Claude Code subscription would otherwise be
+        asked about and seeded -- picking skip ends the question there.
+        """
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = self._paths(root)
             self._config(paths, "providers:\n  og:\n    base_url: x\n")
             args = argparse.Namespace()
+            out = io.StringIO()
+            with patch.object(
+                setup_module,
+                "_detect_external_cli_profiles",
+                return_value={"claude-code": {"binary_present": True, "login_marker": "present"}, "codex": {"binary_present": False}},
+            ), patch.object(
+                setup_module, "_ask_multi_choice", return_value=[setup_module._PROVIDER_SKIP_CHOICE]
+            ), patch.object(setup_module, "_ask_yes_no") as yes_no, patch.object(
+                setup_module, "_ask"
+            ) as free_form, patch.object(setup_module, "_use_color", return_value=False), redirect_stdout(out):
+                setup_module._ask_provider_entitlements(args, paths, "en")
+            self.assertIsNone(args._provider_entitlements)
+            self.assertFalse(provider_entitlements_path(paths.omh_home).exists())
+            self.assertFalse((paths.omh_home / "routing" / "dispatch-models.json").exists())
+            # Skip ends the question: neither the add loop nor the subscription
+            # yes/no runs after it.
+            free_form.assert_not_called()
+            yes_no.assert_not_called()
+            self.assertIn("built-in model order stays in effect", out.getvalue())
+
+    def test_ticking_nothing_records_an_empty_document_which_skip_does_not(self) -> None:
+        """The two ways of answering "no" are distinct, and both keep the order.
+
+        Skip writes nothing. Ticking nothing records "I hold none of these" --
+        a document whose empty `providers` makes `alias_is_served` fail open,
+        so the chain order is identical either way. The difference that earns
+        the distinction is that an operator who recorded providers before can
+        clear them by unticking; skip would leave the old answers standing.
+        """
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._paths(root)
+            self._config(paths, "providers:\n  og:\n    base_url: x\n")
+            _write(
+                provider_entitlements_path(paths.omh_home),
+                {"schema_version": PROVIDER_ENTITLEMENTS_SCHEMA_VERSION, "providers": {"og": "zai"}, "subscription_clis": []},
+            )
+            args = argparse.Namespace()
             with patch.object(
                 setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": False}, "codex": {"binary_present": False}}
-            ), patch.object(setup_module, "_ask_yes_no", return_value=False), patch.object(
-                setup_module, "_use_color", return_value=False
-            ):
+            ), patch.object(setup_module, "_ask_multi_choice", return_value=[]), patch.object(
+                setup_module, "_ask", return_value=""
+            ), patch.object(setup_module, "_use_color", return_value=False):
                 setup_module._ask_provider_entitlements(args, paths, "en")
-            self.assertFalse(provider_entitlements_path(paths.omh_home).exists())
+            document = json.loads(provider_entitlements_path(paths.omh_home).read_text(encoding="utf-8"))
+            self.assertEqual(document["providers"], {})
+            self.assertEqual(
+                entitlement_shaped_chain(HERMES_MIXTURE_CATEGORY_CHAINS["quick"], _entitlements({})),
+                HERMES_MIXTURE_CATEGORY_CHAINS["quick"],
+            )
+
+    def test_the_skip_row_is_last_exclusive_and_never_pre_ticked(self) -> None:
+        options, preselected, kinds = setup_module._provider_entitlement_options(
+            [("og", "gateway", "config")], {"og": "gateway"}, "en"
+        )
+        self.assertEqual(options[-1]["value"], setup_module._PROVIDER_SKIP_CHOICE)
+        self.assertNotIn(setup_module._PROVIDER_SKIP_CHOICE, preselected)
+        # It is not a provider id and carries no kind, so it can never be
+        # written into the document by accident.
+        self.assertNotIn(setup_module._PROVIDER_SKIP_CHOICE, kinds)
+        from omh.plugin_bundle.omh.hermes_delegation import is_provider_id_token
+
+        self.assertFalse(is_provider_id_token(setup_module._PROVIDER_SKIP_CHOICE))
+
+    def test_opengateway_is_always_offered_and_never_duplicated(self) -> None:
+        """OMH's own gateway is discoverable before its key is configured.
+
+        Offering it only once OPENGATEWAY_API_KEY exists hides it from everyone
+        who has the service but has not set the key up yet.
+        """
+        from omh.plugin_bundle.omh.hermes_delegation import PROVIDER_FAMILY_VOCABULARY
+
+        self.assertNotIn("opengateway", PROVIDER_FAMILY_VOCABULARY)
+        options, preselected, kinds = setup_module._provider_entitlement_options([], {}, "en")
+        values = [option["value"] for option in options]
+        # Last real row, immediately before skip, and not pre-ticked when the
+        # env key is absent.
+        self.assertEqual(values[-2:], ["opengateway", setup_module._PROVIDER_SKIP_CHOICE])
+        self.assertEqual(kinds["opengateway"], "gateway")
+        self.assertEqual(preselected, [])
+        # Detected through its env-key name it becomes a normal pre-ticked
+        # candidate row and the standing row is not repeated.
+        options, preselected, kinds = setup_module._provider_entitlement_options(
+            [("opengateway", "gateway", "OPENGATEWAY_API_KEY")], {}, "en"
+        )
+        values = [option["value"] for option in options]
+        self.assertEqual(values.count("opengateway"), 1)
+        self.assertEqual(values[0], "opengateway")
+        self.assertEqual(preselected, ["opengateway"])
+        self.assertEqual(options[0]["description"], "found: OPENGATEWAY_API_KEY is set here")
 
     def test_a_detected_row_is_a_default_the_operator_can_clear(self) -> None:
         """Detection pre-ticks a row; it never decides one.
@@ -621,7 +740,7 @@ class SetupInterviewTests(unittest.TestCase):
             paths = self._paths(root)
             self._config(paths, "providers:\n  og:\n    base_url: x\n")
             args = argparse.Namespace()
-            answers = iter([True, True])
+            answers = iter([True])
             with patch.object(
                 setup_module, "_detect_external_cli_profiles", return_value={"claude-code": {"binary_present": True, "login_marker": "present"}, "codex": {"binary_present": False}}
             ), patch.object(setup_module, "_ask_yes_no", side_effect=lambda *a, **k: next(answers)), patch.object(

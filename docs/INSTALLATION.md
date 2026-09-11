@@ -347,14 +347,25 @@ services you have an account, key, or login for: every provider family, plus
 each provider id in Hermes' config (`providers.<id>` and `model.provider`,
 except `auto`) and each builtin provider whose key NAME appears in
 `$HERMES_HOME/.env` or the environment (`ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`, ...; values are never read). Rows found that way arrive
-ticked, because a found config key or variable name is a sensible default —
-it is not proof of a working account, so every ticked row can be cleared and
-only what you leave ticked is recorded. After the list you can type any
-further provider id (that one is asked for its kind, since OMH knows nothing
-about it), and, when the Claude Code CLI is on PATH, you are asked whether
-you have a Claude Code subscription. The answers are recorded in
-`~/.omh/routing/providers.json` (`provider_entitlements/v1`):
+`OPENAI_API_KEY`, ...; values are never read), plus OpenGateway — OMH's own
+gateway, offered whether or not `OPENGATEWAY_API_KEY` is set yet, because a
+row that appears only once the key exists is a row nobody discovers. Rows
+found on the machine arrive ticked, because a found config key or variable
+name is a sensible default — it is not proof of a working account, so every
+ticked row can be cleared and only what you leave ticked is recorded.
+
+The list's last row is **Skip — leave everything as it is**. Choosing it
+writes nothing at all: no entitlement document, no dispatch-model seed, so
+the built-in chain order stays in effect and the machine behaves exactly as
+it does for someone who never answered. It is exclusive — ticked beside a
+provider the prompt asks again rather than guessing which half you meant —
+and it is never pre-ticked.
+
+After the list you can type any further provider id (that one is asked for
+its kind, since OMH knows nothing about it), and, when the Claude Code CLI is
+on PATH, you are asked whether you have a Claude Code subscription. The
+answers are recorded in `~/.omh/routing/providers.json`
+(`provider_entitlements/v1`):
 
 ```json
 {
@@ -377,8 +388,8 @@ its only effect is seeding the Claude Code `--model` preference in
 `dispatch-models.json` when none is set (a Codex login is spent by Hermes'
 own `openai-codex` provider and belongs under providers). `--yes`, `--json`,
 and runs without `--interactive` on a non-TTY ask nothing and write nothing;
-rerun `omh setup` interactively to answer again (existing answers are the
-defaults) or edit the file.
+rerun `omh setup` interactively to answer again (existing answers arrive
+pre-ticked) or edit the file.
 
 Supply wire-id routes in `~/.omh/routing/model-providers.json`
 (`model_provider_routes/v1`), a sibling of the chain document:
