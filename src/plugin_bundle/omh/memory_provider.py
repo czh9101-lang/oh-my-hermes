@@ -39,7 +39,7 @@ from typing import Any
 
 try:  # Present only inside the Hermes process.
     from agent.memory_provider import MemoryProvider as _MemoryProviderBase
-    from agent.memory_provider import RecallStatus
+    from agent.memory_provider import RecallStatus as RecallStatus
 except ImportError:  # pragma: no cover - exercised by the repo's own test run
     from dataclasses import dataclass
 
@@ -80,10 +80,15 @@ from .memory_dreaming import (
     write_dreaming_state,
 )
 from .memory_eviction import build_eviction_plan
+from .memory_prefetch_receipt import (
+    build_prefetch_receipt,
+    mark_prefetch_receipt_returned,
+    prefetch_receipt_path,
+)
 from .memory_records import (
-    rank_project_memory_records,
-    read_project_memory_records,
-    render_memory_records,
+    prefetch_scope_allowlist,
+    prepare_prefetch_records,
+    read_record_store_snapshot,
 )
 
 PROVIDER_NAME = "omh"
@@ -143,6 +148,12 @@ class OmhMemoryProvider(_MemoryProviderBase):
         self._served_pack = ""
         self._served_count = 0
         self._served_has_memory = False
+        # The record-bound receipt for the rendered pack, and the one for the
+        # pack the LAST prefetch actually handed back. A receipt is prepared
+        # with the pack and becomes `returned_to_host` only when prefetch runs;
+        # it never claims the host delivered it or a model used it.
+        self._prepared_receipt: dict[str, Any] | None = None
+        self._served_receipt: dict[str, Any] | None = None
         # Hermes hands a status callback to providers on the CLI surface only;
         # gateway platforms travel a different path and get the brief through
         # the pack instead. None means "say nothing here", never "fail".
@@ -162,6 +173,10 @@ class OmhMemoryProvider(_MemoryProviderBase):
             return False
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
+        self._query = ""
+        self._pack, self._pack_count, self._pack_has_memory = "", 0, False
+        self._served_pack, self._served_count, self._served_has_memory = "", 0, False
+        self._prepared_receipt, self._served_receipt = None, None
         self._session_id = str(session_id or "")
         hermes_home = kwargs.get("hermes_home")
         self._hermes_home = Path(str(hermes_home)).expanduser() if hermes_home else None
@@ -183,6 +198,12 @@ class OmhMemoryProvider(_MemoryProviderBase):
     def prefetch(self, query: str = "", *, session_id: str = "") -> str:
         self._served_pack, self._served_count = self._pack, self._pack_count
         self._served_has_memory = self._pack_has_memory
+        self._served_receipt = (
+            mark_prefetch_receipt_returned(self._prepared_receipt) if self._prepared_receipt is not None else None
+        )
+        if self._served_receipt is not None:
+            payload = json.dumps(self._served_receipt, ensure_ascii=False, sort_keys=True)
+            self._safely(lambda: _write_text(prefetch_receipt_path(self._omh_home), payload))
         return self._pack
 
     def queue_prefetch(
@@ -215,11 +236,21 @@ class OmhMemoryProvider(_MemoryProviderBase):
             return None
         return RecallStatus(provider_label=PROVIDER_LABEL, count=self._served_count)
 
+    def latest_prefetch_receipt(self) -> dict[str, Any] | None:
+        """The record-bound receipt of what the LAST prefetch returned; None otherwise.
+
+        Rendering a pack prepares a receipt; only a prefetch turns it into the
+        served one reported here, so a queued re-render never reads as served
+        and a shutdown leaves nothing stale behind.
+        """
+        return json.loads(json.dumps(self._served_receipt)) if self._served_receipt is not None else None
+
     def shutdown(self) -> None:
         """Hermes is closing. Last chance to leave a brief behind."""
         self._evaluate_if_due("shutdown")
         self._pack, self._pack_count, self._pack_has_memory = "", 0, False
         self._served_pack, self._served_count, self._served_has_memory = "", 0, False
+        self._prepared_receipt, self._served_receipt = None, None
 
     # -- Optional hooks -----------------------------------------------------
 
@@ -318,9 +349,10 @@ class OmhMemoryProvider(_MemoryProviderBase):
 
     def render_pack(self, *, now: datetime | None = None) -> str:
         """System blocks in full, reference blocks by label only, then the
-        reviewed records ranked for the queued query."""
+        reviewed records the canonical selector chose for the queued query."""
+        moment = now or datetime.now(timezone.utc)
         blocks = read_memory_blocks(self._omh_home)
-        selection = self._block_selection(blocks=blocks, now=now)
+        selection = self._block_selection(blocks=blocks, now=moment)
         system_blocks = tuple(block for block in blocks if block.tier == SYSTEM_TIER)
         reference_blocks = tuple(block for block in blocks if block.tier == REFERENCE_TIER)
         system, block_count = render_memory_blocks_counted(
@@ -329,11 +361,27 @@ class OmhMemoryProvider(_MemoryProviderBase):
             evaluations=selection.evaluations,
         )
         index = render_block_index(reference_blocks, evaluations=selection.evaluations)
-        records, record_count = render_memory_records(
-            rank_project_memory_records(read_project_memory_records(self._record_homes()), self._query)
+        # One selection contract for the live turn and the coding handoff:
+        # explicit user-global/project/thread allowlist, the Hermes perspective
+        # lens, and the selector's own lifecycle, ranking and budget ladder.
+        snapshot = read_record_store_snapshot(self._record_homes())
+        prepared = prepare_prefetch_records(
+            snapshot,
+            self._query,
+            allowed_scopes=self._prefetch_scopes(),
+            session_id=self._session_id,
+            now=moment,
         )
-        self._pack_count = block_count + record_count
+        records = prepared.section.text
+        # The count is what the renderer emitted, never what selection chose.
+        self._pack_count = block_count + len(prepared.section.rendered)
         self._pack_has_memory = bool(system or index or records)
+        self._prepared_receipt = build_prefetch_receipt(
+            prepared,
+            session_id=self._session_id,
+            home_digests=snapshot.home_digests,
+            rendered_block_count=block_count,
+        )
         # The brief is a request, not a memory: it is served so the model can
         # consolidate in this turn, and it never moves the recall count.
         consolidation = render_consolidation_brief(read_latest_consolidation(self._omh_home))
@@ -344,6 +392,17 @@ class OmhMemoryProvider(_MemoryProviderBase):
         if self._project_home is not None and self._project_home != self._omh_home:
             return (self._project_home, self._omh_home)
         return (self._omh_home,)
+
+    def _prefetch_scopes(self) -> list[dict[str, str]]:
+        """Explicit labels only: user-global, this project, this thread.
+
+        The project identity is the repository directory name -- the same rule
+        `omh memory recall` and the handoff apply through `project_identity` --
+        and `default` outside any repository. A record's own scope never
+        widens this list.
+        """
+        identity = self._project_home.parent.name if self._project_home is not None else "default"
+        return prefetch_scope_allowlist(project_identity=identity, session_id=self._session_id)
 
     def consolidation_due(
         self,

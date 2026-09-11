@@ -1,0 +1,227 @@
+"""The bounded, redacted receipt of one live prefetch.
+
+Hermes prints "recalled N memories" and nothing else survives the turn: which
+records were selected, which of them the renderer actually emitted, which lens
+and configuration produced that answer, and for which session. When a user
+later asks why an expected memory was not used, that question cannot be
+answered from a count. This receipt is the record-bound answer.
+
+It proves exactly one thing: the OMH provider prepared this section and
+returned it to the host. It is not evidence that the host put the text into a
+model call, nor that a model used it; both stay `None` here on purpose, and a
+consumer that needs them must observe them elsewhere. It carries record IDs,
+digests, counts, reason codes and identities -- never a summary, a query, a
+rendered section or any other content.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+from .memory_records import PreparedPrefetch, RECORD_SUMMARY_LIMIT_CHARS
+
+MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION = "omh_memory_prefetch_receipt/v1"
+PREFETCH_RECEIPT_FILENAME = "prefetch_receipt.json"
+MAX_PREFETCH_RECEIPT_BYTES = 64 * 1024
+RECEIPT_STATES = ("prepared", "returned_to_host")
+PROVES = "local_provider_preparation_and_return"
+CLAIM_BOUNDARY = (
+    "This receipt proves that the OMH memory provider prepared and returned this record section locally. "
+    "It is not evidence of host delivery, model use, execution, review, CI, merge, or Hermes internal memory."
+)
+_HEX64 = frozenset("0123456789abcdef")
+
+
+def build_prefetch_receipt(
+    prepared: PreparedPrefetch,
+    *,
+    session_id: str,
+    home_digests: tuple[str, ...] | list[str],
+    rendered_block_count: int = 0,
+) -> dict[str, Any]:
+    """Bind one selection and its rendering to configuration, lens, session and store.
+
+    Raises ValueError when the rendering does not describe the selection it
+    claims to render: a receipt must never be assembled from mismatched parts.
+    """
+    selection, section = prepared.selection, prepared.section
+    pack = selection.pack
+    selected_ids = [str(item.get("record_id", "")) for item in pack.get("included_records", []) if isinstance(item, dict)]
+    rendered_ids = [str(item.get("record_id", "")) for item in section.rendered]
+    if rendered_ids != selected_ids[: len(rendered_ids)]:
+        raise ValueError("incompatible prefetch rendering: rendered records are not the selected prefix")
+    for item in section.rendered:
+        digest = str(item.get("content_digest", ""))
+        if len(digest) != 64 or set(digest) - _HEX64:
+            raise ValueError("incompatible prefetch rendering: content digest is not sha256 hex")
+    task_ref: dict[str, Any] = _object(pack.get("task_ref"))
+    perspective: dict[str, Any] = _object(pack.get("perspective"))
+    configuration = selection.configuration
+    render_configuration = {"budget_chars": int(section.budget_chars), "summary_limit_chars": RECORD_SUMMARY_LIMIT_CHARS}
+    body: dict[str, Any] = {
+        "schema_version": MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION,
+        "prepared_at": _stamp(prepared.clock),
+        "session_id": str(pack.get("session_id", "") or session_id or ""),
+        "store": {"home_digests": [str(digest) for digest in home_digests]},
+        "configuration_id": selection.configuration_id,
+        "selector_schema_version": str(configuration.get("selector_schema_version", "")),
+        "recall_pack_schema_version": str(pack.get("schema_version", "")),
+        "render_configuration": render_configuration,
+        "render_configuration_id": _digest(render_configuration),
+        "lens": {
+            "scope_allowlist": [dict(scope) for scope in selection.scope_allowlist],
+            "scope_status": selection.scope_status,
+            "perspective": {"observer": str(perspective.get("observer", "")), "observed": str(perspective.get("observed", ""))},
+            "query_intent": str(pack.get("query_intent", "")),
+            "query_digest": str(task_ref.get("sha256", "")),
+            "query_supplied": bool(task_ref.get("query_supplied", False)),
+        },
+        "selection": {
+            "clock": _stamp(prepared.clock),
+            "recall_enabled": bool(pack.get("enabled", False)),
+            "selected_record_ids": selected_ids,
+            "selected_count": len(selected_ids),
+            "truncated": bool(pack.get("truncated", False)),
+            "exclusion_reason_counts": {str(key): int(value) for key, value in sorted(selection.exclusion_reason_counts.items())},
+        },
+        "rendering": {
+            "rendered_records": [
+                {"record_id": str(item.get("record_id", "")), "content_digest": str(item.get("content_digest", ""))}
+                for item in section.rendered
+            ],
+            "rendered_count": len(section.rendered),
+            "selected_not_rendered": [
+                {"record_id": record_id, "reason": "render_budget_exhausted"} for record_id in selected_ids[len(rendered_ids) :]
+            ],
+            "omission_counts": {str(key): int(value) for key, value in section.omissions.items()},
+            "rendered_block_count": max(int(rendered_block_count), 0),
+        },
+        "delivery_observed": None,
+        "model_use_observed": None,
+        "proves": PROVES,
+        "redaction_policy": "metadata_only",
+        "claim_boundary": CLAIM_BOUNDARY,
+    }
+    return {**body, "receipt_id": _digest(body), "state": "prepared", "served_at": ""}
+
+
+def mark_prefetch_receipt_returned(receipt: dict[str, Any], *, served_at: datetime | None = None) -> dict[str, Any]:
+    """The prepared receipt, now recording that the section was handed back to the host."""
+    return {**receipt, "state": "returned_to_host", "served_at": _stamp(served_at if served_at is not None else datetime.now(timezone.utc))}
+
+
+def validate_prefetch_receipt(value: object) -> list[str]:
+    """Bounded structural checks; a receipt that fails any of them is not consumed."""
+    errors: list[str] = []
+    if not isinstance(value, dict):
+        return ["receipt must be an object"]
+    try:
+        encoded = json.dumps(value, ensure_ascii=False).encode("utf-8")
+        if len(encoded) > MAX_PREFETCH_RECEIPT_BYTES:
+            return ["size"]
+        body = {key: item for key, item in value.items() if key not in {"receipt_id", "state", "served_at"}}
+        if value.get("receipt_id") != _digest(body):
+            errors.append("receipt_id")
+    except (TypeError, ValueError, RecursionError):
+        return ["encoding"]
+    if value.get("schema_version") != MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION:
+        errors.append("schema_version")
+    if value.get("state") not in RECEIPT_STATES:
+        errors.append("state")
+    for key in ("receipt_id", "configuration_id"):
+        if not _hex64(value.get(key)):
+            errors.append(key)
+    if not isinstance(value.get("session_id"), str):
+        errors.append("session_id")
+    lens = value.get("lens")
+    if not isinstance(lens, dict) or not isinstance(lens.get("scope_allowlist"), list) or not isinstance(lens.get("perspective"), dict):
+        errors.append("lens")
+    selection = value.get("selection")
+    rendering = value.get("rendering")
+    if not isinstance(selection, dict) or not isinstance(selection.get("selected_record_ids"), list):
+        errors.append("selection")
+    elif selection.get("selected_count") != len(selection["selected_record_ids"]):
+        errors.append("selection.selected_count")
+    if not isinstance(rendering, dict) or not isinstance(rendering.get("rendered_records"), list):
+        errors.append("rendering")
+    else:
+        rendered = rendering["rendered_records"]
+        if rendering.get("rendered_count") != len(rendered):
+            errors.append("rendering.rendered_count")
+        if not all(isinstance(item, dict) and isinstance(item.get("record_id"), str) and _hex64(item.get("content_digest")) for item in rendered):
+            errors.append("rendering.rendered_records")
+        if isinstance(selection, dict) and isinstance(selection.get("selected_record_ids"), list):
+            rendered_ids = [item.get("record_id") for item in rendered if isinstance(item, dict)]
+            if rendered_ids != selection["selected_record_ids"][: len(rendered_ids)]:
+                errors.append("rendering.selected_prefix")
+    if value.get("delivery_observed") is not None or value.get("model_use_observed") is not None:
+        errors.append("observation_claims")
+    if value.get("proves") != PROVES:
+        errors.append("proves")
+    for key in ("summary", "included_records", "query", "rendered_text"):
+        if key in value:
+            errors.append(f"content:{key}")
+    return errors
+
+
+def prefetch_receipt_path(omh_home: str | Path) -> Path:
+    return Path(omh_home).expanduser() / "memory" / PREFETCH_RECEIPT_FILENAME
+
+
+def read_prefetch_receipt(omh_home: str | Path) -> dict[str, Any] | None:
+    """The last receipt the provider persisted, or None when there is no valid one.
+
+    Malformed, foreign-schema or internally inconsistent files read as absent:
+    a consumer that needs the receipt must treat absence as unknown, never as
+    evidence that nothing was served.
+    """
+    path = prefetch_receipt_path(omh_home)
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        with path.open("rb") as handle:
+            encoded = handle.read(MAX_PREFETCH_RECEIPT_BYTES + 1)
+        if len(encoded) > MAX_PREFETCH_RECEIPT_BYTES:
+            return None
+        value = json.loads(encoded)
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+        return None
+    if validate_prefetch_receipt(value):
+        return None
+    return value
+
+
+def _object(value: object) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _hex64(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and not (set(value) - _HEX64)
+
+
+def _digest(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _stamp(moment: datetime) -> str:
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+__all__ = [
+    "CLAIM_BOUNDARY",
+    "MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION",
+    "PREFETCH_RECEIPT_FILENAME",
+    "PROVES",
+    "RECEIPT_STATES",
+    "build_prefetch_receipt",
+    "mark_prefetch_receipt_returned",
+    "prefetch_receipt_path",
+    "read_prefetch_receipt",
+    "validate_prefetch_receipt",
+]

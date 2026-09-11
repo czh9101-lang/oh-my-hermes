@@ -283,12 +283,34 @@ HERMES_MEMORY_BRIDGE_SCHEMA_VERSION = "hermes_memory_bridge/v1"
 PROJECT_MEMORY_RECORD_SCHEMA_VERSION = "project_memory_record/v2"
 
 
+def read_reviewed_records(omh_home: str | Path) -> list[dict[str, Any]]:
+    """Every v2 record whose admission review exists, never legacy display-only records.
+
+    No replay verdict is applied here. Supersession, expiry and review
+    staleness depend on a clock, and the prefetch selector classifies them at
+    the caller's clock; a reader that judged them at host wall clock first
+    would drop a superseded or expired record before the selector could name
+    it, so the live receipt could never report the exclusion the canonical
+    handoff reports.
+    """
+    home = Path(omh_home).expanduser() / "memory"
+    return _reviewed_records(home, _read_reviews(home / "reviews"))
+
+
 def read_approved_records(omh_home: str | Path) -> list[dict[str, Any]]:
-    """Replay-eligible v2 records, never legacy display-only records."""
+    """Replay-eligible v2 records at wall clock, for the bridge, demotion and expiry views."""
     from .memory_governance import evaluate_memory_replay
 
     home = Path(omh_home).expanduser() / "memory"
     reviews = _read_reviews(home / "reviews")
+    return [
+        record
+        for record in _reviewed_records(home, reviews)
+        if evaluate_memory_replay(record, review_resolver=reviews or None).get("eligible")
+    ]
+
+
+def _reviewed_records(home: Path, reviews: dict[str, dict[str, object]]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     try:
         candidates = sorted((home / "records").glob("*.json"))
@@ -303,10 +325,9 @@ def read_approved_records(omh_home: str | Path) -> list[dict[str, Any]]:
             continue
         if not isinstance(data, dict) or data.get("schema_version") != PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
             continue
-        replay = evaluate_memory_replay(data, review_resolver=reviews or None)
         admission = data.get("admission") if isinstance(data.get("admission"), dict) else {}
         review_id = admission.get("review_id") if isinstance(admission, dict) else None
-        if replay.get("eligible") and isinstance(review_id, str) and review_id in reviews:
+        if isinstance(review_id, str) and review_id in reviews:
             records.append(data)
     return records
 

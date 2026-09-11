@@ -22,6 +22,7 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 from unittest.mock import patch
 
 from _cli_harness import run_cli
@@ -70,8 +71,8 @@ from omh.plugin_bundle.omh.memory_provider import (
     consolidation_status_line,
     render_consolidation_brief,
 )
+from omh.plugin_bundle.omh import memory_records
 from omh.plugin_bundle.omh.memory_records import (
-    rank_project_memory_records,
     read_project_memory_records,
     render_memory_records,
 )
@@ -2255,6 +2256,19 @@ def _approve_record(root: Path, summary: str, *, home: str = ".omh", **capture: 
     return approve_project_memory_candidate(paths, str(captured["candidate"]["candidate_id"]), approved_by="user")["record"]
 
 
+def _rewrite_record(records_dir: Path, record_id: str, **fields: object) -> None:
+    path = records_dir / f"{record_id}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.update(fields)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _served_receipt(provider: OmhMemoryProvider) -> dict[str, Any]:
+    receipt = provider.latest_prefetch_receipt()
+    assert receipt is not None, "nothing has been served"
+    return receipt
+
+
 class RecordsReachPrefetchTests(unittest.TestCase):
     """README 08 promises the next session a ranked, budgeted pack of what a
     reviewer admitted. Measured before this: the provider served blocks only,
@@ -2293,9 +2307,13 @@ class RecordsReachPrefetchTests(unittest.TestCase):
             self.assertLessEqual(len(text), 2400)
             section = ElementTree.fromstring(text)
             self.assertEqual(len(section.findall("record")), 6)
+            # The record limit is the canonical selector's cut, reported under
+            # its reason code; the renderer only adds what IT could not fit.
             self.assertEqual(section.find("omitted").attrib,
-                             {"count": "34", "reason": "record_limit_reached"})
+                             {"count": "34", "reason": "over_budget"})
             self.assertEqual(provider.recall_status().count, 6)
+            self.assertEqual(_served_receipt(provider)["selection"]["exclusion_reason_counts"], {"over_budget": 34})
+            self.assertEqual(_served_receipt(provider)["rendering"]["rendered_count"], 6)
 
     def test_records_sit_after_blocks_in_one_pack(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -2311,12 +2329,23 @@ class RecordsReachPrefetchTests(unittest.TestCase):
             _approve_record(root, "The menubar helper polls every thirty seconds.", tags=["menubar"])
             _approve_record(root, "Release notes are edited with gh release edit.", tags=["release"])
             provider = self._provider(root)
+            # The canonical ladder does not merely sort by overlap: a queried
+            # record with no overlap is excluded as no_query_overlap, exactly as
+            # the coding handoff excludes it.
             provider.queue_prefetch("why does the menubar lag")
             pack = provider.prefetch("why does the menubar lag")
-            self.assertLess(pack.index("menubar helper"), pack.index("Release notes"))
+            self.assertIn("menubar helper", pack)
+            self.assertNotIn("Release notes", pack)
+            self.assertEqual(_served_receipt(provider)["selection"]["exclusion_reason_counts"], {"no_query_overlap": 1})
             provider.queue_prefetch("cut a release")
             pack = provider.prefetch("cut a release")
-            self.assertLess(pack.index("Release notes"), pack.index("menubar helper"))
+            self.assertIn("Release notes", pack)
+            self.assertNotIn("menubar helper", pack)
+            # An unqueried turn ranks rather than excludes: both records travel.
+            provider.queue_prefetch("")
+            pack = provider.prefetch("")
+            self.assertIn("Release notes", pack)
+            self.assertIn("menubar helper", pack)
 
     def test_the_project_store_is_read_when_the_session_runs_inside_a_repository(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -2324,8 +2353,12 @@ class RecordsReachPrefetchTests(unittest.TestCase):
             repo = root / "repo"
             (repo / ".git").mkdir(parents=True)
             (repo / "src" / "deep").mkdir(parents=True)
-            _approve_record(root, "Project-scoped: the API lives under src/api.", home="repo/.omh")
-            _approve_record(root, "User-scoped: the owner prefers Korean replies.")
+            # Scope labels are explicit: the repository's records carry its
+            # identity (`project/repo`, what `omh memory recall` resolves for
+            # this checkout) and the user store's cross-project preference is
+            # labelled `user-global`. Neither is inferred from the store path.
+            _approve_record(root, "Project-scoped: the API lives under src/api.", home="repo/.omh", scope_ref="repo")
+            _approve_record(root, "User-scoped: the owner prefers Korean replies.", scope_kind="user-global", scope_ref="default")
             pack = self._provider(root, cwd=repo / "src" / "deep").prefetch("")
             self.assertIn("Project-scoped", pack)
             self.assertIn("User-scoped", pack)
@@ -2347,18 +2380,62 @@ class RecordsReachPrefetchTests(unittest.TestCase):
         self.assertIn('reason="record_limit_reached"', text)
         self.assertEqual(render_memory_records([]), ("", 0))
 
-    def test_ranking_is_query_overlap_then_recency_then_id(self) -> None:
-        older = {"record_id": "mem_z", "summary": "deploy runbook", "approved_at": "2026-09-01T00:00:00Z"}
-        newer = {"record_id": "mem_a", "summary": "coffee machine", "approved_at": "2026-09-05T00:00:00Z"}
-        same_day = {"record_id": "mem_b", "summary": "tea kettle", "approved_at": "2026-09-05T00:00:00Z"}
-        ranked = rank_project_memory_records([older, newer, same_day], "")
-        self.assertEqual([r["record_id"] for r in ranked], ["mem_a", "mem_b", "mem_z"])
-        ranked = rank_project_memory_records([older, newer, same_day], "deploy the runbook")
-        self.assertEqual(ranked[0]["record_id"], "mem_z")
-        # Korean queries match on character bigrams, so a particle does not hide the noun.
-        korean = {"record_id": "mem_k", "summary": "메뉴바 헬퍼는 30초마다 갱신한다", "approved_at": "2026-09-01T00:00:00Z"}
-        ranked = rank_project_memory_records([newer, korean], "메뉴바가 왜 느리지")
-        self.assertEqual(ranked[0]["record_id"], "mem_k")
+    def test_ranking_belongs_to_the_canonical_selector_alone(self) -> None:
+        """The reduced ranker (`rank_project_memory_records`) is gone: one call
+        into the shared selector decides order, exclusions and budgets, and the
+        Korean bigram case it used to own is now the selector's promise."""
+        from omh.plugin_bundle.omh import memory_recall_selector
+
+        self.assertFalse(hasattr(memory_records, "rank_project_memory_records"))
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _approve_record(root, "deploy runbook lives in docs")
+            _approve_record(root, "메뉴바 헬퍼는 30초마다 갱신한다")
+            provider = self._provider(root)
+            with patch.object(memory_records, "select_memory_recall", wraps=memory_recall_selector.select_memory_recall) as shared:
+                provider.queue_prefetch("메뉴바가 왜 느리지")
+            self.assertEqual(shared.call_count, 1)
+            self.assertFalse(shared.call_args.kwargs["inspection"])
+            pack = provider.prefetch("메뉴바가 왜 느리지")
+            # Korean queries match on character bigrams, so a particle does not hide the noun.
+            self.assertIn("메뉴바 헬퍼", pack)
+            self.assertNotIn("deploy runbook", pack)
+            self.assertEqual(_served_receipt(provider)["selection"]["exclusion_reason_counts"], {"no_query_overlap": 1})
+
+    def test_superseded_and_expired_records_are_classified_by_the_selector_not_dropped_by_the_reader(self) -> None:
+        """The snapshot reader used to run the replay verdict at host wall clock
+        and drop superseded/expired records before the selector saw them, so the
+        live receipt said `{}` where the handoff said `{"superseded": 1}`. The
+        reader now hands the selector every reviewed v2 record; the verdict is
+        the selector's, at the caller's clock, and the receipt names it."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = _approve_record(root, "Live release note.", tags=["release"])
+            superseded = _approve_record(root, "Superseded release note.", tags=["release"])
+            expired = _approve_record(root, "Expired release note.", tags=["release"])
+            records_dir = root / ".omh" / "memory" / "records"
+            # Neither field is part of the reviewed payload digest, so the
+            # review link stays valid and only the lifecycle verdict changes.
+            _rewrite_record(records_dir, superseded["record_id"], superseded_by=f"{superseded['record_id']}-next")
+            _rewrite_record(records_dir, expired["record_id"], retention={"class": "volatile", "expires_at": "2026-01-01T00:00:00Z"})
+            ids = {record["record_id"] for record in read_project_memory_records((root / ".omh",))}
+            self.assertEqual(ids, {live["record_id"], superseded["record_id"], expired["record_id"]})
+
+            provider = self._provider(root)
+            provider.queue_prefetch("release", now=_datetime(2026, 6, 1, tzinfo=_timezone.utc))
+            pack = provider.prefetch("release")
+            self.assertIn("Live release note.", pack)
+            self.assertNotIn("Superseded release note.", pack)
+            self.assertNotIn("Expired release note.", pack)
+            receipt = _served_receipt(provider)
+            self.assertEqual(receipt["selection"]["selected_record_ids"], [live["record_id"]])
+            self.assertEqual(receipt["selection"]["exclusion_reason_counts"], {"expired_volatile": 1, "superseded": 1})
+            # The same store at a clock before the deadline keeps the expired
+            # record: the verdict follows the selector's clock, not the host's.
+            provider.queue_prefetch("release", now=_datetime(2025, 12, 31, tzinfo=_timezone.utc))
+            pack = provider.prefetch("release")
+            self.assertIn("Expired release note.", pack)
+            self.assertEqual(_served_receipt(provider)["selection"]["exclusion_reason_counts"], {"superseded": 1})
 
     def test_a_record_id_shared_by_two_homes_is_read_once_project_first(self) -> None:
         with TemporaryDirectory() as tmp:
