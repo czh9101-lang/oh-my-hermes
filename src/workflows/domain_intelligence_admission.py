@@ -126,6 +126,15 @@ def _normalize_workflow_hint(value: object) -> str:
 
 
 def _ensure_vocabulary_safe(value: str) -> None:
+    """Refuse domain vocabulary that carries protected or bulk-history content.
+
+    This is the only gate that matches the raw-log and transcript SHAPE, and
+    deliberately so: `classify_memory_admission` is a shared primitive whose
+    callers include action gates and handoff manifests, several of which turn
+    any non-safe verdict into a raise, so a line-shape rule there fails an
+    ordinary note whose lines open with "Error" or "User:". Keep the markers
+    here rather than moving them up; see that function's module docstring.
+    """
     normalized = unicodedata.normalize("NFKC", value)
     lowered = normalized.lower()
     ensure_safe_phrase_content(value)

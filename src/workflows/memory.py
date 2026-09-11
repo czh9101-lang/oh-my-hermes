@@ -4217,6 +4217,10 @@ def _project_memory_safety(
     classification = classify_memory_admission("\n".join([summary, content, " ".join(tags), source, source_ref]))
     status = str(classification.get("status", "blocked"))
     return {
+        # v2 stays: the shape gained `lane_refused_inputs` and `protected_inputs`
+        # lost two entries, but nothing reads either key and no stored digest
+        # covers this dict -- the batch artifacts that are re-digested never
+        # carry it. A version bump would be a migration for no reader.
         "schema_version": "project_memory_safety/v2",
         "status": status,
         "safe_to_auto_approve": status == "safe",
