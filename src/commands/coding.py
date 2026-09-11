@@ -2318,10 +2318,12 @@ def _fanout_dispatch_exit_code(summary: dict) -> int:
     2026-09-11 it did not: a batch whose every unit failed exited 0, so a
     caller reading only the status was told the work succeeded. That is how a
     real limit-exhausted run came back "ok" to its wrapper while the inner
-    dispatch had exit 1 and no report. `failure_kind` is the closed enum
-    `classify_failure_kind` sets on a failed unit and leaves empty on a
-    successful one, so presence is the signal and no status vocabulary is
-    duplicated here.
+    dispatch had exit 1 and no report. `failure_kind` is the closed enum a
+    failed unit carries and a successful one leaves empty, so presence is the
+    signal and no status vocabulary is duplicated here. Most kinds come from
+    `classify_failure_kind` reading a finished process; `workspace_blocked` is
+    assigned before the spawn by the workspace preflight, and it reaches this
+    mapper by the same key for the same reason -- the work did not happen.
     """
     if summary.get("interrupted"):
         return 130

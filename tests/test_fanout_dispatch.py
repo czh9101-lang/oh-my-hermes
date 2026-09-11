@@ -57,6 +57,7 @@ from omh.coding.fanout_dispatch import (  # noqa: E402
     verify_goal_matches_contract,
 )
 from omh.coding.verification_execution import VerificationExecutionGate  # noqa: E402
+from omh.commands.coding import _fanout_dispatch_exit_code  # noqa: E402
 from omh.coding.parallelism_policy import (  # noqa: E402
     FANOUT_MAX_DEPTH_DEFAULT,
     FANOUT_RUN_SPAWN_CEILING_DEFAULT,
@@ -1750,6 +1751,11 @@ class FanoutWorkspacePreflightTests(unittest.TestCase):
             self.assertIn("is not a commit present in", core["reason"])
             # The point of the whole check: no agent CLI was started.
             self.assertEqual(root_runner.spawned, [])
+            # ...and the outer command must not call that success. The mapper
+            # keys on `failure_kind` being present, which is exactly what a
+            # pre-spawn blocker sets, so a blocked unit exits 1 like any other
+            # failed one rather than reporting work that never happened.
+            self.assertEqual(_fanout_dispatch_exit_code(summary), 1)
 
     def test_a_healthy_worktree_reports_a_passing_preflight_and_still_spawns(self) -> None:
         # The negative control for the test above: the same dispatch with git
