@@ -103,6 +103,50 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
         ("claude-fable-5-1", "high"),
         ("kimi-k3", "high"),
     ),
+    # The three categories below were added on 2026-09-11 and are APPENDED
+    # rather than interleaved. Position is load-bearing here: `mixture_category_for`
+    # resolves a head tie and a chain-position tie in canonical order, so
+    # inserting a name earlier would silently move an existing model's label.
+    #
+    # capable: strong general work one rung under the frontier categories,
+    # crossing four provider ecosystems so the owner rule above holds. Effort
+    # is medium because that is how claude-opus-5 and kimi-k3 are already used
+    # in unspecified-high, the closest existing lane. High was rejected:
+    # ("claude-fable-5-1", "high") is visual-engineering's head, and a capable
+    # chain at high would have taken that category's projection label.
+    "capable": (
+        ("claude-fable-5-1", "medium"),
+        ("claude-opus-5", "medium"),
+        ("kimi-k3", "medium"),
+        ("glm-5.3", "medium"),
+    ),
+    # simple-work: small tasks rather than fast ones. It leads with the GPT
+    # small model where quick leads with the cheapest GLM tier, so a user who
+    # wants GPT behavior on a trivial task can ask for it by category. Low
+    # throughout, matching quick. Note this moves one existing label:
+    # ("gpt-5.6-luna", "low") projected to quick by chain position and now
+    # head-matches simple-work.
+    "simple-work": (
+        ("gpt-5.6-luna", "low"),
+        ("deepseek-flash", "low"),
+        ("claude-haiku-4-5", "low"),
+    ),
+    # deep-work: the GPT frontier model held on a long task. Effort is high and
+    # deliberately NOT xhigh -- at xhigh this chain's head would be
+    # ("gpt-6-astra", "xhigh"), which is ultrabrain's head, and because a head
+    # match resolves in canonical order the earlier category wins every
+    # projection; deep-work would be a label nothing could ever carry. High
+    # also mirrors `deep`, the same shape one price rung down.
+    #
+    # The original request named GPT-5.6 Sol behind Astra here. The owner
+    # dropped it (decision 2026-09-11, taken after that request) for
+    # consistency with the same-day retirement of superseded generations from
+    # the shipped chains: a chain naming Sol behind Astra is the exact case
+    # that rule cites, so keeping it would have made a rule printed in the
+    # shipped model-setup text false. Single-entry is therefore deliberate,
+    # not an omission -- like ultrabrain and architect, which the same decision
+    # shortened.
+    "deep-work": (("gpt-6-astra", "high"),),
 }
 
 # User-editable chain overrides. The document replaces only the chains of the
@@ -273,6 +317,7 @@ HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
     "kimi-k3": ("apitopia", "kimi-coding", "openrouter", "opencode"),
     "claude-opus-5": ("ccapi", "anthropic", "openrouter"),
     "claude-fable-5-1": ("ccapi", "anthropic", "openrouter"),
+    "claude-haiku-4-5": ("ccapi", "anthropic", "openrouter"),
     # Recognition-only: no shipped chain names Claude Mythos 5.1, but a user
     # who asks for it still deserves "which of my providers serves this"
     # answered rather than unknown. The parity gate lists it explicitly.

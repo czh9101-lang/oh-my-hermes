@@ -181,6 +181,18 @@ _LUNA = _candidate(
     ("openai-codex", "openai"),
     reasoning="Editorial fast GPT-tier quick candidate; not a benchmark claim.",
 )
+# Claude Haiku 4.5 was priced before it was ever recommended: the price table
+# has carried a `claude-haiku-4-5` row for a user who names it, but no shipped
+# chain recommended it, so it had no editorial candidate and no
+# provider-families row. `simple-work` is the first chain to name it, and that
+# is what pulls it onto the catalog side. Families match every other Claude
+# entry, so the entitlement vocabulary does not widen.
+_HAIKU_45 = _candidate(
+    "claude-haiku-4-5",
+    "claude",
+    ("ccapi", "anthropic", "openrouter"),
+    reasoning="Editorial low-cost Claude candidate; not a benchmark claim.",
+)
 
 # The category keys are exactly the existing closed vocabulary. Categories for
 # which the approved profile defines no recommendation remain explicit empty
@@ -248,6 +260,45 @@ SHIPPED_MODEL_RECOMMENDATIONS: Final[dict[str, object]] = {
             _with_effort(_FABLE_51, "high"),
             _with_effort(_KIMI_K3, "high"),
         ],
+        # The three categories below are appended rather than interleaved
+        # (owner request, 2026-09-11). Position is not cosmetic: canonical
+        # order breaks ties in `mixture_category_for`, so appending is what
+        # keeps `(claude-opus-5, medium)` labeled unspecified-high instead of
+        # moving to capable on an equal-position tie.
+        #
+        # capable: the strong general-work lane, one rung under the frontier
+        # categories, spanning four provider ecosystems. Effort is medium
+        # because that is how opus-5 and kimi-k3 are already used in
+        # unspecified-high, the nearest neighbour to what this is for. High
+        # was rejected: `(claude-fable-5-1, high)` is visual-engineering's
+        # chain head, so a capable chain at high would have taken that
+        # category's projection label away from it.
+        "capable": [
+            _with_effort(_FABLE_51, "medium"),
+            _with_effort(_OPUS_5, "medium"),
+            _with_effort(_KIMI_K3, "medium"),
+            _with_effort(_GLM_53, "medium"),
+        ],
+        # simple-work: cheap models for work that is small rather than fast.
+        # It differs from quick in what leads — quick leads with the
+        # cheapest-available GLM tier, simple-work leads with a GPT-family
+        # small model — so a user who wants GPT behavior on a trivial task
+        # has somewhere to ask for it. Low throughout, matching quick.
+        "simple-work": [
+            _with_effort(_LUNA, "low"),
+            _with_effort(_DEEPSEEK_FLASH, "low"),
+            _with_effort(_HAIKU_45, "low"),
+        ],
+        # deep-work: the GPT frontier model on a long task. Effort is high,
+        # NOT xhigh: at xhigh this chain's head would be ultrabrain's head,
+        # and since head-match resolves in canonical order the earlier
+        # category would take every projection and leave deep-work a label
+        # nothing could ever carry. High also mirrors `deep`, the same shape
+        # one price rung down. The original request named Sol behind Astra;
+        # the owner dropped it (2026-09-11, after that request) for
+        # consistency with the same-day superseded-generation retirement, so
+        # the single entry is deliberate.
+        "deep-work": [_with_effort(_ASTRA, "high")],
     },
     "role_suggestions": {
         "main": [

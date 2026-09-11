@@ -166,9 +166,14 @@ class RecommendationCatalogTests(unittest.TestCase):
         catalog = SHIPPED_MODEL_RECOMMENDATIONS
         self.assertEqual(catalog["schema_version"], MODEL_RECOMMENDATION_CATALOG_SCHEMA_VERSION)
         self.assertEqual(set(catalog["categories"]), set(MODEL_CATEGORIES))
+        # Order is part of the contract, not just membership: canonical order
+        # breaks head and chain-position ties in `mixture_category_for`, so a
+        # name that moves takes an existing model's category label with it.
+        # The three 2026-09-11 additions are appended, never inserted.
         self.assertEqual(MODEL_CATEGORIES, (
             "ultrabrain", "deep", "architect", "unspecified-high", "unspecified-low",
             "quick", "writing", "visual-engineering", "artistry",
+            "capable", "simple-work", "deep-work",
         ))
         self.assertEqual(MODEL_ROLES, (
             "brain", "implementation", "design_visual", "review", "docs", "research",

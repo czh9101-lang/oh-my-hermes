@@ -3732,8 +3732,10 @@ class RouterContentTests(unittest.TestCase):
             # doctor, then an "other installation paths" toggle, ~45 lines,
             # owner-directed) in every language, and from 494 when a separate
             # model-setup routing block was added to each localized Quick
-            # Start; it still sits below README.md's length.
-            self.assertLess(len(localized_readme.splitlines()), 495)
+            # Start, and from 495 when the capable / simple-work / deep-work
+            # rows (3 lines) joined the model-chain table in every language;
+            # it still sits below README.md's length.
+            self.assertLess(len(localized_readme.splitlines()), 500)
             # The trust surface is the evidence table, not the wire token that
             # used to stand in for it. Pinning the token meant a README could
             # satisfy this by naming a value no reader could decode; pinning

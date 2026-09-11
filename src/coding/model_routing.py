@@ -237,6 +237,12 @@ MODEL_CATEGORIES: Final[tuple[str, ...]] = (
     "writing",
     "visual-engineering",
     "artistry",
+    # Appended, never interleaved (owner request, 2026-09-11): canonical order
+    # is the tie-break in the native lane's `mixture_category_for`, so moving
+    # an existing name would move an existing model's category label.
+    "capable",
+    "simple-work",
+    "deep-work",
 )
 
 _CATEGORY_ALIASES: Final[dict[str, str]] = {
@@ -347,6 +353,14 @@ BUILTIN_CATEGORY_MODELS: Final[dict[str, dict[str, tuple[dict[str, str], ...]]]]
         "writing": ({"model_id": "gpt-5.6-sol", "reasoning_effort": ""},),
         "visual-engineering": ({"model_id": "gpt-5.6-sol", "reasoning_effort": ""},),
         "artistry": ({"model_id": "gpt-5.6-sol", "reasoning_effort": ""},),
+        # The three appended categories keep this profile's rule: Sol at the
+        # effort the tier wants, and Astra only where the category is about
+        # depth rather than cost. deep-work is the one that earns Astra here,
+        # and Sol does not trail it -- same shape as ultrabrain and architect
+        # above, for the same reason.
+        "capable": ({"model_id": "gpt-5.6-sol", "reasoning_effort": "medium"},),
+        "simple-work": ({"model_id": "gpt-5.6-sol", "reasoning_effort": "low"},),
+        "deep-work": ({"model_id": "gpt-6-astra", "reasoning_effort": "high"},),
     },
     # Claude Code: every frontier category runs the owner-ordered Claude chain
     # (Fable 5.1 -> Opus, 2026-09-06). Fable 5.1 is the most capable widely
@@ -364,6 +378,12 @@ BUILTIN_CATEGORY_MODELS: Final[dict[str, dict[str, tuple[dict[str, str], ...]]]]
         "writing": ({"model_id": "haiku", "reasoning_effort": ""},),
         "visual-engineering": _CLAUDE_FRONTIER_CHAIN(""),
         "artistry": ({"model_id": "sonnet", "reasoning_effort": ""},),
+        # capable and deep-work are frontier-shaped, so they run the ordered
+        # Claude chain at their declared effort; simple-work is a cost-tier
+        # pick and joins the existing haiku lanes.
+        "capable": _CLAUDE_FRONTIER_CHAIN("medium"),
+        "simple-work": ({"model_id": "haiku", "reasoning_effort": ""},),
+        "deep-work": _CLAUDE_FRONTIER_CHAIN("high"),
     },
 }
 

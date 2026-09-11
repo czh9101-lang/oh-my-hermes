@@ -3161,8 +3161,9 @@ def _add_coding_commands(sub) -> None:
         "--category",
         default=None,
         help=(
-            "OMO/ULW model category for this run (ultrabrain, deep, architect, quick, writing, "
-            "visual-engineering, artistry, unspecified-high, unspecified-low); resolved through the "
+            "OMO/ULW model category for this run (ultrabrain, deep, deep-work, architect, capable, "
+            "quick, simple-work, writing, visual-engineering, artistry, unspecified-high, "
+            "unspecified-low); resolved through the "
             "category-maestro table when one is configured. --model still wins."
         ),
     )
@@ -3186,7 +3187,8 @@ def _add_coding_commands(sub) -> None:
         default=None,
         help=(
             "OMO/ULW model category, orthogonal to role: visual-engineering, ultrabrain, deep, "
-            "architect, artistry, quick, unspecified-low, unspecified-high, or writing; ulw-* aliases accepted."
+            "deep-work, architect, capable, artistry, quick, simple-work, unspecified-low, "
+            "unspecified-high, or writing; ulw-* aliases accepted."
         ),
     )
     model_route.add_argument(
@@ -3245,7 +3247,11 @@ def _add_coding_commands(sub) -> None:
     category_maestro_set.add_argument("profile", help="Dispatchable profile: codex or claude-code.")
     category_maestro_set.add_argument(
         "category",
-        help="Model category (ultrabrain, deep, architect, quick, writing, visual-engineering, artistry, unspecified-high, unspecified-low).",
+        help=(
+            "Model category (ultrabrain, deep, deep-work, architect, capable, quick, "
+            "simple-work, writing, visual-engineering, artistry, unspecified-high, "
+            "unspecified-low)."
+        ),
     )
     category_maestro_set.add_argument(
         "chain",
