@@ -12,20 +12,21 @@ agent reference, and it always prints JSON.
 
 ## Six separate claims
 
-A memory that "was not used" failed at one of six places. Treat each as its own
-claim with its own evidence, because proving one never proves the next.
+A report that memory "was not used" doesn't establish where the chain stopped.
+Treat each step as its own claim with its own evidence. Proving one never
+proves the next.
 
 | Claim | Meaning | Where OMH looks |
 | --- | --- | --- |
-| Stored | An approved OMH record or a pending candidate with this claim exists in the active profile and project | `.omh/memory/records` and `.omh/memory/candidates` |
+| Stored | The expected approved record exists in the inspected store; a pending candidate proves only candidate persistence | `.omh/memory/records`, `.omh/memory/candidates`, and correction history |
 | Eligible | The stored record passes review state, lifecycle, scope, and perspective filters for this request | the record's review and lifecycle metadata, the request's scope lens |
 | Selected | The canonical recall selector included the record in its prepared pack under the relevance, attention, and budget policy | `build_project_memory_recall_pack`, the prepared local recall selector |
-| Rendered | The memory provider turned the selected pack into prefetch text for this turn | a record-bound provider receipt (not available yet, see below) |
-| Delivered | The host placed that rendered text in the model request | host delivery evidence (not available) |
-| Used | The model's answer reflected it | never provable from local evidence; stays unknown |
+| Rendered | The provider emitted the record's bounded summary projection into its prefetch section | a matching canonical record-bound prefetch receipt |
+| Delivered | The host placed that rendered text in the model request | separate record-bound host evidence, unavailable to this builder |
+| Used | The model's answer reflected it | separate use evidence, unavailable to this builder |
 
 The incident names the last claim it could prove in `last_proven_stage`
-(`none`, `candidate`, `stored`, or `selected`) and classifies the failure in
+(`none`, `candidate`, `stored`, `selected`, or `rendered`) and classifies the failure in
 `stage`.
 
 ## Stages and remediation
@@ -42,7 +43,7 @@ The incident names the last claim it could prove in `last_proven_stage`
 | `rendered_delivery_not_observed` | `rendered_delivery_not_observed` | `unresolved` | `inspect_host_delivery` |
 | `delivered_model_use_unknown` | `delivered_model_use_unknown` | `unresolved` | `leave_model_use_unresolved` |
 | `used` | `used` | `unresolved` | `no_change` |
-| `unresolved` | `selected_live_evidence_unavailable`, `store_unavailable`, `native_only_not_omh_reviewed`, `selection_unresolved`, `ambiguous_anchor`, `project_memory_disabled` | `unresolved` | `collect_record_bound_evidence` |
+| `unresolved` | `selected_live_evidence_unavailable`, `live_selection_excluded`, `store_unavailable`, `native_only_not_omh_reviewed`, `selection_unresolved`, `ambiguous_anchor`, `project_memory_disabled` | `unresolved` | `collect_record_bound_evidence` |
 
 Every remediation is `state: prepared_not_applied` and lists what it
 `requires`: `memory_curation_review/v1 approval` and `native_write_approval`.
@@ -55,25 +56,49 @@ separately useful OMH correction exists; the incident does not invent one.
 
 ## What the diagnosis can reach today
 
-The builder runs the canonical selector for your query and scope, scans OMH
-records, candidates, and correction history, and reads the native memory inventory. From that it
-can settle every stage up to `selected`. When the expected record is in the
-prepared pack, the incident reports `reason_code:
-selected_live_evidence_unavailable`, `stage: unresolved`, and
-`last_proven_stage: selected`.
+The builder runs the canonical selector for the request's query and scope,
+scans OMH records, candidates, and correction history, and reads the native
+memory inventory. It also reads the provider's persisted
+`omh_memory_prefetch_receipt/v1` from the selected OMH home's
+`memory/prefetch_receipt.json`.
+
+Local selection alone yields `selected_live_evidence_unavailable`,
+`stage: unresolved`, and `last_proven_stage: selected`. A matching receipt
+can refine a locally selected record:
+
+- Selected in the receipt but not rendered: `selected_not_rendered`, with
+  `last_proven_stage: selected` and fault domain `provider`.
+- Rendered with the expected summary digest: `rendered_delivery_not_observed`,
+  with `last_proven_stage: rendered`. Delivery and use remain unknown.
+- Absent from the receipt's selected IDs: `live_selection_excluded`, still
+  unresolved. Aggregate exclusion counts don't prove a reason for that record.
+
+A local lifecycle or scope exclusion remains a local verdict even when a bound
+receipt carries a matching aggregate reason. The incident never reranks the
+provider's result or turns an aggregate count into per-record evidence.
 
 When a correction removes the prior current record, its scoped history can
 establish `superseded`. A matching current record takes precedence over its
 older history. Unreadable history is reported as unavailable, not as proof
 that a claim never existed.
 
-It cannot go further. The canonical live-prefetch receipt that would bind a
-provider rendering to a record id is tracked in #1452 and is not in this tree.
-Until it exists, `evidence_surfaces.live_prefetch_receipt` is `unavailable`
-with basis `canonical_1452_contract_unavailable`, and the rendered, delivered,
-and used stages are reachable only by reason code, never by observation. The
-workflow does not reconstruct provider selection from prose or a second ranking
-implementation; it waits for the receipt.
+Receipt acceptance checks schema and body integrity, `returned_to_host`
+state, an explicitly supplied matching session, store-path digest, canonical
+selection configuration, and membership of the requested scope in the receipt's
+allowlist. Configuration is recomputed through the selector using the receipt's
+lens and query intent, the current profile policy, and the diagnosis budgets.
+For a rendered anchor, its full stored-summary digest must also match.
+
+The receipt records a query digest and clock, but diagnosis doesn't require its
+query or time to equal the receipt's. This is a comparison of local inspection
+with a cited provider preparation, not proof about an arbitrary later turn.
+The on-disk file holds only the last persisted receipt. Use the right session
+and inspect its preparation time; file recency alone isn't identity evidence.
+
+`delivered_model_use_unknown` and `used` remain synthetic stage-model cases,
+labelled `evidence_basis: synthetic`, not outcomes the incident builder can
+observe. A bound receipt proves local preparation and return, not a hosted
+provider call, host delivery, or model adherence.
 
 ## Evidence surfaces
 
@@ -83,13 +108,22 @@ statuses:
 - `observed`: OMH read it. `canonical_recall_pack`, `omh_approved_records`,
   `omh_candidates`, `omh_history`.
 - `unavailable`: OMH could not read it, or no record-bound observation exists.
-  `live_prefetch_receipt`, `host_delivery`, `model_use`,
+  a missing or unreadable `live_prefetch_receipt`, `host_delivery`, `model_use`,
   `provider_availability`, and a store that was partly unreadable.
 - `not_authoritative`: something was supplied, but it cannot settle the
   question. `native_inventory` is native material outside OMH review;
   `provider_recall_status` appears when the caller passes
   `--provider-served-count`, which is an aggregate ("recalled 2 memories") and
   never says which record was served.
+
+For `live_prefetch_receipt`, a bound receipt is `observed` with basis
+`canonical_1452_receipt_bound`. No file gives `no_receipt_persisted`;
+unreadable, oversized, invalid UTF-8, invalid JSON, or decoder-recursion failures
+give `receipt_unreadable`. If decoding succeeds, a structurally incompatible receipt is
+`not_authoritative` with `incompatible_receipt:<field>`. Identity refusals
+include `receipt_session_unbound`, `receipt_session_mismatch`,
+`receipt_store_mismatch`, `receipt_configuration_mismatch`,
+`receipt_scope_mismatch`, and `receipt_record_digest_mismatch`.
 
 The rule that matters: an absent receipt is `unavailable`, not evidence of
 non-delivery. `delivery_observed` and `model_use_observed` are `null` in every
@@ -106,6 +140,18 @@ transcript, provider payload, or credential is written, and records from other
 profiles or projects are neither listed nor counted. `redaction_policy` is
 `metadata_only` on every incident.
 
+The incident cites validated `receipt_id` and `receipt_configuration_id`
+without copying the receipt's selected/rendered lists or unrelated IDs. The
+receipt itself retains session and scope labels, unlike the incident's hashed
+configuration identifiers. Both are sensitive correlation metadata.
+
+Ordinary SHA-256 detects inconsistent body edits; it doesn't authenticate the
+sender. A local writer can replace a receipt and recompute its digest.
+`receipt_id` excludes the mutable `state` and `served_at` fields. Those fields
+are lifecycle metadata, not authenticated return evidence. Store access remains
+the trust boundary. See [Memory Prefetch](MEMORY-PREFETCH.md) for the producer
+contract and its limits.
+
 A digest anchor is matched only inside the requested scope, so a claim stored
 under another project cannot be revealed by guessing its hash. An explicit
 record id may still explain a scope or perspective mismatch, because you
@@ -118,12 +164,26 @@ omh memory recall-incident --record-id <mem_or_cand_id> [--query <text>] [--sess
 omh memory recall-incident --claim-digest <sha256-of-exact-claim> [--query <text>] [--session-id <id>]
 ```
 
-Exactly one anchor is required. Optional flags: `--scope-kind project|target|thread|run`,
+Exactly one anchor is required. Optional flags:
+`--scope-kind user-global|project|target|thread|run`,
 `--scope-ref`, `--observer`, `--observed`, `--limit`, `--max-chars`,
 `--provider-served-count`, and `--write`, which saves the incident under
 `.omh/memory/incidents/<incident_id>.json`. Without `--write` nothing is
 persisted. The command prints JSON only; there is no text mode and no receipt
 flag.
+
+Store selection and record scope are separate. `--scope user` or
+`--scope project` before `memory` selects a store; `--scope-kind` and
+`--scope-ref` identify a record lens. Capture and diagnosis default to
+`project/default`, not the current repository name. For a repository-specific
+record, pass its actual scope ref. To inspect a user-global preference, use
+`--scope-kind user-global --scope-ref default`.
+
+The provider writes its receipt in its user home, even when it also reads
+project records. Diagnosis reads records and receipts from the one selected
+home; it doesn't merge the provider's two stores or accept a separate receipt
+path. A project-home diagnosis normally has no provider receipt. Don't copy
+receipts between homes to bypass this boundary.
 
 ## Worked example
 
@@ -132,7 +192,7 @@ Produced against a temporary OMH home: one candidate captured with
 aggregate count.
 
 ```sh
-omh memory recall-incident --claim-digest 129e9e6f...39ece4 --query "answer style" --session-id session-a --provider-served-count 2
+omh memory recall-incident --claim-digest 129e9e6fabeba13b3dbae876326b1971a8703596e65d2ad2df82485f8839ece4 --query "answer style" --session-id session-a --provider-served-count 2
 ```
 
 ```json
@@ -167,7 +227,7 @@ omh memory recall-incident --claim-digest 129e9e6f...39ece4 --query "answer styl
     "omh_history": {"status": "observed", "basis": "local_store"},
     "native_inventory": {"status": "not_authoritative", "basis": "native_inventory_not_omh_reviewed"},
     "provider_recall_status": {"status": "not_authoritative", "basis": "caller_supplied_aggregate_count"},
-    "live_prefetch_receipt": {"status": "unavailable", "basis": "canonical_1452_contract_unavailable"},
+    "live_prefetch_receipt": {"status": "unavailable", "basis": "no_receipt_persisted"},
     "host_delivery": {"status": "unavailable", "basis": "no_record_bound_observation"},
     "model_use": {"status": "unavailable", "basis": "no_record_bound_observation"},
     "provider_availability": {"status": "unavailable", "basis": "runtime_not_inspected"}
@@ -207,10 +267,9 @@ carries both the positive cases and those controls.
   unknown; the artifact says so instead of naming a cause.
 - Record ids and digests are correlation metadata scoped to the active profile
   and project.
-- The rendered, delivered, and used stages depend on #1452. Until that receipt
-  lands, late-stage classification exists only as reason-code mapping and is
-  not claimed as live workflow behavior; the matching delivery criterion (M7)
-  is recorded as blocked.
+- Canonical prefetch receipts can establish record rendering and local return.
+  They cannot establish host delivery or model use. Neither a recall count nor
+  a model's explanation closes those gaps.
 
 Related: [Project Memory](MEMORY.md), [Memory Context Review](MEMORY_CONTEXT.md),
 [Memory Sync Fidelity](MEMORY-SYNC-FIDELITY.md).

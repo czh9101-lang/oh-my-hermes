@@ -8,6 +8,14 @@ normal chat users.
 
 OMH does not read, patch, or mutate opaque Hermes internal memory.
 
+Reviewed records can have explicit user-global, project, or thread scope.
+Storage location doesn't grant scope: a record in the user home isn't
+necessarily global. See [Canonical Memory Prefetch](MEMORY-PREFETCH.md) for
+scope allowlists, compatible store rollout, render budgets, and receipt privacy.
+For a forgotten-preference complaint, use the
+[Memory Recall Incident](MEMORY-RECALL-INCIDENT.md) workflow to distinguish
+storage, eligibility, selection, rendering, delivery, and use.
+
 ## Optional Project Terms Source
 
 A repository may have one optional `PROJECT_TERMS.md` at its root. It is a
@@ -872,22 +880,36 @@ rendered off the hot path and re-ranked after each turn:
 1. system-tier memory blocks in full, under the block render budget;
 2. reference-tier blocks as a label index (values stay behind `omh_memory
    read`);
-3. `<memory_records>`: replay-eligible `project_memory_record/v2` records with
-   a matching immutable review, ranked by token overlap with the conversation's
-   latest message (tag hits weigh extra), then newest approval, cut to six
-   records and 2,400 characters including tags, separators, escaped text, and
-   omission reports. Cuts are aggregated by reason (`render_budget_exhausted`,
-   `record_limit_reached`) with exact counts instead of one line per record.
-   Space for both reports is reserved before selecting multiple records; record
-   ids and types are never shortened to fit, and the existing approval-date and
-   summary projections stay unchanged. A custom budget
-   too small for the omission report returns no section and a zero count.
+3. `<memory_records>`: reviewed `project_memory_record/v2` records selected by
+   the same canonical eligibility and ranking contract as handoff recall.
+   The provider applies the explicit user-global/current-project/current-thread
+   allowlist and the Hermes perspective. Privileged pins lead, then attention,
+   relevance, decayed rank fusion, and record ID. Selection keeps at most six
+   records. Rendering keeps a prefix under a separate 2,400-character section
+   budget, including tags, escaping, separators, and omission reports.
+   `over_budget` counts selector cuts; `render_budget_exhausted` counts selected
+   records that didn't fit the rendering. Neither cut silently substitutes a
+   lower-ranked record. A budget too small for the omission report returns no
+   section and a zero record count.
 
 Records are read from the project store (`<repository>/.omh/memory/records/`
 for the nearest `.git` above the working directory) and then the user store
-(`~/.omh`); a record id present in both is read from the project. Pending,
-rejected, expired, stale, and legacy v1 records never render. The provider's
-prefetch is not a handoff delivery and does not move the recall usage counters.
+(`~/.omh` by default); a record id present in both is read from the project.
+The snapshot reader retains reviewed superseded, expired, and stale revisions
+so the selector can classify exclusions at its own clock rather than losing
+those reasons to a wall-clock prefilter. Legacy v1 and records without a
+resolvable review don't enter that snapshot. Pending, rejected, superseded,
+expired, stale, foreign-scope, and foreign-perspective records never render.
+The provider's prefetch is not a handoff attachment and doesn't move recall
+usage counters.
+
+A `user-global/default` record is eligible across projects only within the
+stores the caller reads. Existing `project/default` records stay project
+records; inside a differently named repository they don't match the current
+project lens. There is no automatic relabeling or schema migration. Capture,
+recall, and incident commands now accept `--scope-kind user-global`; changing
+an old fact's audience still requires normal reviewed capture and approval.
+See [store rollout](MEMORY-PREFETCH.md#store-rollout) before changing labels.
 
 When the served pack is non-empty Hermes prints its deterministic recall line
 through its status channel, so it appears on every surface Hermes speaks
@@ -898,10 +920,20 @@ memory:
 🧠 OMH — recalled 2 memories
 ```
 
-The count is the number of blocks and records the pack carries in full. A pack
-that is only a reference-block index reports content without a count, which
-Hermes renders as `recalled relevant memory`. The line is Hermes' observation
-that OMH memory was in the request; it is not evidence that the model used it.
+The count is rendered full blocks plus rendered record elements in the last
+pack returned by `prefetch`, not the number selected for a queued pack. Record
+summaries are bounded projections, not a promise of full source content. A
+reference-only block index reports content without a discrete count.
+Initialization, a newly served empty pack, and shutdown don't retain an old
+served count.
+
+The provider also writes a bounded `omh_memory_prefetch_receipt/v1` with
+selected IDs, rendered IDs and summary digests, exclusions, truncation, and
+session/store/configuration identity. It supports local preparation and return
+claims, not host delivery or model use. The recall line is aggregate status,
+not record-bound evidence that a memory entered a model request. Receipt
+integrity checks detect inconsistent edits but don't authenticate the sender.
+See [receipt privacy and identity](MEMORY-PREFETCH.md#receipt-privacy-and-identity).
 
 ## Dreaming
 
@@ -1035,15 +1067,42 @@ hand the executor the wrong context. `omh memory recall-suite` answers the
 second.
 
 ```sh
+# Agent/operator only: deterministic local retrieval and prefetch regression check.
 omh memory recall-suite --revision "$(git rev-parse HEAD)"
 ```
 
 The command runs a retained fixture corpus through
-`build_project_memory_recall_pack` — the same builder handoff preparation
-uses — and exits non-zero when the pack it gets back disagrees with the
-corpus. It copies no ranking, eligibility, or budget logic: every verdict is a
-comparison of retained record ids and production reason codes against what the
-builder returned. Add `--output` to keep the JSON report.
+`build_project_memory_recall_pack`, the same builder handoff preparation uses,
+and compares expected record IDs, order, and production reason codes. It also
+checks canonical selection against the actual local prefetch adapter and
+provider lifecycle. A retained-expectation failure or parity divergence makes
+the case and report fail, with a nonzero CLI exit. Add `--output` to keep the
+JSON report; no ranking, eligibility, or budget logic is copied into a second
+selector.
+
+Each case has two parity arms over its seeded store and frozen clock:
+
+- `prefetch_adapter` reads the plugin snapshot, selects, renders, and builds a
+  receipt using the case's record and summary-character budgets.
+- `provider_session` runs `initialize`, `queue_prefetch`, `prefetch`, receipt
+  retrieval, and `shutdown` at the provider's six-record limit with no selector
+  summary-character cap. Canonical selection is compared at that same budget.
+
+Both parity arms use delivery mode with `user-global/default`,
+`project/default`, `thread/session-fixture`, and the Hermes perspective.
+Retained inspection expectations still use each fixture's own lens and flags;
+`--include-stale` and `--include-archived` aren't carried into live parity.
+The comparison checks included IDs and order, exclusion reason counts,
+truncation, configuration identity, scope/perspective, enabled state, clock,
+and selector/pack schema. It also validates receipts and requires rendered
+IDs to be a prefix of canonical selection, not equal in count when rendering
+cuts that prefix. Missing or malformed receipts fail rather than skip.
+
+Per-case `parity` lists both arms, their budgets, projections, and divergences.
+`summary.parity_divergence_count` and `summary.parity_failed_cases` distinguish
+adapter drift from retained ranking failures. These are local provider-class
+executions on fixtures, not native Hermes sessions, host delivery, or model-use
+observations.
 
 Each fixture declares its own records, pins, delivery counters, query, scope
 and perspective lens, record and character budgets, and the expected
@@ -1083,12 +1142,14 @@ revision passed to `--revision`. `compare_retrieval_reports` refuses a
 comparison whose identities differ and names the mismatched fields, rather
 than attributing a corpus edit or a weight change to a retrieval regression.
 
-Reports carry `schema_version: omh_memory_retrieval_evaluation/v1`. This is a
-sibling of `omh_memory_evaluation/v1`, not a widening of it: existing
-evaluation reports parse exactly as before, and a reader dispatches on
-`schema_version`. Neither runner makes a model call, a provider call, a
-network request, or a credential read, and neither writes outside its own
-temporary store. A model-judge or external memory-provider result may enter
+Reports retain `schema_version: omh_memory_retrieval_evaluation/v1` with
+additive parity fields and `evaluator_version: omh-memory-retrieval-evaluator/v2`.
+A v1-evaluator report isn't comparable to v2, even though the report schema is
+unchanged. This remains a sibling of `omh_memory_evaluation/v1`; readers dispatch
+on schema and check evaluator identity before comparing results. Neither runner
+makes a model call, hosted-provider call, network request, or credential read.
+The retrieval suite does execute the local OMH provider class inside its own
+temporary stores, which are removed after the run. A model-judge or external memory-provider result may enter
 only through a separate observed-evidence contract; this suite never produces
 one.
 
