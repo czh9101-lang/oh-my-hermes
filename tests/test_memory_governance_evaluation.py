@@ -213,6 +213,35 @@ class SafetyAndEvaluationTests(unittest.TestCase):
                 self.assertEqual(governance.classify_memory_admission(content)["status"], "safe")
         self.assertEqual(governance.classify_memory_admission("token-based auth uses rotating tokens")["status"], "safe")
 
+    def test_pasted_log_and_transcript_history_needs_review_but_a_quoted_line_stays_safe(self) -> None:
+        # Bulk history is what memory should not carry: it is context every
+        # later turn pays for, and the session store already holds it. Shape is
+        # evidence of a paste, never proof, so the verdict is review.
+        for label, content in (
+            ("timestamped log", "2026-09-11 08:12 starting run\n2026-09-11 08:13 fetched 12 rows\n2026-09-11 08:14 done\n"),
+            ("bracketed clock", "[08:12:33] one\n[08:12:34] two\n[08:12:35] three\n"),
+            ("log levels", "INFO  boot\nWARN  retrying\nERROR failed to bind\n"),
+            ("chat transcript", "User: why is the build red\nAssistant: the lint step failed\nUser: fix it\n"),
+        ):
+            with self.subTest(label=label):
+                self.assertEqual(governance.classify_memory_admission(content)["status"], "needs_review")
+
+        for label, content in (
+            ("one quoted line in a note", "The deploy fails with: 2026-09-11 08:12 ERROR failed to bind port 8080. Owner prefers we pin the port."),
+            ("two quoted lines in a note", "Root cause note:\n2026-09-11 08:12 ERROR bind\n2026-09-11 08:13 ERROR bind\nOwner wants the port pinned."),
+            ("bulleted prose", "- Error: the gate fails when the body grows\n- Info: the budget note goes at the entry\n- Warning: regenerate all four artifacts"),
+            ("meeting times", "Standup is 09:00 and review is 16:30 on Tuesdays."),
+            ("ordinary multiline fact", "OMH is a wrapper layer.\nIt makes no network calls.\nThe skills are generated."),
+        ):
+            with self.subTest(label=label):
+                self.assertEqual(governance.classify_memory_admission(content)["status"], "safe")
+
+        # A credential inside a paste still blocks: review never outranks it.
+        self.assertEqual(
+            governance.classify_memory_admission("INFO boot\nWARN retry\nERROR password=hunter2\n")["status"],
+            "blocked",
+        )
+
     def test_bare_credential_shapes_are_blocked_and_unknown_opaque_values_need_review(self) -> None:
         aws = "AK" + "IA" + "A" * 16
         github = "gh" + "p_" + "a" * 36

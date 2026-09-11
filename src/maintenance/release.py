@@ -816,7 +816,12 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # an unacknowledged outcome live in `src/coding/unit_execution_state.py` and
 # `src/plugin_bundle/omh/dispatch_outcomes.py`, outside this budget; warranted
 # growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 934125
+# 934125 -> 934558: `memory-new` gained a "retrieve instead" bullet sending
+# past-session history to Hermes' own session store rather than a retained
+# record. It belongs in the always-loaded body because the lane applies it at
+# the moment of capture, which is the only moment the choice exists; a record
+# admitted here is context every later turn pays for; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 934558
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
