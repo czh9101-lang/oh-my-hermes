@@ -8,7 +8,10 @@ Two report families live here, each with its own schema version:
 - ``omh_memory_retrieval_evaluation/v1``
   (``run_memory_retrieval_evaluation``) runs a retained fixture corpus through
   the production recall-pack builder and reports what it selected, ordered,
-  excluded, and explained.
+  excluded, and explained. Since evaluator v2 every case also runs the same
+  frozen store through the live Hermes prefetch adapter under one explicit
+  delivery lens, clock and budget, and names any field on which the live
+  receipt diverges from the canonical selector.
 
 The retrieval report is a new schema rather than a widening of the first, so
 no existing consumer has to migrate: a reader dispatches on
@@ -32,14 +35,30 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from ..paths import OmhPaths
+from ..paths import OmhPaths, project_identity
 from ..plugin_bundle.omh.memory_governance import canonical_payload_digest, evaluate_memory_replay, stable_artifact_identity
+from ..plugin_bundle.omh.memory_prefetch_receipt import build_prefetch_receipt, validate_prefetch_receipt
+from ..plugin_bundle.omh.memory_provider import OmhMemoryProvider
+from ..plugin_bundle.omh.memory_recall_selector import MemoryRecallSelection, select_memory_recall
+from ..plugin_bundle.omh.memory_records import (
+    DEFAULT_RECORD_LIMIT,
+    PREFETCH_EXECUTOR_TARGET,
+    prefetch_scope_allowlist,
+    prepare_prefetch_records,
+    read_record_store_snapshot,
+)
 from ..version import __version__
 from .memory import (
     MEMORY_PINS_SCHEMA_VERSION,
     MEMORY_RECALL_USAGE_SCHEMA_VERSION,
+    _project_memory_review_resolver,
+    _recall_operation_states,
     build_project_memory_recall_pack,
     effective_recall_configuration,
+    read_memory_pins,
+    read_project_memory_policy,
+    read_recall_usage,
+    scan_project_memory_records,
 )
 from .memory_retrieval_fixtures import (
     CONTAMINATION_CLASSES,
@@ -54,7 +73,34 @@ from .memory_store import prune_expired_memory_evidence
 
 EVALUATION_SCHEMA_VERSION = "omh_memory_evaluation/v1"
 RETRIEVAL_EVALUATION_SCHEMA_VERSION = "omh_memory_retrieval_evaluation/v1"
-RETRIEVAL_EVALUATOR_VERSION = "omh-memory-retrieval-evaluator/v1"
+RETRIEVAL_EVALUATOR_VERSION = "omh-memory-retrieval-evaluator/v2"
+# The live-parity arms. `prefetch_adapter` composes the adapter functions the
+# provider's own render_pack calls, in its order, at the case's budgets, so
+# record and character truncation are compared too. `provider_session` drives
+# the real provider lifecycle (initialize, queue_prefetch, prefetch, receipt)
+# at the provider's fixed budget, so the lens the provider derives, the stores
+# it reads and the receipt it serves are compared as Hermes would see them.
+PARITY_ARMS = ("prefetch_adapter", "provider_session")
+# Every field on which the live receipt must agree with the canonical
+# selection. A difference in any one of them fails the case.
+PARITY_FIELDS = (
+    "included_order",
+    "exclusion_reason_counts",
+    "truncated",
+    "configuration_id",
+    "scope_allowlist",
+    "scope_status",
+    "perspective",
+    "recall_enabled",
+    "clock",
+    "selector_schema_version",
+    "recall_pack_schema_version",
+)
+# The fixture corpus files its records under project/default, so the fixture
+# repository is named to resolve to that identity on both paths.
+PARITY_PROJECT_IDENTITY = "default"
+PARITY_SESSION_ID = "session-fixture"
+PARITY_USER_GLOBAL_SCOPE = {"kind": "user-global", "ref": "default"}
 # Two retrieval reports are comparable only when every one of these agrees.
 # A difference in any of them means the two runs answered different questions.
 RETRIEVAL_IDENTITY_FIELDS = (
@@ -123,6 +169,7 @@ def run_memory_retrieval_evaluation(
     target_revision: str = "",
     cases: tuple[dict[str, object], ...] = RETRIEVAL_CASES,
     pack_builder: Callable[..., dict[str, object]] = build_project_memory_recall_pack,
+    live_arms: Callable[..., dict[str, dict[str, object]]] | None = None,
 ) -> dict[str, object]:
     """Run the retained retrieval corpus through the production recall builder.
 
@@ -132,12 +179,20 @@ def run_memory_retrieval_evaluation(
     budget selection: the suite compares retained ids and reason codes against
     what ``pack_builder`` returned, and that is the whole of its judgement.
 
-    ``pack_builder`` exists so the suite's own tests can seed a retrieval
-    regression -- a reordering, a leak, a budget overrun -- and prove the
-    report catches it. Production callers never pass it.
+    The same seeded store is then handed to the live prefetch adapter under one
+    explicit delivery lens, and the live receipt is compared field by field
+    with the canonical selector run on the same store, lens, clock and budget
+    (``PARITY_FIELDS``). The live arm proves local provider preparation only;
+    nothing here observes host delivery or model use.
+
+    ``pack_builder`` and ``live_arms`` exist so the suite's own tests can seed
+    a retrieval regression -- a reordering, a leak, a budget overrun, an
+    adapter that drifts from the selector -- and prove the report catches it.
+    Production callers never pass either.
     """
     revision = str(target_revision or "")
-    case_results = [_run_retrieval_case(case, pack_builder) for case in cases]
+    arms = live_arms if live_arms is not None else run_live_prefetch_arms
+    case_results = [_run_retrieval_case(case, pack_builder, arms) for case in cases]
     configuration = effective_recall_configuration()
     totals = _retrieval_totals(case_results)
     return {
@@ -164,7 +219,50 @@ def run_memory_retrieval_evaluation(
             "internal-memory evidence. A model-judge or external memory-provider result may only enter "
             "through a separate observed-evidence contract and is never produced here."
         ),
+        "parity_boundary": (
+            "Live-parity arms compare the OMH memory provider's own prefetch receipt with the canonical "
+            "selector on the same fixture store, lens, clock and budget. They prove local provider "
+            "preparation and return only, never host delivery or model use."
+        ),
     }
+
+
+def run_live_prefetch_arms(
+    paths: OmhPaths,
+    *,
+    user_home: Path,
+    query: str,
+    session_id: str,
+    limit: int,
+    max_chars: int | None,
+    now: datetime,
+) -> dict[str, dict[str, object]]:
+    """The live prefetch receipt for one seeded fixture store, per parity arm.
+
+    ``paths`` is the fixture project store (``<repository>/.omh``); the
+    repository directory above it is what the provider resolves the project
+    identity from, exactly as it does for a Hermes session. ``user_home`` is
+    the provider's own store: empty here, and the only place it writes.
+    """
+    project_root = paths.omh_home.parent
+    snapshot = read_record_store_snapshot((paths.omh_home, user_home))
+    prepared = prepare_prefetch_records(
+        snapshot,
+        query,
+        allowed_scopes=prefetch_scope_allowlist(project_identity=project_root.name, session_id=session_id),
+        session_id=session_id,
+        limit=limit,
+        max_chars=max_chars,
+        now=now,
+    )
+    adapter_receipt = build_prefetch_receipt(prepared, session_id=session_id, home_digests=snapshot.home_digests)
+    live = OmhMemoryProvider(user_home, hermes_home=paths.hermes_home)
+    live.initialize(session_id, hermes_home=str(paths.hermes_home), agent_context="primary", cwd=str(project_root))
+    live.queue_prefetch(query, now=now)
+    live.prefetch(query)
+    served = live.latest_prefetch_receipt()
+    live.shutdown()
+    return {"prefetch_adapter": adapter_receipt, "provider_session": served if served is not None else {}}
 
 
 def retrieval_report_identity(report: dict[str, object]) -> dict[str, object]:
@@ -217,12 +315,21 @@ def _case_by_id(report: dict[str, object]) -> dict[str, dict[str, object]]:
     return {str(row.get("case_id", "")): row for row in _case_rows(report)}
 
 
-def _run_retrieval_case(case: dict[str, object], pack_builder: Callable[..., dict[str, object]]) -> dict[str, object]:
+def _run_retrieval_case(
+    case: dict[str, object],
+    pack_builder: Callable[..., dict[str, object]],
+    live_arms: Callable[..., dict[str, dict[str, object]]],
+) -> dict[str, object]:
     lens = case["lens"] if isinstance(case.get("lens"), dict) else {}
     budget = case["budget"] if isinstance(case.get("budget"), dict) else {}
     flags = case["flags"] if isinstance(case.get("flags"), dict) else {}
     with tempfile.TemporaryDirectory(prefix="omh-memory-retrieval-") as temporary:
-        paths = OmhPaths(Path(temporary) / "omh", Path(temporary) / "hermes")
+        root = Path(temporary)
+        # A lightweight repository anchor: the handoff and the provider both
+        # resolve the project identity from the directory holding `.git`.
+        project_root = root / PARITY_PROJECT_IDENTITY
+        (project_root / ".git").mkdir(parents=True)
+        paths = OmhPaths(project_root / ".omh", root / "hermes")
         _seed_retrieval_store(paths, case)
         pack = pack_builder(
             paths,
@@ -237,7 +344,190 @@ def _run_retrieval_case(case: dict[str, object], pack_builder: Callable[..., dic
             include_archived=bool(flags.get("include_archived", False)),
             now=FIXTURE_CLOCK,
         )
-    return _score_retrieval_case(case, pack)
+        parity = _run_parity_arms(paths, case, user_home=root / "omh", live_arms=live_arms)
+    return _score_retrieval_case(case, pack, parity)
+
+
+def _run_parity_arms(
+    paths: OmhPaths,
+    case: dict[str, object],
+    *,
+    user_home: Path,
+    live_arms: Callable[..., dict[str, dict[str, object]]],
+) -> dict[str, object]:
+    """Canonical selection versus the live prefetch, same store, lens, clock and budget.
+
+    The lens is the delivery lens a Hermes session gets -- the explicit
+    user-global, project and thread allowlist the handoff builds, the Hermes
+    perspective, no inspection affordance -- never the retained case's own
+    inspection lens, which the live turn cannot honour.
+    """
+    query = str(case["query"])
+    raw_budget = case.get("budget")
+    budget: dict[str, object] = dict(raw_budget) if isinstance(raw_budget, dict) else {}
+    case_limit, case_max_chars = budget.get("limit"), budget.get("max_chars")
+    lens: dict[str, object] = {
+        "scope_allowlist": [
+            dict(PARITY_USER_GLOBAL_SCOPE),
+            {"kind": "project", "ref": project_identity(paths.omh_home.parent)},
+            {"kind": "thread", "ref": PARITY_SESSION_ID},
+        ],
+        "executor_target": PREFETCH_EXECUTOR_TARGET,
+        "session_id": PARITY_SESSION_ID,
+        "inspection": False,
+        "include_stale": False,
+        "include_archived": False,
+    }
+    budgets: dict[str, tuple[int, int | None]] = {
+        "prefetch_adapter": (
+            case_limit if isinstance(case_limit, int) and not isinstance(case_limit, bool) else 0,
+            case_max_chars if isinstance(case_max_chars, int) and not isinstance(case_max_chars, bool) else None,
+        ),
+        "provider_session": (DEFAULT_RECORD_LIMIT, None),
+    }
+    receipts = live_arms(
+        paths,
+        user_home=user_home,
+        query=query,
+        session_id=PARITY_SESSION_ID,
+        limit=budgets["prefetch_adapter"][0],
+        max_chars=budgets["prefetch_adapter"][1],
+        now=FIXTURE_CLOCK,
+    )
+    arms: list[dict[str, object]] = []
+    for name in PARITY_ARMS:
+        limit, max_chars = budgets[name]
+        canonical = _selection_projection(_canonical_delivery_selection(paths, query, lens=lens, limit=limit, max_chars=max_chars))
+        live = _receipt_projection(receipts.get(name))
+        divergences = _parity_divergences(canonical, live)
+        arms.append(
+            {
+                "arm": name,
+                "budget": {"limit": limit, "max_chars": max_chars},
+                "canonical": canonical,
+                "live": live,
+                "divergences": divergences,
+                "passed": not divergences,
+            }
+        )
+    return {
+        "clock": FIXTURE_CLOCK_ISO,
+        "lens": lens,
+        "arms": arms,
+        "divergence_count": sum(len(_rows(arm["divergences"])) for arm in arms),
+        "passed": all(bool(arm["passed"]) for arm in arms),
+    }
+
+
+def _rows(value: object) -> list[dict[str, object]]:
+    return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
+def _strings(value: object) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def _parity_of(case: dict[str, object]) -> dict[str, object]:
+    parity = case.get("parity")
+    return parity if isinstance(parity, dict) else {}
+
+
+def _canonical_delivery_selection(
+    paths: OmhPaths,
+    query: str,
+    *,
+    lens: dict[str, object],
+    limit: int,
+    max_chars: int | None,
+) -> MemoryRecallSelection:
+    """The canonical selector fed exactly what the handoff facade feeds it.
+
+    The facade returns only the pack, and the parity check also needs the
+    selection's configuration identity and hidden exclusion counts, so the
+    store is read through the same control-plane readers the facade uses.
+    """
+    records = scan_project_memory_records(paths)[0]
+    allowed_scopes = _rows(lens.get("scope_allowlist"))
+    return select_memory_recall(
+        records,
+        query,
+        allowed_scopes=[{str(key): str(value) for key, value in scope.items()} for scope in allowed_scopes],
+        required_scope_kinds=("project",),
+        inspection=False,
+        review_resolver=_project_memory_review_resolver(paths),
+        operation_states=_recall_operation_states(paths, records),
+        policy=read_project_memory_policy(paths),
+        usage=read_recall_usage(paths),
+        pins=set(read_memory_pins(paths)),
+        executor_target=str(lens["executor_target"]),
+        session_id=str(lens["session_id"]),
+        limit=limit,
+        max_chars=max_chars,
+        now=FIXTURE_CLOCK,
+    )
+
+
+def _selection_projection(selection: MemoryRecallSelection) -> dict[str, object]:
+    pack = selection.pack
+    included = [item for item in pack.get("included_records", []) if isinstance(item, dict)]
+    excluded = [item for item in pack.get("excluded_records", []) if isinstance(item, dict)]
+    return {
+        "included_order": [str(item.get("record_id", "")) for item in included],
+        # Per-record reasons are canonical-side evidence only: the receipt is
+        # bounded to reason counts by design, so counts are what is compared.
+        "exclusion_reasons": {str(item["record_id"]): str(item.get("reason", "")) for item in excluded if str(item.get("record_id", ""))},
+        "exclusion_reason_counts": dict(selection.exclusion_reason_counts),
+        "truncated": bool(pack.get("truncated", False)),
+        "configuration_id": selection.configuration_id,
+        "scope_allowlist": [dict(scope) for scope in selection.scope_allowlist],
+        "scope_status": selection.scope_status,
+        "perspective": dict(pack["perspective"]) if isinstance(pack.get("perspective"), dict) else {},
+        "recall_enabled": bool(pack.get("enabled", False)),
+        "clock": FIXTURE_CLOCK_ISO,
+        "selector_schema_version": str(selection.configuration.get("selector_schema_version", "")),
+        "recall_pack_schema_version": str(pack.get("schema_version", "")),
+    }
+
+
+def _receipt_projection(receipt: object) -> dict[str, object]:
+    """The compared fields of a live receipt; a missing receipt projects as absent, never as agreement."""
+    body = receipt if isinstance(receipt, dict) else {}
+    selection = body["selection"] if isinstance(body.get("selection"), dict) else {}
+    lens = body["lens"] if isinstance(body.get("lens"), dict) else {}
+    rendering = body["rendering"] if isinstance(body.get("rendering"), dict) else {}
+    rendered = _rows(rendering.get("rendered_records"))
+    return {
+        "included_order": selection.get("selected_record_ids"),
+        "exclusion_reason_counts": selection.get("exclusion_reason_counts"),
+        "truncated": selection.get("truncated"),
+        "configuration_id": body.get("configuration_id"),
+        "scope_allowlist": lens.get("scope_allowlist"),
+        "scope_status": lens.get("scope_status"),
+        "perspective": lens.get("perspective"),
+        "recall_enabled": selection.get("recall_enabled"),
+        "clock": selection.get("clock"),
+        "selector_schema_version": body.get("selector_schema_version"),
+        "recall_pack_schema_version": body.get("recall_pack_schema_version"),
+        "rendered_order": [str(item.get("record_id", "")) for item in rendered],
+        "receipt_errors": validate_prefetch_receipt(receipt),
+    }
+
+
+def _parity_divergences(canonical: dict[str, object], live: dict[str, object]) -> list[dict[str, object]]:
+    divergences = [
+        {"field": field, "canonical": canonical[field], "live": live.get(field)}
+        for field in PARITY_FIELDS
+        if canonical[field] != live.get(field)
+    ]
+    # The renderer may stop early on its section budget, never reorder or
+    # skip: what it rendered must be a prefix of the canonical order.
+    rendered = _strings(live.get("rendered_order"))
+    included = _strings(canonical.get("included_order"))
+    if rendered != included[: len(rendered)]:
+        divergences.append({"field": "rendered_order", "canonical": included, "live": rendered})
+    if live.get("receipt_errors"):
+        divergences.append({"field": "receipt", "canonical": [], "live": live["receipt_errors"]})
+    return divergences
 
 
 def _seed_retrieval_store(paths: OmhPaths, case: dict[str, object]) -> None:
@@ -267,7 +557,7 @@ def _seed_retrieval_store(paths: OmhPaths, case: dict[str, object]) -> None:
         )
 
 
-def _score_retrieval_case(case: dict[str, object], pack: dict[str, object]) -> dict[str, object]:
+def _score_retrieval_case(case: dict[str, object], pack: dict[str, object], parity: dict[str, object]) -> dict[str, object]:
     case_id = str(case["case_id"])
     expected = case["expected"] if isinstance(case.get("expected"), dict) else {}
     expected_order = [str(value) for value in expected.get("included_order", [])]
@@ -361,6 +651,7 @@ def _score_retrieval_case(case: dict[str, object], pack: dict[str, object]) -> d
         + len(ineligible_evidence_drift)
         + len(budget_violations)
         + (0 if exact_order else 1)
+        + (0 if bool(parity.get("passed", False)) else 1)
     )
     return {
         "case_id": case_id,
@@ -382,6 +673,7 @@ def _score_retrieval_case(case: dict[str, object], pack: dict[str, object]) -> d
         "ineligible_evidence_drift": ineligible_evidence_drift,
         "contamination": contamination,
         "budget_violations": budget_violations,
+        "parity": parity,
         "passed": failures == 0,
     }
 
@@ -441,6 +733,10 @@ def _retrieval_totals(cases: list[dict[str, object]]) -> dict[str, object]:
         "sibling_hint_drift_count": sum(len(list(case["sibling_hint_drift"])) for case in cases),
         "ineligible_evidence_drift_count": sum(len(list(case["ineligible_evidence_drift"])) for case in cases),
         "budget_violation_count": sum(len(list(case["budget_violations"])) for case in cases),
+        "parity_divergence_count": sum(
+            len(_rows(arm.get("divergences"))) for case in cases for arm in _rows(_parity_of(case).get("arms"))
+        ),
+        "parity_failed_cases": sum(1 for case in cases if not bool(_parity_of(case).get("passed", False))),
         **contamination,
     }
 
