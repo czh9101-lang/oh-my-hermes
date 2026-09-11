@@ -44,6 +44,15 @@ from ..system.paths import OmhPaths
 from .fanout_artifacts import _managed_fanout_dir
 from .fanout_contracts import FANOUT_ID_PATTERN
 
+# Held at v1 through the 2026-09 progress-evidence fields below on purpose.
+# Every reader of this file (`read_inflight_markers` here, `_merge_inflight` in
+# `plugin_bundle/omh/status_board_reader.py`) compares the version for EXACT
+# equality and counts a mismatch as `unreadable`, and the plugin copy on a live
+# machine is refreshed by `omh update` rather than in lockstep with core. A bump
+# for a purely additive field set would therefore blank the running-work board
+# on every machine whose plugin lags its core by one update, which is a worse
+# outcome than an older reader ignoring keys it does not know. Bump when a
+# field's MEANING changes; not when one is added.
 INFLIGHT_MARKER_SCHEMA_VERSION: Final[str] = "omh_inflight_marker/v1"
 
 INFLIGHT_CLAIM_BOUNDARY: Final[str] = (
@@ -81,6 +90,22 @@ INFLIGHT_MARKER_FIELDS: Final[tuple[str, ...]] = (
     # runner. It does not upgrade the liveness claim — presence is still not
     # liveness — but it is the only pid the fanout reaper will ever touch.
     "pid",
+    # What `unit_progress.assess_progress` made of the unit's stdout at the
+    # last mid-run snapshot. This is the only field group on the marker that
+    # says anything about the WORK; everything above it is dispatch
+    # bookkeeping. Unset means no snapshot has been assessed yet — never that
+    # the work is moving. `unit_state` carries a value of
+    # `unit_execution_state.UNIT_EXECUTION_STATES`; `stalled_for_seconds` is
+    # the derived elapsed since output last grew, recorded instead of the
+    # assessment's own readings because those are monotonic and mean nothing
+    # in a reading process; `phase_markers` is comma-joined because every
+    # marker value is a scalar string.
+    "unit_state",
+    "state_reason",
+    "last_new_output_at",
+    "stalled_for_seconds",
+    "repeat_count",
+    "phase_markers",
 )
 
 DEFAULT_INFLIGHT_READ_LIMIT: Final[int] = 20
