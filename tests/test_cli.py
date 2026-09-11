@@ -2894,23 +2894,25 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
                 # declining the interview keeps this test's surface to the
                 # seeding + pointers the name promises.
                 "omh.commands.setup._ask_yes_no",
-                # TUI yes, maestro yes, category walk no, provider entitlements no.
+                # TUI yes, maestro yes, category walk no, Claude Code
+                # subscription no.
                 side_effect=[True, True, False, False],
             ) as yes_no:
                 status, stdout, stderr = run_cli(base + ["setup", "--interactive"], output_json=False)
 
             self.assertEqual(status, 0, stderr)
             # TUI identity choice, the maestro-delegation question, the
-            # category-maestro interview offer, then the provider-entitlement
-            # question (declined here; tests/test_provider_entitlements.py
-            # covers the accepted path).
+            # category-maestro interview offer, then the Claude Code
+            # subscription question. The provider entitlements themselves are a
+            # ticked list, not a yes/no, so they no longer add a yes/no call;
+            # tests/test_provider_entitlements.py covers the list.
             self.assertEqual(yes_no.call_count, 4)
             second_prompt = yes_no.call_args_list[1].args[0]
             self.assertIn("claude-code", second_prompt)
             third_prompt = yes_no.call_args_list[2].args[0]
             self.assertIn("category", third_prompt)
             fourth_prompt = yes_no.call_args_list[3].args[0]
-            self.assertIn("provider", fourth_prompt)
+            self.assertIn("subscription", fourth_prompt)
             dispatch_models_path = omh_home / "routing" / "dispatch-models.json"
             self.assertTrue(dispatch_models_path.exists())
             seeded = json.loads(dispatch_models_path.read_text(encoding="utf-8"))

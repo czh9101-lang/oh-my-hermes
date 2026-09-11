@@ -2389,6 +2389,8 @@ _ENV_KEY_PROVIDER_HINTS: dict[str, tuple[str, str]] = {
 }
 # `model.provider: auto` is Hermes' resolution mode, not an account.
 _NON_PROVIDER_IDS = frozenset({"auto"})
+# The candidate source that is not an env-var name.
+_PROVIDER_SOURCE_CONFIG = "config"
 
 
 def _env_key_names(paths: OmhPaths) -> set[str]:
@@ -2411,35 +2413,163 @@ def _env_key_names(paths: OmhPaths) -> set[str]:
     return names
 
 
-def _provider_candidates(paths: OmhPaths) -> list[tuple[str, str]]:
-    """Provider ids worth asking about, each with its default kind, in ask order.
+def _provider_candidates(paths: OmhPaths) -> list[tuple[str, str, str]]:
+    """Provider ids worth asking about: `(id, default kind, where it was found)`.
 
     Config keys first (`providers.<id>`, `model.provider`) with `gateway` as
-    the default kind, then env-key hints with their vendor kind. Ids that the
-    entitlement document would reject (non-token keys such as YAML merge
-    markers) and Hermes' `auto` mode are skipped rather than asked.
+    the default kind and the source `config`, then env-key hints with their
+    vendor kind and the variable NAME as the source. Ids that the entitlement
+    document would reject (non-token keys such as YAML merge markers) and
+    Hermes' `auto` mode are skipped rather than asked. The source is the row
+    label's evidence line and nothing else: a config key or a variable name is
+    a reason to pre-tick a row, never a claim that the account works.
     """
     from ..plugin_bundle.omh.hermes_delegation import PROVIDER_KIND_GATEWAY, is_provider_id_token
 
     config_text = read_config(paths.hermes_config_path) if paths.hermes_config_path.exists() else ""
-    candidates: list[tuple[str, str]] = []
+    candidates: list[tuple[str, str, str]] = []
     seen: set[str] = set()
     for provider_id in configured_provider_ids(config_text):
         if provider_id in _NON_PROVIDER_IDS or not is_provider_id_token(provider_id) or provider_id in seen:
             continue
         seen.add(provider_id)
-        candidates.append((provider_id, PROVIDER_KIND_GATEWAY))
+        candidates.append((provider_id, PROVIDER_KIND_GATEWAY, _PROVIDER_SOURCE_CONFIG))
     for name in sorted(_env_key_names(paths)):
         provider_id, kind = _ENV_KEY_PROVIDER_HINTS[name]
         if provider_id in seen:
             continue
         seen.add(provider_id)
-        candidates.append((provider_id, kind))
+        candidates.append((provider_id, kind, name))
     return candidates
+
+
+# Display names for the multi-select rows. Plain vendor names the operator
+# recognizes; the recorded document still holds the entitlement vocabulary
+# token, never these strings. Vendor names stay untranslated because they are
+# proper nouns -- the localized half of a row is its description line.
+_PROVIDER_DISPLAY_LABELS: dict[str, str] = {
+    "anthropic": "Anthropic (Claude)",
+    "apitopia": "Apitopia",
+    "ccapi": "CCAPI",
+    "deepseek": "DeepSeek",
+    "gemini": "Google Gemini API",
+    "google": "Google AI Studio",
+    "kimi-coding": "Moonshot (Kimi)",
+    "openai": "OpenAI (GPT)",
+    "openai-codex": "OpenAI Codex",
+    "opencode": "OpenCode",
+    "openrouter": "OpenRouter",
+    "qwen-oauth": "Qwen",
+    "xai": "xAI (Grok)",
+    "zai": "Z.ai (GLM)",
+    "opengateway": "OpenGateway",
+}
+# OMH's own gateway. Its kind is `gateway`, not a vendor family, so it is
+# absent from PROVIDER_FAMILY_VOCABULARY (that tuple mirrors the catalog's
+# vendor families and is parity-gated elsewhere) -- the row is added here, at
+# the presentation layer, instead. It reaches the list on its own even when
+# OPENGATEWAY_API_KEY is not set yet: offering it only once the key exists is
+# a chicken-and-egg that hides the service from everyone who has it but has
+# not configured it. The id matches `_ENV_KEY_PROVIDER_HINTS` and
+# `_PROVIDER_ENV` in `coding/hermes_child_dispatch.py`.
+_OPENGATEWAY_PROVIDER_ID = "opengateway"
+# The "leave everything as it is" row. Not a provider id -- `is_provider_id_token`
+# rejects a leading underscore, so this can never collide with one, and it is
+# never written to the document.
+_PROVIDER_SKIP_CHOICE = "__skip__"
+
+
+def _provider_entitlement_options(
+    candidates: list[tuple[str, str, str]],
+    previous_providers: dict[str, str],
+    language: str,
+) -> tuple[list[dict[str, str]], list[str], dict[str, str]]:
+    """Rows for the provider multi-select: `(options, pre-ticked ids, kind per id)`.
+
+    Order is found-here first, then whatever the operator recorded last time,
+    then the rest of the family vocabulary, then OpenGateway, then the skip
+    row -- so the rows that matter lead and the two always-present rows sit
+    where the eye ends up. A pre-ticked row is a DEFAULT, not a finding:
+    EXECUTOR_AUTH_SIGNALS_CLAIM_BOUNDARY holds here too -- a config key or a
+    variable name is not an account, a tier, or a quota. Every pre-ticked row
+    stays clearable, and only what the operator leaves ticked is written, so
+    the document keeps meaning "what the operator said they hold".
+
+    Pre-ticking mirrors the per-provider default the yes/no chain used: the
+    previously recorded set when there is one, otherwise everything found on
+    this machine. The skip row is never pre-ticked -- "leave everything as it
+    is" has to be chosen, never defaulted into.
+    """
+    from ..plugin_bundle.omh.hermes_delegation import (
+        MULTI_VENDOR_PROVIDER_KINDS,
+        PROVIDER_FAMILY_VOCABULARY,
+        PROVIDER_KIND_GATEWAY,
+    )
+
+    kinds: dict[str, str] = {}
+    descriptions: dict[str, str] = {}
+    order: list[str] = []
+    for provider_id, hinted_kind, source in candidates:
+        order.append(provider_id)
+        kinds[provider_id] = previous_providers.get(provider_id, hinted_kind)
+        descriptions[provider_id] = (
+            tr(language, "provider_detected_config")
+            if source == _PROVIDER_SOURCE_CONFIG
+            else tr(language, "provider_detected_env", name=source)
+        )
+    for provider_id in sorted(previous_providers):
+        if provider_id in kinds:
+            continue
+        order.append(provider_id)
+        kinds[provider_id] = previous_providers[provider_id]
+        descriptions[provider_id] = tr(language, "provider_recorded_before")
+    for family in PROVIDER_FAMILY_VOCABULARY:
+        if family in kinds:
+            continue
+        order.append(family)
+        kinds[family] = family
+        descriptions[family] = tr(language, "provider_kind_relay") if family in MULTI_VENDOR_PROVIDER_KINDS else ""
+    if _OPENGATEWAY_PROVIDER_ID not in kinds:
+        order.append(_OPENGATEWAY_PROVIDER_ID)
+        kinds[_OPENGATEWAY_PROVIDER_ID] = PROVIDER_KIND_GATEWAY
+        descriptions[_OPENGATEWAY_PROVIDER_ID] = tr(language, "provider_opengateway_desc")
+    order.append(_PROVIDER_SKIP_CHOICE)
+    descriptions[_PROVIDER_SKIP_CHOICE] = tr(language, "provider_skip_desc")
+    labels = {_PROVIDER_SKIP_CHOICE: tr(language, "provider_skip_label")}
+    options = [
+        {
+            "choice": str(index + 1),
+            "value": provider_id,
+            "label": labels.get(provider_id) or _PROVIDER_DISPLAY_LABELS.get(provider_id, provider_id),
+            "description": descriptions[provider_id],
+        }
+        for index, provider_id in enumerate(order)
+    ]
+    detected_ids = {provider_id for provider_id, _kind, _source in candidates}
+    preselect = set(previous_providers) if previous_providers else detected_ids
+    preselect.discard(_PROVIDER_SKIP_CHOICE)
+    return options, [provider_id for provider_id in order if provider_id in preselect], kinds
 
 
 def _ask_provider_entitlements(args: argparse.Namespace, paths: OmhPaths, language: str) -> None:
     """Ask, at most once, which providers and subscription CLIs this machine holds.
+
+    One list, not a question per candidate: the operator ticks what they can
+    reach (rows found on this machine pre-ticked and clearable), and then the
+    one subscription CLI that exists is a yes/no. A pre-ticked row is a
+    default, never a finding -- what is written is still only what the
+    operator left ticked.
+
+    The list's last row is "leave everything as it is", and choosing it writes
+    NOTHING: no entitlement document, no dispatch-model seed, so the seeded
+    chain order stays in effect and the machine behaves exactly as it does for
+    someone who never answered. It is exclusive -- ticking it beside a
+    provider is contradictory, so the prompt refuses and asks again rather
+    than guessing which half the operator meant. That row replaced a separate
+    gate question ("Record which providers ... ?") whose "no" did precisely
+    this; keeping both would have been two ways to say the same thing, and the
+    one inside the list is the one the operator can see next to what it
+    declines.
 
     Every account is different, and the shipped chains cannot know which of
     their entries this operator can actually reach. The answer is recorded as
@@ -2484,15 +2614,6 @@ def _ask_provider_entitlements(args: argparse.Namespace, paths: OmhPaths, langua
     use_color = _use_color()
     if existing_status.startswith("invalid:"):
         print(_color(tr(language, "provider_entitlements_invalid", status=existing_status), "33", use_color))
-    if not _ask_yes_no(
-        tr(language, "provider_entitlements_prompt"),
-        default=existing_status != "applied",
-        use_color=use_color,
-        note=tr(language, "provider_entitlements_note"),
-        language=language,
-    ):
-        args._provider_entitlements = None
-        return
 
     previous_providers = dict(existing.get("providers", {})) if existing else {}
     previous_clis = list(existing.get("subscription_clis", [])) if existing else []
@@ -2518,15 +2639,32 @@ def _ask_provider_entitlements(args: argparse.Namespace, paths: OmhPaths, langua
             language=language,
         )
 
-    providers: dict[str, str] = {}
-    for provider_id, hinted_kind in candidates:
-        if _ask_yes_no(
-            tr(language, "provider_hold_prompt", provider=provider_id),
-            default=provider_id in previous_providers or not previous_providers,
-            use_color=use_color,
-            language=language,
-        ):
-            providers[provider_id] = ask_kind(provider_id, previous_providers.get(provider_id, hinted_kind))
+    # One list instead of a yes/no plus a sixteen-option kind menu per
+    # candidate: the kind a row records is the one detection or the previous
+    # answer already implies, and the kind menu stays only on the add loop,
+    # where the operator typed an id OMH knows nothing about.
+    options, preselected, kind_by_id = _provider_entitlement_options(candidates, previous_providers, language)
+    chosen = _ask_multi_choice(
+        tr(language, "provider_select_title"),
+        [
+            tr(language, "provider_select_intro_1"),
+            tr(language, "provider_select_intro_2"),
+            tr(language, "provider_entitlements_note"),
+        ],
+        options,
+        selected=preselected,
+        exclusive={_PROVIDER_SKIP_CHOICE},
+        use_color=use_color,
+        language=language,
+    )
+    if _PROVIDER_SKIP_CHOICE in chosen:
+        # "Leave everything as it is": no document, no seed, no further
+        # question. Same contract as the Maestro category question's "no" --
+        # the shipped chain order stays in effect until the operator opts in.
+        args._provider_entitlements = None
+        print(tr(language, "provider_entitlements_skipped"))
+        return
+    providers = {provider_id: kind_by_id[provider_id] for provider_id in chosen}
     # Providers Hermes reaches some other way (a builtin with a key OMH does
     # not recognize, a gateway named only in a route) can be added by name.
     while True:
@@ -2543,7 +2681,7 @@ def _ask_provider_entitlements(args: argparse.Namespace, paths: OmhPaths, langua
             tr(language, "subscription_cli_prompt", cli=profile),
             default=profile in previous_clis or not previous_clis,
             use_color=use_color,
-            note=tr(language, "subscription_cli_note"),
+            note=tr(language, "subscription_cli_note", cli=profile),
             language=language,
         ):
             subscription_clis.append(profile)
@@ -2893,6 +3031,78 @@ def _ask_single_choice(
         print(_color(tr(language, "invalid_selection", valid=valid), "31", use_color))
 
 
+def _exclusive_choice_conflict(values: list[str], exclusive: set[str]) -> str:
+    """The first exclusive value that was picked alongside something else, else ""."""
+    if len(values) < 2:
+        return ""
+    return next((value for value in values if value in exclusive), "")
+
+
+def _ask_multi_choice(
+    title: str,
+    intro_lines: list[str],
+    options: list[dict[str, str]],
+    *,
+    selected: list[str],
+    use_color: bool,
+    language: str = "en",
+    exclusive: set[str] | None = None,
+) -> list[str]:
+    """Tick any number of options; returns the ticked values in option order.
+
+    The single-choice sibling's shape: same colors, same localized labels, the
+    keyboard menu when one is available and a typed fallback when it is not.
+    Empty input keeps the pre-selected set, so a machine whose detected rows
+    are already right answers with one Enter.
+
+    A value in `exclusive` may only be chosen alone. Picked beside anything
+    else it is contradictory, so both paths refuse and ask again rather than
+    resolving it by a rule the operator cannot see.
+
+    There is deliberately no "none" token: a caller that needs "none of these"
+    as an answer gives the list a row that says so, which is legible next to
+    what it declines in a way a magic `0` is not.
+    """
+    exclusive = exclusive or set()
+    normalized = [_normalize_choice_option(option) for option in options]
+    ticked = {option["choice"] for option in normalized if option["value"] in selected}
+    labels_by_value = {option["value"]: option["label"] for option in normalized}
+    if _keyboard_menu_available():
+        return _keyboard_multi_choice(
+            title, intro_lines, normalized, ticked, exclusive, use_color=use_color, language=language
+        )
+
+    print("")
+    print(_color(title, "1;32", use_color))
+    for line in intro_lines:
+        print(f"  {line}")
+    for option in normalized:
+        mark = "[x]" if option["choice"] in ticked else "[ ]"
+        print(f"  {option['choice']}) {mark} {option['label']}")
+        if option["description"]:
+            print(f"     {option['description']}")
+    default = ",".join(option["choice"] for option in normalized if option["choice"] in ticked)
+    values_by_choice = {option["choice"]: option["value"] for option in normalized}
+    values_by_value = {option["value"]: option["value"] for option in normalized}
+    while True:
+        raw = _ask(tr(language, "select_multi"), default=default, use_color=use_color).strip()
+        if not raw:
+            picked = [option["value"] for option in normalized if option["choice"] in ticked]
+        else:
+            tokens = [token for token in re.split(r"[,\s]+", raw) if token]
+            resolved = [values_by_choice.get(token) or values_by_value.get(token) for token in tokens]
+            if not all(resolved):
+                valid = ", ".join(option["choice"] for option in normalized)
+                print(_color(tr(language, "invalid_selection", valid=valid), "31", use_color))
+                continue
+            picked = [value for index, value in enumerate(resolved) if value not in resolved[:index]]
+        conflict = _exclusive_choice_conflict(picked, exclusive)
+        if conflict:
+            print(_color(tr(language, "exclusive_selection", label=labels_by_value[conflict]), "31", use_color))
+            continue
+        return picked
+
+
 def _normalize_choice_option(option: dict[str, str]) -> dict[str, str]:
     return {
         "choice": str(option.get("choice", "")).strip(),
@@ -2950,6 +3160,82 @@ def _keyboard_single_choice(
                 return option["value"]
 
 
+def _keyboard_multi_choice(
+    title: str,
+    intro_lines: list[str],
+    options: list[dict[str, str]],
+    ticked: set[str],
+    exclusive: set[str] | None = None,
+    *,
+    use_color: bool,
+    language: str = "en",
+) -> list[str]:
+    """`_keyboard_single_choice` with a tick per row: Space or a digit toggles, Enter confirms.
+
+    A value in `exclusive` may only be confirmed alone. Enter on a
+    contradictory tick set keeps the menu up with the reason appended, so the
+    operator fixes it in place instead of losing the list.
+    """
+    exclusive = exclusive or set()
+    ticked = set(ticked)
+    cursor = 0
+    rendered_option_rows = 0
+    first_render = True
+    error = ""
+    while True:
+        lines = _choice_menu_lines(
+            title,
+            intro_lines,
+            options,
+            cursor,
+            default_choice="",
+            use_color=use_color,
+            language=language,
+            ticked=ticked,
+            hint_key="menu_hint_multi",
+        )
+        option_lines = _choice_menu_option_lines(lines, intro_lines)
+        if error:
+            # Appended to the option block so the next redraw erases it with
+            # the rows -- `rendered_option_rows` is measured after the append.
+            option_lines = [*option_lines, _color(f"  {error}", "31", use_color)]
+            lines = [*lines, option_lines[-1]]
+        if first_render:
+            sys.stdout.write("\n".join(lines) + "\n")
+            first_render = False
+        else:
+            sys.stdout.write(f"\033[{rendered_option_rows}F\033[J")
+            sys.stdout.write("\n".join(option_lines) + "\n")
+        sys.stdout.flush()
+        rendered_option_rows = _rendered_terminal_rows(option_lines)
+        error = ""
+        key = _read_tui_key()
+        if key in {"\x03", "\x04"}:
+            raise KeyboardInterrupt
+        if key in {"\x1b[A", "k"}:
+            cursor = (cursor - 1) % len(options)
+            continue
+        if key in {"\x1b[B", "j"}:
+            cursor = (cursor + 1) % len(options)
+            continue
+        if key == " ":
+            ticked ^= {options[cursor]["choice"]}
+            continue
+        if key in {"\r", "\n"}:
+            picked = [option["value"] for option in options if option["choice"] in ticked]
+            conflict = _exclusive_choice_conflict(picked, exclusive)
+            if not conflict:
+                return picked
+            label = next(option["label"] for option in options if option["value"] == conflict)
+            error = tr(language, "exclusive_selection", label=label)
+            continue
+        for index, option in enumerate(options):
+            if key == option["choice"]:
+                cursor = index
+                ticked ^= {option["choice"]}
+                break
+
+
 def _choice_menu_lines(
     title: str,
     intro_lines: list[str],
@@ -2959,16 +3245,19 @@ def _choice_menu_lines(
     default_choice: str,
     use_color: bool,
     language: str = "en",
+    ticked: set[str] | None = None,
+    hint_key: str = "menu_hint",
 ) -> list[str]:
     lines = ["", _color(title, "1;32", use_color)]
     for line in intro_lines:
         lines.append(f"  {line}")
-    lines.append(_color(f"  {tr(language, 'menu_hint')}", "2", use_color))
+    lines.append(_color(f"  {tr(language, hint_key)}", "2", use_color))
     for index, option in enumerate(options):
         active = index == cursor
         pointer = ">" if active else " "
         suffix = f" ({tr(language, 'recommended')})" if option["choice"] == default_choice else ""
-        label = f"  {pointer} {option['choice']}) {option['label']}{suffix}"
+        mark = "" if ticked is None else ("[x] " if option["choice"] in ticked else "[ ] ")
+        label = f"  {pointer} {option['choice']}) {mark}{option['label']}{suffix}"
         if active:
             label = _color(label, "1;36", use_color)
         lines.append(label)
