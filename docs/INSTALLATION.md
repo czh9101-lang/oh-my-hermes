@@ -892,18 +892,29 @@ zero OMH skills while the default chat has the full set.
 
 `omh setup` and `omh update` sync every profile automatically:
 
-- an already-registered profile is refreshed to the running version;
+- an already-registered profile is refreshed to the running version — its
+  plugin bundle, TUI widget, and skin, under the same manifest-checked
+  refusals the primary home gets;
 - a profile with no OMH bundle at all — including a bot created after
   install — gets the full bootstrap on the next `omh setup` or `omh update`;
 - a deliberately unregistered profile (see below) is left alone.
+
+"Registered" means the profile names any OMH-managed skills directory, not
+the exact one this install would write today. A profile registered at
+`~/.omh/skills` before the command install moved to its shared generation
+pointer is still registered: it gets refreshed and carried forward, not read
+as an opt-out and frozen on the generation it was installed at. Only a
+profile naming none of them has opted out.
 
 `omh uninstall` is symmetric with the sync. A full uninstall (`omh uninstall`,
 `--all`, or `--purge`) clears every profile's registration and removes its
 managed artifacts — the plugin bundle, the TUI widget, and the skin — through
 the same manifest checks the primary home gets: a profile directory OMH cannot
 prove it owns is kept and reported, never deleted blind. `--registration-only`
-unregisters every profile while keeping their plugin directories, which is
-exactly the deliberate opt-out state described below.
+removes every OMH-managed entry from each profile — the same directories the
+sync reads, so nothing is left behind for the next update to score as still
+registered — while keeping their plugin directories, which is exactly the
+deliberate opt-out state described below.
 
 After a sync, restart Hermes Desktop so bot chats reload their skills.
 
@@ -913,8 +924,10 @@ To keep OMH out of one bot, unregister that profile only:
 omh --hermes-home ~/.hermes/profiles/<name> uninstall --registration-only
 ```
 
-The plugin directory stays in place as the opt-out marker; setup and update
-never re-register a profile in that state.
+That removes every OMH-managed skills directory the profile's config named,
+whichever one it was registered at. The plugin directory stays in place as
+the opt-out marker; setup and update never re-register a profile in that
+state.
 
 OMH workflows are skill triggers, not Hermes slash commands, so they do not
 appear in the `/` autocomplete — in any chat, bot or default. Invoke them as
