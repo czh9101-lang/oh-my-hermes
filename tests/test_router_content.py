@@ -1217,6 +1217,35 @@ class RouterContentTests(unittest.TestCase):
                 f"{planning_name} is a planning lane, not an executing engine",
             )
 
+    def test_ulw_executing_engines_carry_follow_up_authority_and_closing_brief_rules(self) -> None:
+        """The two rules adopted from the Codex Desktop prompt review (MODEL_OPTI.md,
+        2026-09-11) ride the same executing-engine bars as the interjection rule and,
+        like it, stay off the planning lanes; the interjection rule itself now says a
+        mid-run message is steering, not a replacement objective.
+        """
+        from omh.skills.catalog import (
+            ENGINE_CLOSING_BRIEF_RULE,
+            ENGINE_FOLLOW_UP_AUTHORITY_RULE,
+            ENGINE_INTERJECTION_RESUME_RULE,
+        )
+
+        engines = ("ultrawork", "ultraqa", "loop", "research", "context", "ultraperf")
+        definitions = {definition.name: definition for definition in installable_skill_definitions()}
+        for name in engines:
+            with self.subTest(engine=name):
+                for rule in (ENGINE_FOLLOW_UP_AUTHORITY_RULE, ENGINE_CLOSING_BRIEF_RULE):
+                    self.assertIn(rule, definitions[name].quality_bar, name)
+        templates = {template.name: template for template in builtin_skill_templates()}
+        for name in engines:
+            self.assertIn("persistence never broadens the authorized scope", templates[name].content, name)
+            self.assertIn("omit abandoned approaches unless they explain a tradeoff", templates[name].content, name)
+            self.assertIn("not automatically a replacement objective", templates[name].content, name)
+        for planning_name in ("ralplan", "plan", "deep-interview"):
+            for rule in (ENGINE_FOLLOW_UP_AUTHORITY_RULE, ENGINE_CLOSING_BRIEF_RULE):
+                self.assertNotIn(rule, definitions[planning_name].quality_bar, planning_name)
+        # The words the review rejected never enter an engine bar.
+        self.assertNotIn("helpful enough", ENGINE_INTERJECTION_RESUME_RULE + ENGINE_FOLLOW_UP_AUTHORITY_RULE + ENGINE_CLOSING_BRIEF_RULE)
+
     def test_ultrawork_closes_with_observed_run_summary_or_not_available(self) -> None:
         """The owner reported ultrawork's closing brief showing deploy/verification
         status but not total tokens or elapsed time. `omh_run_summary` reads those

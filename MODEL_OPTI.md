@@ -161,6 +161,13 @@ discipline for how those prompts are assembled:
   prompt prefixes by exact bytes; DeepSeek additionally prices cached
   prefixes, which is where OMH first learned the rule
   (`PROMPT_CACHE_COMPOSITION_PROTOCOL`).
+- **Tool batching** — independent reads and searches go out together in one
+  turn and every result is inspected; dependent steps, edits, approvals,
+  waits, and follow-ups that adapt to a result stay sequential; shell output
+  is never decorated with separator commands (`TOOL_BATCHING_PROTOCOL`).
+  *Why:* a fan-out unit that serializes independent reads pays a round trip
+  per read, and a unit that parallelizes an edit with the read it depends on
+  edits stale bytes; separators are noise inside a bounded output capture.
 
 The first three originate from the stop-condition techniques the
 oh-my-openagent research surfaced for high-effort models (terminal-condition
@@ -168,7 +175,10 @@ rules, criterion-bound blocking, capped re-review), generalized to every
 family. The fourth comes from the DeepSeek Harness review named above. The
 fifth generalizes that harness's priced-prefix composition constraint to
 every family, because every major serving stack is a byte-exact prefix
-cacher.
+cacher. The sixth comes from the Codex Desktop prompt review below; the
+`claude` family block already told its units to request every independent
+item in one response, and the universal rule is that sentence promoted to
+every family with the sequential set and the separator rule added.
 
 ### Writing for the smallest model in the fleet
 
@@ -233,6 +243,54 @@ cycles, two review rounds). Machine-readable result markers and
 KV-cache-aware request assembly belong to the executor/runtime that actually
 calls a model — outside the universal prompt-cache composition discipline
 above, they are out of OMH's boundary by design.
+
+### Techniques compared (Codex Desktop prompt review, community source)
+
+A circulating dump of the Codex Desktop system prompts for GPT-6 Astra
+(elder-plinius/CL4R1T4S, `OPENAI/Codex_Desktop/GPT-6_Astra_Prompts.md`, read
+2026-09-11 — 5,051 lines with no date, version, or extraction method, so
+**community / unverified**; nothing in it overrides the official contract in
+`src/coding/model_contracts.py`) was compared against OMH the same way the
+DeepSeek Harness was. What it corroborates is already here: instruction
+precedence ("the user's instruction … must take precedence over any
+guidelines provided in skills"), assumptions over questions ("strongly
+prefer making reasonable assumptions … rather than stopping to ask"), and
+test sizing ("do not write tests for reversible, low-impact changes or that
+mirror the implementation … broaden or repeat testing only when new changes,
+failures, or unresolved concerns justify it") are the three sentences of the
+`gpt-6-astra` override, and the guardian-rejection rule ("continue with a
+safer alternative, or carry out checks to prove that the action is
+authorized … do not bypass this rejection through a workaround") is the
+failure-kind discipline (its "safer alternative or shown authorization"
+wording is the same rule as "continue with what the boundary allows, or
+report it" and was not added twice; likewise a checkpoint's contents are
+already the `goal_ledger/v1` structure, so no sentence restates them).
+Adopted as harness discipline on OMH's own surfaces (executor-neutral,
+measured by observed engine behaviour rather than a token benchmark): the
+latest mid-run message is steering for the active task, not a replacement
+objective — a sharpening of the interjection rule's existing "when the
+interjection changes scope, say so" clause; a follow-up that needs new
+authority, expands scope materially, or changes external state not already
+authorized is described and approved first, and persistence never broadens
+scope (`ENGINE_FOLLOW_UP_AUTHORITY_RULE` — the engine-entry, external
+executor, and delegation-enable gates already asked before their own
+steps, but nothing covered an external state change such as a merge or a
+send); independent reads batch, dependent steps serialize, no decorative
+shell separators (`TOOL_BATCHING_PROTOCOL`, universal); the closing brief
+scales to the change, leads with the result, and omits abandoned approaches
+unless they explain a tradeoff (`ENGINE_CLOSING_BRIEF_RULE`, new).
+Deliberately not adopted: the persistence
+push ("do not settle for a partial or 'helpful enough' solution … persist
+until the user's intended goal is complete", "only send a final message
+after concluding that no follow-up … could be useful"). It is written for an
+interactive desktop session with the user present; OMH units are bounded by
+numbered criteria, and the 2026-09-05 Astra measurement above showed that a
+completion-push sentence costs +5,419 tokens per instance at an unchanged
+pass rate, spent on the tasks the model fails. Host channels (commentary
+versus final, heartbeats, async user messages, `notes`/`history` tools,
+`fork_turns`) are Hermes' surfaces, not OMH's; the confirmation-policy tiers
+for computer use are a candidate for the browser skills' boundaries, not
+this round.
 
 ## Per-family calibrations: what, why, and where each came from
 

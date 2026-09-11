@@ -224,7 +224,10 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # skill's declared outputs, not the rule text; the operation table and the
 # native/fixture boundary live in `docs/AGENT-BOARD.md`, outside this budget;
 # warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 411570
+# 411570 -> 412828: the same two shared engine rules and the extended
+# interjection rule render into the capability sections of the executing
+# engines (the section carries each engine's quality bar); warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 412828
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -795,7 +798,14 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # enumeration the lane reads to a user choosing a category: one missing from
 # it reads as a category that does not exist. The chains themselves live in
 # the catalog, outside this budget; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 925264
+# 925264 -> 931851: the six executing ULW engines gained two shared rules
+# from the Codex Desktop prompt review (follow-up authority triad,
+# closing-brief scaling; +~440 chars each across seven bars), the shared
+# interjection rule gained the steering-not-objective sentence, and the
+# ultragoal bar gained the checkpoint-contents sentence; harness discipline
+# the engines read every run, so it belongs in the always-loaded body;
+# warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 931851
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

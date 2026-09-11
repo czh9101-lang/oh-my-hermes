@@ -94,6 +94,18 @@ FAILURE_KIND_PROTOCOL: Final[str] = (
     "instead of process_failed: a decline is a conclusive negative answer, never a bug to retry."
 )
 
+# Tool batching (2026-09-11, from the Codex Desktop prompt review in
+# MODEL_OPTI.md — a community source adopted for the discipline it states):
+# independent reads and searches go out together; anything that depends on
+# a result, mutates, needs approval, or waits goes one at a time. Decorative
+# shell separators are noise inside a bounded output capture.
+TOOL_BATCHING_PROTOCOL: Final[str] = (
+    "Tool discipline: issue independent reads and searches together in one turn and inspect every "
+    "result; keep dependent steps, edits, approvals, waits, and follow-ups that adapt to a result "
+    "sequential. Do not decorate shell output with separator commands (echo '====', printf '---'); the "
+    "capture is bounded and the noise displaces evidence."
+)
+
 # The sidecar file is the primary machine-read return
 # (`fanout_dispatch._intake_unit_result`). The block restates the sidecar
 # object when a sidecar path was given, so the two returns cannot disagree,
@@ -515,6 +527,7 @@ def shared_unit_preamble_lines(goal_text: str) -> list[str]:
         GOAL_ECHO_PROTOCOL,
         VERIFICATION_STOP_PROTOCOL,
         FAILURE_KIND_PROTOCOL,
+        TOOL_BATCHING_PROTOCOL,
         UNIT_RESULT_RETURN_PROTOCOL,
         STRUCTURAL_SEARCH_DISCIPLINE_GUIDANCE,
     ]
