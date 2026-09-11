@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..plugin_bundle.omh.memory_governance import MEMORY_GOVERNANCE_POLICY_VERSION, MEMORY_SCOPE_SCHEMA_VERSION, PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION, SOURCE_CLASSES, build_retention, canonical_memory_scope, canonical_payload_digest, classify_memory_admission, evaluate_renderable_strings, stable_artifact_identity
-from ..system.local_store import atomic_write_json, file_lock, read_json_object_result
+from ..system.local_store import atomic_write_json, file_lock, is_directory_link, read_json_object_result
 from ..system.paths import OmhPaths
 from ._memory_store_validation import safe_token
 from .memory_store import (
@@ -727,20 +727,25 @@ def _scope_snapshot_by_target(paths: OmhPaths, target: str) -> dict[str, Any] | 
 
 
 def _checked_scope_path(paths: OmhPaths, target: str) -> Path:
+    # Lexical for the reason `memory_store._checked_memory_relative_path`
+    # spells out: `Path.resolve` canonicalizes only what exists, so comparing
+    # two resolves makes containment depend on who is creating the store right
+    # now. This is the same check on the same root, reached by the batch apply
+    # path that two processes contend on, so it carries the same race.
     root = paths.memory_dir
     relative = Path(target)
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError("scope path is unsafe")
+    if is_directory_link(root):
+        raise ValueError("scope path is unsafe")
     path = root / relative
+    if not path.is_relative_to(root):
+        raise ValueError("scope path is unsafe")
     cursor = root
     for part in relative.parts:
         cursor /= part
-        if cursor.is_symlink():
+        if is_directory_link(cursor):
             raise ValueError("scope path is unsafe")
-    resolved_root = root.resolve(strict=False)
-    resolved_path = path.resolve(strict=False)
-    if resolved_root != resolved_path and resolved_root not in resolved_path.parents:
-        raise ValueError("scope path is unsafe")
     return path
 
 

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from ..system.local_store import atomic_write_json, atomic_write_text, ensure_dir, file_lock, read_json_object_result, utc_now
+from ..system.local_store import atomic_write_json, atomic_write_text, ensure_dir, file_lock, is_directory_link, read_json_object_result, utc_now
 from ..system.paths import OmhPaths
 from ._memory_store_validation import (
     MEMORY_OPERATION_SCHEMA_VERSION,
@@ -357,19 +357,48 @@ def checked_memory_directory(paths: OmhPaths, relative: str) -> Path:
 
 
 def _checked_memory_relative_path(paths: OmhPaths, relative: str) -> Path:
+    """Contain a validated relative path in the store without resolving it.
+
+    Containment used to be decided by comparing ``root.resolve()`` with
+    ``(root / relative).resolve()``. ``Path.resolve`` canonicalizes only the
+    components that exist at the moment it runs and appends the rest
+    literally, so the same path resolves differently depending on how much of
+    it is on disk. Two callers racing to create the store therefore got two
+    spellings of one directory and the comparison rejected the store as an
+    escape -- ``ensure_memory_directory`` raising "memory path escapes store"
+    against its own root while a sibling process created it. POSIX hid that:
+    there the only thing ``resolve`` rewrites is a symlink, and symlinks are
+    already rejected below, so the comparison never changed an answer. Windows
+    also folds 8.3 short names, drive spelling and on-disk casing per existing
+    component, which is what made the race observable there.
+
+    Deciding it lexically removes the race and loses nothing. Every caller has
+    already rejected an absolute path, ``..`` and any component outside
+    ``_SAFE_TOKEN``, so ``root / relative`` extends ``root`` unless the join
+    itself discards it. It does for a drive-qualified or UNC token -- ``D:name``
+    joins to ``D:name`` and ``//host/share`` to that share, both leaving the
+    store, and ``_SAFE_TOKEN`` permits ``:`` because the token spells no
+    separator. ``is_relative_to`` is the containment test rather than a parts
+    comparison because it is case-correct about the drive: ``c:name`` on the
+    store's own drive stays inside but joins to a differently-cased spelling,
+    and rejecting that would trade one wrong refusal for another. Comparing
+    resolves used to catch the real escapes by accident.
+
+    The link walk is also stricter now: ``Path.is_symlink`` answers False for a
+    Windows directory junction, so a junction component was previously caught,
+    if at all, only by the resolve comparison it is replacing.
+    """
     root = paths.memory_dir
-    if root.is_symlink():
+    if is_directory_link(root):
         raise ValueError("memory path escapes store")
     path = root / relative
+    if not path.is_relative_to(root):
+        raise ValueError("memory path escapes store")
     cursor = root
     for part in Path(relative).parts:
         cursor /= part
-        if cursor.is_symlink():
+        if is_directory_link(cursor):
             raise ValueError("memory path escapes store")
-    resolved_root = root.resolve(strict=False)
-    resolved_path = path.resolve(strict=False)
-    if resolved_root != resolved_path and resolved_root not in resolved_path.parents:
-        raise ValueError("memory path escapes store")
     return path
 
 
