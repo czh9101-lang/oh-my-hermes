@@ -4843,7 +4843,8 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(payload["schema_version"], "omh_release_evidence_bundle/v2")
             self.assertEqual(payload["status"], "ready")
             self.assertTrue(payload["written"])
-            self.assertTrue(payload["publication_ready"])
+            # Source-only evidence is inspectable but lacks the notes binding.
+            self.assertFalse(payload["publication_ready"])
             self.assertEqual(payload["source_identity"]["schema_version"], "omh_release_source_identity/v1")
             self.assertEqual(payload["source_identity"]["origin"], "git_checkout")
             self.assertEqual(payload["source_identity"]["identity_status"], "available")

@@ -22,6 +22,7 @@ from ..release import (
 )
 from ..release_install_smoke import install_script_smoke_plan, run_install_script_smoke
 from .common import _paths, _print_json, _wants_json
+from .release_notes import add_release_notes_commands
 
 
 def cmd_release_checklist(args: argparse.Namespace) -> int:
@@ -160,8 +161,9 @@ def cmd_release_evidence_bundle(args: argparse.Namespace) -> int:
             artifact=args.artifact,
             archive_digest=args.archive_digest,
             artifact_digest=args.artifact_digest,
+            notes_file=args.notes_file,
         )
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         raise OmhError(str(exc)) from exc
     if _wants_json(args):
         _print_json(payload)
@@ -190,6 +192,7 @@ def _cmd_release_evidence_bundle_verify(args: argparse.Namespace) -> int:
         artifact=args.artifact,
         archive_digest=args.archive_digest,
         artifact_digest=args.artifact_digest,
+        notes_file=args.notes_file,
     )
     if _wants_json(args):
         _print_json(payload)
@@ -229,6 +232,7 @@ def cmd_release_drift(args: argparse.Namespace) -> int:
 def _add_release_commands(sub) -> None:
     release = sub.add_parser("release", help="Plan or run release smoke checks for real Hermes installation paths.")
     release_sub = release.add_subparsers(dest="release_command", required=True)
+    add_release_notes_commands(release_sub)
 
     drift = release_sub.add_parser(
         "drift",
@@ -357,6 +361,7 @@ def _add_release_commands(sub) -> None:
         default="",
         help="sha256:<hex> digest binding an installed package when no git checkout is available.",
     )
+    evidence_bundle.add_argument('--notes-file', default=None, help='Canonical notes artifact bound to the stamped source version.')
     evidence_bundle.add_argument("--json", action="store_true", help="Print the machine-readable release evidence bundle payload.")
     evidence_bundle.set_defaults(func=cmd_release_evidence_bundle)
 

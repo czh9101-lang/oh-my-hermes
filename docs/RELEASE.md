@@ -115,6 +115,89 @@ strings quoted in README/docs prose and CLI help examples are illustrative and
 deliberately not parity-gated — update them in the bump commit, but a stale
 example is a docs nit, not a diagnostics lie.
 
+## Curated release notes (maintainer and automation reference)
+
+Author release copy once, under the exact level-two `## Unreleased` heading in
+`CHANGELOG.md`. Do not maintain a separate GitHub body or generate release copy
+from commits. A version heading is `## X.Y.Z - YYYY-MM-DD`; fenced examples are
+content, not headings. Missing, empty or duplicate Unreleased sections, duplicate
+target versions, invalid dates/UTF-8 and oversized input are refused before
+publication. Changelogs are bounded to 2 MiB and extracted notes to 256 KiB.
+
+Explicit preparation is local-only: no build, tag, GitHub call or publication.
+Use a staging directory outside the checkout for derived notes:
+
+```sh
+stage="$(mktemp -d)"
+uv run python -m omh.cli release prepare --version "$VERSION" \
+  --repo-root "$PWD" --notes-file "$stage/release-notes.md" --json
+```
+
+Preparation renames the nonempty Unreleased section to the target version and
+current **UTC date**, inserting exactly one fresh empty Unreleased above it.
+Commit `CHANGELOG.md` with the version surfaces before tagging. Cut Release
+performs this preparation and stages the changelog before its gates/commit/tag.
+Historical entries are not rewritten. Notes exclude the version heading and
+separator blank lines; authored interior Markdown, trailing spaces, fences,
+quotes, dollar signs and Unicode are preserved, with CRLF normalized to LF and
+one final LF in the artifact. Copy is passed through files, never shell text.
+
+Re-running preparation for the same version preserves the original stamp/date
+and produces identical notes, provided the target is nonempty and Unreleased
+is empty. A stamped target plus newly authored Unreleased is ambiguous and is
+refused without edits: review which release the new copy belongs to first.
+Each file replacement is atomic, not a two-file transaction. If a run stops
+after stamping but before writing notes, rerun the same preparation to recover
+the artifact; do not duplicate or move the stamped text manually.
+
+For an immutable tagged checkout, extract without stamping:
+
+```sh
+uv run python -m omh.cli release notes --version "$VERSION" \
+  --repo-root "$PWD" --notes-file "$stage/release-notes.md" --json
+uv run python -m omh.cli release evidence-bundle --version "$VERSION" --write \
+  --repo-root "$PWD" --notes-file "$stage/release-notes.md" --json
+```
+
+New publication evidence requires notes matching that exact source section.
+The optional closed `release_notes` object in v2 evidence records
+`schema_version: omh_release_notes/v1`, `path`, `version`, `sha256` and
+`byte_length`, and is included in the input-manifest digest. `path` is only the
+resolved notes basename, relative to its parent staging directory; absolute
+paths and traversal are not publication identity. Verify a saved bundle with
+its same `--notes-file` (and `--artifact` when a wheel was bound).
+
+Legacy v2 evidence still verifies its old source/artifact bindings, but reports
+`notes_binding: not_recorded` and `publication_ready: false`; local gate status
+`ready` alone never authorizes publication. Regenerate notes and evidence from
+the **same immutable tag** before attempting resume. If that historical tag
+has no authored version section, it cannot meet the new contract: do not
+backfill its GitHub body or move the tag as part of recovery. Review a new
+release instead. Rolling back this feature means reverting the tooling and
+workflow together; retain stamped entries and original evidence, and do not
+reinterpret notes-bound bundles with an older verifier as notes-verified.
+
+Distribution Release uses `gh release create --notes-file`, checks an existing
+release's decoded body **before any upload**, and checks again after creation
+or resume. Authentication/network errors cannot select create; absence needs
+repository access plus a structured release-endpoint 404. Body drift stops the
+run without `gh release edit`, uploads or downstream publication. Investigate
+the source/tag/artifact and remote body; resume never silently repairs either.
+For an explicitly fetched `gh release view --json body` file, local verification
+is exact (no trimming):
+
+```sh
+uv run python -m omh.cli release notes-verify --notes-file "$stage/release-notes.md" \
+  --body-json "$stage/body.json" --json
+```
+
+Exit 0 means matching, 1 means body mismatch, and 2 means invalid input.
+Preparation/extraction also return 2 for invalid input. Local QA exercises real
+CLI commands and the workflow shell with a process-level `gh` fixture via
+`tools/qa/seven_issues_release.py --scenario local --output-dir <new-directory>`;
+it is not GitHub publication evidence. Remove the caller-owned staging directory
+when done; the runner removes only its own scratch homes and reaps its processes.
+
 ## Required Checks
 
 Run before tagging:

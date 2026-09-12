@@ -111,7 +111,8 @@ class ReleaseRevisionBindingContractTests(unittest.TestCase):
         self.assertEqual(identity["tree_sha"], TREE)
         self.assertIs(identity["dirty"], False)
         self.assertEqual(identity["dirty_file_count"], 0)
-        self.assertTrue(payload["publication_ready"])
+        # Source-only v2 evidence remains inspectable, not publication evidence.
+        self.assertFalse(payload["publication_ready"])
         self.assertEqual(payload["status"], "ready")
         manifest = identity["input_manifest"]
         self.assertEqual(manifest["schema_version"], "omh_release_input_manifest/v1")
@@ -437,7 +438,7 @@ class ReleaseRevisionBindingCliContractTests(unittest.TestCase):
             written = json.loads(stdout)
             self.assertEqual(written["schema_version"], "omh_release_evidence_bundle/v2")
             self.assertEqual(written["source_identity"]["origin"], "git_checkout")
-            self.assertTrue(written["publication_ready"])
+            self.assertFalse(written["publication_ready"])
 
             status, stdout, stderr = run_cli(
                 base + ["release", "evidence-bundle", "--verify", "--repo-root", str(repo), "--json"],

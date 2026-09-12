@@ -10,6 +10,7 @@ import subprocess
 from typing import Any, Callable, Mapping
 
 from ..system.hashutil import sha256_file
+from .release_notes import NotesMetadata
 
 RELEASE_EVIDENCE_BUNDLE_SCHEMA_V2 = "omh_release_evidence_bundle/v2"
 RELEASE_SOURCE_IDENTITY_SCHEMA = "omh_release_source_identity/v1"
@@ -118,6 +119,7 @@ def build_input_manifest(
     source_identity: Mapping[str, object],
     paths: Any = None,
     artifact: str | Path | None = None,
+    release_notes: NotesMetadata | None = None,
 ) -> dict[str, object]:
     """Build the deterministic manifest of the inputs the evidence depends on.
 
@@ -168,6 +170,8 @@ def build_input_manifest(
         },
         "artifact": artifact_entry,
     }
+    if release_notes is not None:
+        manifest["release_notes"] = release_notes
     manifest["digest"] = _canonical_digest(manifest)
     return manifest
 
