@@ -156,7 +156,7 @@ class _Scenario:
                                       "evaluation_context": {"experiment_reference_state": "resolved", "baseline_exposure_state": "observed"}})
         self.check("configuration_not_exposure", result["actual_exposure_count"] == 0 and result["delivery_count"] == 7
                    and result["disposition"] == "insufficient_data"
-                   and result["evidence_reason_codes"] == ["exposure_evidence_missing", "exposure_absent"])
+                   and result["evidence_reason_codes"] == ["exposure_evidence_missing", "exposure_absent", "configuration_identity_missing"])
 
     def promotion(self) -> None:
         for approved in (False, True):
@@ -189,7 +189,7 @@ class _Scenario:
                                             ("unknown", "observed", "experiment_reference_unknown")):
             result = self.cli("evaluate", {"experiment": experiment, "readout": readout,
                                           "evaluation_context": {"experiment_reference_state": reference, "baseline_exposure_state": baseline}})
-            self.check(reason, result["evidence_reason_codes"] == ["exposure_evidence_missing", reason]
+            self.check(reason, result["evidence_reason_codes"] == ["exposure_evidence_missing", reason, "configuration_identity_missing"]
                        and result["blocked"] is True
                        and result["disposition"] == "insufficient_data" and result["interpretation_state"] == "HOLD")
         _ = self.cli("evaluate", {"experiment": experiment, "readout": readout, "evaluation_context": {
@@ -220,7 +220,8 @@ class _Scenario:
     def exposure(self) -> None:
         from test_lifecycle_growth_exposure import exposure_inputs
 
-        full = _record(exposure_inputs())
+        from _lifecycle_configuration import bind
+        full = _record(bind(exposure_inputs()))
         observed = self.cli("evaluate", full)
         self.check("observed_expansion", observed["disposition"] == "ship" and observed["blocked"] is False
                    and observed["populations"] == {"eligible": 10, "assigned": 8, "attempted": 8, "reached": 8, "converted": 1})

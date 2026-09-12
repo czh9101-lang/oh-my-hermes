@@ -118,7 +118,9 @@ class AnalysisRunStateTests(unittest.TestCase):
         self.assertEqual(result["runtime_days_observed"], 14)
         self.assertNotIn("minimum runtime has not elapsed", result["artifact_errors"])
         self.assertEqual(result["analysis_run_state"], "queued")
-        self.assertEqual(result["disposition"], "review")
+        self.assertEqual(result["disposition"], "insufficient_data")
+        from _lifecycle_configuration import sequence
+        self.assertIn("configuration_identity_missing", sequence(result["evidence_reason_codes"]))
 
     def test_given_a_guardrail_breach_when_analysis_is_in_flight_then_rollback_still_outranks_it(self) -> None:
         result = readout_lifecycle_growth(_readout(rollback_state="triggered", analysis_status=_status_input_for("running")))
@@ -289,7 +291,8 @@ class AnalysisReadinessTests(unittest.TestCase):
     def test_given_a_completed_analysis_on_a_shipping_readout_when_prepared_then_launch_stays_ready(self) -> None:
         from test_lifecycle_growth_exposure import exposure_inputs
         artifacts = _launch_artifacts()
-        artifacts.update(exposure_inputs())
+        from _lifecycle_configuration import bind
+        artifacts.update(bind(exposure_inputs()))
 
         readiness = prepare_lifecycle_growth(artifacts)
 

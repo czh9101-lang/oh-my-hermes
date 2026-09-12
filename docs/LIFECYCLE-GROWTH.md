@@ -144,7 +144,8 @@ overlap; it neither adds a person to an audience nor starts a journey.
 
 `readout_lifecycle_growth` derives `ship`, `rollback`, `review`, or
 `insufficient_data`. Legacy readout-only input is readable but insufficient to
-ship. With experiment and exposure evidence, it uses the same evaluator, requiring
+ship. With experiment, exposure evidence and a reconciled configuration companion,
+it uses the same evaluator, requiring
 non-zero eligible/displayed/outcome stages,
 valid actual-exposure/runtime/causal references, and a valid causal method
 before `ship`. `evaluate_lifecycle_growth` also compares observed runtime days
@@ -251,6 +252,141 @@ analysis-run reference. Already supplied channel failures still hold; removing
 a readout cannot hide them. All checks remain local metadata interpretation:
 neither supplying a reference nor receiving `READY` proves provider observation
 or authorizes external execution.
+
+## Immutable launch configuration (issue #1503)
+
+Ask Hermes to bind the readout to the configuration observed at launch before
+recommending expansion. The following APIs and CLI are for adapters, wrappers
+and operators, equally for every selected executor. They do not read a provider,
+launch an experiment, resolve an audience, or perform a connector mutation.
+
+`omh.workflows.lifecycle_growth_configuration` provides
+`build_configuration_binding(payload)` and `review_configuration(payload)`.
+`lifecycle_growth_configuration_identity.build_configuration_identity(artifacts,
+metadata)` and `lifecycle_growth_configuration_values.configuration_digest(artifacts)`
+provide the identity and canonical digest independently. All are pure local
+contracts. The six original v1 artifacts remain byte-compatible and readable.
+
+### Closed identity and canonical assignment fields
+
+`lifecycle_growth_configuration_identity/v1` has exactly these keys:
+
+| Keys | Contract |
+| --- | --- |
+| `schema_version`, `lifecycle_growth_id` | Schema above and the experiment's safe opaque lifecycle reference. |
+| `identity_state` | `observed`, `unknown`, `drifted`, or `legacy`. |
+| `configuration_ref`, `revision_ref` | Nullable safe opaque handles. A mutable handle alone proves nothing. |
+| `canonical_schema`, `digest_algorithm` | `lifecycle_assignment_configuration/v1`, `sha256`. |
+| `configuration_digest` | Null or lowercase `sha256:` plus 64 hexadecimal characters. Builders compute the reviewed expected digest even before observation. |
+| `observed_at` | Null or UTC RFC3339 with `Z`, seconds and optional 1-6 fractional digits. |
+| `evidence_refs` | At most eight safe references; never provider payloads, condition values or people. |
+| `claim_boundary` | Fixed local-reconciliation boundary supplied by the builder. |
+
+Observed and drifted identities require a digest, observation time and nonempty
+evidence references. Unknown and legacy identities cannot carry an observation
+time or observation references. An adapter must identify immutable condition
+definitions through an observed provider revision, or version/digest-qualified
+safe condition references (suffix `_vN` or `sha256_<64 hex>`). The adapter is
+responsible for those references really being immutable; OMH does not fetch or
+attest them. Unresolved conditions without that binding, unknown evaluation
+semantics, null evaluation/bucketing domains, or unknown holdout make the
+identity unknown even if the adapter requests `observed`.
+
+Canonical assignment JSON includes plan treatment/control, assignment/exposure
+units and event references, sticky policy, holdout state/rationale, and audience
+evaluation semantics, ordered rules and holdout exclusion share. Every rule
+includes its rule reference, evaluation domain, bucketing domain, person/group/
+device subject, ordered condition references, rollout share, result kind and
+variant reference. There is no provider-specific boolean/default normalization.
+Required references use existing metadata-reference normalization. Finite shares
+become minimal decimal strings (`50` equals `50.0`; negative zero equals zero);
+booleans and nonfinite values are invalid. Object keys sort, UTF-8 JSON is compact,
+arrays retain order, and null/unknown remain distinct from supplied values.
+Timestamps, evidence references, reachability, verdicts, status and boundary prose
+are excluded. Changing this field set or normalization requires a new canonical
+schema version. Actual artifact hashes are separate: they cover the complete
+supplied JSON, including its nested analysis status, not just assignment fields.
+
+### Adapter input and immutable first-observation seal
+
+The `configuration` operation accepts exactly `artifacts`, `metadata`,
+`observations`, and `predecessor_seal`:
+
+- `artifacts` contains `experiment` and `audience_review` for preparation; at
+  evaluation it additionally contains `exposure_evidence` and `readout`.
+  `analysis_status` is taken from the actual readout, never an independent copy.
+- `metadata` contains exactly `identity_state`, `configuration_ref`, `revision_ref`,
+  `observed_at`, `evidence_refs`. The builder computes the digest from artifacts.
+- `observations` contains at most eight caller-supplied records with exactly
+  `kind` (`launch` or `exposure`), `observed_at`, `evidence_ref`,
+  `configuration_digest`, `revision_ref`. The connector owns actual observation;
+  a prepared record or digest equality cannot substitute for it.
+- `predecessor_seal` is null on the first call, then the exact returned seal.
+  The seal has `schema_version=lifecycle_growth_configuration_seal/v1`,
+  `lifecycle_growth_id`, and one `observation`. The first supplied receipt wins,
+  ordered by parsed `(observed_at, evidence_ref)` if multiple arrive together.
+  Later calls never replace the predecessor. Earlier contradictory arrivals
+  require `configuration_seal_conflict`; later differences require
+  `configuration_drift`. Adapters must retain and resupply the predecessor:
+  this stateless contract cannot discover a deliberately omitted receipt.
+
+The returned `lifecycle_growth_configuration_binding/v1` has exactly
+`schema_version`, `identity`, `seal`, `observations`, `bindings`, `claim_boundary`.
+`bindings` has precisely the two launch slots, or all five evaluation slots:
+`experiment`, `audience_review`, `exposure_evidence`, `analysis_status`, `readout`.
+Each carries `artifact_digest`, `configuration_digest`, `revision_ref`,
+`evidence_refs`. The first observed seal, current observed identity, every
+asserted configuration/revision and every actual artifact hash must reconcile.
+An observed identity's time/evidence reference must correspond to a supplied
+receipt or seal. Copying five matching strings without binding actual artifacts
+is insufficient. Caller assertions still are not authenticated provider evidence.
+
+Supply the companion under `configuration_binding` and the audience review under
+`audience_review` to `evaluate`, wrapped `readout`, and `prepare` with a readout.
+Both companion schemas are accepted by `validate`. Evaluation envelopes are
+closed: only experiment/readout, exposure evidence, audience review, configuration
+binding and optional evaluation context are accepted. Unknown input keys or
+malformed configuration companions exit CLI 2. A valid HOLD exits 0 with
+`blocked=true`, because local evaluation succeeded but promotion did not.
+
+### Decision precedence and compatibility
+
+An independently valid observed rollback wins, including with missing/drifted
+configuration. Malformed readouts cannot manufacture rollback. Next come
+structural errors, then configuration reconciliation, then existing analysis,
+runtime, exposure, approval and causal gates. Only a matching observed identity
+can reach `ship` and `configuration_integrity=true`.
+
+| Reason | New evaluation outcome without an independent rollback |
+| --- | --- |
+| `configuration_identity_missing`, `configuration_identity_unknown`, `configuration_identity_legacy` | `HOLD/insufficient_data` |
+| `configuration_drift`, `configuration_binding_mismatch`, `configuration_seal_conflict` | `HOLD/review` (structural errors still take precedence) |
+
+Legacy readout-only inspection remains readable and explicitly reports
+`configuration_identity_legacy` and `configuration_integrity=false`. Existing
+six-artifact validators do not demand migration. First-launch preparation can
+carry an unknown observed identity plus a reviewed expected digest, without a
+fictional readout or launch receipt. Already supplied conflicts still hold.
+Preparation always reports `configuration_integrity=false`; readiness is neither
+an observed launch-integrity claim nor permission to execute.
+
+### Reproducible local scenarios (operator QA)
+
+```sh
+uv run python tools/qa/seven_issues_lifecycle.py --issue 1503 --output-dir "$TMP/lifecycle"
+uv run python -m omh.cli runtime workflow-artifact lifecycle-growth configuration --input "$TMP/lifecycle/configuration-input.json"
+uv run python -m omh.cli runtime workflow-artifact lifecycle-growth prepare --input "$TMP/lifecycle/prepare.json"
+uv run python -m omh.cli runtime workflow-artifact lifecycle-growth evaluate --input "$TMP/lifecycle/matching.json"
+uv run python -m omh.cli runtime workflow-artifact lifecycle-growth readout --input "$TMP/lifecycle/drift-share.json"
+```
+
+Use an invocation-owned temporary directory and isolated OMH/Hermes homes. The
+runner retains caller-owned fixture/output files and removes only its internal
+scratch home, reporting a cleanup receipt. Its committed synthetic base fixture
+is `tests/fixtures/lifecycle_growth_configuration/base.json`; it uses public
+builders to produce a positive observed chain, two sealed identities,
+rule/share drift, analysis mismatch, unknown, rollback, legacy and malformed
+inputs. These scenarios prove real local CLI behavior, not provider execution.
 
 ## Upstream review (issue #1399)
 

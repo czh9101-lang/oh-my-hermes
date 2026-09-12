@@ -74,7 +74,10 @@ def exposure_inputs() -> dict[str, dict[str, object]]:
 
 
 def evaluate(payload: dict[str, dict[str, object]]) -> dict[str, object]:
-    return evaluate_lifecycle_growth(payload["experiment"], payload["readout"], exposure_evidence=payload["exposure_evidence"])
+    from _lifecycle_configuration import bind
+    observed = bind(payload)
+    return evaluate_lifecycle_growth(payload["experiment"], payload["readout"], exposure_evidence=payload["exposure_evidence"],
+        audience_review=observed["audience_review"], configuration_binding=observed["configuration_binding"])
 
 
 class LifecycleGrowthExposureTests(unittest.TestCase):
@@ -249,6 +252,9 @@ class LifecycleGrowthExposureTests(unittest.TestCase):
                 if mode == "rollback":
                     payload["readout"].update(guardrail_state="failed", disposition="rollback")
                     del payload["exposure_evidence"]
+                if "exposure_evidence" in payload:
+                    from _lifecycle_configuration import bind
+                    payload = bind(payload)
                 before = deepcopy(payload)
                 result = subprocess.run([*cli, "runtime", "workflow-artifact", "lifecycle-growth", operation, "--input", "-"],
                     cwd=root, env={**os.environ, "PYTHONPATH": str(root / "tests"), "PYTHONDONTWRITEBYTECODE": "1",

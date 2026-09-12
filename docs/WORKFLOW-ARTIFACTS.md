@@ -19,7 +19,7 @@ Each workflow has its own contract page, linked from the first column.
 | Workflow | Operations | Explicit durable operation |
 | --- | --- | --- |
 | [`decision-prototype`](DECISION-PROTOTYPES.md) | `prepare`, `validate`, `observe`, `receipt`, `handoff`, `persist` | `persist` writes the validated existing prototype artifact store. |
-| [`lifecycle-growth`](LIFECYCLE-GROWTH.md) | `build`, `prepare`, `validate`, `evaluate`, `readout`, `audience`, `promote`, `graduate` | `build` derives the five prepared artifacts from semantic fields; returned JSON is the durable serializable artifact. |
+| [`lifecycle-growth`](LIFECYCLE-GROWTH.md) | `build`, `prepare`, `validate`, `evaluate`, `readout`, `audience`, `promote`, `graduate`, `configuration` | `build` derives the five prepared artifacts from semantic fields; returned JSON is the durable serializable artifact. |
 | [`product-discovery-validation`](PRODUCT-DISCOVERY-VALIDATION.md) | `build`, `prepare`, `validate`, `audience-gate`, `evaluate`, `handoff`, `append` | `build` derives the five pre-decision artifacts and their hashes; `append` uses the existing append-only discovery store. |
 | [`sales-pipeline-review`](SALES-PIPELINE-REVIEW.md) | `prepare`, `validate`, `evaluate`, `handoff` | None; returned JSON is the durable serializable artifact. |
 
@@ -41,7 +41,16 @@ Preparation does not write state. Persist only when the producer already owns a 
 
 The new operations return separate `prepared_not_observed` records, not additions
 inside the six closed lifecycle artifact schemas. `validate` preserves those
-original artifact shapes and also accepts the separate exposure-evidence companion.
+original artifact shapes and also accepts the separate exposure-evidence and
+configuration identity/binding companions. `configuration` accepts exactly
+`artifacts`, `metadata`, `observations`, and `predecessor_seal`; the complete
+[immutable configuration contract](LIFECYCLE-GROWTH.md#immutable-launch-configuration-issue-1503)
+defines their closed fields, canonicalization and caller-carried seal. Forward
+`configuration_binding` and `audience_review` alongside actual experiment,
+exposure evidence and readout to evaluate/prepare-with-readout/wrapped-readout.
+Legacy artifacts remain readable but cannot prove configuration integrity or
+justify a fresh ship decision. First-launch preparation needs no fictional
+readout; independent rollback still wins over drift.
 No operation launches treatment, carries
 configuration into a provider, or deletes a gate; `READY` is local preparation,
 not observed execution. These contracts are provider- and executor-neutral.

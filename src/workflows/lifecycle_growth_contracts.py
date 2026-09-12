@@ -1,82 +1,44 @@
+"""Lifecycle launch preparation and backwards-compatible public builder facade."""
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from .lifecycle_growth_analysis import (
-    IN_FLIGHT_ANALYSIS_STATES,
-    analysis_cancellation_hold_reasons,
-    analysis_run_state,
-    analysis_status_field,
-    build_analysis_cancellation,
-    build_analysis_status,
-    route_lifecycle_analysis_request,
-    select_latest_analysis_run,
+    IN_FLIGHT_ANALYSIS_STATES, analysis_cancellation_hold_reasons, analysis_run_state,
+    build_analysis_cancellation, build_analysis_status, route_lifecycle_analysis_request, select_latest_analysis_run,
 )
 from .lifecycle_growth_artifacts import (
-    build_audience_trigger_policy,
-    build_growth_experiment_plan,
-    build_growth_handoff_disposition,
-    build_lifecycle_growth_brief,
-    build_lifecycle_safety_policy,
-    validate_audience,
-    validate_brief,
-    validate_experiment,
-    validate_handoff,
-    validate_safety,
+    build_audience_trigger_policy, build_growth_experiment_plan, build_growth_handoff_disposition,
+    build_lifecycle_growth_brief, build_lifecycle_safety_policy,
 )
-from .lifecycle_growth_launch import lifecycle_growth_evaluation_context
-from .lifecycle_growth_exposure import is_exposure_evidence, review_exposure_evidence, validate_exposure_evidence
-from .lifecycle_growth_readout import (
-    build_growth_measurement_readout,
-    derive_readout_disposition,
-    validate_readout,
+from .lifecycle_growth_configuration import review_configuration
+from .lifecycle_growth_evaluation import (
+    evaluate_lifecycle_growth, readout_lifecycle_growth,
 )
+from .lifecycle_growth_exposure import review_exposure_evidence
+from .lifecycle_growth_readout import build_growth_measurement_readout
 from .lifecycle_growth_safety import (
-    build_step_outcome,
-    build_throttle_grouping,
-    derive_throttle_group_identity,
-    route_lifecycle_workflow_mutation,
-    workflow_mutation_hold_reasons,
+    build_step_outcome, build_throttle_grouping, derive_throttle_group_identity,
+    route_lifecycle_workflow_mutation, workflow_mutation_hold_reasons,
 )
-from .lifecycle_growth_values import artifact_shape_errors, metadata_ref, metadata_refs
-
+from .lifecycle_growth_validation import (
+    expected_errors as _expected_errors, experiment_hold_reasons, validate_lifecycle_growth_artifact,
+)
+from .lifecycle_growth_values import metadata_ref, metadata_refs
 
 LIFECYCLE_GROWTH_READINESS_SCHEMA_VERSION: Final = "lifecycle_growth_readiness/v1"
 LIFECYCLE_GROWTH_READOUT_SCHEMA_VERSION: Final = "lifecycle_growth_readout/v1"
 LIFECYCLE_GROWTH_ENTRY_SCHEMA_VERSION: Final = "lifecycle_growth_entry/v1"
 _LAUNCH_SCHEMAS: Final = {
-    "brief": "lifecycle_growth_brief/v1",
-    "audience": "audience_trigger_policy/v1",
-    "safety": "lifecycle_safety_policy/v1",
-    "experiment": "growth_experiment_plan/v1",
+    "brief": "lifecycle_growth_brief/v1", "audience": "audience_trigger_policy/v1",
+    "safety": "lifecycle_safety_policy/v1", "experiment": "growth_experiment_plan/v1",
     "handoff": "growth_handoff_disposition/v1",
 }
 
 
-def validate_lifecycle_growth_artifact(record: object) -> list[str]:
-    """Return structural errors for one versioned lifecycle-growth artifact."""
-    if is_exposure_evidence(record):
-        return validate_exposure_evidence(record)
-    schema, errors = artifact_shape_errors(record)
-    if not schema or not isinstance(record, Mapping):
-        return errors
-    validators = {
-        "lifecycle_growth_brief/v1": validate_brief,
-        "audience_trigger_policy/v1": validate_audience,
-        "lifecycle_safety_policy/v1": validate_safety,
-        "growth_experiment_plan/v1": validate_experiment,
-        "growth_measurement_readout/v1": validate_readout,
-        "growth_handoff_disposition/v1": validate_handoff,
-    }
-    validator = validators.get(schema)
-    if validator is None:
-        return errors + ["lifecycle growth artifact schema_version is unsupported"]
-    return errors + validator(record)
-
-
 def prepare_lifecycle_growth(artifacts: Mapping[str, Mapping[str, Any]]) -> dict[str, object]:
-    """Prepare an approved first launch; an optional observed readout gates an existing run."""
+    """Prepare first launch without a fictional readout; existing runs use all gates."""
     records, errors = _launch_records(artifacts)
     readout = artifacts.get("readout")
     if isinstance(readout, Mapping):
@@ -93,7 +55,7 @@ def prepare_lifecycle_growth(artifacts: Mapping[str, Mapping[str, Any]]) -> dict
     _require_same_lifecycle_growth_id(records, errors)
     _hold_for_safety(records["safety"], errors)
     _hold_for_audience(records["audience"], errors)
-    _hold_for_experiment(records["experiment"], errors)
+    errors.extend(experiment_hold_reasons(records["experiment"]))
     _hold_for_handoff(records["handoff"], errors)
     evidence = artifacts.get("exposure_evidence")
     errors.extend(review_exposure_evidence(evidence, records["experiment"], records.get("readout")).reasons)
@@ -103,103 +65,20 @@ def prepare_lifecycle_growth(artifacts: Mapping[str, Mapping[str, Any]]) -> dict
         if evidence.get("channel_refs") != records["brief"].get("available_surface_refs"):
             errors.append("channel_scope_mismatch")
     records["exposure_evidence"] = evidence if isinstance(evidence, Mapping) else {}
+    for key in ("configuration_binding", "audience_review", "evaluation_context"):
+        if key in artifacts:
+            records[key] = artifacts[key]
+    binding = artifacts.get("configuration_binding")
+    if binding is not None and readout is None:
+        errors.extend(review_configuration(artifacts, evaluation=False))
     _hold_for_analysis(records, errors)
-    return _readiness(errors)
-
-
-def evaluate_lifecycle_growth(
-    experiment: Mapping[str, Any], readout: Mapping[str, Any], *, evaluation_context: object = None,
-    exposure_evidence: object = None,
-) -> dict[str, object]:
-    """Require audience/exposure observations before recommending expansion."""
-    errors = _expected_errors(experiment, "growth_experiment_plan/v1", "experiment")
-    errors.extend(_expected_errors(readout, "growth_measurement_readout/v1", "readout"))
-    if not errors and experiment.get("lifecycle_growth_id") != readout.get("lifecycle_growth_id"):
-        errors.append("experiment and readout lifecycle_growth_id differ")
-    result = _readout_lifecycle_growth(readout, experiment, exposure_evidence)
-    _hold_for_experiment(experiment, errors)
-    observed_days = readout.get("runtime_days_observed")
-    minimum_days = experiment.get("minimum_runtime_days")
-    if isinstance(observed_days, int) and isinstance(minimum_days, int) and observed_days < minimum_days:
-        errors.append("minimum runtime has not elapsed")
-    if errors:
-        if result["disposition"] != "rollback":
-            result["disposition"] = "insufficient_data"
-        result["interpretation_state"] = "HOLD"
-    context = lifecycle_growth_evaluation_context(
-        evaluation_context, displayed_count=max(0, _count(readout, "displayed_count")),
-    )
-    reasons = _errors(result["evidence_reason_codes"]) + _errors(context.get("evidence_reason_codes", []))
-    if context.get("evidence_reason_codes") and result["disposition"] != "rollback":
-        result.update(disposition="insufficient_data", interpretation_state="HOLD")
-    return {
-        "schema_version": LIFECYCLE_GROWTH_READOUT_SCHEMA_VERSION,
-        "interpretation_state": result["interpretation_state"],
-        "disposition": result["disposition"],
-        "assignment_unit": experiment.get("assignment_unit", ""),
-        "exposure_unit": experiment.get("exposure_unit", ""),
-        "actual_exposure_count": result["actual_exposure_count"],
-        "delivery_count": result["delivery_count"],
-        "populations": result["populations"],
-        "channels": result["channels"],
-        "runtime_days_observed": result["runtime_days_observed"],
-        "analysis_run_state": result["analysis_run_state"],
-        "analysis_observed_at": result["analysis_observed_at"],
-        "analysis_delay_state": result["analysis_delay_state"],
-        "artifact_errors": _errors(result.get("artifact_errors")) + errors,
-        "claim_boundary": "Assignment is not exposure; evaluation is derived from bounded caller-supplied metadata only.",
-        "evidence_reason_codes": reasons,
-        "blocked": bool(errors or reasons or result["interpretation_state"] == "HOLD"),
-    }
-
-
-def readout_lifecycle_growth(
-    readout: Mapping[str, Any], *, experiment: Mapping[str, object] | None = None,
-    exposure_evidence: object = None,
-) -> dict[str, object]:
-    """Read old artifacts conservatively, or evaluate a complete expansion input."""
-    if experiment is not None:
-        return evaluate_lifecycle_growth(experiment, readout, exposure_evidence=exposure_evidence)
-    return _readout_lifecycle_growth(readout, None, exposure_evidence)
-
-
-def _readout_lifecycle_growth(
-    readout: Mapping[str, object], experiment: Mapping[str, object] | None, exposure_evidence: object,
-) -> dict[str, object]:
-    """Derive a readout disposition without claiming provider observation occurred."""
-    errors = _expected_errors(readout, "growth_measurement_readout/v1", "readout")
-    disposition = derive_readout_disposition(readout)
-    exposure = review_exposure_evidence(exposure_evidence, experiment, readout)
-    reasons = list(exposure.reasons)
-    if experiment is None:
-        reasons.append("experiment_missing")
-    if reasons and disposition == "ship":
-        disposition = "review" if "channel_partial_delivery" in reasons else "insufficient_data"
-    return {
-        "schema_version": LIFECYCLE_GROWTH_READOUT_SCHEMA_VERSION,
-        "interpretation_state": "READY" if not errors and disposition == "ship" else "HOLD",
-        "disposition": disposition if not errors else "insufficient_data",
-        "evidence_reason_codes": reasons,
-        "blocked": bool(errors or reasons or disposition != "ship"),
-        "populations": {"eligible": _count(readout, "eligible_count"), "assigned": exposure.assigned_count,
-                        "attempted": _count(readout, "attempted_count"), "reached": _count(readout, "displayed_count"),
-                        "converted": _count(readout, "outcome_count")},
-        "channels": list(exposure.channels),
-        "actual_exposure_count": _count(readout, "displayed_count"),
-        "delivery_count": _count(readout, "delivered_count"),
-        "action_count": _count(readout, "acted_count"),
-        "outcome_count": _count(readout, "outcome_count"),
-        "runtime_days_observed": _count(readout, "runtime_days_observed"),
-        "analysis_run_state": analysis_run_state(readout),
-        "analysis_observed_at": analysis_status_field(readout, "observed_at"),
-        "analysis_delay_state": analysis_status_field(readout, "delay_state"),
-        "artifact_errors": errors,
-        "claim_boundary": "This derived readout is not provider, delivery, display, outcome, or causal evidence. Analysis-run state and its observation time are reported as the provider observed them, and elapsed time never restates them.",
-    }
+    result = _readiness(errors)
+    result["configuration_integrity"] = False  # Preparation is never observed launch integrity.
+    return result
 
 
 def evaluate_lifecycle_growth_entry(audience: Mapping[str, Any], *, event_id_ref: str, prior_event_id_refs: Sequence[str], prior_exit_observed: bool, active_intervention_refs: Sequence[str]) -> dict[str, object]:
-    """Apply idempotency, re-entry, and overlap policy to caller-supplied metadata only."""
+    """Apply idempotency, re-entry and overlap to caller-supplied metadata only."""
     event_id = metadata_ref(event_id_ref, field="event_id_ref")
     prior_ids = metadata_refs(prior_event_id_refs, field="prior_event_id_refs", required=False)
     active = metadata_refs(active_intervention_refs, field="active_intervention_refs", required=False)
@@ -214,10 +93,8 @@ def evaluate_lifecycle_growth_entry(audience: Mapping[str, Any], *, event_id_ref
     if active:
         reasons.append("overlapping intervention is active")
     return {
-        "schema_version": LIFECYCLE_GROWTH_ENTRY_SCHEMA_VERSION,
-        "verdict": "HOLD" if reasons else "ACCEPT",
-        "event_id_ref": event_id,
-        "idempotency_key_ref": audience.get("idempotency_key_ref", ""),
+        "schema_version": LIFECYCLE_GROWTH_ENTRY_SCHEMA_VERSION, "verdict": "HOLD" if reasons else "ACCEPT",
+        "event_id_ref": event_id, "idempotency_key_ref": audience.get("idempotency_key_ref", ""),
         "reason_codes": reasons,
         "claim_boundary": "This entry decision is metadata validation only; it does not enter an audience or execute a journey.",
     }
@@ -234,13 +111,6 @@ def _launch_records(artifacts: Mapping[str, Mapping[str, Any]]) -> tuple[dict[st
         errors.extend(_expected_errors(record, schema, name))
         records[name] = record
     return records, errors
-
-
-def _expected_errors(record: Mapping[str, Any], schema: str, label: str) -> list[str]:
-    if record.get("schema_version") != schema:
-        return [f"{label} artifact has the wrong schema"]
-    errors = validate_lifecycle_growth_artifact(record)
-    return [f"{label} artifact is invalid"] if errors else []
 
 
 def _require_same_lifecycle_growth_id(records: Mapping[str, Mapping[str, Any]], errors: list[str]) -> None:
@@ -263,29 +133,19 @@ def _hold_for_audience(audience: Mapping[str, Any], errors: list[str]) -> None:
         errors.append("canonical event semantics are unknown")
 
 
-def _hold_for_experiment(experiment: Mapping[str, Any], errors: list[str]) -> None:
-    if experiment.get("approval_state") != "approved":
-        errors.append("human approval is absent")
-    if experiment.get("holdout_state") != "preserved":
-        errors.append("holdout is not preserved")
-    if experiment.get("data_health_state") != "healthy":
-        errors.append("experiment data health is not healthy")
-
-
 def _hold_for_analysis(records: Mapping[str, Mapping[str, Any]], errors: list[str]) -> None:
-    """Hold on an unfinished analysis, and on a cancellation the run does not support.
-
-    A supplied readout stands for an existing run. While its analysis is queued
-    or running, preparing another one duplicates work that is already in
-    flight, so readiness holds until the caller reconciles it. The cancellation
-    cross-check is here rather than in either validator because it is the only
-    place that sees the observed run state and the prepared handoff together.
-    """
+    """Expansion and cancellation must reconcile the supplied existing run."""
     readout = records.get("readout")
     if readout is None:
         return
-    if evaluate_lifecycle_growth(records["experiment"], readout, exposure_evidence=records.get("exposure_evidence"))["interpretation_state"] == "HOLD":
+    result = evaluate_lifecycle_growth(records["experiment"], readout,
+        exposure_evidence=records.get("exposure_evidence"), audience_review=records.get("audience_review"),
+        configuration_binding=records.get("configuration_binding"), evaluation_context=records.get("evaluation_context"))
+    if result["interpretation_state"] == "HOLD":
         errors.append("observed readout interpretation is on hold")
+        reasons = result["evidence_reason_codes"]
+        if isinstance(reasons, list):
+            errors.extend(reason for reason in reasons if isinstance(reason, str))
     if analysis_run_state(readout) in IN_FLIGHT_ANALYSIS_STATES:
         errors.append("the latest analysis run is still in flight; reconcile it before preparing another")
     errors.extend(analysis_cancellation_hold_reasons(readout.get("analysis_status"), records["handoff"].get("analysis_cancellation")))
@@ -299,41 +159,18 @@ def _hold_for_handoff(handoff: Mapping[str, Any], errors: list[str]) -> None:
 def _readiness(hold_reasons: list[str]) -> dict[str, object]:
     return {
         "schema_version": LIFECYCLE_GROWTH_READINESS_SCHEMA_VERSION,
-        "verdict": "HOLD" if hold_reasons else "READY",
-        "launch_ready": not hold_reasons,
+        "verdict": "HOLD" if hold_reasons else "READY", "launch_ready": not hold_reasons,
         "hold_reasons": hold_reasons,
         "claim_boundary": "Readiness is a local validation result, not approval or external-effect evidence.",
     }
 
 
-def _errors(value: object) -> list[str]:
-    return value if isinstance(value, list) and all(isinstance(error, str) for error in value) else ["readout errors are invalid"]
-
-
-def _count(record: Mapping[str, Any], field: str) -> int:
-    value = record.get(field)
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
-
-
 __all__ = [
-    "analysis_cancellation_hold_reasons",
-    "build_analysis_cancellation",
-    "build_analysis_status",
-    "build_audience_trigger_policy",
-    "build_growth_experiment_plan",
-    "build_growth_handoff_disposition",
-    "build_growth_measurement_readout",
-    "build_lifecycle_growth_brief",
-    "build_lifecycle_safety_policy",
-    "build_step_outcome",
-    "build_throttle_grouping",
-    "derive_throttle_group_identity",
-    "evaluate_lifecycle_growth",
-    "evaluate_lifecycle_growth_entry",
-    "prepare_lifecycle_growth",
-    "readout_lifecycle_growth",
-    "route_lifecycle_analysis_request",
-    "route_lifecycle_workflow_mutation",
-    "select_latest_analysis_run",
-    "validate_lifecycle_growth_artifact",
+    "analysis_cancellation_hold_reasons", "build_analysis_cancellation", "build_analysis_status",
+    "build_audience_trigger_policy", "build_growth_experiment_plan", "build_growth_handoff_disposition",
+    "build_growth_measurement_readout", "build_lifecycle_growth_brief", "build_lifecycle_safety_policy",
+    "build_step_outcome", "build_throttle_grouping", "derive_throttle_group_identity",
+    "evaluate_lifecycle_growth", "evaluate_lifecycle_growth_entry", "prepare_lifecycle_growth",
+    "readout_lifecycle_growth", "route_lifecycle_analysis_request", "route_lifecycle_workflow_mutation",
+    "select_latest_analysis_run", "validate_lifecycle_growth_artifact",
 ]
