@@ -128,7 +128,10 @@ omh doctor
 ```
 
 ```sh
-# 모델을 온보딩하거나 모델 라우팅을 설정하려면 Hermes에서 이 스킬을 사용하세요:
+# 작업 카테고리별 모델 설정 (화살표: 카테고리, ←→ head 모델, -/+ effort);
+# Hermes TUI 안에서는 /omh-model이 같은 피커를 엽니다:
+omh model
+# 새 모델 패밀리를 온보딩하려면 Hermes에서 이 스킬을 사용하세요:
 /omh-model-setup
 ```
 
@@ -317,6 +320,9 @@ OMH 워크플로가 도는 동안 터미널이 보여주는 것:
 
 ## 권장 모델
 
+<p align="center">
+  <img src="assets/omh-model-tui.png" alt="Hermes Modern TUI의 /omh-model: 카테고리마다 head 모델, effort 바, 상태를 한 행으로 보여주고, 커서 행에는 좌우와 -/+ 핸들이 표시됩니다" width="820">
+</p>
 OMH에는 다음과 같이 편집 가능한 순서형 recommendation chain이 포함되어 있습니다. guided model setup은 사용자가 active라고 확인한 candidate만 기준으로 chain을 해석합니다. 그 결과는 준비된 routing config이며 provider availability, credential, dispatch, execution evidence가 아닙니다.
 
 | 카테고리 alias | 용도 | 편집 가능한 recommendation 순서 |
@@ -364,7 +370,7 @@ $ cat ~/.omh/routing/model-chains.json
 }
 ```
 
-현재 적용 중인 chain은 `omh model-chains show`로 확인할 수 있습니다. 파일을 직접 고치는 대신 명령으로 바꾸고 싶다면 `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.3-ultrafast:low"`처럼 실행하면 이 파일이 그대로 수정됩니다.
+현재 적용 중인 chain은 `omh model-chains show`로 확인할 수 있습니다. 파일을 직접 고치는 대신 바꾸고 싶다면 터미널에서 `omh model-chains`(또는 `omh model`)를 치면 화살표 피커가 열립니다 — 위아래로 카테고리, 좌우로 head 모델, `-`/`+`로 effort — 그리고 Modern TUI 안에서는 `/omh-model`이 같은 피커를 엽니다. 스크립트용 형태는 `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.3-ultrafast:low"`처럼 실행하면 이 파일이 그대로 수정됩니다.
 alias에 provider 전용 wire ID가 필요하면 `model_provider_routes/v1` 형식의 `~/.omh/routing/model-providers.json`에 한 번 매핑하세요. 이후 `set`, `status`, fallback, HUD가 alias/provider/wire model 전체 route를 표시합니다. OMH는 provider ID만 저장하며 credential은 저장하지 않습니다.
 
 Hermes에게 **모델을 설정해 줘**라고 요청해 검토하거나 변경할 수 있습니다. 이는 편집 가능한 선호이며 benchmark 결과가 아닙니다. 자세한 설정, fallback, provider, 소유권 규칙은 [Guided Model Setup](docs/INSTALLATION.md#guided-model-setup)을 참조하세요.

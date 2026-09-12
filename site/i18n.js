@@ -643,11 +643,17 @@ window.OMH_I18N = {
       ja: "その結果は準備されたルーティング設定であり、プロバイダの可用性・認証情報・ディスパッチ・実行の証拠ではありません。",
       zh: "其结果是准备好的路由配置，而非提供方可用性、凭据、派发或执行的证据。"
     },
+    "chain.shot.alt": {
+      en: "/omh-model in the Hermes Modern TUI: one row per category with its head model, effort bar and state; the cursor row shows the left/right and -/+ handles",
+      ko: "Hermes Modern TUI의 /omh-model: 카테고리마다 head 모델, effort 바, 상태를 한 행으로 보여주고, 커서 행에는 좌우와 -/+ 핸들이 표시됩니다",
+      ja: "Hermes Modern TUI の /omh-model: カテゴリごとに head モデル、effort バー、状態を 1 行で表示し、カーソル行には左右と -/+ のハンドルが出ます",
+      zh: "Hermes Modern TUI 中的 /omh-model：每个类别一行，显示 head 模型、effort 条和状态；光标行显示左右与 -/+ 手柄"
+    },
     "chain.edit": {
-      en: 'Every chain is yours to reorder. Edit <code>~/.omh/routing/model-chains.json</code>, then run <code>omh model-chains show</code> to print what is in effect. The Maestro lane — dispatched Claude Code and Codex units — has the same dial: <code>omh coding category-maestro interview</code>.',
-      ko: '모든 체인은 직접 순서를 바꿀 수 있습니다. <code>~/.omh/routing/model-chains.json</code>을 편집한 뒤 <code>omh model-chains show</code>로 현재 적용된 내용을 출력하세요. Maestro 레인 — 디스패치되는 Claude Code·Codex 유닛 — 에도 같은 다이얼이 있습니다: <code>omh coding category-maestro interview</code>.',
-      ja: 'どのチェーンも自分で並べ替えられます。<code>~/.omh/routing/model-chains.json</code> を編集し、<code>omh model-chains show</code> で現在有効な内容を出力してください。Maestro レーン — ディスパッチされる Claude Code・Codex ユニット — にも同じダイヤルがあります: <code>omh coding category-maestro interview</code>。',
-      zh: '每条链都可以由你重新排序。编辑 <code>~/.omh/routing/model-chains.json</code>，再运行 <code>omh model-chains show</code> 打印当前生效的配置。Maestro 通道——被派发的 Claude Code 与 Codex 单元——也有同样的旋钮：<code>omh coding category-maestro interview</code>。'
+      en: 'Every chain is yours to reorder. Bare <code>omh model-chains</code> (or <code>omh model</code>) opens an arrow-key picker on a terminal, and <code>/omh-model</code> opens the same one inside the Modern TUI; or edit <code>~/.omh/routing/model-chains.json</code> directly, then run <code>omh model-chains show</code> to print what is in effect. The Maestro lane — dispatched Claude Code and Codex units — has the same dial: <code>omh coding category-maestro interview</code>.',
+      ko: '모든 체인은 직접 순서를 바꿀 수 있습니다. 터미널에서 <code>omh model-chains</code>(또는 <code>omh model</code>)를 치면 화살표 피커가 열리고, Modern TUI 안에서는 <code>/omh-model</code>이 같은 피커를 엽니다. <code>~/.omh/routing/model-chains.json</code>을 직접 편집한 뒤 <code>omh model-chains show</code>로 현재 적용된 내용을 출력할 수도 있습니다. Maestro 레인 — 디스패치되는 Claude Code·Codex 유닛 — 에도 같은 다이얼이 있습니다: <code>omh coding category-maestro interview</code>.',
+      ja: 'どのチェーンも自分で並べ替えられます。ターミナルで <code>omh model-chains</code>（または <code>omh model</code>）を実行すると矢印キーのピッカーが開き、Modern TUI では <code>/omh-model</code> が同じピッカーを開きます。<code>~/.omh/routing/model-chains.json</code> を直接編集して、<code>omh model-chains show</code> で現在有効な内容を出力することもできます。Maestro レーン — ディスパッチされる Claude Code・Codex ユニット — にも同じダイヤルがあります: <code>omh coding category-maestro interview</code>。',
+      zh: '每条链都可以由你重新排序。在终端运行 <code>omh model-chains</code>（或 <code>omh model</code>）会打开方向键选择器，在 Modern TUI 里 <code>/omh-model</code> 打开同一个选择器；也可以直接编辑 <code>~/.omh/routing/model-chains.json</code>，再运行 <code>omh model-chains show</code> 打印当前生效的配置。Maestro 通道——被派发的 Claude Code 与 Codex 单元——也有同样的旋钮：<code>omh coding category-maestro interview</code>。'
     },
 
     "install.routing.note": {

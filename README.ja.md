@@ -128,7 +128,10 @@ omh doctor
 ```
 
 ```sh
-# モデルのオンボーディングやモデルルーティングの設定には、Hermes でこのスキルを使ってください:
+# 作業カテゴリごとのモデル設定（矢印キー: カテゴリ、←→ head モデル、-/+ effort）;
+# Hermes TUI では /omh-model が同じピッカーを開きます:
+omh model
+# 新しいモデルファミリーをオンボーディングするには、Hermes でこのスキルを使ってください:
 /omh-model-setup
 ```
 
@@ -323,6 +326,9 @@ OMH ワークフローの実行中にターミナルが表示するもの:
 
 ## 推奨モデル
 
+<p align="center">
+  <img src="assets/omh-model-tui.png" alt="Hermes Modern TUI の /omh-model: カテゴリごとに head モデル、effort バー、状態を 1 行で表示し、カーソル行には左右と -/+ のハンドルが出ます" width="820">
+</p>
 OMH には次の編集可能な順序付き recommendation chain が含まれています。guided model setup は、ユーザーが active と確認した candidate だけを基準に chain を解決します。その結果は準備済み routing config であり、provider availability、credential、dispatch、execution の証拠ではありません。
 
 | カテゴリ alias | 用途 | 編集可能な recommendation 順序 |
@@ -370,7 +376,7 @@ $ cat ~/.omh/routing/model-chains.json
 }
 ```
 
-現在有効な chain は `omh model-chains show` で確認できます。ファイルを直接編集したくない場合は、`omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.3-ultrafast:low"` のようにコマンドから同じファイルを書き換えられます。
+現在有効な chain は `omh model-chains show` で確認できます。ファイルを直接編集したくない場合は、ターミナルで `omh model-chains`（または `omh model`）を実行すると矢印キーのピッカーが開き — 上下でカテゴリ、左右で head モデル、`-`/`+` で effort — Modern TUI では `/omh-model` が同じピッカーを開きます。スクリプト向けには `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.3-ultrafast:low"` のようにコマンドから同じファイルを書き換えられます。
 alias に provider 固有の wire ID が必要な場合は、`model_provider_routes/v1` 形式の `~/.omh/routing/model-providers.json` に一度マッピングします。その後は `set`、`status`、fallback、HUD が alias/provider/wire model の完全な route を表示します。OMH が保存するのは provider ID だけで、credential は保存しません。
 
 Hermes に **モデルをセットアップして** と頼むと、確認や変更ができます。これは編集可能な優先設定であり、benchmark 結果ではありません。詳しい設定、fallback、provider、所有権のルールは [Guided Model Setup](docs/INSTALLATION.md#guided-model-setup) を参照してください。

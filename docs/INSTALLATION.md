@@ -289,8 +289,11 @@ Chain customization is a config edit, not a source edit — bare
 one row per category, up/down to move, left/right to step the head model
 through the aliases chains name today, `-`/`+` to step its effort, `d` to
 restore the shipped default, Enter to save and `q` to leave the file alone;
-`omh model-chains show` prints the current per-category state,
-`omh model-chains interview` walks every category with numbered choices — the
+inside the Modern TUI, `/omh-model` opens the same picker as a modal over the
+transcript (Hermes' own `/model` picks the session model and keeps its name;
+the two edit different things); `omh model-chains show` prints the current
+per-category state, `omh model-chains interview` walks every category with
+numbered choices — the
 interactive `omh setup` offers that walk as its last question, default No, and
 a "no" leaves the seeded defaults in effect — and
 `omh model-chains set <category> "model[:effort], ..."` is the scriptable
@@ -950,7 +953,12 @@ state.
 OMH workflows are skill triggers, not Hermes slash commands, so they do not
 appear in the `/` autocomplete — in any chat, bot or default. Invoke them as
 `$ulw …`, `$plan …`, `$research …` (or plain phrasings like `ulw work …`),
-and list what is installed with `/skills`.
+and list what is installed with `/skills`. The one `/` entry OMH adds is
+`/omh-model`, the per-category model-chain picker the Modern-TUI widget
+registers as a modal app; it exists only in the Modern TUI, where the widget
+loads.
+
+![/omh-model in the Modern TUI: the same rows and keys as the CLI picker, over the transcript](../assets/omh-model-tui.png)
 
 The curl installer intentionally stops before setup. It installs the isolated
 command package and `omh` executable only. `omh setup` is the explicit,

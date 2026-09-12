@@ -136,7 +136,10 @@ omh doctor
 ```
 
 ```sh
-# To onboard models or configure model routing, use this skill in Hermes:
+# Set the model per work category (arrow keys: category, ←→ head model, -/+ effort);
+# the same picker opens inside the Hermes TUI as /omh-model:
+omh model
+# To onboard a new model family, use this skill in Hermes:
 /omh-model-setup
 ```
 
@@ -387,6 +390,10 @@ What the terminal shows while OMH workflows run:
 
 ## Recommended models
 
+<p align="center">
+  <img src="assets/omh-model-tui.png" alt="/omh-model in the Hermes Modern TUI: one row per category with its head model, effort bar and state; the cursor row shows the left/right and -/+ handles" width="820">
+</p>
+
 OMH ships with these editable, ordered recommendation chains. Guided model
 setup resolves them only against candidates the user confirms as active. The
 result is prepared routing configuration, not provider availability,
@@ -445,8 +452,9 @@ fallback, and HUD labels alike —
 Check the chains currently in effect with `omh model-chains show`. If you
 would rather not edit the file by hand, bare `omh model-chains` (or
 `omh model`) opens an arrow-key picker — up/down picks a category, left/right
-steps its head model, `-`/`+` its effort — and the scriptable form makes the
-same change from the command line:
+steps its head model, `-`/`+` its effort — `/omh-model` opens the same picker
+inside the Modern TUI, and the scriptable form makes the same change from the
+command line:
 `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.3-ultrafast:low"`.
 When an alias uses a provider-specific wire ID, map it once in
 `~/.omh/routing/model-providers.json` with

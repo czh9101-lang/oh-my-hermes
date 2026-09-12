@@ -22,7 +22,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import json
+import os
 from pathlib import Path
+import secrets
 from typing import Any
 
 from .hermes_delegation import (
@@ -245,3 +247,60 @@ def compose_override_document(
     if status.startswith("invalid"):
         raise ValueError(status)
     return composed
+
+
+def write_override_document(omh_home: str | Path | None, document: Mapping[str, Any]) -> Path:
+    """Write a composed document where the reader looks for it.
+
+    The `omh model-chains` command keeps the repo-wide atomic writer; this is
+    the bundle's own (the todo store's idiom: a fresh temporary beside the
+    target, then `os.replace`), because the widget reaches this module from
+    the installed plugin, where `omh.system` does not exist. Validated once
+    more before the bytes land, so an invalid document is never written by
+    either surface.
+    """
+    _, status = parse_mixture_chain_overrides(document)
+    if status.startswith("invalid"):
+        raise ValueError(status)
+    path = mixture_chain_overrides_path(omh_home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}-{secrets.token_hex(8)}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8", newline="") as handle:
+            handle.write(json.dumps(document, indent=2, sort_keys=True) + "\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists() and not temporary.is_symlink():
+            temporary.unlink()
+    return path
+
+
+def apply_picker_changes(omh_home: str | Path | None, raw_changes: object) -> dict[str, Any]:
+    """The widget's save, as one call over stdin JSON.
+
+    `raw_changes` is `{category: [{"model": ..., "reasoning_effort": ...}]}`
+    for every edited row. A refusal comes back as `{"error": ...}` rather
+    than a traceback: the widget shows the sentence, and a shell reading the
+    script's stdout sees JSON either way.
+    """
+    if not isinstance(raw_changes, Mapping):
+        return {"error": "changes must be a JSON object keyed by category"}
+    changes: dict[str, Chain] = {}
+    for name, entries in raw_changes.items():
+        if not isinstance(entries, list) or not all(
+            isinstance(entry, Mapping) and isinstance(entry.get("model"), str) for entry in entries
+        ):
+            return {"error": f"category {name!r} needs a list of model entries"}
+        changes[str(name)] = tuple(
+            (str(entry["model"]), str(entry.get("reasoning_effort", "") or "")) for entry in entries
+        )
+    try:
+        document = compose_override_document(read_override_document(omh_home), changes)
+        path = write_override_document(omh_home, document)
+    except (ValueError, OSError) as exc:
+        return {"error": str(exc)}
+    return {
+        "schema_version": "model_chain_picker_apply/v1",
+        "path": str(path),
+        "changed": sorted(changes),
+    }

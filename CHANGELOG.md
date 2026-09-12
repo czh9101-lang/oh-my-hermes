@@ -13,6 +13,13 @@ All notable changes will be documented here.
   and `q` writes nothing. Off a terminal the bare form prints `show`. The
   chain rules live in the plugin bundle so the Modern-TUI widget can walk the
   same rows.
+- **`/omh-model` in the Modern TUI.** The OMH widget registers the same
+  picker as a modal app: `/omh-model` opens it over the transcript with the
+  keys the CLI picker uses, reads and saves through the installed plugin
+  bundle, and shows the written path on save. Hermes' own `/model` keeps its
+  name and its job (the session model); the two edit different things. A host
+  whose widget SDK lacks the overlay primitives keeps the docks and the CLI
+  picker.
 
 ## 2.0.3 - 2026-09-12
 
