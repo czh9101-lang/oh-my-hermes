@@ -7,7 +7,6 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
-import shlex
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -175,18 +174,38 @@ class FixtureTransportTests(unittest.TestCase):
 
     def test_verification_diagnostic_bytes_survive_crlf_text_stream(self) -> None:
         from five_issue_cases import diagnostics
-        join = shlex.join
 
-        def windows_command(arguments: list[str]) -> str:
-            argv = list(arguments)
-            if len(argv) == 3 and argv[:2] == [sys.executable, '-c']:
-                argv[2] = "import sys; sys.stderr.reconfigure(newline='\\r\\n'); " + argv[2]
-            return join(argv)
-
-        with patch('shlex.join', windows_command):
-            result = diagnostics.run_case('D5')
+        result = diagnostics.run_case('D5', verification_newline='\r\n')
         self.assertTrue(result['pass'], result['observations'])
         self.assertTrue(result['cleanup']['verified_absent'])
+
+    def test_the_verification_command_does_not_grow_with_the_checkout_path(self) -> None:
+        # #1474: the command embedded `sys.executable` and an inline script, so
+        # a deep worktree pushed it past MAX_UNIT_VERIFICATION_COMMAND_CHARS and
+        # the fixture's verdict became a function of where the repo lives.
+        from five_issue_cases import diagnostics
+        from omh.coding.fanout import MAX_UNIT_VERIFICATION_COMMAND_CHARS
+
+        captured: list[str] = []
+        real_build = diagnostics.build_fanout_contract
+
+        def capture(goal: str, units: list[dict[str, object]]) -> object:
+            for unit in units:
+                commands = unit.get('verification_commands')
+                if isinstance(commands, list):
+                    captured.extend(str(command) for command in commands)
+            return real_build(goal, units)
+
+        with patch.object(diagnostics, 'build_fanout_contract', capture):
+            result = diagnostics.run_case('D5', verification_newline='\r\n')
+        self.assertTrue(result['pass'], result['observations'])
+        self.assertEqual(len(captured), 1)
+        command = captured[0]
+        checkout = str(Path(__file__).resolve().parents[1])
+        self.assertNotIn(checkout, command)
+        # Headroom for a checkout far deeper than this one, measured rather
+        # than assumed: the command may not consume the whole cap.
+        self.assertLess(len(command), MAX_UNIT_VERIFICATION_COMMAND_CHARS - 40)
 
 
 if __name__ == '__main__':

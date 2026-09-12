@@ -25,8 +25,23 @@ from omh.system.paths import OmhPaths
 from . import CaseResult, JsonValue
 
 
+def _fixture_interpreter() -> str:
+    """An interpreter path that does not grow with the checkout's location.
+
+    The verification command is capped at MAX_UNIT_VERIFICATION_COMMAND_CHARS,
+    and `sys.executable` inside a project venv sits UNDER the checkout, so a
+    deep worktree path used to decide whether this fixture passed (#1474).
+    The base interpreter that created the venv lives outside the checkout and
+    runs a stdlib-only script just as well; a non-venv run resolves to the
+    same path it already used.
+    """
+    base = getattr(sys, '_base_executable', '') or ''
+    return base if base and Path(base).exists() else sys.executable
+
+
 def exercise_dispatch(*, stdout: bytes = b'', stderr: bytes = b'', exit_code: int = 3,
-                      sidecar: str = 'missing', verification: bool = False) -> CaseResult:
+                      sidecar: str = 'missing', verification: bool = False,
+                      verification_newline: str = '') -> CaseResult:
     """Exercise dispatch_fanout with its real runner and an explicit fixture argv.
 
     No injected process result or confinement bypass. The only adapter replaces
@@ -59,8 +74,22 @@ def exercise_dispatch(*, stdout: bytes = b'', stderr: bytes = b'', exit_code: in
         _ = err.write_bytes(stderr)
         if verification:
             import shlex
-            unit['verification_commands'] = [shlex.join([
-                sys.executable, '-c', 'import sys; sys.stderr.buffer.write(b"compiler failed\\n"); sys.exit(7)'])]
+            # The script is a file in the temp root, not an inline `-c` payload:
+            # both halves of the command then stay clear of the contract's
+            # per-command character cap however deep the checkout sits (#1474).
+            reconfigure = (f'sys.stderr.reconfigure(newline={verification_newline!r})\n'
+                           if verification_newline else '')
+            failing_script = root / 'fail.py'
+            _ = failing_script.write_text(
+                'import sys\n'
+                + reconfigure
+                + 'sys.stderr.buffer.write(b"compiler failed\\n")\n'
+                  'sys.exit(7)\n',
+                encoding='utf-8',
+            )
+            unit['verification_commands'] = [
+                shlex.join([_fixture_interpreter(), str(failing_script)])
+            ]
         contract = write_fanout_contract(paths, build_fanout_contract(goal, [unit]))
         fanout_id = str(contract['fanout_id'])
         run_ref = fanout_id + '-core'
@@ -115,7 +144,7 @@ def exercise_dispatch(*, stdout: bytes = b'', stderr: bytes = b'', exit_code: in
                         'removed_paths': [directory], 'verified_absent': not root.exists(), 'errors': []}}
 
 
-def run_case(case_id: str) -> CaseResult:
+def run_case(case_id: str, *, verification_newline: str = '') -> CaseResult:
     if case_id not in {'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'S5'}:
         raise ValueError('unknown_diagnostics_case')
     stdout, stderr, code, sidecar, verification = b'', b'compiler failed\n', 3, 'missing', False
@@ -135,7 +164,8 @@ def run_case(case_id: str) -> CaseResult:
     elif case_id == 'D7':
         code, sidecar = 0, 'fenced'
     result = exercise_dispatch(stdout=stdout, stderr=stderr, exit_code=code,
-                               sidecar=sidecar, verification=verification)
+                               sidecar=sidecar, verification=verification,
+                               verification_newline=verification_newline)
     result['case'] = case_id
     observations = result['observations']
     summary = observations['summary']
