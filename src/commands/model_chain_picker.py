@@ -14,25 +14,35 @@ save composes the document — live in the plugin bundle's
 module only paints frames and reads keys. The same seams as the theme picker
 keep it testable without a terminal: `read_key`, `write` and the frame width
 arrive as arguments, and the raw-mode reader is shared with that picker.
+
+The frame is painted in the active OMH skin's palette so it reads as part of
+the same product as the TUI: the cursor row sits on the skin's selection
+background with `◂ model ▸` and `− effort +` markers showing which keys act
+on which cell, effort bars are toned by rung, and a row's state is a glyph
+plus a word (`● edited`, `◆ override`, `· default`). NO_COLOR or a
+non-terminal keeps the exact same text with no escape bytes. Every line is
+built from fixed-width cells sized to the terminal, and the free-text lines
+are cut with an ellipsis, so a frame never wraps — a wrapped line would put
+the cursor-up repaint off by one row and duplicate the header.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import os
+from pathlib import Path
 import sys
 from typing import Any, TextIO
 
 from ..plugin_bundle.omh.model_chain_picker import (
-    PICKER_EFFORT_RING,
     Chain,
     chain_from_entries,
     chain_text,
     step_effort,
     step_head_model,
 )
+from ..skin_pack import hex_to_rgb, skin_colors
 from .theme_picker import (
-    BOLD,
     CLEAR_LINE,
     ESC,
     HIDE_CURSOR,
@@ -52,29 +62,45 @@ from .theme_picker import (
     read_terminal_key,
 )
 
-DIM = f"{ESC}[2m"
+CURSOR_MARK = "▍"
+LEFT_MARK = "◂"
+RIGHT_MARK = "▸"
+STATE_GLYPHS = {"edited": "●", "override": "◆", "default": "·"}
+# Palette token per state word and per effort rung; the palette itself is
+# the active skin's, so the picker follows `omh theme` like the TUI does.
+STATE_TONES = {"edited": "ui_warn", "override": "ui_accent", "default": "banner_dim"}
+EFFORT_TONES = {"low": "banner_dim", "medium": "ui_ok", "high": "ui_warn", "xhigh": "ui_accent", "max": "banner_title"}
+KEY_HINTS = (
+    ("↑↓", "category"),
+    ("←→", "head model"),
+    ("−/+", "effort"),
+    ("d", "default"),
+    ("⏎", "save"),
+    ("q", "cancel"),
+)
 
-_HEADER = "Model chains  (up/down category, left/right head model, -/+ effort, d default, Enter save, q cancel)"
-# Column widths include one trailing space so a cell that fills its width
-# never runs into the next one.
-_CATEGORY_WIDTH = 20
-_PURPOSE_WIDTH = 31
-_MODEL_WIDTH = 23
+_MARGIN = 3
+_CATEGORY_WIDTH = 19
+_PURPOSE_WIDTH = 30
+_MODEL_WIDTH = 24
+_EFFORT_WIDTH = 16
+_STATE_WIDTH = 11
+_PURPOSE_MIN_WIDTH = _MARGIN + _CATEGORY_WIDTH + _PURPOSE_WIDTH + _MODEL_WIDTH + _EFFORT_WIDTH + _STATE_WIDTH
 
 
-def effort_bar(effort: str) -> str:
-    """Four cells, one per ring rung; `max` fills all four, nothing fills none."""
+def default_palette() -> dict[str, str]:
+    return skin_colors("omh")
+
+
+def effort_bar(effort: str, ring: tuple[str, ...] = ("low", "medium", "high", "xhigh")) -> str:
+    """One cell per ring rung; `max` fills all of them, nothing fills none."""
     if effort == "max":
-        filled = len(PICKER_EFFORT_RING)
-    elif effort in PICKER_EFFORT_RING:
-        filled = PICKER_EFFORT_RING.index(effort) + 1
+        filled = len(ring)
+    elif effort in ring:
+        filled = ring.index(effort) + 1
     else:
         filled = 0
-    return "■" * filled + "□" * (len(PICKER_EFFORT_RING) - filled)
-
-
-def _paint(text: str, code: str, use_color: bool) -> str:
-    return f"{code}{text}{RESET}" if use_color else text
+    return "■" * filled + "□" * (len(ring) - filled)
 
 
 def _fit(text: str, width: int) -> str:
@@ -84,11 +110,82 @@ def _fit(text: str, width: int) -> str:
     return text.ljust(width)
 
 
+def _clip(text: str, width: int) -> str:
+    return text if len(text) <= width else text[: max(0, width - 1)] + "…"
+
+
+def _sgr(palette: Mapping[str, str], fg: str | None, bg: str | None, bold: bool) -> str:
+    codes: list[str] = []
+    if bold:
+        codes.append("1")
+    for token, kind in ((fg, "38"), (bg, "48")):
+        rgb = hex_to_rgb(palette.get(token, "")) if token else None
+        if rgb is not None:
+            codes.append(f"{kind};2;{rgb[0]};{rgb[1]};{rgb[2]}")
+    return f"{ESC}[{';'.join(codes)}m" if codes else ""
+
+
+class _Painter:
+    """Paints text with palette tokens, or returns it untouched without color."""
+
+    def __init__(self, palette: Mapping[str, str], use_color: bool) -> None:
+        self.palette = palette
+        self.use_color = use_color
+
+    def __call__(self, text: str, fg: str | None = None, *, bg: str | None = None, bold: bool = False) -> str:
+        if not self.use_color or not text:
+            return text
+        prefix = _sgr(self.palette, fg, bg, bold)
+        return f"{prefix}{text}{RESET}" if prefix else text
+
+
 def row_status(row: Mapping[str, Any], chain: Chain) -> str:
     """`edited` beats the stored origin: the row shows what Enter would do."""
     if chain != chain_from_entries(row["chain"]):
         return "edited"
     return str(row["origin"])
+
+
+def _short_path(path: str) -> str:
+    home = str(Path.home())
+    return "~" + path[len(home):] if path.startswith(home) else path
+
+
+def _row_cells(
+    row: Mapping[str, Any],
+    chain: Chain,
+    *,
+    cursor: bool,
+    labels: Mapping[str, str],
+    served: Mapping[str, bool],
+    ring: tuple[str, ...],
+    with_purpose: bool,
+) -> list[tuple[str, str]]:
+    """The row as (text, tone) cells; tones are palette tokens for the painter."""
+    head_model, head_effort = chain[0]
+    label = labels.get(head_model, head_model)
+    unserved = not served.get(head_model, True)
+    state = row_status(row, chain)
+    cells = [
+        (f" {CURSOR_MARK} " if cursor else " " * _MARGIN, "ui_accent"),
+        (_fit(str(row["category"]), _CATEGORY_WIDTH), "ui_label"),
+    ]
+    if with_purpose:
+        cells.append((_fit(str(row["purpose"]), _PURPOSE_WIDTH), "banner_dim"))
+    # `◂ label ▸` hugs the label on the cursor row so the markers read as
+    # handles on the value, not as column borders; the cell keeps its width.
+    model_text = _clip(label + (" !" if unserved else ""), _MODEL_WIDTH - 5)
+    cells.append((f"{LEFT_MARK} " if cursor else "  ", "ui_accent"))
+    cells.append((model_text, "ui_error" if unserved else "banner_text"))
+    cells.append((f" {RIGHT_MARK}" if cursor else "  ", "ui_accent"))
+    cells.append((" " * (_MODEL_WIDTH - 4 - len(model_text)), None))
+    tone = EFFORT_TONES.get(head_effort, "banner_dim")
+    cells.append(("− " if cursor else "  ", "ui_accent"))
+    cells.append((effort_bar(head_effort, ring), "ui_accent" if cursor else tone))
+    cells.append((" +" if cursor else "  ", "ui_accent"))
+    cells.append((f" {head_effort or '-':<7}", tone))
+    cells.append((f"{STATE_GLYPHS[state]} {state:<{_STATE_WIDTH - 2}}", STATE_TONES[state]))
+    return cells
 
 
 def render_frame(
@@ -98,44 +195,76 @@ def render_frame(
     *,
     use_color: bool,
     width: int,
+    palette: Mapping[str, str] | None = None,
 ) -> list[str]:
-    """One full repaint: the header, one row per category, the cursor row's
-    detail, then the save line."""
+    """One full repaint: title, column header, one row per category, the
+    cursor row's detail, then the key hints. Every line fits `width`."""
+    paint = _Painter(palette or default_palette(), use_color)
     rows = payload["categories"]
+    ring = tuple(payload.get("efforts") or ("low", "medium", "high", "xhigh"))
     labels = {row["alias"]: row["label"] for row in payload["models"]}
     served = {row["alias"]: bool(row["served"]) for row in payload["models"]}
-    lines = [_HEADER]
+    with_purpose = width >= _PURPOSE_MIN_WIDTH
+    row_width = min(width, _PURPOSE_MIN_WIDTH if with_purpose else _PURPOSE_MIN_WIDTH - _PURPOSE_WIDTH)
+    inner = row_width - _MARGIN
+
+    title_left = " ⚚ OMH · Model chains"
+    title_right = _short_path(str(payload.get("path", "")))
+    gap = row_width - len(title_left) - len(title_right)
+    if gap < 2:
+        title_right = _clip(title_right, max(0, row_width - len(title_left) - 2))
+        gap = row_width - len(title_left) - len(title_right)
+    title = paint(" ⚚ OMH", "ui_accent", bold=True) + paint(" · Model chains", "banner_title", bold=True)
+    title += " " * gap + paint(title_right, "banner_dim")
+    rule = paint("─" * row_width, "input_rule")
+
+    header_cells = [(" " * _MARGIN, None), (_fit("CATEGORY", _CATEGORY_WIDTH), None)]
+    if with_purpose:
+        header_cells.append((_fit("PURPOSE", _PURPOSE_WIDTH), None))
+    header_cells += [(_fit("  HEAD MODEL", _MODEL_WIDTH), None), (_fit("  EFFORT", _EFFORT_WIDTH), None), ("STATE", None)]
+    header = paint("".join(text for text, _ in header_cells), "banner_dim")
+
+    lines = [title, rule, header]
     for index, row in enumerate(rows):
-        chain = chains[row["category"]]
-        head_model, head_effort = chain[0]
-        pointer = ">" if index == cursor else " "
-        unserved = "!" if not served.get(head_model, True) else " "
-        line = (
-            f" {pointer} {_fit(row['category'], _CATEGORY_WIDTH)}"
-            f"{_fit(row['purpose'], _PURPOSE_WIDTH)}"
-            f"{_fit(labels.get(head_model, head_model), _MODEL_WIDTH)}"
-            f"{effort_bar(head_effort)} {head_effort or '-':<7}{unserved} {row_status(row, chain)}"
+        is_cursor = index == cursor
+        cells = _row_cells(
+            row, chains[row["category"]], cursor=is_cursor, labels=labels, served=served, ring=ring, with_purpose=with_purpose
         )
-        lines.append(_paint(line, BOLD, use_color) if index == cursor else line)
+        if is_cursor:
+            lines.append("".join(paint(text, tone, bg="selection_bg", bold=True) for text, tone in cells))
+        else:
+            lines.append("".join(paint(text, tone) for text, tone in cells))
+
     current = rows[cursor]
     chain = chains[current["category"]]
-    lines.append("")
-    lines.append(f"    [{current['category']}] {current['purpose']}".rstrip())
-    lines.append(f"    chain: {chain_text(chain)}")
     default_chain = chain_from_entries(current["default_chain"])
-    if chain != default_chain:
-        lines.append(_paint(f"    shipped default: {chain_text(default_chain)}", DIM, use_color))
-    if any(not served.get(chains[row["category"]][0][0], True) for row in rows):
-        lines.append(_paint("    ! this machine's recorded providers do not serve that head", DIM, use_color))
     changed = sum(1 for row in rows if chains[row["category"]] != chain_from_entries(row["chain"]))
+    lines.append(rule)
+    heading = paint(str(current["category"]), "ui_label", bold=True)
+    if current.get("purpose"):
+        heading += paint(f" · {_clip(str(current['purpose']), inner - len(str(current['category'])) - 3)}", "banner_dim")
+    lines.append(" " * _MARGIN + heading)
+    lines.append(" " * _MARGIN + paint(_fit("chain", 18), "banner_dim") + paint(_clip(chain_text(chain), inner - 18), "banner_text"))
+    default_text = "✓ same as shipped" if chain == default_chain else _clip(chain_text(default_chain), inner - 18)
+    lines.append(" " * _MARGIN + paint(_fit("shipped default", 18) + default_text, "banner_dim"))
     if changed:
-        lines.append(f"    {changed} unsaved change{'s' if changed != 1 else ''}; Enter writes {payload['path']}")
+        lines.append(" " * _MARGIN + paint(f"{changed} unsaved change{'s' if changed != 1 else ''} · ⏎ writes the file", "ui_warn"))
     else:
-        lines.append("    no unsaved changes; Enter or q leaves the file as it is")
-    # Plain rows are cut to the terminal width; a painted row carries escape
-    # bytes no column count applies to, and cutting one mid-escape would leak
-    # the sequence into the terminal (the theme picker's rule).
-    return [line if use_color or len(line) <= width else line[: max(0, width)] for line in lines]
+        lines.append(" " * _MARGIN + paint("no unsaved changes · ⏎ or q leaves the file as it is", "banner_dim"))
+    head_model = chain[0][0]
+    if not served.get(head_model, True):
+        note = _clip(f"! {labels.get(head_model, head_model)} is not served by this machine's recorded providers", inner)
+        lines.append(" " * _MARGIN + paint(note, "ui_error"))
+    lines.append(rule)
+    hints = "   ".join(paint(keys, "ui_accent", bold=True) + " " + paint(what, "banner_dim") for keys, what in KEY_HINTS)
+    lines.append(" " * _MARGIN + hints)
+    # Below the narrowest layout the plain frame is cut to the terminal; a
+    # painted row carries escape bytes no column count applies to, and
+    # cutting one mid-escape would leak the sequence (the theme picker's
+    # rule), so colour keeps the full row there.
+    if use_color:
+        return lines
+    return [line if len(line) <= width else line[: max(0, width - 1)] + "…" for line in lines]
 
 
 def run_picker(
@@ -145,6 +274,7 @@ def run_picker(
     write: Callable[[str], None],
     use_color: bool,
     width: int = 110,
+    palette: Mapping[str, str] | None = None,
     max_keys: int = 4000,
 ) -> dict[str, Chain] | None:
     """Drive the cursor until Enter or cancel.
@@ -160,7 +290,7 @@ def run_picker(
     original = {row["category"]: chain_from_entries(row["chain"]) for row in rows}
     chains = dict(original)
     cursor = 0
-    frame = render_frame(payload, chains, cursor, use_color=use_color, width=width)
+    frame = render_frame(payload, chains, cursor, use_color=use_color, width=width, palette=palette)
     write("\n".join(frame) + "\n")
     # `max_keys` bounds a pathological reader (a stream returning nothing but
     # unknown bytes) instead of spinning forever inside a terminal in raw mode.
@@ -188,7 +318,7 @@ def run_picker(
         else:
             continue
         previous_rows = len(frame)
-        frame = render_frame(payload, chains, cursor, use_color=use_color, width=width)
+        frame = render_frame(payload, chains, cursor, use_color=use_color, width=width, palette=palette)
         write(cursor_up(previous_rows) + "".join(f"{CLEAR_LINE}{line}\n" for line in frame))
     return None
 
@@ -197,6 +327,7 @@ def pick_chains_interactively(
     payload: Mapping[str, Any],
     *,
     use_color: bool,
+    palette: Mapping[str, str] | None = None,
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
 ) -> dict[str, Chain] | None:
@@ -214,6 +345,7 @@ def pick_chains_interactively(
                 write=lambda text: (sink.write(text), sink.flush(), None)[-1],
                 use_color=use_color,
                 width=width,
+                palette=palette,
             )
         finally:
             if use_color:

@@ -47,8 +47,10 @@ from ..plugin_bundle.omh.model_chain_picker import (
     picker_rows,
     read_override_document,
 )
+from ..install.config_adapter import display_skin_selection, read_config
+from ..skin_pack import skin_colors, theme_for_skin_name
 from .common import _paths
-from .model_chain_picker import pick_chains_interactively
+from .model_chain_picker import default_palette, pick_chains_interactively
 
 # From `quickstart`, not `setup`, for the reason `theme` gives: importing the
 # parser module back here would close an import cycle.
@@ -205,6 +207,13 @@ def cmd_model_chains_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def _active_palette(paths) -> dict[str, str]:
+    """The active OMH skin's colours, so the picker matches the TUI; the
+    default skin when `display.skin` is unset or not an OMH theme."""
+    theme = theme_for_skin_name(display_skin_selection(read_config(paths.hermes_config_path)))
+    return skin_colors(theme.skin_name) if theme else default_palette()
+
+
 def cmd_model_chains_pick(args: argparse.Namespace) -> int:
     """Bare `omh model-chains` picks interactively; anything else prints `show`.
 
@@ -215,9 +224,10 @@ def cmd_model_chains_pick(args: argparse.Namespace) -> int:
     """
     if getattr(args, "json", False) or not picker_available():
         return cmd_model_chains_show(args)
-    omh_home = _paths(args).omh_home
+    paths = _paths(args)
+    omh_home = paths.omh_home
     payload = picker_rows(omh_home, labels=MODEL_DISPLAY_LABELS, purposes=CHAIN_SURFACE_PURPOSES)
-    changes = pick_chains_interactively(payload, use_color=_use_color())
+    changes = pick_chains_interactively(payload, use_color=_use_color(), palette=_active_palette(paths))
     if changes is None:
         print(f"Cancelled; {payload['path']} was not changed.")
         return 0

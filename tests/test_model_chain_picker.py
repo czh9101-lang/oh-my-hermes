@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -22,7 +23,7 @@ from _cli_harness import run_cli
 
 from omh.catalogs.model_chain_table import CHAIN_SURFACE_PURPOSES, MODEL_DISPLAY_LABELS
 from omh.coding.model_routing import REASONING_EFFORT_LADDER
-from omh.commands.model_chain_picker import effort_bar, render_frame, run_picker
+from omh.commands.model_chain_picker import CURSOR_MARK, effort_bar, render_frame, run_picker
 from omh.commands.theme_picker import (
     ESC,
     KEY_DEFAULT,
@@ -276,9 +277,9 @@ class PickerNavigationTests(unittest.TestCase):
         self.assertEqual(result, {"deep": deep})
         # One frame per accepted key: initial, then down, right, plus.
         self.assertEqual(len(frames), 4)
-        self.assertIn(" > deep ", frames[-1])
-        self.assertIn("edited", frames[-1])
-        self.assertIn("1 unsaved change;", frames[-1])
+        self.assertIn(f" {CURSOR_MARK} deep ", frames[-1])
+        self.assertIn("● edited", frames[-1])
+        self.assertIn("1 unsaved change ·", frames[-1])
 
     def test_left_and_minus_step_the_other_way_and_wrap_the_cursor(self) -> None:
         payload = _payload(self.root)
@@ -292,7 +293,7 @@ class PickerNavigationTests(unittest.TestCase):
         self.assertNotEqual(result, {})
         result, frames = _drive(payload, ["up", KEY_ENTER])
         self.assertEqual(result, {})
-        self.assertIn(f" > {last} ", frames[-1])
+        self.assertIn(f" {CURSOR_MARK} {last} ", frames[-1])
 
     def test_default_key_on_an_override_row_is_a_change_that_clears_it(self) -> None:
         _write_overrides(self.root, {"quick": OVERRIDE_QUICK})
@@ -300,8 +301,8 @@ class PickerNavigationTests(unittest.TestCase):
         quick_index = [row["category"] for row in payload["categories"]].index("quick")
         result, frames = _drive(payload, [KEY_DOWN] * quick_index + [KEY_DEFAULT, KEY_ENTER])
         self.assertEqual(result, {"quick": HERMES_MIXTURE_CATEGORY_CHAINS["quick"]})
-        self.assertIn("override", frames[0])
-        self.assertIn("edited", frames[-1])
+        self.assertIn("◆ override", frames[0])
+        self.assertIn("● edited", frames[-1])
         composed = compose_override_document(read_override_document(_omh_home(self.root)), result)
         self.assertEqual(composed["categories"], {})
 
@@ -326,25 +327,49 @@ class PickerNavigationTests(unittest.TestCase):
         self.assertNotIn(ESC, frames[0])
         for line in frames[0].splitlines():
             self.assertLessEqual(len(line), 60, line)
+        # The purpose column is the first thing to go on a narrow terminal;
+        # a wide one keeps it.
+        self.assertNotIn("PURPOSE", frames[0])
+        _, wide = _drive(payload, [KEY_ENTER], width=120)
+        self.assertIn("PURPOSE", wide[0])
+        self.assertTrue(all(len(line) <= 120 for line in wide[0].splitlines()))
         _, frames = _drive(payload, [KEY_DOWN, KEY_ENTER], use_color=True)
         self.assertIn(ESC, frames[0])
-        # The cursor row is the only painted row; every category is present.
-        self.assertEqual(frames[0].count(f"{ESC}[1m"), 1)
+        # Exactly one row sits on the selection background -- the cursor row
+        # -- and every category is present.
+        self.assertEqual(sum("48;2;" in line for line in frames[0].splitlines()), 1)
         for row in payload["categories"]:
             self.assertIn(row["category"], frames[0])
+
+    def test_a_frame_never_wraps_the_override_path(self) -> None:
+        # The regression this exists for: a wrapped path line put the
+        # cursor-up repaint off by one row and drew the header twice.
+        payload = _payload(self.root)
+        payload["path"] = "/" + "deep/" * 60 + "model-chains.json"
+        for use_color in (False, True):
+            lines = render_frame(payload, _chains(payload), 0, use_color=use_color, width=100)
+            visible = [re.sub(r"\x1b\[[0-9;]*m", "", line) for line in lines]
+            self.assertTrue(all(len(line) <= 100 for line in visible), max(visible, key=len))
+            self.assertIn("…", visible[0])
 
     def test_the_frame_shows_labels_effort_bar_chain_and_default_for_the_cursor_row(self) -> None:
         _write_overrides(self.root, {"ultrabrain": (("claude-fable-5-1", "medium"), ("gpt-6-astra", "xhigh"))})
         payload = _payload(self.root)
         chains = _chains(payload)
         lines = render_frame(payload, chains, 0, use_color=False, width=200)
-        self.assertIn(MODEL_DISPLAY_LABELS["claude-fable-5-1"], lines[1])
-        self.assertIn(f"{effort_bar('medium')} medium", lines[1])
-        self.assertIn("    chain: claude-fable-5-1:medium, gpt-6-astra:xhigh", lines)
+        row = next(line for line in lines if " ultrabrain " in line)
+        self.assertTrue(row.startswith(f" {CURSOR_MARK} "))
+        self.assertIn(f"◂ {MODEL_DISPLAY_LABELS['claude-fable-5-1']} ▸", row)
+        self.assertIn(f"− {effort_bar('medium')} + medium", row)
+        self.assertTrue(row.rstrip().endswith("◆ override"))
+        self.assertIn("   chain             claude-fable-5-1:medium, gpt-6-astra:xhigh", lines)
         self.assertIn(
-            f"    shipped default: {', '.join(m + ':' + e for m, e in HERMES_MIXTURE_CATEGORY_CHAINS['ultrabrain'])}",
+            f"   shipped default   {', '.join(m + ':' + e for m, e in HERMES_MIXTURE_CATEGORY_CHAINS['ultrabrain'])}",
             lines,
         )
+        self.assertTrue(lines[0].startswith(" ⚚ OMH · Model chains"))
+        self.assertIn("CATEGORY", lines[2])
+        self.assertIn("↑↓ category   ←→ head model   −/+ effort   d default   ⏎ save   q cancel", lines[-1])
         self.assertEqual(effort_bar("low"), "■□□□")
         self.assertEqual(effort_bar("xhigh"), "■■■■")
         self.assertEqual(effort_bar("max"), "■■■■")
@@ -354,10 +379,15 @@ class PickerNavigationTests(unittest.TestCase):
         _write_entitlements(self.root, {"zai": "zai"})
         payload = _payload(self.root)
         lines = render_frame(payload, _chains(payload), 0, use_color=False, width=200)
-        ultrabrain = lines[1]
-        self.assertIn("gpt-6-astra", "".join(payload["categories"][0]["chain"][0]["model"]))
-        self.assertRegex(ultrabrain, r"xhigh\s+! ")
-        self.assertEqual(sum("recorded providers do not serve" in line for line in lines), 1)
+        ultrabrain = next(line for line in lines if " ultrabrain " in line)
+        self.assertEqual(payload["categories"][0]["chain"][0]["model"], "gpt-6-astra")
+        self.assertIn(f"◂ {MODEL_DISPLAY_LABELS['gpt-6-astra']} ! ▸", ultrabrain)
+        self.assertEqual(sum("is not served by this machine's recorded providers" in line for line in lines), 1)
+        # Off the cursor the mark stays on the row and the explanation goes
+        # (row 4, unspecified-low, heads with GLM, which zai does serve).
+        lines = render_frame(payload, _chains(payload), 4, use_color=False, width=200)
+        self.assertIn(f"  {MODEL_DISPLAY_LABELS['gpt-6-astra']} !", next(line for line in lines if " ultrabrain " in line))
+        self.assertEqual(sum("is not served by" in line for line in lines), 0)
 
 
 class PickerCommandTests(unittest.TestCase):
