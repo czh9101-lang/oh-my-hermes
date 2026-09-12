@@ -19,7 +19,7 @@ PRINCIPAL_CONTEXT_KEYS = frozenset({
 })
 _SAFE_REF = re.compile(r"^[A-Za-z0-9_.:-]{1,120}$")
 _GENERATED_REVIEW_REF = re.compile(
-    r"^(?:review_cand_[0-9a-f]{16}|review-mem_[0-9a-f]{16}-r[0-9]+)$"
+    r"^(?:review_cand_[0-9a-f]{16}|review-mem_[0-9a-f]{16}-r[0-9]+|principal_assignment_[0-9a-f]{24})$"
 )
 
 

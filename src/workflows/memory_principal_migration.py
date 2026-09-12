@@ -21,6 +21,7 @@ from ..plugin_bundle.omh.memory_governance import canonical_payload_digest, stab
 from ..plugin_bundle.omh.memory_principals import memory_identity_errors, principal_operation_decision
 from ..system.local_store import read_json_object_result
 from ..system.paths import OmhPaths
+from .memory_principal_assignment import assignment_review_reason, source_review_reason
 from .memory_store import run_memory_operation
 
 REPORT_SCHEMA = "memory_principal_migration_report/v1"
@@ -72,7 +73,8 @@ def principal_migration_plan_digest(plan: Mapping[str, Any]) -> str:
 
 def apply_principal_migration(paths: OmhPaths, plan: Mapping[str, Any]) -> dict[str, Any]:
     """Apply one exact reviewed v2-to-v3 assignment through the operation store."""
-    if set(plan) != {"schema_version", "record_id", "revision", "review_id", "identity", "plan_digest"}:
+    base_fields = {"schema_version", "record_id", "revision", "review_id", "identity", "plan_digest"}
+    if set(plan) not in {frozenset(base_fields), frozenset({*base_fields, "assignment_review_id"})}:
         raise PrincipalMigrationError("principal migration plan fields are invalid")
     if plan.get("schema_version") != PLAN_SCHEMA or plan.get("plan_digest") != principal_migration_plan_digest(plan):
         raise PrincipalMigrationError("principal migration plan digest is invalid")
@@ -93,18 +95,36 @@ def apply_principal_migration(paths: OmhPaths, plan: Mapping[str, Any]) -> dict[
     admission: Any = source.get("admission") if isinstance(source.get("admission"), dict) else {}
     if admission.get("review_id") != review_id:
         return _migration_refusal("source_review_mismatch")
+    review_reason = source_review_reason(paths, source, review_id)
+    if review_reason:
+        return _migration_refusal(review_reason)
     identity = plan.get("identity")
     if not isinstance(identity, dict) or memory_identity_errors(identity):
         raise PrincipalMigrationError("principal migration identity block is invalid")
+    assignment_review_id = plan.get("assignment_review_id")
+    if not isinstance(assignment_review_id, str) or not assignment_review_id:
+        return _migration_refusal("assignment_review_required")
+    assignment_reason = assignment_review_reason(
+        paths,
+        source,
+        review_id,
+        identity,
+        assignment_review_id,
+    )
+    if assignment_reason:
+        return _migration_refusal(assignment_reason)
     target_review_id = "principal-" + hashlib.sha256(str(plan["plan_digest"]).encode()).hexdigest()[:24]
-    subject = identity.get("subject_principal")
+    target_identity: Any = json.loads(json.dumps(identity))
+    target_identity["reviewer"]["review_ref"] = assignment_review_id
+    target_identity["audience"]["review_ref"] = assignment_review_id
+    subject = target_identity.get("subject_principal")
     target_scope = {"kind": "user", "ref": subject} if isinstance(subject, str) and subject else source.get("scope")
     target: Any = {
         **source,
         "schema_version": "project_memory_record/v3",
         "revision": revision + 1,
         "scope": target_scope,
-        "identity": identity,
+        "identity": target_identity,
         "admission": {**admission, "review_id": target_review_id},
     }
     target["admission"] = {**target["admission"], "payload_digest": canonical_payload_digest(target)}
@@ -115,8 +135,9 @@ def apply_principal_migration(paths: OmhPaths, plan: Mapping[str, Any]) -> dict[
         "decision": "approved_manual",
         "reviewer_claim": "reviewed_principal_migration",
         "source_review_id": review_id,
+        "assignment_review_id": assignment_review_id,
         "payload_digest": canonical_payload_digest(target),
-        "identity": identity,
+        "identity": target_identity,
     }
     migration: Any = {
         "schema_version": MIGRATION_SCHEMA,
@@ -124,6 +145,7 @@ def apply_principal_migration(paths: OmhPaths, plan: Mapping[str, Any]) -> dict[
         "source": {"record_id": record_id, "revision": revision, "review_id": review_id},
         "target": {"record_id": record_id, "revision": revision + 1, "review_id": target_review_id},
         "source_digest": canonical_payload_digest(source),
+        "assignment_review_id": assignment_review_id,
         "target_digest": canonical_payload_digest(target),
         "plan_digest": plan["plan_digest"],
         "rollback_state": "available",

@@ -53,9 +53,13 @@ omh memory principal-export --principal-context principal.json --json
 ```
 
 The report contains bounded record identities, revisions, review IDs, and
-digests, never summaries. A plan binds the exact source revision, its immutable
-review ID, proposed identity, and plan digest. Apply archives the source and
-uses the existing operation store; replay is idempotent. Rollback restores only
+digests, never summaries. Before apply, the wrapper/operator review adapter
+records `memory_principal_assignment_review/v1` through the existing memory
+operation store. That immutable record binds the verified source review and the
+proposed subject, reviewer, executor perspective, and audience policy. The plan
+names both reviews plus its own digest; a source review alone never authorizes
+principal assignment. Apply archives the source and uses the existing operation
+store; replay is idempotent. Rollback restores only
 an unchanged migrated revision and refuses rather than clobbering newer data.
 Legacy records are never assigned to the next active user automatically.
 
