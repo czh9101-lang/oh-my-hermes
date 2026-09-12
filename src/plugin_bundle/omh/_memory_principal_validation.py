@@ -63,17 +63,20 @@ def memory_identity_errors(value: Any) -> list[str]:
         return ["audience"]
     refs = audience.get("principal_refs")
     audience_ref = audience.get("review_ref")
+    audience_kind = audience.get("kind")
     if audience.get("schema_version") != MEMORY_AUDIENCE_SCHEMA_VERSION or not isinstance(refs, list) or not refs or len(refs) > 64 or any(not principal_ref(item) for item in refs):
         return ["audience"]
+    if not isinstance(audience_kind, str) or audience_kind not in {"subject_only", "explicit_principals"}:
+        return ["identity_values"]
     if not valid_review_ref(audience_ref, allow_empty=False):
         return ["audience_review_ref"]
     if audience_ref != reviewer_ref:
         return ["review_ref_mismatch"]
     subject = value.get("subject_principal")
-    if audience.get("kind") == "subject_only" and (not principal_ref(subject) or refs != [subject]):
+    if audience_kind == "subject_only" and (not principal_ref(subject) or refs != [subject]):
         return ["subject_audience"]
-    if audience.get("kind") == "explicit_principals" and subject is not None:
+    if audience_kind == "explicit_principals" and subject is not None:
         return ["shared_subject"]
-    if audience.get("kind") not in {"subject_only", "explicit_principals"} or not safe_ref(value.get("executor_perspective")):
+    if not safe_ref(value.get("executor_perspective")):
         return ["identity_values"]
     return []

@@ -22,7 +22,11 @@ from omh.plugin_bundle.omh.memory_principals import (
     parse_principal_context,
 )
 from omh.plugin_bundle.omh.memory_provider import OmhMemoryProvider
-from omh.workflows.memory import approve_project_memory_candidate, capture_project_memory_candidate
+from omh.workflows.memory import (
+    approve_project_memory_candidate,
+    capture_project_memory_candidate,
+    validate_project_memory_record,
+)
 PRINCIPAL_A = "principal:v1:" + "a" * 64
 PRINCIPAL_B = "principal:v1:" + "b" * 64
 NOW = datetime(2026, 9, 12, tzinfo=timezone.utc)
@@ -124,6 +128,29 @@ class MemoryPrincipalTests(unittest.TestCase):
                         self.assertFalse(capture["captured"])
                         self.assertEqual(capture["reason"], "principal_context_required")
             self.assertFalse((paths.memory_dir / "candidates").exists())
+
+    def test_M4_nested_audience_kind_containers_return_bounded_admission_errors(self) -> None:
+        # Given an otherwise valid reviewed shared v3 record.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / "omh", Path(tmp) / "hermes")
+            record = _approved(
+                paths,
+                "Shared malformed audience fixture",
+                _context(PRINCIPAL_A),
+                audience=(PRINCIPAL_A, PRINCIPAL_B),
+            )
+
+            # When nested audience.kind is a JSON container at both validators.
+            for malformed in ([], {}):
+                with self.subTest(malformed=malformed):
+                    candidate: Any = json.loads(json.dumps(record))
+                    candidate["identity"]["audience"]["kind"] = malformed
+                    identity_errors = memory_identity_errors(candidate["identity"])
+                    admission_errors = validate_project_memory_record(candidate)
+
+                    # Then both paths return bounded codes instead of raising.
+                    self.assertEqual(identity_errors, ["identity_values"])
+                    self.assertIn("project_memory_record.identity_values", admission_errors)
 
     def test_M4_review_refs_reject_malformed_and_private_values_without_retention(self) -> None:
         # Given a safe candidate plus review-ref variants at the identity boundary.
