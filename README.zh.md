@@ -312,6 +312,9 @@ OMH 工作流运行时,终端会展示:
 
 ## 推荐模型
 
+<p align="center">
+  <img src="assets/omh-model-tui.png" alt="Hermes Modern TUI 中的 /omh-model：每个类别一行，显示 head 模型、effort 条和状态；光标行显示左右与 -/+ 手柄" width="820">
+</p>
 OMH 随附以下可编辑的有序 recommendation chain。guided model setup 只会依据用户确认 active 的 candidate 来解析 chain。结果是已准备的 routing config，不是 provider availability、credential、dispatch 或 execution 证据。
 
 | 类别 alias | 用途 | 可编辑的 recommendation 顺序 |
@@ -359,7 +362,7 @@ $ cat ~/.omh/routing/model-chains.json
 }
 ```
 
-当前生效的 chain 可用 `omh model-chains show` 查看。不想手动编辑文件的话，也可以运行 `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.3-ultrafast:low"`，同一个文件会被直接修改。
+当前生效的 chain 可用 `omh model-chains show` 查看。不想手动编辑文件的话，在终端运行 `omh model-chains`（或 `omh model`）会打开方向键选择器——上下选类别，左右换 head 模型，`-`/`+` 调 effort——在 Modern TUI 里 `/omh-model` 打开同一个选择器。脚本化的写法是 `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.3-ultrafast:low"`，同一个文件会被直接修改。
 如果 alias 需要 provider 专用的 wire ID，请在 `~/.omh/routing/model-providers.json` 中按 `model_provider_routes/v1` 映射一次。此后 `set`、`status`、fallback 和 HUD 都会显示完整的 alias/provider/wire model route。OMH 只保存 provider ID，不保存 credential。
 
 请让 Hermes **设置我的模型**，以查看或更改这些推荐。它们是可编辑的偏好，不是 benchmark 结果。详细的设置、fallback、provider 与所有权规则见 [Guided Model Setup](docs/INSTALLATION.md#guided-model-setup)。
