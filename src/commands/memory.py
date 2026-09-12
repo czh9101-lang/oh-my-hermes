@@ -26,6 +26,9 @@ from ..plugin_bundle.omh.memory_blocks import (
 from ..plugin_bundle.omh.memory_dreaming import read_dreaming_state
 from ..plugin_bundle.omh.memory_principals import parse_principal_context
 from ..plugin_bundle.omh.memory_provider import OmhMemoryProvider
+from ..plugin_bundle.omh.project_identity import mint_explicit_project_identity, project_identity_root, require_project_identity, resolve_project_identity
+from ..plugin_bundle.omh.memory_records import prefetch_scope_allowlist
+from ..workflows.memory_project_identity import build_project_identity_migration_report, migrate_project_identity, rollback_project_identity_migration
 from ..plugin_bundle.omh.metadata import MEMORY_PROVIDER_NAME
 from ..memory import (
     LifecycleCandidateError,
@@ -92,6 +95,30 @@ from ..workflows.memory_migration import (
 from .common import _paths, _print_json
 
 
+def cmd_memory_project_identity(args: argparse.Namespace) -> int:
+    from dataclasses import asdict
+
+    try:
+        paths = _paths(args)
+        root = project_identity_root(paths.omh_home.parent) or project_identity_root() or Path.cwd()
+        if args.identity_command == "init":
+            mint_explicit_project_identity(root)
+            payload = asdict(resolve_project_identity(root))
+        elif args.identity_command == "show":
+            payload = asdict(resolve_project_identity(root))
+        elif args.identity_command == "report":
+            payload = build_project_identity_migration_report(paths, root=root)
+        elif args.rollback:
+            payload = rollback_project_identity_migration(paths, args.rollback, root=root)
+        else:
+            payload = migrate_project_identity(paths, approve=args.approve, root=root)
+    except (OSError, ValueError):
+        # These commands never expose filesystem paths from operating-system errors.
+        raise OmhError("project_identity_operation_refused") from None
+    _print_json(payload)
+    return 0
+
+
 def cmd_memory_status(args: argparse.Namespace) -> int:
     try:
         payload = build_project_memory_status(_paths(args))
@@ -114,7 +141,7 @@ def cmd_memory_capture(args: argparse.Namespace) -> int:
             content=content,
             record_type=args.type,
             scope_kind=args.scope_kind,
-            scope_ref=args.scope_ref,
+            scope_ref=(require_project_identity(project_identity_root(_paths(args).omh_home.parent) or project_identity_root() or _paths(args).omh_home.parent) if args.scope_kind == "project" and args.scope_ref is None else args.scope_ref),
             source=args.source,
             source_ref=args.source_ref,
             tags=args.tag or [],
@@ -272,8 +299,11 @@ def cmd_memory_reject(args: argparse.Namespace) -> int:
 def cmd_memory_recall(args: argparse.Namespace) -> int:
     try:
         query = " ".join(args.query).strip()
+        paths = _paths(args)
+        automatic = args.scope_kind is None and args.scope_ref is None
+        resolution = resolve_project_identity(project_identity_root(paths.omh_home.parent) or project_identity_root() or paths.omh_home.parent)
         payload = build_project_memory_recall_pack(
-            _paths(args),
+            paths,
             query,
             executor_target=args.executor,
             session_id=args.session_id,
@@ -283,6 +313,8 @@ def cmd_memory_recall(args: argparse.Namespace) -> int:
             max_chars=_optional_positive_int(args.max_chars, "--max-chars"),
             include_stale=args.include_stale,
             include_archived=args.include_archived,
+            allowed_scopes=prefetch_scope_allowlist(project_identity=resolution.identity, session_id=args.session_id) if automatic else None,
+            inspection=not automatic,
             observer=args.observer,
             observed=args.observed,
             query_intent=args.intent,

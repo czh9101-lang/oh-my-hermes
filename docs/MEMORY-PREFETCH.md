@@ -47,11 +47,49 @@ The normal prefetch and handoff allowlist contains:
 | `project/<identity>` | Context for the current project label |
 | `thread/<session-id>` | Context for the current session, included only when a session ID is available |
 
-For prefetch, project identity is the nearest repository directory name, or
-`default` outside a repository. Handoff derives it from the project containing
-the supplied OMH home's parent. Same-named checkouts share a label; this isn't
-an authenticated repository or user identity. The handoff facade reads its
-supplied store only, so a global label doesn't make it discover other stores.
+Project memory uses `project_identity/v2`, not a checkout basename. The
+filesystem-only resolver prefers a valid `.omh/project-identity.json` explicit
+`prj:<64 hex>` identity. Otherwise it reads Git metadata (including linked
+worktree `commondir`) and hashes the normalized remote URL into
+`repo:<32 hex>`. Origin wins; conflicting remotes without origin fail closed.
+Credentials and transport schemes are removed before hashing. Checkout renames
+retain identity, worktrees share their common remote, and distinct forks do
+not share memory merely because their directories have the same name.
+
+Invalid explicit evidence, absent or ambiguous remotes, unreadable metadata,
+and an unbound checkout produce closed diagnostics, never a basename fallback.
+Resolution makes no subprocess, network, or model call and writes nothing.
+This is repository scoping, not authenticated repository or user identity.
+The handoff facade still reads its supplied store only; a global label does
+not make it discover other stores.
+
+### Compatibility and operator migration
+
+Automatic recall of basename-scoped records stops until reviewed migration.
+`legacy_basename` is an inspection/migration compatibility state, never a
+second project ref in an automatic result. Local-only repositories need an
+explicit identity initialized by the agent/operator maintenance command
+`omh memory project-identity init`. Capture without a resolved project identity
+refuses with that guidance; it never silently becomes user-global.
+
+Agent/operator maintenance path:
+
+1. `omh memory project-identity show` inspects resolution without writing.
+2. `omh memory project-identity report` scans project and user stores and
+   reports proposed scope changes without altering records.
+3. After review, `omh memory project-identity migrate --approve <report_digest>`
+   binds approval to that exact inventory and creates reviewed successor
+   revisions through the existing lifecycle journal. Original revisions and
+   reviews are preserved, not rewritten in place. Repeating the same completed
+   migration is a no-op.
+4. `omh memory project-identity migrate --rollback <receipt_id>` retires those
+   successors and restores original eligibility for explicit legacy inspection.
+   It does not re-enable basename-based automatic recall.
+
+Prefetch receipts are now `omh_memory_prefetch_receipt/v3`. Configuration
+identity includes both resolver version and project identity. Older v2 receipts
+remain structurally readable, but cannot establish current repository-bound
+recall evidence; identity/version mismatches are rejected.
 
 Delivery requires an explicit nonempty allowlist with a valid project entry.
 A missing required kind, invalid scope, or blank ref yields
@@ -66,7 +104,8 @@ lens. The live provider selects `observed: hermes`; handoffs select their
 executor, including Codex, Claude Code, Hermes, and generic targets. An
 unresolved executor doesn't inherit another actor's perspective.
 
-Operator `omh memory recall` without scope flags retains wildcard inspection
+Agent/operator `omh memory recall` without scope flags uses the current stable
+project allowlist. Explicit scope flags remain available for legacy inspection
 within the selected store. Supplying only half a scope fails closed.
 `--include-stale` is inspection-only and carries ineligible replay evidence;
 it can't turn stale records into approved handoff context. Inspection isn't
@@ -82,11 +121,10 @@ remains a legacy profile-local scope, not a human identity; it is excluded on a
 shared surface. Upgrade and recall never silently rewrite or assign old records.
 Use the report-first principal migration described in [Project Memory](MEMORY.md).
 
-A record in the user home is not automatically global. In particular,
-`project/default`, the capture default, doesn't match prefetch inside a
-repository named `release-tools`. That record stays stored and inspectable;
-it simply isn't in the `project/release-tools` delivery lens. `target` and
-`run` records likewise aren't implicitly added to the normal allowlist.
+A record in the user home is not automatically global. In particular, old
+`project/default` records do not match a resolved stable repository identity.
+They stay stored and explicitly inspectable until reviewed migration. `target`
+and `run` records likewise are not implicitly added to the normal allowlist.
 
 For a rollout, inspect the existing store and intended audience first. Keep
 correct project/thread labels. If an old fact really belongs across projects,
@@ -148,10 +186,12 @@ or model use.
 
 ## Receipt privacy and identity
 
-`build_prefetch_receipt` creates `omh_memory_prefetch_receipt/v2` in `prepared`
-state. It adds the opaque principal binding state, actor kind, shared-surface
-flag, aggregate allow/deny reasons, and audience-policy digest. Existing v1
-receipts remain readable but establish no principal-isolation claim. `prefetch`
+`build_prefetch_receipt` creates `omh_memory_prefetch_receipt/v3` in `prepared`
+state. It binds resolver version and project identity, with resolution state
+and closed diagnostics in the lens, alongside opaque principal binding state,
+actor kind, shared-surface flag, aggregate allow/deny reasons, and audience-policy
+digest. Existing v1/v2 receipts remain readable; they cannot establish the new
+repository-identity binding, and v1 establishes no principal-isolation claim. `prefetch`
 marks the current receipt `returned_to_host`, exposes it through
 `latest_prefetch_receipt()`, and attempts to persist it at
 `<provider-user-home>/memory/prefetch_receipt.json`. A write `OSError` doesn't

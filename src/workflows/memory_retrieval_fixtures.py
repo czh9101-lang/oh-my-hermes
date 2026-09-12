@@ -34,7 +34,8 @@ from ..plugin_bundle.omh.memory_governance import (
     stable_artifact_identity,
 )
 
-FIXTURE_CORPUS_VERSION = "omh-memory-retrieval-fixtures/v1"
+FIXTURE_CORPUS_VERSION = "omh-memory-retrieval-fixtures/v2"
+FIXTURE_PROJECT_IDENTITY = "repo:" + hashlib.sha256(b"example.invalid/memory-fixture").hexdigest()[:32]
 # The corpus clock. Absolute, declared once, never derived from the host.
 FIXTURE_CLOCK = datetime(2031, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 FIXTURE_CLOCK_ISO = "2031-01-02T03:04:05Z"
@@ -61,7 +62,7 @@ def _record(
     tags: tuple[str, ...] = (),
     record_type: str = "fact",
     scope_kind: str = "project",
-    scope_ref: str = "default",
+    scope_ref: str = FIXTURE_PROJECT_IDENTITY,
     observer: str = "",
     observed: str = "",
     retention_class: str = "standard",
@@ -358,7 +359,7 @@ RETRIEVAL_CASES: tuple[dict[str, object], ...] = (
         ),
         query="release checklist",
         scope_kind="project",
-        scope_ref="default",
+        scope_ref=FIXTURE_PROJECT_IDENTITY,
         included_order=("mem_r50_in_scope",),
         absent=("mem_r51_other_scope",),
     ),

@@ -21,7 +21,7 @@ from omh.coding.executor_capability_snapshots import (
     write_executor_capability_snapshot,
 )
 from omh.coding_delegation import build_coding_delegation_payload
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.memory import capture_project_memory_candidate
 from omh.profiles.setup import write_setup_profile
 from omh.runtime_artifacts import (

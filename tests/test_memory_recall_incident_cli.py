@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from _cli_harness import run_cli
+from project_identity_fixture import seed_project_identity
 from omh.plugin_bundle.omh.memory_provider import OmhMemoryProvider
 
 
@@ -16,6 +17,7 @@ class MemoryRecallIncidentCliTests(unittest.TestCase):
             with self.subTest(persist=persist), TemporaryDirectory() as directory:
                 # Given: a real pending candidate in isolated OMH/Hermes homes.
                 root = Path(directory)
+                seed_project_identity(root)
                 home = root / "omh"
                 prefix = ["--omh-home", str(home), "--hermes-home", str(root / "hermes")]
                 summary = "PRIVATE_CLAIM_SENTINEL"
@@ -71,6 +73,7 @@ class MemoryRecallIncidentCliTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             # Given: an approved record and the actual provider's served receipt in this home.
             root = Path(directory)
+            seed_project_identity(root)
             home = root / "omh"
             prefix = ["--omh-home", str(home), "--hermes-home", str(root / "hermes")]
             status, stdout, stderr = run_cli(prefix + ["memory", "capture", "LIVE_CLAIM_SENTINEL"])

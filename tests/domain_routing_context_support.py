@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+from project_identity_fixture import project_identity, seed_repository_remote
 
 
 CLAIM_BOUNDARY = (
@@ -36,6 +37,7 @@ def _resolver():
 def _repository(root: Path) -> Path:
     root.mkdir(parents=True)
     (root / ".git").mkdir()
+    seed_repository_remote(root)
     return root
 
 
@@ -49,7 +51,7 @@ def _approve_profile(
     scope_kind: str = "project",
     scope_ref: str | None = None,
 ) -> dict[str, object]:
-    from omh.paths import project_identity, resolve_paths
+    from omh.paths import resolve_paths
     from omh.workflows.domain_intelligence import (
         approve_domain_candidate,
         capture_domain_candidate,

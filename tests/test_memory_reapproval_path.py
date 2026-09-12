@@ -16,7 +16,7 @@ from omh.memory import (
     build_project_memory_review,
     capture_project_memory_candidate,
 )
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 
 
 def _cli(home: Path, *args):

@@ -20,7 +20,7 @@ from omh.memory import (
     set_memory_pin,
     validate_project_memory_recall_pack,
 )
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.profiles.setup import write_setup_profile
 from omh.runtime.records import _compact_memory_recall_pack
 

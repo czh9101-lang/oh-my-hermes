@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..paths import OmhPaths, project_identity
+from ..paths import OmhPaths
+from ..plugin_bundle.omh.project_identity import resolve_project_identity
 from .domain_intelligence_lineage import ProfileValidationContext
 from .domain_intelligence_store import (
     domain_store_lock,
@@ -30,7 +31,7 @@ def build_domain_handoff_projection(
     project_root = paths.omh_home.parent
     store = paths.memory_dir / "domain-intelligence"
     required = (store / ".store.lock", store / "candidates", store / "profiles", store / "reviews", store / "history")
-    if project_identity(project_root) == "default" or not store.exists():
+    if resolve_project_identity(project_root).state != "resolved" or not store.exists():
         return [], []
     if not all(path.exists() for path in required):
         return [], [_exclusion("domain-profile-store", "domain_profile_store_unhealthy")]
@@ -75,7 +76,7 @@ def _project_records(
         candidates=candidate_values,
         reviews=review_values,
     )
-    expected_scope = {"kind": "project", "ref": project_identity(project_root)}
+    expected_scope = {"kind": "project", "ref": resolve_project_identity(project_root).identity}
     included: list[dict[str, object]] = []
     excluded: list[dict[str, object]] = []
 

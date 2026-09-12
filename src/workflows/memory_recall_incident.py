@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from typing import Any
 
 from ..plugin_bundle.omh.hermes_memory import HERMES_MEMORY_FILES, read_hermes_memory_file
@@ -16,6 +17,7 @@ from ..plugin_bundle.omh.memory_prefetch_receipt import (
     MAX_PREFETCH_RECEIPT_BYTES, prefetch_receipt_path, validate_prefetch_receipt,
 )
 from ..plugin_bundle.omh.memory_recall_selector import select_memory_recall
+from ..plugin_bundle.omh.project_identity import LEGACY_BASENAME_STATE, legacy_project_scope, project_identity_root, resolve_project_identity
 from ..system.local_store import atomic_write_json, read_json_object_result
 from ..system.paths import OmhPaths
 from . import memory
@@ -67,6 +69,9 @@ def _read_live_receipt(paths: OmhPaths, request: RecallIncidentRequest) -> tuple
     home_digests = store.get('home_digests') if isinstance(store, dict) else None
     if not isinstance(home_digests, list) or digest(str(paths.omh_home.resolve())) not in home_digests:
         return rejected('receipt_store_mismatch')
+    resolution = resolve_project_identity(paths.omh_home.parent)
+    if receipt.get('resolver_version') != resolution.resolver_version or receipt.get('project_identity') != resolution.identity:
+        return rejected('receipt_project_identity_mismatch')
     lens = receipt['lens']
     perspective = lens['perspective']
     allowlist = [{**scope} for scope in lens['scope_allowlist'] if isinstance(scope, dict)]
@@ -120,6 +125,8 @@ def _receipt_stage(receipt: dict[str, Any], record_id: str, claim_digest: str) -
 
 def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest) -> Incident:
     """Inspect one scoped anchor; never attach raw recall packs to an incident."""
+    if request.scope_kind == 'project' and not request.scope_ref:
+        request = replace(request, scope_ref=resolve_project_identity(paths.omh_home.parent).identity)
     pack = memory.build_project_memory_recall_pack(
         paths, request.query, session_id=request.session_id,
         scope_kind=request.scope_kind, scope_ref=request.scope_ref,
@@ -257,6 +264,11 @@ def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest
                         (reason, last), basis = staged, 'live_prefetch_receipt'
     if not pack['enabled']:
         reason = 'project_memory_disabled'
+    root = project_identity_root(paths.omh_home.parent)
+    resolution = resolve_project_identity(paths.omh_home.parent)
+    if root is not None and resolution.state == 'resolved' and request.scope_kind == 'project' and request.scope_ref == legacy_project_scope(root)['ref']:
+        reason = LEGACY_BASENAME_STATE
+        basis = 'project_identity_resolution'
     config = {
         'home_digest': digest(str(paths.omh_home.resolve())),
         'session_digest': digest(request.session_id),

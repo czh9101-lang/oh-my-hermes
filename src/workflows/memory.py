@@ -123,7 +123,8 @@ from ..plugin_bundle.omh.memory_recall_support import (
     normalize_memory_attention_tier as normalize_memory_attention_tier,
     record_attention_tier as record_attention_tier,
 )
-from ..paths import OmhPaths, project_identity
+from ..paths import OmhPaths
+from ..plugin_bundle.omh.project_identity import require_project_identity, resolve_project_identity
 from ..profiles.setup import read_setup_profile
 from ..targets import summarize_target_registry
 
@@ -789,7 +790,7 @@ def capture_project_memory_candidate(
     content: str = "",
     record_type: str = "fact",
     scope_kind: str = "project",
-    scope_ref: str = "default",
+    scope_ref: str | None = None,
     source: str = "cli",
     source_ref: str = "",
     tags: list[str] | tuple[str, ...] | None = None,
@@ -889,6 +890,8 @@ def capture_project_memory_candidate(
         }
     if audience_principals and parsed_principal is None:
         raise ValueError("shared memory admission requires a validated acting principal")
+    if scope_ref is None:
+        scope_ref = require_project_identity(paths.omh_home.parent) if scope_kind == "project" else "default"
     effective_scope_ref = str(parsed_principal["principal"]) if scope_kind == "user" and parsed_principal is not None else scope_ref
     candidate = _build_project_memory_candidate(
         summary,
@@ -1398,6 +1401,8 @@ def memory_recall_pack_for_handoff(
     # Dropping it here was the silent failure: the handoff went out with no
     # memory and no statement that a stale record had been held back, so the
     # operator never got the chance to confirm, replace, or retire it.
+    if pack_scope["kind"] == "unresolved":
+        return {**pack, "scope": pack_scope}
     if not pack.get("enabled") or not (pack.get("included_records") or pack.get("freshness_warnings")):
         return None
     return pack
@@ -2787,6 +2792,8 @@ def build_handoff_context_pack(
     run_id: str | None = None,
 ) -> dict[str, object]:
     pack_scope = _handoff_pack_scope(paths, scope_kind=scope_kind, scope_ref=scope_ref)
+    if pack_scope["kind"] == "unresolved":
+        inspection = {"snapshots": [], "conflicts": []}
     if inspection is None:
         snapshots = _local_snapshots(paths, scope_kind=scope_kind, scope_ref=scope_ref, session_limit=session_limit, now=now)
         inspection = {"snapshots": snapshots, "conflicts": _detect_conflicts(snapshots)}
@@ -2807,6 +2814,9 @@ def build_handoff_context_pack(
             item_id = str(item.get("item_id", ""))
             if source == "omh_memory":
                 artifact = _memory_artifact_for_snapshot_item(paths, item)
+                artifact_scope = artifact.get("scope")
+                if isinstance(artifact_scope, dict) and artifact_scope.get("kind") == "project" and artifact_scope != pack_scope:
+                    continue
                 # Context packs are executor-facing exactly like recall
                 # packs, so they apply the same lens: a record about another
                 # executor is excluded here, not silently skipped, because
@@ -2847,7 +2857,7 @@ def build_handoff_context_pack(
                     "summary": str(item.get("summary", "")),
                     "source": source,
                     "truth_level": str(snapshot.get("truth_level", "")),
-                    "scope": item.get("scope", snapshot.get("scope", _scope("project", "default"))),
+                    "scope": item.get("scope", snapshot.get("scope", pack_scope)) if source == "omh_memory" else pack_scope,
                 }
                 if evaluation:
                     context_item["replay_evaluation"] = evaluation
@@ -2858,7 +2868,7 @@ def build_handoff_context_pack(
     # Reviewed domain profiles share the existing OMH-memory handoff lane, but
     # are resolved directly from their own validated store rather than trusted
     # from a caller-supplied inspection snapshot.
-    if (not scope_kind or scope_kind == "project"):
+    if pack_scope["kind"] == "project":
         from .domain_handoff_projection import build_domain_handoff_projection
 
         domain_included, domain_excluded = build_domain_handoff_projection(paths)
@@ -2889,6 +2899,7 @@ def build_handoff_context_pack(
         "session_id": session_id,
         "scope": pack_scope,
         "source_refs": _source_refs(inspection),
+        **({"metadata": {"scope_status": "scope_unresolved"}} if pack_scope["kind"] == "unresolved" else {}),
         "included_context": kept,
         "excluded_context": excluded,
         "blocked_by_conflicts": blocking_conflicts,
@@ -4666,7 +4677,8 @@ def _handoff_pack_scope(paths: OmhPaths, *, scope_kind: str | None, scope_ref: s
     if scope_kind and scope_ref:
         return _scope(str(scope_kind), str(scope_ref))
     project_root = paths.omh_home.parent
-    return _scope("project", project_identity(project_root))
+    resolution = resolve_project_identity(project_root)
+    return _scope("project", resolution.identity) if resolution.state == "resolved" else _scope("unresolved", "scope_unresolved")
 
 
 def _source_refs(inspection: dict[str, Any]) -> list[dict[str, object]]:

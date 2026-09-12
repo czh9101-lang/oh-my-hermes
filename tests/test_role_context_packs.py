@@ -35,7 +35,7 @@ from omh.memory import (
     freshness_reason_detail,
     memory_recall_pack_for_handoff,
 )
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.runtime.records import validate_handoff_context_pack_fields
 from omh.workflows.role_context_packs import (
     ROLE_CONTEXT_PACK_ORIGINS,

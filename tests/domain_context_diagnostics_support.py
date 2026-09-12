@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from omh.paths import project_identity
+from project_identity_fixture import project_identity
 from omh.workflows.domain_routing_context import DomainRoutingResolution
 
 from test_domain_routing_context import _binding

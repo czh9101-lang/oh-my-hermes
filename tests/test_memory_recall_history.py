@@ -12,7 +12,7 @@ from _cli_harness import run_cli
 from _local_package import load_local_package
 
 load_local_package()
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.workflows import memory
 from omh.workflows.memory_lifecycle import build_memory_correction
 from omh.workflows.memory_lifecycle_executor import execute_memory_lifecycle

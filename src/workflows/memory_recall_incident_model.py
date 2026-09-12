@@ -31,7 +31,7 @@ class RecallIncidentRequest:
     query: str = ''
     session_id: str = ''
     scope_kind: str = 'project'
-    scope_ref: str = 'default'
+    scope_ref: str = ''
     observer: str | None = None
     observed: str | None = None
     limit: int = 6
@@ -50,7 +50,7 @@ class RecallIncidentRequest:
             raise IncidentInputError('scope_kind')
         for field in ('scope_ref', 'observer', 'observed'):
             value = getattr(self, field)
-            if value is not None:
+            if value is not None and not (field == 'scope_ref' and value == '' and self.scope_kind == 'project'):
                 require_opaque_metadata_ref(value, field=field)
         for field in ('limit', 'max_chars', 'provider_served_count'):
             value = getattr(self, field)
@@ -105,6 +105,7 @@ REASON_STAGES: Final[dict[str, Stage]] = {
     'invalid_record': 'invalid_or_superseded', 'review_required_legacy': 'invalid_or_superseded',
     'review_not_found': 'invalid_or_superseded', 'review_identity_mismatch': 'invalid_or_superseded',
     'scope_mismatch': 'scope_or_perspective_mismatch', 'perspective_mismatch': 'scope_or_perspective_mismatch',
+    'legacy_basename': 'scope_or_perspective_mismatch',
     'review_due': 'stale_expired_or_archived', 'stale_review_required': 'stale_expired_or_archived',
     'expired_standard': 'stale_expired_or_archived', 'expired_volatile': 'stale_expired_or_archived',
     'expired_durable': 'stale_expired_or_archived', 'archived_tier': 'stale_expired_or_archived',

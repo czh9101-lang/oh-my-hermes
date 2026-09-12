@@ -20,7 +20,8 @@ from domain_store_snapshot_support import (
     repository_tree_snapshot,
 )
 
-from omh.paths import project_identity, resolve_paths
+from omh.paths import resolve_paths
+from project_identity_fixture import project_identity, seed_project_identity
 from omh.system import binary_io
 from omh.workflows import domain_intelligence_store
 from omh.workflows.domain_intelligence_store import MAX_DOMAIN_CANDIDATE_FILES
@@ -84,6 +85,7 @@ def _repository(root: Path) -> Path:
     root.mkdir()
     (root / ".git").mkdir()
     (root / "PROJECT_TERMS.md").write_bytes(_VALID_DOCUMENT)
+    seed_project_identity(root)
     return root
 
 
@@ -163,6 +165,7 @@ class ProjectTermsCharacterizationTests(unittest.TestCase):
         # Given
         with TemporaryDirectory() as temporary:
             project_root = Path(temporary).resolve()
+            seed_project_identity(project_root)
             profile = {
                 "scope": {
                     "kind": "project",

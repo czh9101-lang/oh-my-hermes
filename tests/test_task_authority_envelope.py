@@ -50,7 +50,8 @@ from omh.coding.fanout_dispatch import (  # noqa: E402
     verify_safety_profile_matches_contract,
 )
 from omh.runtime.records import build_coding_delegation_record  # noqa: E402
-from omh.system.paths import OmhPaths, resolve_paths  # noqa: E402
+from omh.system.paths import OmhPaths  # noqa: E402
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.workflows.memory import (  # noqa: E402
     build_handoff_context_pack,
     build_project_memory_recall_pack,

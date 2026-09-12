@@ -16,7 +16,8 @@ from omh.hermes_planning import build_hermes_plan_payload
 from omh.ingress import extract_message_text, extract_source_metadata
 from omh.skills.catalog import builtin_definitions, omh_skill_display_name
 from omh.skills.render import workflow_reference_payload
-from omh.paths import project_identity, resolve_paths
+from omh.paths import resolve_paths
+from project_identity_fixture import project_identity
 from omh.wrapper_contract import build_chat_interaction_payload
 from omh.wrapper.route_hints import build_chat_route_hint_payload
 

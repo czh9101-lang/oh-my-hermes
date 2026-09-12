@@ -43,7 +43,7 @@ from omh.memory import (
     validate_project_memory_recall_pack,
 )
 from omh.memory import file_lock
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.profiles.setup import write_setup_profile
 from omh.targets import record_target_observation
 
@@ -1358,7 +1358,7 @@ class MemoryContractTests(unittest.TestCase):
             self.assertIn("receipt", applied)
 
             inspection = build_memory_inspection(paths, summary=True, review_item_limit=2)
-            pack = build_handoff_context_pack(paths, context_limit=2)
+            pack = build_handoff_context_pack(paths, context_limit=2, scope_kind="project", scope_ref="default")
 
             self.assertEqual(inspection["snapshots"], [])
             self.assertGreaterEqual(inspection["snapshot_count"], 1)

@@ -78,7 +78,7 @@ from omh.plugin_bundle.omh.memory_records import (
 )
 from omh.plugin_bundle.omh.metadata import MEMORY_PROVIDER_NAME, PROVIDED_TOOLS
 from omh.plugin_bundle.omh.tools.memory_tool import MEMORY_ACTIONS, OMH_MEMORY_SCHEMA, omh_memory_handler
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.workflows.memory import (
     approve_project_memory_candidate,
     capture_project_memory_candidate,
@@ -2357,7 +2357,7 @@ class RecordsReachPrefetchTests(unittest.TestCase):
             # identity (`project/repo`, what `omh memory recall` resolves for
             # this checkout) and the user store's cross-project preference is
             # labelled `user-global`. Neither is inferred from the store path.
-            _approve_record(root, "Project-scoped: the API lives under src/api.", home="repo/.omh", scope_ref="repo")
+            _approve_record(root, "Project-scoped: the API lives under src/api.", home="repo/.omh")
             _approve_record(root, "User-scoped: the owner prefers Korean replies.", scope_kind="user-global", scope_ref="default")
             pack = self._provider(root, cwd=repo / "src" / "deep").prefetch("")
             self.assertIn("Project-scoped", pack)

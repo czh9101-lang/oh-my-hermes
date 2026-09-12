@@ -46,15 +46,18 @@ def resolve_domain_clarification_target_result(
     project_root: Path,
     locale: str,
 ) -> DomainClarificationResolution:
-    from ..paths import project_identity
+    from ..plugin_bundle.omh.project_identity import resolve_project_identity
     from ..skills import catalog
 
     if len(message) > MAX_DOMAIN_CONTEXT_INPUT_CODE_POINTS:
         return DomainClarificationResolution("input_too_large")
 
+    resolution = resolve_project_identity(project_root)
+    if resolution.state != "resolved":
+        return DomainClarificationResolution("no_match")
     expected_scope = {
         "kind": "project",
-        "ref": project_identity(project_root),
+        "ref": resolution.identity,
         "ref_authority": "operator_or_wrapper_supplied",
         "identity_claim": "not_authenticated_identity_evidence",
     }

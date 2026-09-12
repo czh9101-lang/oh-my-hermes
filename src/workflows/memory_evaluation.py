@@ -35,7 +35,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from ..paths import OmhPaths, project_identity
+from ..paths import OmhPaths
+from ..plugin_bundle.omh.project_identity import resolve_project_identity
 from ..plugin_bundle.omh.memory_governance import canonical_payload_digest, evaluate_memory_replay, stable_artifact_identity
 from ..plugin_bundle.omh.memory_prefetch_receipt import build_prefetch_receipt, validate_prefetch_receipt
 from ..plugin_bundle.omh.memory_provider import OmhMemoryProvider
@@ -96,9 +97,8 @@ PARITY_FIELDS = (
     "selector_schema_version",
     "recall_pack_schema_version",
 )
-# The fixture corpus files its records under project/default, so the fixture
-# repository is named to resolve to that identity on both paths.
-PARITY_PROJECT_IDENTITY = "default"
+# The fixture repository carries matching remote evidence, independent of name.
+PARITY_PROJECT_IDENTITY = "fixture-checkout"
 PARITY_SESSION_ID = "session-fixture"
 PARITY_USER_GLOBAL_SCOPE = {"kind": "user-global", "ref": "default"}
 # Two retrieval reports are comparable only when every one of these agrees.
@@ -249,7 +249,7 @@ def run_live_prefetch_arms(
     prepared = prepare_prefetch_records(
         snapshot,
         query,
-        allowed_scopes=prefetch_scope_allowlist(project_identity=project_root.name, session_id=session_id),
+        allowed_scopes=prefetch_scope_allowlist(project_identity=resolve_project_identity(project_root).identity, session_id=session_id),
         session_id=session_id,
         limit=limit,
         max_chars=max_chars,
@@ -329,6 +329,7 @@ def _run_retrieval_case(
         # resolve the project identity from the directory holding `.git`.
         project_root = root / PARITY_PROJECT_IDENTITY
         (project_root / ".git").mkdir(parents=True)
+        (project_root / ".git" / "config").write_text('[remote "origin"]\n url = https://example.invalid/memory-fixture.git\n', encoding="utf-8")
         paths = OmhPaths(project_root / ".omh", root / "hermes")
         _seed_retrieval_store(paths, case)
         pack = pack_builder(
@@ -369,7 +370,7 @@ def _run_parity_arms(
     lens: dict[str, object] = {
         "scope_allowlist": [
             dict(PARITY_USER_GLOBAL_SCOPE),
-            {"kind": "project", "ref": project_identity(paths.omh_home.parent)},
+            {"kind": "project", "ref": resolve_project_identity(paths.omh_home.parent).identity},
             {"kind": "thread", "ref": PARITY_SESSION_ID},
         ],
         "executor_target": PREFETCH_EXECUTOR_TARGET,

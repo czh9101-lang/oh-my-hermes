@@ -17,7 +17,7 @@ from omh.coding_lifecycle import (
     start_codex_delegation_lifecycle,
 )
 from omh.memory import capture_project_memory_candidate
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.profiles.setup import write_setup_profile
 from omh.coding.executor_capability_snapshots import (
     build_executor_capability_snapshot,
