@@ -207,9 +207,16 @@ class CancelledJournalTests(unittest.TestCase):
 
 class InterruptedRunningUnitTests(unittest.TestCase):
     def setUp(self) -> None:
+        # The interrupt flag is process-global and the dispatch under test
+        # sets it. Clearing only BEFORE the test leaked the set flag to
+        # whichever test ran next in the same process: on the CI shard plan
+        # that was `test_fanout_capacity`'s C4 matrix, whose direct
+        # `signal_safe_unit_runner` spawn then hit register-then-check and
+        # was SIGTERMed before writing a byte (#1482). Restore it after too.
         from omh.coding.fanout_dispatch import _INTERRUPT_FLAG
 
         _INTERRUPT_FLAG.clear()
+        self.addCleanup(_INTERRUPT_FLAG.clear)
 
     def test_a_signal_killed_unit_records_cancelled_rather_than_a_model_failure(self) -> None:
         with TemporaryDirectory() as tmp:

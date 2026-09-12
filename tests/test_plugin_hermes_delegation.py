@@ -55,6 +55,7 @@ def _build_state_db(
         );
         CREATE TABLE session_model_usage (
             session_id TEXT NOT NULL, model TEXT NOT NULL,
+            billing_provider TEXT NOT NULL DEFAULT '',
             api_call_count INTEGER NOT NULL DEFAULT 0,
             input_tokens INTEGER NOT NULL DEFAULT 0,
             output_tokens INTEGER NOT NULL DEFAULT 0,
@@ -91,20 +92,32 @@ def _build_state_db(
             single = child.get("usage")
             usages = [single] if single else []
         for usage in usages:
+            # Named columns, not positions: the host's real table carries
+            # more of them than this fixture does, and a positional insert
+            # made adding one a rewrite of every call site.
+            values = {
+                "session_id": child["id"],
+                # The usage table records the model each call ran on, which
+                # is not always what the session row holds.
+                "model": usage.get("model", child["model"]),
+                "billing_provider": usage.get("billing_provider", ""),
+                "api_call_count": usage.get("api_calls", 0),
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+                "cache_read_tokens": usage.get("cache_read_tokens", 0),
+                "actual_cost_usd": usage.get("actual_cost_usd", 0.0),
+                "estimated_cost_usd": usage.get("estimated_cost_usd", 0.0),
+                "first_seen": usage.get("first_seen"),
+                "last_seen": usage.get("last_seen"),
+            }
+            if include_cost_provenance:
+                values["cost_status"] = usage.get("cost_status")
+                values["cost_source"] = usage.get("cost_source")
             connection.execute(
-                (
-                    "INSERT INTO session_model_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    if include_cost_provenance
-                    else "INSERT INTO session_model_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO session_model_usage ({}) VALUES ({})".format(
+                    ", ".join(values), ", ".join("?" for _ in values)
                 ),
-                (
-                    child["id"], child["model"], usage.get("api_calls", 0),
-                    usage.get("input_tokens", 0), usage.get("output_tokens", 0),
-                    usage.get("cache_read_tokens", 0), usage.get("actual_cost_usd", 0.0),
-                    usage.get("estimated_cost_usd", 0.0),
-                    *(([usage.get("cost_status"), usage.get("cost_source")] if include_cost_provenance else [])),
-                    usage.get("first_seen"), usage.get("last_seen"),
-                ),
+                tuple(values.values()),
             )
     for delegation_id, state in (delegation_states or {}).items():
         connection.execute(
@@ -187,16 +200,16 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
 
     def test_a_routed_ultrabrain_child_is_labeled_ultrabrain(self):
         self.assertEqual(
-            mixture_category_for("gpt-5.6-sol", "xhigh", parent_model="kimi-k3"),
+            mixture_category_for("gpt-6-astra", "xhigh", parent_model="kimi-k3"),
             "ultrabrain",
         )
 
     def test_an_effort_mismatch_with_the_chain_entry_yields_no_category(self):
-        # gpt-5.6-sol appears only as the ultrabrain head, which declares
-        # xhigh; a medium run on a different parent matches nothing and must
-        # not be dressed up as a routed ultrabrain dispatch.
+        # gpt-6-astra appears only at xhigh (the ultrabrain head and the
+        # architect GPT slot); a medium run on a different parent matches
+        # nothing and must not be dressed up as a routed ultrabrain dispatch.
         self.assertEqual(
-            mixture_category_for("gpt-5.6-sol", "medium", parent_model="kimi-k3"), ""
+            mixture_category_for("gpt-6-astra", "medium", parent_model="kimi-k3"), ""
         )
 
     def test_head_match_beats_membership_match(self):
@@ -208,12 +221,17 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
         )
 
     def test_earliest_chain_position_beats_category_order(self):
-        # glm-5.2-ultrafast:low sits second in `quick` but only third in
-        # `unspecified-low` (which precedes quick in canonical order); the
-        # shallower fall-through slot is the likelier route, so the quick
-        # label survives glm-5.3-flash taking the quick head.
+        # A model that sits third in an earlier category but second in a
+        # later one is labelled by the shallower fall-through slot: that is
+        # the likelier route. The shipped chains no longer carry such a pair
+        # (the 5.2 Ultrafast entry that did left on 2026-09-11), so the rule
+        # is pinned on explicit chains.
+        chains = {
+            "unspecified-low": (("glm-5.3", "low"), ("deepseek-v4.1-flash", "low"), ("kimi-k3", "low")),
+            "quick": (("glm-5.3-flash", "low"), ("kimi-k3", "low")),
+        }
         self.assertEqual(
-            mixture_category_for("glm-5.2-ultrafast", "low", parent_model="kimi-k3"),
+            mixture_category_for("kimi-k3", "low", parent_model="claude-opus-5", chains=chains),
             "quick",
         )
 
@@ -240,9 +258,9 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
     def test_an_effort_that_matches_no_chain_entry_is_not_attributed(self):
         # Every category now declares its effort (owner decision), so a child
         # whose effort matches no entry — e.g. an inherited medium on the
-        # quick chain's model — shows the bare model, not a routed category.
+        # quick chain's head — shows the bare model, not a routed category.
         self.assertEqual(
-            mixture_category_for("glm-5.2-ultrafast", "medium", parent_model="kimi-k3"),
+            mixture_category_for("glm-5.3-flash", "medium", parent_model="kimi-k3"),
             "",
         )
 
@@ -259,9 +277,14 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
             mixture_category_for("kimi-k3-ultrafast", "low", parent_model="gpt-5.6-sol"),
             "quick",
         )
-        # An explicitly-named variant still matches itself first.
+        # An explicitly-named variant still matches itself first (no shipped
+        # chain names a variant since 2026-09-11, so the rule is pinned on an
+        # explicit chain).
         self.assertEqual(
-            mixture_category_for("glm-5.2-ultrafast", "low", parent_model="kimi-k3"),
+            mixture_category_for(
+                "kimi-k3-ultrafast", "low", parent_model="gpt-5.6-sol",
+                chains={"quick": (("kimi-k3-ultrafast", "low"),)},
+            ),
             "quick",
         )
         # The effort contract still applies to the base-model retry.
@@ -272,7 +295,7 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
 
     def test_a_routed_architect_child_is_labeled_architect(self):
         self.assertEqual(
-            mixture_category_for("claude-fable-5", "xhigh", parent_model="kimi-k3"),
+            mixture_category_for("claude-fable-5-1", "xhigh", parent_model="kimi-k3"),
             "architect",
         )
 
@@ -288,19 +311,148 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
             for model_id, projection in DECLARED_MODEL_CONTRACT_PROJECTIONS.items()
         }
         self.assertEqual(DECLARED_MODEL_ALIAS_PROJECTIONS, expected)
-        for model_id in ("gpt-6-astra", *expected):
-            requested = f"openai/{model_id}"
+        # Per exact contract: (vendor prefix, effort, category, a serving
+        # family, a non-serving family). Every declared alias inherits its
+        # contract's category and provider eligibility.
+        # The DeepSeek chains name the declared pointer (`deepseek-flash`),
+        # so the exact id labels its category through the reverse
+        # projection and the pointer through a direct chain match.
+        contracts = {
+            "gpt-6-astra": ("openai", "xhigh", "ultrabrain", "openai", "anthropic"),
+            "deepseek-v4.1-flash": ("deepseek", "high", "deep", "deepseek", "anthropic"),
+        }
+        for model_id in (*contracts, *expected):
+            contract_id = expected.get(model_id, (model_id,))[0]
+            vendor, effort, category, serving, non_serving = contracts[contract_id]
+            requested = f"{vendor}/{model_id}"
             with self.subTest(model_id=model_id):
                 self.assertEqual(
-                    mixture_category_for(requested, "xhigh", parent_model="kimi-k3"),
-                    "ultrabrain",
+                    mixture_category_for(requested, effort, parent_model="kimi-k3"),
+                    category,
                 )
-                self.assertIs(provider_serves_alias(requested, "openai"), True)
-                self.assertIs(provider_serves_alias(requested, "anthropic"), False)
+                self.assertIs(provider_serves_alias(requested, serving), True)
+                self.assertIs(provider_serves_alias(requested, non_serving), False)
 
         unknown = "openai/gpt-6-astra-pro-turbo"
         self.assertEqual(mixture_category_for(unknown, "xhigh", parent_model="kimi-k3"), "")
         self.assertIsNone(provider_serves_alias(unknown, "openai"))
+        # Both DeepSeek spellings label both DeepSeek slots at their efforts;
+        # the vendor-routed legacy id is not a declared alias and stays bare.
+        for spelling in ("deepseek-flash", "deepseek/deepseek-v4.1-flash"):
+            self.assertEqual(mixture_category_for(spelling, "low", parent_model="kimi-k3"), "unspecified-low")
+        self.assertEqual(mixture_category_for("deepseek/deepseek-v4-flash", "high", parent_model="kimi-k3"), "")
+
+    def test_reverse_projection_is_limited_to_pointer_aliases(self):
+        from omh.coding.model_contracts import EXACT_CONTRACT_POINTER_ALIASES as source_pointers
+
+        pointers = hermes_delegation_module.EXACT_CONTRACT_POINTER_ALIASES
+        exact = hermes_delegation_module.EXACT_MODEL_CONTRACT_ALIASES
+        # Parity, and every pointer is a declared row at the contract's own
+        # mode and tier — a second spelling, not a mode or price variant.
+        self.assertEqual(pointers, source_pointers)
+        for contract_id, aliases in pointers.items():
+            self.assertIn(contract_id, exact)
+            for alias in aliases:
+                base, mode, tier = DECLARED_MODEL_ALIAS_PROJECTIONS[alias]
+                self.assertEqual(base, contract_id)
+                contract = MODEL_CONTRACTS[contract_id]
+                self.assertEqual((mode, tier), (contract["reasoning_mode"], contract["service_tier"]))
+        # A chain (shipped or an operator override) that names a mode or tier
+        # variant never labels the base id: `-pro-flex` is a different
+        # reasoning mode at half price, `-fast` is the same mode at double.
+        for alias, effort in (("gpt-6-astra-pro-flex", "xhigh"), ("gpt-6-astra-fast", "low"), ("gpt-6-astra-pro", "xhigh")):
+            chains = {"architect": ((alias, effort),)}
+            with self.subTest(alias=alias):
+                self.assertEqual(
+                    mixture_category_for("openai/gpt-6-astra", effort, parent_model="kimi-k3", chains=chains), ""
+                )
+        # The forward direction stays: the variant itself matches its entry.
+        self.assertEqual(
+            mixture_category_for(
+                "openai/gpt-6-astra-fast", "low", parent_model="kimi-k3",
+                chains={"quick": (("gpt-6-astra-fast", "low"),)},
+            ),
+            "quick",
+        )
+
+    def test_dated_snapshot_mirror_stays_in_parity_with_core(self) -> None:
+        from omh.coding import model_contracts
+
+        self.assertEqual(
+            hermes_delegation_module._DATED_SNAPSHOT_SUFFIX.pattern,
+            model_contracts._DATED_SNAPSHOT_SUFFIX.pattern,
+        )
+        for form in (
+            "gpt-5.6-terra-2026-07-09",
+            "openai/gpt-5.6-terra-2026-07-09",
+            "GPT-6-Astra-2026-08-01",
+            "deepseek/deepseek-flash-2026-09-01",
+            "gpt-6-astra-2026-13-01",
+            "gpt-6-astra-20260801",
+            "gpt-6-astra-2026-08-01-fast",
+            "gpt-6-astra",
+            "",
+        ):
+            with self.subTest(form=form):
+                self.assertEqual(
+                    hermes_delegation_module._dated_snapshot_base(form),
+                    model_contracts.dated_snapshot_base(form),
+                )
+
+    def test_dated_snapshot_labels_its_base_category_price_and_provider(self) -> None:
+        # Terra sits in the shipped deep chain; a provider that serves only the
+        # dated id (reported 2026-09-11) must label the same category, price,
+        # and provider family as the base, while an unknown base with a date
+        # gains nothing.
+        for spelling in ("gpt-5.6-terra-2026-07-09", "openai/gpt-5.6-terra-2026-07-09"):
+            with self.subTest(spelling=spelling):
+                self.assertEqual(
+                    mixture_category_for(spelling, "high", parent_model="kimi-k3"),
+                    mixture_category_for("gpt-5.6-terra", "high", parent_model="kimi-k3"),
+                )
+                self.assertEqual(mixture_category_for(spelling, "high", parent_model="kimi-k3"), "deep")
+                self.assertEqual(
+                    hermes_delegation_module._approximate_cost_usd(spelling, 1000.0, 1000.0, 100.0),
+                    hermes_delegation_module._approximate_cost_usd("gpt-5.6-terra", 1000.0, 1000.0, 100.0),
+                )
+                self.assertIs(provider_serves_alias(spelling, "openai"), True)
+                self.assertIs(provider_serves_alias(spelling, "anthropic"), False)
+        # A snapshot of the exact id reaches the served pointer the chain names.
+        self.assertEqual(
+            mixture_category_for("deepseek/deepseek-v4.1-flash-2026-09-01", "high", parent_model="kimi-k3"), "deep"
+        )
+        # The exact-contract label follows the snapshot too.
+        self.assertEqual(
+            mixture_category_for("gpt-6-astra-2026-08-01", "xhigh", parent_model="kimi-k3"),
+            mixture_category_for("gpt-6-astra", "xhigh", parent_model="kimi-k3"),
+        )
+        # A child on a dated snapshot of the parent's model is on the parent's
+        # model; the parent's own id is the base the reader knows, so this
+        # holds for an alias no table describes as well.
+        self.assertEqual(
+            mixture_category_for("gpt-5.6-terra-2026-07-09", "high", parent_model="gpt-5.6-terra"), "inherit"
+        )
+        self.assertEqual(
+            mixture_category_for("zzz-mystery-2026-08-01", "high", parent_model="zzz-mystery"), "inherit"
+        )
+        # One direction only, like the resolver's explicit match: an unpinned
+        # child under a date-pinned parent, or a different date, is not the
+        # parent's run and falls through to the chain match.
+        self.assertEqual(
+            mixture_category_for("gpt-5.6-terra", "high", parent_model="openai/gpt-5.6-terra-2026-07-09"), "deep"
+        )
+        self.assertEqual(
+            mixture_category_for("gpt-5.6-terra-2026-08-01", "high", parent_model="gpt-5.6-terra-2026-07-09"), "deep"
+        )
+        self.assertEqual(
+            mixture_category_for("zzz-mystery-2026-08-01", "high", parent_model="zzz-mystery-2026-07-09"), ""
+        )
+        # Bounds: an unknown base, a non-trailing date, and a compact shape.
+        for spelling in ("gpt-7-nova-2026-07-09", "gpt-5.6-terra-2026-07-09-fast", "gpt-5.6-terra-20260709"):
+            with self.subTest(spelling=spelling):
+                self.assertEqual(mixture_category_for(spelling, "high", parent_model="kimi-k3"), "")
+                self.assertIsNone(provider_serves_alias(spelling, "openai"))
+                self.assertIsNone(hermes_delegation_module._approximate_cost_usd(spelling, 1000.0, 1000.0, 0.0))
 
 
 def _write_overrides(omh_home: Path, document: object) -> Path:
@@ -460,9 +612,9 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
                 {
                     "schema_version": "model_provider_routes/v1",
                     "models": {
-                        "glm-5.2-ultrafast": {
+                        "kimi-k3": {
                             "provider": "gateway",
-                            "model": "z-ai/glm-5.2-ultrafast",
+                            "model": "moonshotai/kimi-k3",
                         }
                     },
                 }
@@ -474,7 +626,7 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
             [
                 {
                     "id": "20260818_100100_provider",
-                    "model": "z-ai/glm-5.2-ultrafast",
+                    "model": "moonshotai/kimi-k3",
                     "effort": "low",
                     "started_at": NOW - 60,
                     "usage": {"last_seen": NOW - 5, "output_tokens": 10},
@@ -488,10 +640,10 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
             omh_home=self.home,
         )["rows"][0]
 
-        self.assertEqual(row["alias"], "glm-5.2-ultrafast")
+        self.assertEqual(row["alias"], "kimi-k3")
         self.assertEqual(row["provider"], "gateway")
         self.assertEqual(row["provider_source"], "model_provider_routes")
-        self.assertEqual(row["model"], "z-ai/glm-5.2-ultrafast")
+        self.assertEqual(row["model"], "moonshotai/kimi-k3")
         self.assertEqual(row["category"], "quick")
 
     def test_a_live_child_projects_a_running_row_with_model_effort_and_metrics(self):
@@ -824,6 +976,303 @@ class HermesNativeSubagentReaderTest(unittest.TestCase):
         self.assertNotIn("cost_status", row)
         self.assertNotIn("cost_source", row)
 
+    def test_the_hosts_no_pricing_sentinel_is_approximated_like_an_absence(self):
+        # Given: a child served by a custom gateway provider. Hermes has no
+        # rate for it, so its pricing returns no amount and stamps its own
+        # `unknown` no-figure status (`agent/usage_pricing.py:549`, persisted
+        # by `agent/turn_usage.py:236,257`) -- the host saying it has NO
+        # figure, not a billing outcome.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_gateway1",
+                "model": "anthropic/claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usage": {
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "actual_cost_usd": 0.0,
+                    "cost_status": "unknown",
+                    "cost_source": "none",
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_gw", ["gateway lane"], started=NOW - 65, log_mtime=NOW - 5)
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: the token-derived figure fires exactly as it does for a row
+        # with no provenance at all. Fable 5.1 lists $10/M input, $50/M
+        # output, cache reads at $0.25/M.
+        self.assertTrue(row["cost_approximate"])
+        self.assertAlmostEqual(
+            row["cost_usd"], (10_000 * 10.0 + 4_000 * 50.0) / 1_000_000
+        )
+        # And: the host's own words stay on the row as recorded -- OMH
+        # reports what the host wrote, it does not rewrite it.
+        self.assertEqual(row["cost_status"], "unknown")
+        self.assertEqual(row["cost_source"], "none")
+
+    def test_an_unpriceable_sentinel_keeps_the_zero_the_host_can_render(self):
+        # Given: the same no-pricing sentinel on a model OMH has no rate for
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_gateway2",
+                "model": "og/some-unlisted-model",
+                "started_at": NOW - 60,
+                "usage": {
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "actual_cost_usd": 0.0,
+                    "cost_status": "unknown",
+                    "cost_source": "none",
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_gw2", ["gateway lane"], started=NOW - 65, log_mtime=NOW - 5)
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: nothing is invented and nothing is taken away -- the row
+        # renders exactly as it did before this rule existed,
+        # `$0.0000 (unknown)`. Only a SUCCESSFUL approximation changes it.
+        self.assertEqual(row["cost_usd"], 0.0)
+        self.assertNotIn("cost_approximate", row)
+        self.assertEqual(row["cost_status"], "unknown")
+        self.assertEqual(row["cost_source"], "none")
+
+    def test_one_informative_row_stops_the_sentinel_approximation(self):
+        # Given: a group that mixes the host's no-pricing sentinel with one
+        # row that DID record a billing outcome, and whose summed cost is
+        # still zero. MAX(cost_status) over this group answers "unknown",
+        # which is exactly the reduction a per-row count has to survive.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_mixedsen",
+                "model": "gpt-5.6-sol",
+                "started_at": NOW - 60,
+                "usages": [
+                    {
+                        "input_tokens": 10_000,
+                        "output_tokens": 4_000,
+                        "actual_cost_usd": 0.0,
+                        "cost_status": "unknown",
+                        "cost_source": "none",
+                        "first_seen": NOW - 55,
+                        "last_seen": NOW - 30,
+                    },
+                    {
+                        "input_tokens": 5_000,
+                        "output_tokens": 1_000,
+                        "actual_cost_usd": 0.0,
+                        "cost_status": "included",
+                        "cost_source": "subscription",
+                        "first_seen": NOW - 25,
+                        "last_seen": NOW - 5,
+                    },
+                ],
+            }],
+        )
+        _write_manifest(self.home, "deleg_ms", ["mixed lane"], started=NOW - 65, log_mtime=NOW - 5)
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: the confirmed zero stands. One row vouching for the figure
+        # is enough, whatever the other rows recorded.
+        self.assertEqual(row["cost_usd"], 0.0)
+        self.assertNotIn("cost_approximate", row)
+        # And: the WORD the surface renders is the one that vouched for the
+        # zero. A plain MAX answers alphabetically, which put "unknown"
+        # ahead of "included" and made a vouched zero read as unpriced.
+        self.assertEqual(row["cost_status"], "included")
+        self.assertEqual(row["cost_source"], "subscription")
+
+    def test_an_empty_session_model_is_filled_from_the_observed_usage_model(self):
+        # Given: a child whose `sessions.model` is empty -- the row was
+        # created before the model was known -- while its usage rows record
+        # the model every call actually ran on
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_nomodel1",
+                "model": "",
+                "effort": "high",
+                "started_at": NOW - 60,
+                "usage": {
+                    "model": "claude-fable-5-1",
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_nm", ["unnamed lane"], started=NOW - 65, log_mtime=NOW - 5)
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: the label names the observed model instead of the bare
+        # `:high` the empty recording used to produce, and everything keyed
+        # off the model follows it -- category here, and pricing below.
+        self.assertEqual(row["model"], "claude-fable-5-1")
+        self.assertEqual(row["effort"], "high")
+        self.assertEqual(row["category"], "visual-engineering")
+        self.assertTrue(row["cost_approximate"])
+
+    def test_two_observed_usage_models_leave_an_empty_model_untouched(self):
+        # The negative control: a child whose usage rows name two models has
+        # no single answer, so the row stays exactly as recorded. Nothing is
+        # inferred from the parent -- Hermes does not copy its model down.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_twomodel",
+                "model": "",
+                "started_at": NOW - 60,
+                "usages": [
+                    {"model": "claude-fable-5-1", "output_tokens": 10, "last_seen": NOW - 20},
+                    {"model": "gpt-5.6-sol", "output_tokens": 10, "last_seen": NOW - 5},
+                ],
+            }],
+        )
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["model"], "")
+        self.assertEqual(row["category"], "")
+
+    def test_a_recorded_session_model_wins_over_the_usage_model(self):
+        # The session row is the child's own identity when it has one; the
+        # usage fill only covers the absence.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_ownmodel",
+                "model": "claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usage": {"model": "gpt-5.6-sol", "output_tokens": 10, "last_seen": NOW - 5},
+            }],
+        )
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["model"], "claude-fable-5-1")
+
+    def test_an_unrouted_child_shows_the_provider_the_host_billed_it_under(self):
+        # Given: a wire model no `model-providers.json` row names, whose
+        # usage the host recorded against a billing provider
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_billprov",
+                "model": "anthropic/claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usage": {
+                    "billing_provider": "og",
+                    "output_tokens": 10,
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        # When: the reader projects the child
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        # Then: the provider column shows the observed billing provider,
+        # marked with the origin that earned it rather than passed off as
+        # OMH's own configuration.
+        self.assertEqual(row["provider"], "og")
+        self.assertEqual(row["provider_source"], "hermes_billing_provider")
+
+    def test_two_billing_providers_leave_the_provider_column_empty(self):
+        # The negative control: a session billed under two providers has no
+        # single answer, and a guessed one would be worse than none.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_twoprovs",
+                "model": "anthropic/claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usages": [
+                    {"billing_provider": "og", "output_tokens": 10, "last_seen": NOW - 20},
+                    {"billing_provider": "custom", "output_tokens": 10, "last_seen": NOW - 5},
+                ],
+            }],
+        )
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["provider"], "")
+        self.assertNotIn("provider_source", row)
+
+    def test_one_billing_provider_beside_an_unattributed_row_is_still_one(self):
+        # The column defaults to the empty string, so a session with one
+        # attributed row and one unattributed row must not read as two
+        # providers -- there is exactly one, and it is the one to show.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_oneprov1",
+                "model": "anthropic/claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usages": [
+                    {"billing_provider": "og", "output_tokens": 10, "last_seen": NOW - 20},
+                    {"billing_provider": "", "output_tokens": 10, "last_seen": NOW - 5},
+                ],
+            }],
+        )
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["provider"], "og")
+        self.assertEqual(row["provider_source"], "hermes_billing_provider")
+
+    def test_the_no_figure_status_is_the_test_whatever_source_it_carries(self):
+        # Hermes stamps `unknown` whenever its pricing produced no amount,
+        # and a partially-rated route pairs that status with an informative
+        # source instead of `none`. The STATUS is what says "no figure", so
+        # the source must not rescue it into a vouched zero.
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_partial1",
+                "model": "gpt-5.6-sol",
+                "started_at": NOW - 60,
+                "usage": {
+                    "input_tokens": 10_000,
+                    "output_tokens": 4_000,
+                    "actual_cost_usd": 0.0,
+                    "cost_status": "unknown",
+                    "cost_source": "litellm",
+                    "last_seen": NOW - 5,
+                },
+            }],
+        )
+        _write_manifest(self.home, "deleg_pr", ["partial lane"], started=NOW - 65, log_mtime=NOW - 5)
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertTrue(row["cost_approximate"])
+        self.assertGreater(row["cost_usd"], 0.0)
+        self.assertEqual(row["cost_status"], "unknown")
+        self.assertEqual(row["cost_source"], "litellm")
+
+    def test_a_configured_route_still_wins_over_the_billing_provider(self):
+        # The other negative control: OMH's own configuration is the answer
+        # whenever it has one, so the fallback never overrides a route.
+        route_path = self.home / "routing" / "model-providers.json"
+        route_path.parent.mkdir(parents=True)
+        route_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "model_provider_routes/v1",
+                    "models": {
+                        "fable": {"provider": "gateway", "model": "anthropic/claude-fable-5-1"}
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        _build_state_db(
+            self.home,
+            [{
+                "id": "20260818_100100_routewin",
+                "model": "anthropic/claude-fable-5-1",
+                "started_at": NOW - 60,
+                "usage": {"billing_provider": "og", "output_tokens": 10, "last_seen": NOW - 5},
+            }],
+        )
+        row = read_hermes_native_subagents(self.home, now=NOW, omh_home=self.home)["rows"][0]
+        self.assertEqual(row["provider"], "gateway")
+        self.assertEqual(row["provider_source"], "model_provider_routes")
+
     def test_legacy_schema_preserves_usage_and_approximates_zero(self):
         _build_state_db(
             self.home,
@@ -1002,9 +1451,9 @@ class HudMergeTest(unittest.TestCase):
                     {
                         "schema_version": "model_provider_routes/v1",
                         "models": {
-                            "glm-5.2-ultrafast": {
+                            "kimi-k3": {
                                 "provider": "gateway",
-                                "model": "z-ai/glm-5.2-ultrafast",
+                                "model": "moonshotai/kimi-k3",
                             }
                         },
                     }
@@ -1016,7 +1465,7 @@ class HudMergeTest(unittest.TestCase):
                 [
                     {
                         "id": "20260818_100100_provider",
-                        "model": "z-ai/glm-5.2-ultrafast",
+                        "model": "moonshotai/kimi-k3",
                         "effort": "low",
                         "started_at": time.time() - 30,
                         "usage": {
@@ -1030,7 +1479,7 @@ class HudMergeTest(unittest.TestCase):
 
             row = read_omh_hud(omh_home, hermes_home)["subagents"]["rows"][0]
 
-            self.assertEqual(row["alias"], "glm-5.2-ultrafast")
+            self.assertEqual(row["alias"], "kimi-k3")
             self.assertEqual(row["provider"], "gateway")
             self.assertEqual(row["category"], "quick")
 
@@ -1133,11 +1582,11 @@ def _record(**overrides) -> dict:
     record = {
         "origin": "fallback",
         "category": "visual-engineering",
-        "alias": "glm-5.2-ultrafast",
-        "wire_model": "z-ai/glm-5.2-ultrafast",
+        "alias": "kimi-k3",
+        "wire_model": "moonshotai/kimi-k3",
         "provider": "gateway",
         "reasoning_effort": "low",
-        "from_alias": "claude-fable-5",
+        "from_alias": "claude-fable-5-1",
         "written_at": NOW - 120,
     }
     record.update(overrides)
@@ -1200,9 +1649,9 @@ class RouteProvenanceProjectionTest(unittest.TestCase):
                 {
                     "schema_version": "model_provider_routes/v1",
                     "models": {
-                        "glm-5.2-ultrafast": {
+                        "kimi-k3": {
                             "provider": "gateway",
-                            "model": "z-ai/glm-5.2-ultrafast",
+                            "model": "moonshotai/kimi-k3",
                         }
                     },
                 }
@@ -1227,7 +1676,7 @@ class RouteProvenanceProjectionTest(unittest.TestCase):
 
     def test_a_fallback_route_labels_its_child_with_category_and_origin(self):
         _write_provenance(self.home, [_record()])
-        row = self._row("z-ai/glm-5.2-ultrafast")
+        row = self._row("moonshotai/kimi-k3")
         self.assertEqual(row["category"], "visual-engineering")
         self.assertEqual(row["route_origin"], "fallback")
         self.assertEqual(row["category_source"], "route_provenance")
@@ -1306,22 +1755,58 @@ class RouteProvenanceProjectionTest(unittest.TestCase):
                 {"origin": "cleared", "written_at": NOW - 200},
             ],
         )
-        row = self._row("z-ai/glm-5.2-ultrafast")
+        row = self._row("moonshotai/kimi-k3")
         self.assertNotIn("route_origin", row)
         self.assertNotIn("category_source", row)
         self.assertEqual(row["category"], "quick")
 
-    def test_inherit_wins_over_a_matching_routed_record(self):
-        # The parent's own model can also be a chain member; a child that
-        # inherited it was NOT routed, whatever the prepared route said.
+    def test_a_route_to_the_parents_own_model_keeps_its_category_and_says_so(self):
+        # The parent's own model can also be a chain head (the owner's
+        # `deep` heads on the model the session runs). A fresh record whose
+        # identity matches proves the tool routed the lane there; the row
+        # keeps the lane's category and says the model is the parent's own,
+        # so the label is neither "unrouted" nor "a cheaper dispatch".
         _write_provenance(
             self.home,
-            [_record(alias="gpt-5.6-sol", wire_model="gpt-5.6-sol", provider="")],
+            [_record(origin="head", alias="gpt-5.6-sol", wire_model="gpt-5.6-sol", provider="")],
         )
         row = self._row("gpt-5.6-sol")
-        self.assertEqual(row["category"], "inherit")
+        self.assertEqual(row["category"], "visual-engineering")
+        self.assertEqual(row["category_source"], "route_provenance")
+        self.assertIs(row["same_as_parent"], True)
         self.assertNotIn("route_origin", row)
-        self.assertNotIn("category_source", row)
+
+    def test_a_fallback_to_the_parents_own_model_keeps_both_tokens(self):
+        _write_provenance(
+            self.home,
+            [_record(origin="fallback", alias="gpt-5.6-sol", wire_model="gpt-5.6-sol", provider="")],
+        )
+        row = self._row("gpt-5.6-sol")
+        self.assertEqual(row["category"], "visual-engineering")
+        self.assertEqual(row["route_origin"], "fallback")
+        self.assertIs(row["same_as_parent"], True)
+
+    def test_an_unrouted_child_on_the_parents_model_stays_plain_inherit(self):
+        # No record, a stale record, or a cleared route: the chain
+        # projection's inherit stands and nothing claims a category.
+        for records in (
+            [],
+            [_record(alias="gpt-5.6-sol", wire_model="gpt-5.6-sol", provider="", written_at=NOW - 2000)],
+            [_record(alias="gpt-5.6-sol", wire_model="gpt-5.6-sol", provider=""), {"origin": "cleared", "written_at": NOW - 100}],
+        ):
+            with self.subTest(records=records):
+                _write_provenance(self.home, records)
+                (self.home / "state.db").unlink(missing_ok=True)
+                row = self._row("gpt-5.6-sol")
+                self.assertEqual(row["category"], "inherit")
+                self.assertNotIn("same_as_parent", row)
+                self.assertNotIn("category_source", row)
+
+    def test_a_routed_child_on_another_model_never_carries_the_parent_token(self):
+        _write_provenance(self.home, [_record(origin="head")])
+        row = self._row("moonshotai/kimi-k3")
+        self.assertEqual(row["category"], "visual-engineering")
+        self.assertNotIn("same_as_parent", row)
 
     def test_a_newer_unrelated_record_blocks_an_older_matching_one(self):
         # Only the newest record written before the dispatch describes it;
@@ -1340,7 +1825,7 @@ class RouteProvenanceProjectionTest(unittest.TestCase):
                 ),
             ],
         )
-        row = self._row("z-ai/glm-5.2-ultrafast")
+        row = self._row("moonshotai/kimi-k3")
         self.assertNotIn("route_origin", row)
         self.assertEqual(row["category"], "quick")
 
@@ -1360,6 +1845,6 @@ class RouteProvenanceProjectionTest(unittest.TestCase):
             with self.subTest(records=records):
                 _write_provenance(self.home, records)
                 (self.home / "state.db").unlink(missing_ok=True)
-                row = self._row("z-ai/glm-5.2-ultrafast")
+                row = self._row("moonshotai/kimi-k3")
                 self.assertNotIn("route_origin", row)
                 self.assertEqual(row["category"], "quick")

@@ -1,7 +1,21 @@
 """Safety classification for memory governance (internal module).
 
-Deterministic patterns for protected values, raw logs/transcripts, temporary
-progress, and imperative prompt-injection-shaped content.
+Deterministic patterns only, and only for protected values: credential
+keywords, the documented bare token shapes, a PEM private-key header, and a
+URL carrying inline basic-auth credentials block; temporary progress,
+imperative prompt-injection-shaped content, credential-shaped assignments,
+and unknown opaque values route to review.
+
+Raw logs and transcripts are deliberately NOT screened here, though the
+capture lane refuses them. This function is a shared primitive -- action
+gates, handoff manifests, batch identifiers, and reviewer labels all call it,
+and several of them turn any non-safe verdict into a raise -- so a line-shape
+heuristic placed here would fail a plain note whose lines happen to open with
+"Error", "Warning" or "User:", and would fail it by exception. The shape gate
+for that material lives beside the path that can afford to refuse:
+`_ensure_vocabulary_safe` in `src/workflows/domain_intelligence_admission.py`
+matches raw-log markers, three or more full `YYYY-MM-DD HH:MM:SS` line
+openings, and an anchored role marker.
 """
 
 from __future__ import annotations
@@ -632,11 +646,14 @@ def _iter_renderable_values(value: object, path: str) -> Iterator[tuple[str, str
 
 def classify_memory_admission(content: str) -> dict[str, object]:
     """Classify memory content for safety admission.
-    
+
     Returns a dict with "status" field:
-    - "blocked": protected material (passwords, secrets, raw logs, transcripts)
-    - "needs_review": ambiguous content (temporary, prompt injection, credentials)
-    - "safe": safe to auto-approve
+    - "blocked": protected values (credential keywords, the documented bare
+      token shapes, a PEM private-key header, inline basic-auth in a URL)
+    - "needs_review": ambiguous content (temporary progress, prompt injection,
+      credential-shaped assignments, unknown opaque values)
+    - "safe": everything else, including pasted logs and transcripts -- see the
+      module docstring for where that shape is screened instead
     """
     if not isinstance(content, str):
         return {"status": "blocked"}

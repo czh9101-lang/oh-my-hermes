@@ -156,6 +156,8 @@ class ParentClarificationTests(unittest.TestCase):
             result = fixture.dispatch()
             rows = {row["unit_id"]: row for row in result["units"]}
             self.assertEqual(rows["unit-b"]["status"], "input_required")
+            self.assertEqual(rows["unit-b"]["unit_state"], "awaiting_input")
+            self.assertEqual(rows["unit-a"]["unit_state"], "verified")
             self.assertTrue(rows["unit-a"]["unit_verification_observed"])
             self.assertEqual(rows["unit-c"]["blocked_reasons"], {"unit-b": "awaiting_input"})
             self.assertFalse(rows["unit-b"]["unit_verification_observed"])

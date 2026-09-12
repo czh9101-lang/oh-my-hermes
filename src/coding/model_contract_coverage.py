@@ -13,7 +13,7 @@ import json
 from typing import Final, Iterable, Mapping
 
 from ..system.metadata_safety import require_opaque_metadata_ref
-from .model_contracts import model_contract, model_contract_projection
+from .model_contracts import contract_model_id, model_contract, model_contract_projection
 from .model_recommendations import SHIPPED_MODEL_RECOMMENDATIONS
 from .model_routing import model_family
 from .unit_prompt_protocol import (
@@ -30,6 +30,7 @@ MODEL_CONTRACT_COVERAGE_CLAIM_BOUNDARY: Final[str] = (
 MODEL_CONTRACT_COVERAGE_STATUSES: Final[tuple[str, ...]] = (
     "exact",
     "declared_inheritance",
+    "dated_snapshot",
     "intentional_exclusion",
     "missing",
 )
@@ -38,6 +39,7 @@ _SERVICE_TIER_MULTIPLIERS: Final[dict[str, float]] = {"fast": 2.0, "flex": 0.5}
 _SOURCE_LINEAGE_KEY: Final[str] = "provenance"
 _MODEL_DOCS: Final[dict[str, tuple[str, ...]]] = {
     "gpt-6-astra": ("MODEL_OPTI.md", "docs/MODEL-ONBOARDING.md"),
+    "deepseek-v4.1-flash": ("MODEL_OPTI.md", "docs/MODEL-ONBOARDING.md"),
 }
 
 
@@ -299,7 +301,12 @@ def _inventory_record(
     }
 
 
-def _recommendation_metadata(contract_model_id: str) -> tuple[list[str], list[str]]:
+def _contract_key(alias: str) -> str:
+    """A shipped chain names the id a vendor serves; resolve it to its contract key."""
+    return contract_model_id(alias).casefold()
+
+
+def _recommendation_metadata(contract_id: str) -> tuple[list[str], list[str]]:
     categories: list[str] = []
     providers: list[str] = []
     catalog = SHIPPED_MODEL_RECOMMENDATIONS
@@ -311,7 +318,7 @@ def _recommendation_metadata(contract_model_id: str) -> tuple[list[str], list[st
             for candidate in chain:
                 if not isinstance(candidate, Mapping):
                     continue
-                if str(candidate.get("model_alias", "")).casefold() != contract_model_id.casefold():
+                if _contract_key(str(candidate.get("model_alias", ""))) != contract_id.casefold():
                     continue
                 categories.append(str(category))
                 if not providers:
@@ -330,7 +337,7 @@ def _recommendation_metadata(contract_model_id: str) -> tuple[list[str], list[st
                 for candidate in chain:
                     if not isinstance(candidate, Mapping):
                         continue
-                    if str(candidate.get("model_alias", "")).casefold() == contract_model_id.casefold():
+                    if _contract_key(str(candidate.get("model_alias", ""))) == contract_id.casefold():
                         raw_providers = candidate.get("preferred_provider_families", ())
                         if isinstance(raw_providers, (list, tuple)):
                             providers = [str(value) for value in raw_providers]

@@ -4,18 +4,22 @@ import json
 import multiprocessing
 import unittest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest.mock import patch
 
 from _local_package import load_local_package
-from _platform_support import requires_fcntl_locks, requires_symlinks
+from _platform_support import requires_enforced_file_lock, requires_symlinks
 
 load_local_package()
 from omh.local_store import atomic_write_json, ensure_dir, read_json_object_result
+from omh.system import local_store
 from omh.paths import OmhPaths
 from omh.workflows.memory_store import (
     apply_memory_operation_step,
+    checked_memory_directory,
+    ensure_memory_directory,
     prune_expired_memory_evidence,
     recover_memory_operations,
     run_memory_operation,
@@ -473,7 +477,7 @@ class MemoryOperationTests(unittest.TestCase):
                 run_memory_operation(paths, operation_id="op-bad", operation_type="write", steps=[{"name": "bad", "action": "copy", "source": "staging/a.json", "target": "records/a.json", "summary": "private"}], now=NOW)
             self.assertFalse(paths.memory_operations_dir.exists())
 
-    @requires_fcntl_locks
+    @requires_enforced_file_lock
     def test_two_processes_serialize_same_target_without_lost_updates(self) -> None:
         with TemporaryDirectory() as tmp:
             context = multiprocessing.get_context("spawn")
@@ -485,8 +489,17 @@ class MemoryOperationTests(unittest.TestCase):
             ]
             for worker in workers:
                 worker.start()
-            self.assertTrue(first_ready.wait(20))
-            self.assertTrue(second_ready.wait(20))
+            # `assertTrue(ready.wait(20))` reported `False is not true` and
+            # nothing else, which reads as "the writer was slow" and was in
+            # fact "the writer died": the child raised before it could signal,
+            # and its exit code -- the one fact that separates the two -- was
+            # only checked further down, after this assertion had already
+            # stopped the test. Say which writer and what became of it.
+            for label, ready, worker in (("first", first_ready, workers[0]), ("second", second_ready, workers[1])):
+                self.assertTrue(
+                    ready.wait(20),
+                    f"{label} writer never signalled: exitcode={worker.exitcode} alive={worker.is_alive()}",
+                )
             for worker in workers:
                 worker.join(20)
                 self.assertEqual(worker.exitcode, 0)
@@ -616,6 +629,97 @@ class MemoryOperationTests(unittest.TestCase):
             self.assertTrue((paths.memory_dir / "records/result.json").exists())
             first_still_failed, _ = read_json_object_result(paths.memory_operations_dir / "op-first-fail.json")
             self.assertEqual(first_still_failed["state"], "failed")
+
+
+class MemoryPathContainmentTests(unittest.TestCase):
+    """The store's containment rule, which had no coverage until it flaked."""
+
+    def test_containment_does_not_depend_on_how_much_of_the_path_exists(self) -> None:
+        """A concurrent creator must not turn the store into an escape.
+
+        `Path.resolve` canonicalizes the components that exist and appends the
+        rest literally, so a directory resolves to one spelling before it is
+        created and another after. The old check compared two resolves taken a
+        line apart, which made containment a race: on Windows, where resolve
+        also folds short names and on-disk casing, a sibling process creating
+        the store between them was enough to fail the check against its own
+        root. The stub models exactly that -- an existing directory answers
+        with its canonical spelling, a missing one answers literally.
+        """
+        real_resolve = Path.resolve
+        canonical = "CANONICAL"
+
+        def existence_dependent_resolve(self_path: Path, strict: bool = False) -> Path:
+            resolved = real_resolve(self_path, strict=strict)
+            if self_path.exists():
+                return Path(str(resolved).replace("literal", canonical))
+            return resolved
+
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp) / "literal"
+            paths = OmhPaths(base / "omh", base / "hermes")
+            ensure_dir(paths.memory_dir, private=True)
+            with patch.object(Path, "resolve", existence_dependent_resolve):
+                # The root exists and the child does not, which is precisely
+                # the window the two racing writers hit.
+                self.assertFalse((paths.memory_dir / "operations").exists())
+                directory = ensure_memory_directory(paths, "operations")
+            self.assertEqual(directory, paths.memory_dir / "operations")
+            self.assertTrue(directory.is_dir())
+
+    def test_a_symlinked_component_is_still_an_escape(self) -> None:
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            ensure_dir(paths.memory_dir, private=True)
+            outside = Path(tmp) / "outside"
+            outside.mkdir()
+            (paths.memory_dir / "operations").symlink_to(outside, target_is_directory=True)
+
+            with self.assertRaisesRegex(ValueError, "memory path escapes store"):
+                checked_memory_directory(paths, "operations")
+
+    def test_a_junction_component_is_an_escape_that_is_symlink_calls_safe(self) -> None:
+        """`Path.is_symlink` answers False for a junction; containment must not.
+
+        Only the resolve comparison stood between a Windows junction and the
+        store before, and it was the racy half. The link walk now asks
+        `is_directory_link`, which asks `is_junction` too.
+        """
+        with TemporaryDirectory() as tmp:
+            paths = _paths(tmp)
+            ensure_dir(paths.memory_dir, private=True)
+            junction = paths.memory_dir / "operations"
+            junction.mkdir()
+
+            # Patched on `local_store`, not on `Path`: `Path.is_junction` only
+            # exists from 3.12, and `is_directory_link` reaches its junction
+            # probe through this module global, so the composition under test
+            # stays real on every supported version.
+            with patch.object(local_store, "is_junction", lambda probe: probe == junction):
+                self.assertFalse(junction.is_symlink())
+                with self.assertRaisesRegex(ValueError, "memory path escapes store"):
+                    checked_memory_directory(paths, "operations")
+
+    def test_a_drive_qualified_token_is_what_the_containment_test_is_for(self) -> None:
+        """Why containment is still asserted and not left to the link walk.
+
+        `_SAFE_TOKEN` permits `:` because the token spells no separator, so a
+        drive-qualified or UNC component survives validation and then discards
+        the root it is joined to. `is_relative_to` rather than a parts
+        comparison because pathlib is case-correct about the drive: a token on
+        the store's own drive stays inside but joins to a differently-cased
+        spelling, and a parts comparison would reject it. Measured identical on
+        3.11, 3.12 and 3.13; asserted against Windows semantics directly, since
+        POSIX gives none of these tokens special meaning.
+        """
+        root = PureWindowsPath(r"C:\store\omh\memory")
+
+        for escaping in ("D:evil", "//host/share"):
+            with self.subTest(token=escaping):
+                self.assertFalse((root / escaping).is_relative_to(root))
+        for contained in ("operations", "scopes/project.json", "c:evil", "C:evil"):
+            with self.subTest(token=contained):
+                self.assertTrue((root / contained).is_relative_to(root))
 
 
 if __name__ == "__main__":

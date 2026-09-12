@@ -728,6 +728,40 @@ Rules:
   work that cannot resolve an executor becomes an explicit user choice, not
   retained Hermes implementation).
 
+## Workspace preflight
+
+`git worktree add` creating the isolation, and an executor readiness probe
+saying the binary runs, together answer neither of the questions that matter
+next: can a file be written in that worktree, and does it hold the objects the
+work names? On 2026-09-11 both said yes and the unit spent 36 minutes unable to
+write a git index, against a `blob:none` partial clone with fetching forbidden
+and case-only filename collisions on a case-insensitive filesystem.
+
+So immediately after the worktree exists and before any process is spawned,
+dispatch runs `coding/workspace_preflight.py::probe_workspace` **in that
+worktree**, with a bounded timeout on every command and no network call. Four
+checks, in this order:
+
+| Check | What it observes |
+| --- | --- |
+| `file_write` | A scratch file is created, read back and removed in the worktree. |
+| `git_index_write` | A scratch blob is written to the object store and an index entry through a **temporary** `GIT_INDEX_FILE`, so the unit's real index is never touched. |
+| `objects_present` | `HEAD` and the base ref are commits that exist here, a merge base exists when both sides are named, and — when the clone is partial — no object the work needs is absent. A partial clone is reported, not failed; only an actually missing object blocks. |
+| `case_collision` | Whether the filesystem is case-insensitive is *observed*, not inferred from the platform; if it is, no two tracked paths in `HEAD` may differ only in case. |
+
+A failing check stops the unit **before the spawn**. It reports
+`status: worktree_failed` with `reason_code: workspace_preflight_blocked`,
+`failure_kind: workspace_blocked`, the `unit_state` the first blocking check
+implies (`permission_blocked` for a write refusal or a case collision,
+`data_missing` for absent objects), and the full `workspace_preflight/v1`
+payload naming every check and its detail. None of the four is cleared by
+running the unit again under the same conditions, which is why this is a
+refusal rather than a retry: the repair belongs at the preparation step, on the
+worktree that is left exactly as it is.
+
+Everything the probe writes it removes again — scratch paths only, inside the
+worktree or the git directory, never a tracked file and never the real index.
+
 ## Failure recovery
 
 A spawned agent CLI that dies because the provider quota is spent or the stored
@@ -737,8 +771,13 @@ way. This section is what dispatch does about that. It applies identically to
 funnel into the same engine.
 
 - **`failure_kind` is a closed enum on every failed unit envelope**:
-  `auth_shaped`, `limit_shaped`, `timeout`, `binary_missing`, or `crash` as the
-  fallback. Precedence is fixed and deterministic. The dispatcher's own
+  `auth_shaped`, `limit_shaped`, `timeout`, `binary_missing`,
+  `workspace_blocked`, or `crash` as the fallback. Precedence is fixed and
+  deterministic. `workspace_blocked` outranks everything because it is decided
+  before the spawn (see **Workspace preflight** above): there is no process, no
+  exit code and no output to classify, and it is never offered a recovery
+  retry because retrying is what cannot clear it. Among the rest, the
+  dispatcher's own
   synthetic exit codes classify first — 127 is `binary_missing`, 124 is
   `timeout` — because they are observations of the process rather than text the
   provider wrote. Text then classifies as `auth_shaped` **before**
@@ -821,6 +860,110 @@ funnel into the same engine.
   attempt observed. Choosing an action is not a claim it succeeded, and a
   retargeted or Hermes-lane unit that exits 0 is no more verified than any other
   unit that exits 0.
+
+## Cause-specific recovery
+
+The three actions above answer *where else could this run*. They do not answer
+*may it run again at all, and what has to be true first* — and those are
+different questions. Re-running a unit under the permissions that denied it, or
+inside the quota window that refused it, is not a recovery; it is the same
+attempt again. `src/coding/cause_recovery.py` is the table that answers the
+second question, one row per cause, attached to every candidate as its `plan`
+(`unit_recovery_plan/v1`).
+
+A plan carries `cause`, `action`, `allowed_rerun`, `requires`, `unmet`,
+`reason`, and `resume_unit_id`. A reader branches on `cause` and `action`, never
+on the prose.
+
+| Cause | Action | Rerun allowed only when |
+| --- | --- | --- |
+| any cause, while a marker for this scope is present | `wait_for_live_worker` | never — the marker is cleared first |
+| `permission_blocked`, `workspace_blocked` on a file or the index | `repair_permissions_then_reprobe` | `workspace_preflight_ok` |
+| `account_limit` / `limit_shaped` | `check_account_then_switch_if_allowed` | `account_changed_or_reset_elapsed` |
+| `data_missing`, `workspace_blocked` on objects | `supplement_objects_then_resume_unit` | `objects_present` |
+| `progress_stalled` | `rerun_with_changed_conditions_or_checkpoint` | `conditions_changed` |
+| `awaiting_input` | `answer_or_cancel` | never — a rerun only asks again |
+| `auth_shaped` | `reauthenticate_then_redispatch` | `credential_repaired` |
+| `binary_missing` | `install_binary_then_redispatch` | `binary_present` |
+| `timeout`, `crash` | `report_or_choose_recovery` | always (existing behaviour, unchanged) |
+| nothing recorded | `report_only` | always — no cause-specific repair is claimed |
+
+- **The live-worker row wins over every other row**, and is checked before the
+  cause is even resolved. Scope is the unit id **or** the worktree path: two
+  dispatchers racing one unit and two units pointed at one directory are the
+  same hazard. Marker presence is still not liveness, so the plan names the
+  marker and asks for it to be confirmed gone and cleared — it never claims the
+  process exists. This is the "never add a second worker to a scope whose worker
+  is still alive" rule, and it is the reason it cannot be talked past.
+- **A cause a new worker would inherit closes the two spawning lanes.** For
+  `live_worker_present`, `permission_blocked`, `data_missing`, and
+  `awaiting_input`, retarget and the Hermes lane are listed `available: false`
+  with the requirement named, because a fresh worker meets the same denied
+  permission, the same absent objects, or the same unanswered question. A quota
+  and a stall are **not** inherited — another owner has its own account, and
+  another owner is itself a changed condition — so both lanes stay open for
+  them. Waiting is always offered: it spawns nothing.
+- **`conditions_fingerprint` is what makes "identical conditions" false-able.**
+  It folds owner, model, `prompt_sha256`, worktree, and permissions into one
+  digest. A proposed attempt whose fingerprint equals the last attempt's is the
+  attempt that already stalled, and is refused. When no proposal is stated the
+  proposal is taken to BE the last attempt, because that is what re-running the
+  same command does — a stall with no stated change is refused rather than
+  waved through. A fingerprint over a mapping that names none of the five is
+  empty and never compares equal to anything, so "the conditions are identical"
+  cannot be claimed by accident.
+- **`data_missing` names one unit.** The plan's `resume_unit_id` is the single
+  unit to resume once the objects are supplemented and verified. Rebuilding the
+  fanout would destroy the work the failure left behind.
+- **`workspace_blocked` is two causes wearing one name**, and the preflight's own
+  verdict decides which. A blocked unit carries that verdict as `unit_state` and
+  the plan reads it first. Only a record that lost its state falls through to
+  deriving it from the `workspace_preflight/v1` report, and it derives it the way
+  the preflight itself does: the FIRST name in `blocking` is the repair, because
+  the checks run in dependency order — a worktree that refuses a file write also
+  fails the index write and the object reads, and that repair belongs at the
+  filesystem, not at the objects. That rule is not restated here: the plan calls
+  `workspace_preflight_unit_state`, the same function that stamped the state, so
+  the routing and the stamp cannot drift into two answers. An absent or
+  unreadable report is read as the permission row, the more conservative of the
+  two — it blocks a new worker where the objects row would have let one start. A
+  passing preflight is `ok: true` and nothing else; an `ok` arriving as `1` or
+  `"true"` came from something that is not the preflight and is not a pass.
+  `workspace_blocked` is deliberately **not** in `RECOVERABLE_FAILURE_KINDS` —
+  no other owner and no later attempt answers a denied write or an absent object
+  — so a blocked unit reaches the interview through its `unit_state` instead,
+  where every spawning option is closed and the requirement is named.
+- **The account a limit was hit under is recorded.** At spawn time the dispatch
+  reads the owner's own CLI config — `~/.claude.json` `oauthAccount`, falling
+  back to the single `claudeAiOauth` slot in `~/.claude/.credentials.json`; or
+  `~/.codex/auth.json` `tokens.account_id`, falling back to whether an API key
+  is configured — and records a redacted tag (`claude:kh...@gmail.com`,
+  `codex:<8 hex>`) on the unit envelope and in the limit signal, where the
+  readiness advisory already surfaces every stored key. **No token, key, or
+  secret value is read**: the only inputs are an email address, an account
+  uuid, and an account id. An unreadable or absent file is an empty tag, and an
+  empty tag means "nothing readable named an account" — never "nobody is logged
+  in", and never a tag that compares equal to another unknown, which is why an
+  account change it cannot show keeps the operator waiting for the reset.
+- **`reset_text` is a literal, not a time.** The phrase the provider wrote
+  (`6:10pm (Asia/Seoul)`) is taken as-is into the limit signal for display.
+  Nothing converts it to an instant; a timezone-aware reset computed from a
+  provider's prose would be a fabricated observation. The elapsed answer comes
+  from the cooldown window going stale, which omh does measure.
+- **The table is gated, not frozen.** `tests/test_cause_recovery.py` re-derives
+  every `FAILURE_KIND_*` constant from the classifier's source and every member
+  of `UNIT_STUCK_STATES`, and fails naming the member that has no row. Adding a
+  failure kind or a stuck state stays a one-line change plus its row; nothing
+  here forbids adding one.
+- **A stuck unit reaches the interview.** `recovery_candidates` admits a unit
+  whose `unit_state` is in `UNIT_STUCK_STATES` as well as one whose
+  `failure_kind` is recoverable. That is what carries a workspace-blocked unit
+  in, and what will carry a stalled or input-waiting one in as soon as a
+  producer stamps those states.
+- **Not evidence.** A plan states which repair the observed cause requires. It
+  is not a claim the repair will succeed, and `allowed_rerun: false` is a
+  refusal to re-run under conditions that already failed — never a verdict
+  about the work.
 
 ## Installed-skill discovery
 

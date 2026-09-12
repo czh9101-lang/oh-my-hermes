@@ -43,6 +43,7 @@ from ..workflows.observation_journal import project_run_failure_diagnostic
 from ..system.paths import OmhPaths
 from ._hermes_child_process import terminate_process_group
 from .action_gate import recheck_safety_profile_revision
+from .cause_recovery import attempt_conditions, limit_reset_text, plan_summary_line, recovery_plan
 from .coding_contracts import STRUCTURAL_SEARCH_GUIDANCE
 from .dispatch_failure_recovery import (
     HERMES_LANE_CONSENT,
@@ -59,6 +60,7 @@ from .dispatch_failure_recovery import (
     ON_FAILURE_WAIT,
     FAILURE_KIND_AUTH_SHAPED,
     FAILURE_KIND_LIMIT_SHAPED,
+    FAILURE_KIND_WORKSPACE_BLOCKED,
     FAILURE_RECOVERY_CLAIM_BOUNDARY,
     FAILURE_RECOVERY_SCHEMA_VERSION,
     auth_shaped_label,
@@ -136,7 +138,13 @@ from .fanout_review_budget import (
     ReviewDispatchBudget,
     normalized_review_role,
 )
-from .inflight import InflightMarkerError, clear_inflight_marker, write_inflight_marker
+from .executor_account import observed_account_tag
+from .inflight import (
+    InflightMarkerError,
+    clear_inflight_marker,
+    read_inflight_markers,
+    write_inflight_marker,
+)
 from .parallelism_policy import FANOUT_MAX_DEPTH_DEFAULT, FANOUT_RUN_SPAWN_CEILING_DEFAULT
 from .fanout_retry import (
     FANOUT_MAX_RETRIES,
@@ -145,7 +153,18 @@ from .fanout_retry import (
     classify_unit_failure,
     evaluate_unit_retry,
 )
+from .unit_execution_state import UNIT_STATE_AWAITING_INPUT, UNIT_STATE_FAILED, UNIT_STATE_VERIFIED
+from .unit_progress import (
+    assess_progress,
+    empty_progress_evidence,
+    stalled_for_seconds,
+)
 from .unit_prompt_protocol import shared_unit_preamble_lines, unit_protocol_lines
+from .workspace_preflight import (
+    probe_workspace,
+    workspace_preflight_reason,
+    workspace_preflight_unit_state,
+)
 from .verification_execution import VerificationExecutionGate
 from .verification_integration import run_post_integration_verification
 from .verification_plan import VERIFICATION_PLAN_SCHEMA_VERSION, compile_verification_plan
@@ -684,6 +703,16 @@ _LIMIT_SHAPED_PATTERNS: tuple[tuple[str, str], ...] = (
     ("credit", "insufficient credit"),
     ("credit", "out of credits"),
     ("limit_reached", "limit reached"),
+    # Observed 2026-09-11: two dispatches ended with "You've hit your session
+    # limit · resets 6:10pm (Asia/Seoul)" and classified as `crash`, because
+    # every pattern above wants "rate", "usage", "quota", a 429, a credit, or
+    # the exact words "limit reached". A session limit is the same thing those
+    # describe -- the provider declining to serve this owner until a stated
+    # reset -- so it belongs in the recoverable lane, not the terminal one.
+    # Anchored on the possessive phrasing and on "session limit" together:
+    # a bare "session" matches half of this repo's own narration.
+    ("session_limit", "session limit"),
+    ("session_limit", "hit your limit"),
 )
 
 # Spawnability is a data property: profiles listed here have a local headless
@@ -2605,7 +2634,14 @@ def _run_failure_recovery(
     switched without an explicit choice — an interview answer, or an explicit
     `--on-failure=retarget:<owner>` on the command line.
     """
-    candidates = recovery_candidates([results[unit_id] for unit_id in order if unit_id in results])
+    # Markers for THIS fanout only, read once. They are what the plan's
+    # live-worker rule is checked against: a unit whose scope another session
+    # still occupies must be waited on, never given a second worker. Marker
+    # presence is not liveness and the plan says so when it fires.
+    candidates = recovery_candidates(
+        [results[unit_id] for unit_id in order if unit_id in results],
+        inflight=_recovery_inflight(paths, str(unit_dispatch_kwargs["fanout_id"])),
+    )
     if not candidates:
         return None
     emit = write_line if write_line is not None else _silent_write_line
@@ -2745,6 +2781,12 @@ def _report_recovery_options(
         f"Unit {candidate.get('unit_id')} failed on {candidate.get('owner')} as "
         f"{candidate.get('failure_kind')}. Recovery options (none taken; pass --on-failure to choose):"
     )
+    # Same line the interview prints: the operator reading a non-interactive
+    # report needs the cause and its precondition as much as the one answering
+    # a prompt does.
+    plan_line = plan_summary_line(candidate.get("plan"))
+    if plan_line:
+        emit(f"  {plan_line}")
     for option in options:
         suffix = "" if option.get("available") else f"  (unavailable: {option.get('unavailable_reason')})"
         emit(f"  [{option.get('key')}] {option.get('title')}{suffix}")
@@ -3114,6 +3156,83 @@ def _write_inflight(paths: OmhPaths, fanout_id: str, unit_id: str, fields: dict[
         return
 
 
+class _UnitProgressObserver:
+    """Turns the mid-run stdout snapshots into a verdict on the unit's WORK.
+
+    The snapshots `_communicate_with_output_polls` already takes were used
+    only for token telemetry, so every surface downstream could say a process
+    existed and none could say whether the work was moving -- the exact gap
+    the 2026-09-11 incident fell into (36 minutes of new output that was the
+    same git workaround again, read as progress because the PID was alive).
+    This holds the previous evidence, assesses each snapshot against it, and
+    writes the answer onto the in-flight marker so another session reads the
+    state rather than inferring one from a file's existence.
+
+    Best-effort throughout, like every other marker write on this path:
+    observability must never fail a dispatch.
+    """
+
+    def __init__(self, paths: OmhPaths, fanout_id: str, unit_id: str, fields: dict[str, str]) -> None:
+        self._paths = paths
+        self._fanout_id = fanout_id
+        self._unit_id = unit_id
+        # The SAME dict the dispatch keeps its marker fields in, so a pid
+        # recorded after the spawn is carried by every later progress write
+        # instead of being erased by one.
+        self._fields = fields
+        self._evidence: dict[str, Any] = empty_progress_evidence(now=time.monotonic())
+        # Wall-clock twin of the evidence's monotonic `last_new_output_at`,
+        # restamped only when that reading moves. A reader in another process
+        # can subtract this from its own clock; it can do nothing at all with
+        # a monotonic value from a process it never ran.
+        self._last_new_output_stamp = utc_now()
+
+    def observe(self, stdout_snapshot: str) -> None:
+        self._assess(stdout_snapshot, result_record_present=False)
+        self._fields.update(
+            _inflight_progress_fields(self._evidence, last_new_output_at=self._last_new_output_stamp)
+        )
+        _write_inflight(self._paths, self._fanout_id, self._unit_id, self._fields)
+
+    def finalize(self, stdout_text: str, *, result_record_present: bool) -> dict[str, Any]:
+        """One last assessment after exit, with the result record's answer in.
+
+        Still non-terminal: `failed` and `verified` are the caller's to assign
+        from the evidence ladder, not this module's to guess from stdout.
+        """
+        self._assess(stdout_text, result_record_present=result_record_present)
+        return self._evidence
+
+    def _assess(self, stdout_text: str, *, result_record_present: bool) -> None:
+        previous_new_output_at = self._evidence.get("last_new_output_at")
+        try:
+            self._evidence = assess_progress(
+                self._evidence,
+                stdout_text,
+                now=time.monotonic(),
+                result_record_present=result_record_present,
+            )
+        except (TypeError, ValueError, re.error):
+            # A malformed snapshot must not cost the dispatch its run; the
+            # previous evidence stands and the next snapshot tries again.
+            return
+        if self._evidence.get("last_new_output_at") != previous_new_output_at:
+            self._last_new_output_stamp = utc_now()
+
+
+def _inflight_progress_fields(evidence: Mapping[str, Any], *, last_new_output_at: str) -> dict[str, str]:
+    """Progress evidence as the marker's flat, scalar, string-only fields."""
+    markers = evidence.get("phase_markers")
+    return {
+        "unit_state": str(evidence.get("state", "") or ""),
+        "state_reason": str(evidence.get("reason", "") or ""),
+        "last_new_output_at": last_new_output_at,
+        "stalled_for_seconds": str(stalled_for_seconds(evidence)),
+        "repeat_count": str(evidence.get("repeat_count", 0) or 0),
+        "phase_markers": ",".join(str(marker) for marker in markers) if isinstance(markers, list) else "",
+    }
+
+
 def _clear_inflight(paths: OmhPaths, fanout_id: str, unit_id: str) -> None:
     """Runs inside `finally`, so it must never mask the dispatch exception."""
     if not fanout_id:
@@ -3122,6 +3241,18 @@ def _clear_inflight(paths: OmhPaths, fanout_id: str, unit_id: str) -> None:
         clear_inflight_marker(paths, fanout_id, unit_id)
     except (InflightMarkerError, OSError):
         return
+
+
+def _recovery_inflight(paths: OmhPaths, fanout_id: str) -> list[dict[str, Any]]:
+    """Markers for one fanout, for the recovery plan's live-worker rule.
+
+    `read_inflight_markers` already never raises and skips what it cannot
+    parse, so the empty list here means only "no marker was listed" — which the
+    plan reads as "no live worker was observed", never as "the scope is free".
+    """
+    if not fanout_id:
+        return []
+    return read_inflight_markers(paths, fanout_id=fanout_id)
 
 
 DISPATCH_MODEL_PREFERENCE_SCHEMA_VERSION = "omh_dispatch_model_preferences/v1"
@@ -3860,6 +3991,43 @@ def _dispatch_unit(
             **_dispatch_status_ladder(),
         }
     worktree = Path(str(worktree_record["worktree_path"]))
+    # The isolation now exists; whether the work can be DONE in it is a
+    # separate question, and the 2026-09-11 incident is what happens when only
+    # the first one is asked. A readiness probe says the executor binary runs.
+    # It cannot say that this worktree takes a file write, that its index can
+    # be written, that the commits the unit merges are present rather than
+    # promised by a partial clone, or that its tracked filenames survive a
+    # case-insensitive filesystem. Those four are observed HERE, in the path
+    # the unit was handed, before any process is spawned -- because none of
+    # them is cleared by running the unit and finding out.
+    #
+    # `target_ref` is deliberately None: the worktree was just created at
+    # `base_sha`, so the unit has no head of its own yet and HEAD is the only
+    # other commit there is to check.
+    workspace_preflight = probe_workspace(
+        worktree, base_ref=base_sha or None, target_ref=None, runner=runner
+    )
+    if not workspace_preflight["ok"]:
+        # `worktree_failed` rather than a new status word: the closed status
+        # vocabulary is a wire contract external wrappers gate on, and this IS
+        # a setup-phase failure of the worktree. `reason_code` is what
+        # separates "the worktree could not be created" from "the worktree was
+        # created and cannot be worked in"; `workspace_preflight` carries which
+        # check failed and why. The worktree is left exactly as it is -- the
+        # repair happens at the preparation step, on what is on disk.
+        return {
+            "unit_id": unit_id,
+            "run_ref": run_ref,
+            "owner": owner,
+            "status": "worktree_failed",
+            "attempt_id": attempt_id,
+            "reason_code": "workspace_preflight_blocked",
+            "failure_kind": FAILURE_KIND_WORKSPACE_BLOCKED,
+            "unit_state": workspace_preflight_unit_state(workspace_preflight),
+            "workspace_preflight": workspace_preflight,
+            "reason": workspace_preflight_reason(workspace_preflight),
+            **_dispatch_status_ladder(),
+        }
     session_capability = (negotiate_session_capability(owner, argv[0], env=child_env)
                           if argv and getattr(runner, 'accepts_output_capture', False) else None)
     if session_capability is not None:
@@ -3949,25 +4117,36 @@ def _dispatch_unit(
     stdout_text = ""
     exit_code = 1
     owner_host = omo_runtime_host() or "" if owner == "omo-runtime" else ""
+    # Which account this owner's CLI is configured as, read once here from that
+    # CLI's own config file and redacted on the way out. Read at spawn rather
+    # than at failure time because the failure is what makes it interesting and
+    # by then the operator may already have switched: without the tag recorded
+    # beside the limit, "wait for the reset" is the only recovery omh can offer,
+    # including to the operator for whom that window no longer applies. No
+    # token or key is read, and an unreadable file is an empty tag.
+    account_tag = observed_account_tag(owner)
     unit_title = str(unit.get("title") or unit.get("unit_id", unit_id))
     # Written BEFORE the spawn and cleared in `finally`. This call blocks for
     # the whole unit, so the dispatching process cannot report on itself; the
     # marker is what lets ANOTHER session see that this unit is running and
     # compute its elapsed time. Marker failures never block a dispatch.
-    _write_inflight(
-        paths,
-        fanout_id,
-        unit_id,
-        {
-            "owner": owner,
-            "owner_host": owner_host,
-            "model": routed_model,
-            "reasoning_effort": routed_effort,
-            "run_ref": run_ref,
-            "worktree": str(worktree),
-            "started_at": started_at,
-        },
-    )
+    # One dict for the unit's whole lifetime: the pid recorded after the spawn
+    # and the progress evidence written from each stdout snapshot both update
+    # it in place, so no later write erases what an earlier one recorded.
+    marker_fields: dict[str, str] = {
+        "owner": owner,
+        "owner_host": owner_host,
+        "model": routed_model,
+        "reasoning_effort": routed_effort,
+        "run_ref": run_ref,
+        "worktree": str(worktree),
+        "started_at": started_at,
+    }
+    _write_inflight(paths, fanout_id, unit_id, marker_fields)
+    # Holds the evidence across snapshots. Opened here rather than beside the
+    # on_output wiring below so the post-exit record has one to finalize even
+    # when the runner never accepted the snapshot hook at all.
+    progress_observer = _UnitProgressObserver(paths, fanout_id, unit_id, marker_fields)
     # Best-effort HUD row for this unit: opened inside the same try whose
     # finally below closes it, so the row can never outlive the process it
     # describes -- opening it BEFORE the try left a window (a Ctrl-C during
@@ -4012,21 +4191,8 @@ def _dispatch_unit(
                 nonlocal progress_binding
                 if getattr(runner, 'accepts_launch', False):
                     dispatch_observed()
-                _write_inflight(
-                    paths,
-                    fanout_id,
-                    unit_id,
-                    {
-                        "owner": owner,
-                        "owner_host": owner_host,
-                        "model": routed_model,
-                        "reasoning_effort": routed_effort,
-                        "run_ref": run_ref,
-                        "worktree": str(worktree),
-                        "started_at": started_at,
-                        "pid": str(process.pid),
-                    },
-                )
+                marker_fields["pid"] = str(process.pid)
+                _write_inflight(paths, fanout_id, unit_id, marker_fields)
                 progress_binding = _record_fanout_progress_pid(paths, progress_binding, process.pid)
 
             spawn_kwargs["on_spawn"] = _record_pid
@@ -4041,7 +4207,7 @@ def _dispatch_unit(
                 nonlocal progress_binding
                 progress_binding = updated
 
-            spawn_kwargs["on_output"] = _live_unit_telemetry_reporter(
+            telemetry_reporter = _live_unit_telemetry_reporter(
                 paths,
                 owner=owner,
                 routed_model=routed_model,
@@ -4050,6 +4216,17 @@ def _dispatch_unit(
                 binding_ref=lambda: progress_binding,
                 binding_set=_replace_binding,
             )
+
+            def _observe_snapshot(stdout_snapshot: str) -> None:
+                # The same snapshot answers two different questions: how many
+                # tokens the unit has spent (the HUD row) and whether its work
+                # is moving at all (the marker). The progress verdict goes
+                # first: it is the one a supervisor acts on, and the telemetry
+                # reporter's own throttle can swallow a whole poll.
+                progress_observer.observe(stdout_snapshot)
+                telemetry_reporter(stdout_snapshot)
+
+            spawn_kwargs["on_output"] = _observe_snapshot
         confinement_command = confinement.command(argv) if confinement is not None else None
         if confinement_command is not None:
             spawn_kwargs["confinement_command"] = confinement_command
@@ -4299,7 +4476,18 @@ def _dispatch_unit(
             paths, owner, run_ref=run_ref, unit_id=unit_id, pattern_label=auth_label
         )
     elif limit_label:
-        _record_limit_signal(paths, owner, run_ref=run_ref, unit_id=unit_id, pattern_label=limit_label)
+        _record_limit_signal(
+            paths,
+            owner,
+            run_ref=run_ref,
+            unit_id=unit_id,
+            pattern_label=limit_label,
+            account_tag=account_tag,
+            # The literal reset phrase the provider wrote ("resets 6:10pm
+            # (Asia/Seoul)"), carried for display only. Nothing converts it to
+            # an instant; the elapsed answer stays the cooldown window's.
+            reset_text=limit_reset_text(output_tail, stderr_tail),
+        )
     elif exit_code == 0:
         # A successful dispatch to this executor is the freshest evidence the
         # provider is serving it again; a stale limit or auth signal must not
@@ -4423,6 +4611,39 @@ def _dispatch_unit(
                 and producer_head == unit_result.get("producer_head_sha")
             ),
         ) or {}
+    # The ladder's own two rungs, read once so the envelope and the unit state
+    # below it cannot disagree about what was observed.
+    result_schema_valid = bool(unit_result.get("result_schema_valid"))
+    verification_observed = _unit_verification_is_observed(paths, run_ref)
+    # `unit_result_missing` is the intake path's word for "no result record
+    # appeared at all", as opposed to one that appeared and failed validation.
+    result_record_present = str(unit_result.get("unit_result_status", "")) != "unit_result_missing"
+    progress_evidence = progress_observer.finalize(
+        stdout_text, result_record_present=result_record_present
+    )
+    # `observed_at` and `last_new_output_at` inside the evidence are monotonic
+    # readings from THIS process and mean nothing in a reader's. The
+    # difference between them does, so the record carries it derived rather
+    # than leaving a reader to subtract two numbers it cannot interpret.
+    progress_evidence = {
+        **progress_evidence,
+        "stalled_for_seconds": stalled_for_seconds(progress_evidence),
+    }
+    # The only terminal answer, and it is the ladder's, never the exit code's:
+    # a unit that exited 0 without a validated result and an observed
+    # verification has not verified anything. `result_missing` is called out by
+    # name because exit 0 with no record at all is the shape that used to read
+    # as success everywhere.
+    if input_required:
+        unit_state, unit_state_reason = UNIT_STATE_AWAITING_INPUT, "parent_decision_required"
+    elif result_schema_valid and verification_observed:
+        unit_state, unit_state_reason = UNIT_STATE_VERIFIED, ""
+    elif not result_record_present:
+        unit_state, unit_state_reason = UNIT_STATE_FAILED, "result_missing"
+    elif not result_schema_valid:
+        unit_state, unit_state_reason = UNIT_STATE_FAILED, "result_invalid"
+    else:
+        unit_state, unit_state_reason = UNIT_STATE_FAILED, "verification_not_observed"
     result = {
         "unit_id": unit_id,
         "run_ref": run_ref,
@@ -4431,6 +4652,22 @@ def _dispatch_unit(
         "reasoning_effort": routed_effort,
         "status": "input_required" if input_required else "completed" if exit_code == 0 else "failed",
         "exit_code": exit_code,
+        "unit_state": unit_state,
+        "unit_state_reason": unit_state_reason,
+        "progress": progress_evidence,
+        # Which output contract this unit actually ran under, and why it was
+        # not the structured one when it was not. `plain` means no token
+        # counts and no session id were obtainable for the whole unit -- an
+        # absence with a cause, rather than an empty token column that reads
+        # like a unit which spent nothing.
+        "session_protocol": ("codex" if owner == "codex" else "claude")
+        if session_capability is not None and session_capability.protocol is not None
+        else "plain",
+        "session_protocol_reason": (
+            "" if session_capability is not None and session_capability.protocol is not None
+            else (session_capability.reason if session_capability is not None
+                  else "no_session_capability_negotiated")
+        ),
         "worktree_path": str(worktree),
         "filesystem_confinement": filesystem_confinement,
         "child_environment_policy": child_environment.receipt,
@@ -4438,8 +4675,8 @@ def _dispatch_unit(
         "shared_artifacts": shared_artifacts,
         **_dispatch_status_ladder(
             process_succeeded=exit_code == 0 and not input_required,
-            result_schema_valid=bool(unit_result.get("result_schema_valid")),
-            unit_verification_observed=_unit_verification_is_observed(paths, run_ref),
+            result_schema_valid=result_schema_valid,
+            unit_verification_observed=verification_observed,
         ),
         **unit_result,
         **verification,
@@ -4456,6 +4693,11 @@ def _dispatch_unit(
         _record_capacity(paths, unit, result['capacity'])
     result['worktree_created'] = bool(worktree_record.get('created'))
     result['worktree_reused'] = bool(worktree_record.get('reused'))
+    if account_tag:
+        # Only when observed. An absent key is "no account was readable"; an
+        # empty string recorded as a value would compare equal to the next
+        # unreadable one and make an account switch look like no switch at all.
+        result["account_tag"] = account_tag
     if owner_host:
         result["owner_host"] = owner_host
     result['attempt_id'] = attempt_id
@@ -4492,6 +4734,11 @@ def _dispatch_unit(
             owner=owner,
             failure_kind=failure_kind,
             detail=f"unit {unit_id} exited {exit_code} on {owner} with a {failure_kind} output shape",
+            # The cause-specific precondition, computed from this envelope. No
+            # in-flight markers are consulted: this unit's own marker is being
+            # cleared in the `finally` above, so a live-worker verdict here
+            # would be about a worker that is on its way out.
+            plan=recovery_plan(result, last_attempt=attempt_conditions(result)),
         )
     if retry_decisions:
         # Only when something actually failed once: a unit that succeeded on
@@ -5344,7 +5591,25 @@ def _limit_shaped_label(output_tail: str, stderr_tail: str) -> str:
     return ""
 
 
-def _record_limit_signal(paths: OmhPaths, owner: str, *, run_ref: str, unit_id: str, pattern_label: str) -> None:
+def _record_limit_signal(
+    paths: OmhPaths,
+    owner: str,
+    *,
+    run_ref: str,
+    unit_id: str,
+    pattern_label: str,
+    account_tag: str = "",
+    reset_text: str = "",
+) -> None:
+    """Persist one owner's limit observation, with the account it happened under.
+
+    `account_tag` and `reset_text` are written only when they were observed: an
+    empty tag is "nothing readable named an account", and recording it as a
+    value would let a later comparison read two unknowns as the same account.
+    `last_limit_signal_for_profile` copies every stored key, so both reach the
+    readiness advisory without a second reader.
+    """
+
     def _update(state: dict[str, Any]) -> dict[str, Any]:
         state["schema_version"] = EXECUTOR_LIMIT_SIGNALS_SCHEMA_VERSION
         profiles = state.setdefault("profiles", {})
@@ -5353,6 +5618,8 @@ def _record_limit_signal(paths: OmhPaths, owner: str, *, run_ref: str, unit_id: 
             "run_ref": run_ref,
             "unit_id": unit_id,
             "pattern_label": pattern_label,
+            **({"account_tag": account_tag} if account_tag else {}),
+            **({"reset_text": reset_text} if reset_text else {}),
         }
         state["claim_boundary"] = EXECUTOR_LIMIT_SIGNALS_CLAIM_BOUNDARY
         return state

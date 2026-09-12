@@ -3352,11 +3352,22 @@ def _project_memory_safety(
     classification = classify_memory_admission("\n".join([summary, content, " ".join(tags), source, source_ref]))
     status = str(classification.get("status", "blocked"))
     return {
+        # v2 stays: the shape gained `lane_refused_inputs` and `protected_inputs`
+        # lost two entries, but nothing reads either key and no stored digest
+        # covers this dict -- the batch artifacts that are re-digested never
+        # carry it. A version bump would be a migration for no reader.
         "schema_version": "project_memory_safety/v2",
         "status": status,
         "safe_to_auto_approve": status == "safe",
         "review_reasons": [] if status == "safe" else [status],
-        "protected_inputs": ["credentials", "raw_logs", "full_transcripts", "temporary_task_progress"],
+        # What this classification actually screens, not what the lane asks a
+        # person to refuse. Raw logs and transcripts belong in the second list:
+        # the capture lane declines them and points at the session store, and
+        # the domain-vocabulary gate matches their shape, but no pattern here
+        # reads them, so naming them as screened here would be a claim the
+        # verdict above cannot support.
+        "protected_inputs": ["credentials", "prompt_injection_shaped_text", "temporary_task_progress"],
+        "lane_refused_inputs": ["raw_logs", "full_transcripts"],
     }
 
 

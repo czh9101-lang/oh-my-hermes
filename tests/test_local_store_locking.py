@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from _local_package import load_local_package
+from _platform_support import HAS_FCNTL, requires_enforced_file_lock
 
 load_local_package()
 from omh.local_store import (
@@ -18,14 +19,7 @@ from omh.local_store import (
     locked_json_update,
     read_json_object,
 )
-
-try:
-    import fcntl as _fcntl  # noqa: F401 - import used only to probe platform availability
-
-    HAS_FCNTL = True
-except ImportError:
-    HAS_FCNTL = False
-
+from omh.system import local_store
 
 class FakeMsvcrt:
     """Stand-in for the Windows locking API, exercised on every platform.
@@ -64,7 +58,7 @@ class FakeMsvcrt:
 
 
 class LocalStoreLockingTests(unittest.TestCase):
-    @unittest.skipUnless(HAS_FCNTL, "fcntl advisory locking is POSIX-only")
+    @requires_enforced_file_lock
     def test_concurrent_locked_updates_do_not_lose_writes(self) -> None:
         worker_count = 24
         with TemporaryDirectory() as tmp:
@@ -112,7 +106,7 @@ class LocalStoreLockingTests(unittest.TestCase):
             leftover = list(Path(tmp).glob(".target.json.*.tmp"))
             self.assertEqual(leftover, [])
 
-    @unittest.skipUnless(HAS_FCNTL, "fcntl advisory locking is POSIX-only")
+    @requires_enforced_file_lock
     def test_file_lock_times_out_when_already_held(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "contended.json"
@@ -216,6 +210,55 @@ class WindowsFileLockTests(unittest.TestCase):
 
             # A lock that was never taken leaves no sidecar behind either.
             self.assertFalse((Path(tmp) / ".state.json.lock").exists())
+
+    def test_preparing_the_lock_sidecar_survives_a_windows_sharing_denial(self) -> None:
+        """A denied chmod must not abandon the lock the caller is about to take.
+
+        `file_lock` prepares its sidecar through `ensure_file` *before* it takes
+        the lock, so every waiter runs that chmod at once against a file the
+        other waiters already hold open. Windows denies chmod for exactly that
+        window -- the same one `atomic_write_text` was taught to retry -- and
+        POSIX never does, so the denial only ever escaped there.
+        """
+        attempts: list[int] = []
+        real_chmod = Path.chmod
+
+        def denied_twice(self_path: Path, mode: int, *args: object, **kwargs: object) -> None:
+            if self_path.name.endswith(".lock"):
+                attempts.append(mode)
+                if len(attempts) <= 2:
+                    raise PermissionError(32, "used by another process")
+            real_chmod(self_path, mode, *args, **kwargs)
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            with (
+                mock.patch.object(local_store.os, "name", "nt"),
+                mock.patch.object(Path, "chmod", denied_twice),
+            ):
+                with file_lock(path, private=True) as acquired:
+                    self.assertTrue(acquired["enforced"])
+
+            self.assertEqual(len(attempts), 3)
+
+    def test_a_posix_permission_error_on_chmod_is_still_an_error(self) -> None:
+        """The retry is a Windows branch, not a swallow: POSIX must still fail."""
+        real_chmod = Path.chmod
+
+        def denied(self_path: Path, mode: int, *args: object, **kwargs: object) -> None:
+            if self_path.name.endswith(".lock"):
+                raise PermissionError(13, "permission denied")
+            real_chmod(self_path, mode, *args, **kwargs)
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            with (
+                mock.patch.object(local_store.os, "name", "posix"),
+                mock.patch.object(Path, "chmod", denied),
+                self.assertRaises(PermissionError),
+            ):
+                with file_lock(path, private=True):
+                    pass
 
 
 if __name__ == "__main__":

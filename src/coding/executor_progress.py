@@ -429,12 +429,22 @@ def build_progress_event(
     return event
 
 
+# A restated copy of the closed category vocabulary rather than an import:
+# this is a metadata-only projection surface and its allowlist is meant to be
+# readable next to what it guards. It is a mirror all the same, and an
+# unlisted category is DROPPED here rather than reported, so a category added
+# to MODEL_CATEGORIES and forgotten here would silently blank the routed label
+# on every progress event instead of failing. The parity gate lives in
+# tests/test_executor_progress_projection.py.
 _ROUTING_CATEGORIES = frozenset(
     {
         "architect",
         "artistry",
+        "capable",
         "deep",
+        "deep-work",
         "quick",
+        "simple-work",
         "unspecified-high",
         "unspecified-low",
         "ultrabrain",

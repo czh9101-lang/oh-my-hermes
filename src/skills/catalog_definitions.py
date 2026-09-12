@@ -43,8 +43,10 @@ from .catalog_types import (
     ADVERSARIAL_CONSENSUS_PERSPECTIVES,
     ADVERSARIAL_CONSENSUS_ROUNDS,
     DEEP_INTERVIEW_MAX_ROUNDS,
+    ENGINE_CLOSING_BRIEF_RULE,
     ENGINE_ENTRY_CONFIRMATION_RULE,
     ENGINE_FIT_RECOMMENDATION_RULE,
+    ENGINE_FOLLOW_UP_AUTHORITY_RULE,
     ENGINE_INTERJECTION_RESUME_RULE,
     EXECUTION_WAIT_DISCIPLINE_RULE,
     LLM_APP_DEV_EVAL_DELIVERABLES,
@@ -345,6 +347,8 @@ _DEFINITIONS = [
             "Treat direct `loop`, `./loop`, `$loop`, and OMH loop invocations as a start/continue signal rather than a picker or passive clarification path.",
             "Classify the goal as task, project, ambition, external-wait, or unclear inside the loop, then keep progressing until a real permission, evidence, verification, context, budget, or external-wait gate appears.",
             ENGINE_INTERJECTION_RESUME_RULE,
+            ENGINE_FOLLOW_UP_AUTHORITY_RULE,
+            ENGINE_CLOSING_BRIEF_RULE,
             "Expose core OMH roles: interviewer, planner, researcher, builder, reviewer, and loop controller.",
             "Route tiny direct tasks to one-cycle delivery surfaces instead of forcing loop overhead.",
             "Reframe a north-star ambition into a bounded arena, observable problem, next loop goal, and next verification without shrinking its ambition.",
@@ -558,6 +562,8 @@ _DEFINITIONS = [
             "Give every materialized decision a stable identifier and keep omitted decisions open unless the user explicitly resolves, defers, or blocks them.",
             "Keep terminology sparse: canonical identity, short definition, expression guidance, distinct-from boundary, and optional localized display label.",
             ENGINE_INTERJECTION_RESUME_RULE,
+            ENGINE_FOLLOW_UP_AUTHORITY_RULE,
+            ENGINE_CLOSING_BRIEF_RULE,
             "Stop on a terminal frontier, explicit user request, or the shared round ceiling; then confirm the summary separately from planning or coding.",
         ),
         why_this_exists=(
@@ -905,6 +911,8 @@ _DEFINITIONS = [
             EXECUTION_WAIT_DISCIPLINE_RULE,
             "Initialize the phase todo before engine work: declare numbered phases in delivery order with `omh_todo` (todo init) — bootstrap, one implement/verify/deliver task per lane or work unit, independent review lanes, and an evidence-and-cleanup close, with one task per observable outcome — keep exactly one item active while working, and update states as lanes complete; the run walks a bounded, HUD-visible checklist instead of an open-ended reasoning loop. Phase names and task titles are written in English — short, operator-legible labels — even when the conversation runs in another language, since the HUD todo checklist is an operator surface under the repo's English-by-default output contract.",
             ENGINE_INTERJECTION_RESUME_RULE,
+            ENGINE_FOLLOW_UP_AUTHORITY_RULE,
+            ENGINE_CLOSING_BRIEF_RULE,
             "Close a completed run with the localized run summary: call `omh_run_summary` with the conversation's language and print its summary_text verbatim as the final lines (elapsed seconds, token usage, and models used from observed host accounting — never numbers the model estimated); when the tool reports a non-observed status (no session id, no accounting row), print an explicit run-summary not_available line instead of omitting it or estimating the numbers.",
             "[capability:single_owner_persistence] Do not enter a finish-until-done loop until scope, acceptance criteria, and verification commands are concrete.",
             "[capability:single_owner_persistence] For single-owner coding edits, prepare and track the selected runtime path instead of implying unobserved work happened or hiding execution inside chat narration.",
@@ -1083,9 +1091,32 @@ _DEFINITIONS = [
             "Capture the executor's session id at dispatch (`--output-format json` -> `session_id` for Claude "
             "Code, `--json` -> `thread_id` for Codex) and carry it into every status line; a missing id is "
             "reported as unsteerable, never silently attached.",
+            "Observe to a terminal state: after dispatch, poll `omh coding fanout status --fanout-id "
+            "<fanout-id> --json` about every 60 seconds until the roster's own `all_units_terminal` is true, "
+            "and read `stuck_units` on every poll rather than scanning the rows yourself. Per unit, `terminal` "
+            "is the answer and `unit_state` is why -- a `lifecycle_state` of `unit_verification_observed` or "
+            "`integration_ready`, or a recorded `failure_diagnostic`, is what makes a finished unit terminal -- "
+            "with `last_event_age_seconds` the time since that unit's last observed output, "
+            "`progress.seconds_since_new_output` the time since its output last grew, and "
+            "`capacity.next_action` the reason a refused unit was refused. A unit that is "
+            "`progress_stalled`, `awaiting_input`, `account_limit`, `permission_blocked`, or `data_missing` "
+            "needs intervention NOW, not more waiting: a live process with no new evidence is not progress, and "
+            "re-running under the same account, the same credentials, or the same missing objects repeats the "
+            "failure exactly. Never end a turn on \"waiting for the worker\" while a unit sits in one of those "
+            "states. `all_units_terminal` is also false when the roster is empty and when a unit has neither a "
+            "marker nor a summary row, so give the loop a wall clock of its own: a unit whose `unit_state` is "
+            "still `unknown` after about ten minutes is a missing record to chase, not a unit to keep waiting "
+            "on, and a poll loop with no bound is the stall it was meant to catch.",
+            "A finished dispatch is an event to act on in the same turn, not a status to report: verify that "
+            "unit's result, record the outcome on the plan (done, or blocked with its reason), then run the "
+            "recovery or start the next item. Never announce a continuation that has not actually started -- a "
+            "closing sentence promising the next step, with no dispatch and no plan change in the same turn, "
+            "is the failure this rule exists for.",
             "Write every steering delta as more than a restated brief: name the changed constraint, the new "
             "evidence, the required action, and whether the verification target moved.",
             ENGINE_INTERJECTION_RESUME_RULE,
+            ENGINE_FOLLOW_UP_AUTHORITY_RULE,
+            ENGINE_CLOSING_BRIEF_RULE,
             "Entered from an `ulw-work` lane, own that lane's handoff only -- lane framing, disjointness, "
             "integration verification, and the closing brief stay with `ulw-work`; report back in that lane's "
             "evidence vocabulary.",
@@ -1229,6 +1260,8 @@ _DEFINITIONS = [
             "Distill the dossier into a plan-feed block - decision drivers, viable options with evidence, rejected candidates with reasons, risks, and open questions - so planning consumes conclusions, not raw notes.",
             "Reserve the end of the run for synthesis; an interrupted run must still leave a partial dossier rather than lost context.",
             ENGINE_INTERJECTION_RESUME_RULE,
+            ENGINE_FOLLOW_UP_AUTHORITY_RULE,
+            ENGINE_CLOSING_BRIEF_RULE,
             "Summarize the evidence or dossier before any planning or coding handoff; research is not implementation evidence.",
         ),
         why_this_exists="`research` exists to make Hermes a careful research engine: it routes research demands to source-backed evidence gathering - from live web citations to studied reference implementations - verifies contested claims, and distills decision-grounding output so planning starts from evidence instead of guesses.",
@@ -5658,6 +5691,8 @@ _DEFINITIONS = [
         quality_bar=(
             ENGINE_ENTRY_CONFIRMATION_RULE,
             ENGINE_INTERJECTION_RESUME_RULE,
+            ENGINE_FOLLOW_UP_AUTHORITY_RULE,
+            ENGINE_CLOSING_BRIEF_RULE,
             "Generate hostile scenarios from changed behavior and known risk areas.",
             "Report pass/fail evidence separately from proposed fixes.",
             "Delegate code mutations discovered by QA to the selected coding executor.",
@@ -6540,6 +6575,8 @@ _DEFINITIONS = [
             "Never present a restart, cache flush, or resource bump as a leak fix; prove causation by revert-verify.",
             "Set the regression budget as baseline x (1 + tolerance) and name the CI gate that enforces it.",
             ENGINE_INTERJECTION_RESUME_RULE,
+            ENGINE_FOLLOW_UP_AUTHORITY_RULE,
+            ENGINE_CLOSING_BRIEF_RULE,
         ),
         why_this_exists=(
             "`ultraperf` exists because most performance work starts unlocalized: something is slow, leaking, or "
@@ -6958,7 +6995,7 @@ _DEFINITIONS = [
         )
         + (
             "Treat each Hermes role slot (main, realtime-search, design), semantic category, and external owner as an independent prerequisite/diagnose/recommend/apply unit instead of one combined change.",
-            "Explain the shipped recommendations as editable editorial defaults, not benchmarks or allowlists: ultrabrain uses GPT-5.6 Sol; deep uses GPT-5.6 Terra then DeepSeek V3.2; architect prefers Claude Fable 5.1, Claude Fable 5, GPT-5.6 Sol, then Kimi K3 at xhigh; unspecified-high prefers Kimi K3 then Claude Opus 5; unspecified-low prefers GLM-5.3, GLM-5.2, GLM-5.2 Ultrafast, DeepSeek V3.2, then Claude Opus 5 at low; quick prefers GLM-5.3 Flash, GLM-5.2 Ultrafast, Kimi K3, GPT-5.6 Luna, Claude Fable 5.1, then Claude Fable 5 at low; writing prefers Kimi K3, Qwen3-Coder, then Gemini 3.1 Pro; visual-engineering prefers Claude Fable 5.1, Claude Fable 5, then Kimi K3; and artistry prefers Gemini 3.1 Pro, Claude Fable 5.1, Claude Fable 5, then Kimi K3. Inside every chain the Claude order is Fable 5.1, then the older Claude entry. Chain customization is a config edit: a category written into ~/.omh/routing/model-chains.json (mixture_chain_overrides/v1, seeded by omh setup) replaces that chain for routing, fallback, and HUD labels without touching code. The interactive omh setup also records which providers the machine holds and whether it has a Claude Code subscription in ~/.omh/routing/providers.json (provider_entitlements/v1); every chain is then reordered so served entries lead, nothing is removed, and the Claude Code subscription only seeds the Maestro lane's --model preference because Hermes cannot spend it.",
+            "Explain the shipped recommendations as editable editorial defaults, not benchmarks or allowlists: ultrabrain uses GPT-6 Astra; deep uses GPT-5.6 Terra then DeepSeek Flash (V4.1); architect prefers Claude Fable 5.1, GPT-6 Astra, then Kimi K3 at xhigh; unspecified-high prefers Kimi K3 then Claude Opus 5; unspecified-low prefers GLM-5.3, DeepSeek Flash (V4.1), then Claude Opus 5 at low; quick prefers GLM-5.3 Flash, Kimi K3, GPT-5.6 Luna, then Claude Fable 5.1 at low; writing prefers Kimi K3, Qwen3-Coder, then Gemini 3.1 Pro; visual-engineering prefers Claude Fable 5.1 then Kimi K3; artistry prefers Gemini 3.1 Pro, Claude Fable 5.1, then Kimi K3; capable prefers Claude Fable 5.1, Claude Opus 5, Kimi K3, then GLM-5.3 at medium; simple-work prefers GPT-5.6 Luna, DeepSeek Flash (V4.1), then Claude Haiku 4.5 at low; and deep-work uses GPT-6 Astra at high. Each chain names the current generation of a model line; a superseded generation (Fable 5, GLM 5.2, DeepSeek V3.2, GPT-5.6 Sol behind Astra) is kept only by a machine-level chain override. Chain customization is a config edit: a category written into ~/.omh/routing/model-chains.json (mixture_chain_overrides/v1, seeded by omh setup) replaces that chain for routing, fallback, and HUD labels without touching code. The interactive omh setup also records which providers the machine holds and whether it has a Claude Code subscription in ~/.omh/routing/providers.json (provider_entitlements/v1); every chain is then reordered so served entries lead, nothing is removed, and the Claude Code subscription only seeds the Maestro lane's --model preference because Hermes cannot spend it.",
             "For X/Twitter scraping or trend analysis, keep x_platform_data as a domain affinity rather than a role alias: prefer confirmed-active Grok, then Kimi K3, then Gemini, without removing the rest of the route or overriding an explicit model.",
             "When a recommendation head is missing, choose the first confirmed-active owner-compatible candidate in that chain. Only after every selected category, role-slot, and domain chain is exhausted, consult the shared final order Claude Opus 5 then GPT-5.6 Sol. If no candidate is confirmed active anywhere, keep the selector on its owner's native default model and let the rest of OMH setup finish without a model-config write.",
             "Give provider-specific native next actions without claiming provider readiness: use installed Hermes flows for OpenAI OAuth/OpenAI Codex, Anthropic or an existing Claude provider, Qwen OAuth or Alibaba, Gemini/Google/Vertex, Grok/xAI, Kimi, GLM/Z.AI, or an already-working custom provider; preserve working alternatives.",
@@ -6992,6 +7029,7 @@ _DEFINITIONS = [
         ),
         recovery_notes=(
             "If discovery is absent, truncated, unreadable, or layout_unverified, name that source state and continue with manual confirmed-active input instead of scanning more broadly.",
+            "If a provider serves only dated snapshot ids (`gpt-5.6-terra-2026-07-09`), confirm the dated id as active and keep it as served: OMH reads a trailing `-YYYY-MM-DD` as the base alias for recommendation chains, HUD labels, prices, and calibration, so the base's chain position applies without renaming the id; a date on a base no chain names still resolves nothing.",
             "If a preferred Kimi, Claude, OpenAI, GLM, Grok, Gemini, or Qwen candidate is missing, preserve it as inactive and try the next confirmed-active compatible editorial candidate; do not substitute for an explicit unavailable choice.",
             "If no compatible model is confirmed active, record owner_default, finish applicable OMH setup without a model-config write, and name the relevant Hermes-native provider/auth or user-override next action.",
             "If the diagnosed Hermes config cannot be read, report the read failure and stop before proposing a diff; if the config digest changes or the user rejects the diff, do not apply it.",

@@ -40,7 +40,7 @@ def utc_now() -> str:
 def ensure_dir(path: Path, *, private: bool = False) -> None:
     path.mkdir(parents=True, exist_ok=True)
     if private:
-        path.chmod(0o700)
+        _with_windows_retry(lambda: path.chmod(0o700))
 
 
 def is_junction(path: Path) -> bool:
@@ -96,10 +96,17 @@ def discard_path(path: Path, *, ignore_errors: bool = False) -> None:
 
 
 def ensure_file(path: Path, *, private: bool = False) -> None:
+    # The chmod goes through the same Windows retry `atomic_write_text` uses,
+    # and for the same recorded reason: chmod opens the file and races the
+    # sharing window, so it is denied while a concurrent holder has the file
+    # open. `file_lock` calls this on its lock sidecar *before* taking the
+    # lock, so every waiter runs it at once against a file the other waiters
+    # already hold open -- the one place in this module where that window is
+    # not merely possible but structural.
     if not path.exists():
         path.touch(mode=0o600 if private else 0o666)
     if private:
-        path.chmod(0o600)
+        _with_windows_retry(lambda: path.chmod(0o600))
 
 
 def can_write_dir(path: Path, *, probe_name: str = ".write-test", private: bool = False) -> bool:

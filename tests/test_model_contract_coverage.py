@@ -41,6 +41,42 @@ def _inventory(models: tuple[str, ...], *, status: str = "observed") -> dict[str
 
 
 class CoverageMatrixTests(unittest.TestCase):
+    def test_deepseek_pointer_inherits_the_exact_contract_and_routed_legacy_ids_stay_missing(self) -> None:
+        inventory = _inventory(
+            (
+                "deepseek/deepseek-v4.1-flash",
+                "deepseek/deepseek-flash",
+                "deepseek/deepseek-v4-flash",
+            )
+        )
+        rows = {
+            row["requested_model"]: row
+            for row in build_model_contract_coverage(inventory)["comparison"]["models"]
+        }
+        self.assertEqual(rows["deepseek/deepseek-v4.1-flash"]["status"], "exact")
+        pointer = rows["deepseek/deepseek-flash"]
+        self.assertEqual(pointer["status"], "declared_inheritance")
+        self.assertEqual(pointer["contract_model_id"], "deepseek-v4.1-flash")
+        self.assertEqual(pointer["dimensions"]["effort"]["floor"], "low")
+        self.assertEqual(pointer["dimensions"]["effort"]["unsupported_efforts"], {})
+        self.assertEqual(pointer["dimensions"]["calibration"]["high_effort"], "model_specific")
+        # simple-work joined deep and unspecified-low on 2026-09-11: the
+        # projection lists every category whose chain names the alias, so a
+        # third chain naming deepseek-flash belongs here.
+        self.assertEqual(
+            pointer["dimensions"]["category_projection"]["categories"],
+            ["deep", "simple-work", "unspecified-low"],
+        )
+        self.assertEqual(
+            pointer["dimensions"]["provider_eligibility"]["families"],
+            ["deepseek", "openrouter", "opencode"],
+        )
+        self.assertEqual(pointer["dimensions"]["price"]["status"], "documented_list")
+        self.assertEqual(pointer["dimensions"]["docs"]["status"], "covered")
+        # The vendor routes v4-flash to V4.1 Flash on its own API; the catalog
+        # does not turn that wire routing into an inherited contract.
+        self.assertEqual(rows["deepseek/deepseek-v4-flash"]["status"], "missing")
+
     def test_astra_catalog_reports_exact_declared_and_unknown_rows_by_dimension(self) -> None:
         inventory = _inventory(
             (
@@ -48,6 +84,10 @@ class CoverageMatrixTests(unittest.TestCase):
                 "openai/gpt-6-astra-turbo",
                 "openai/gpt-6-astra-2",
                 "gateway/provider-only-astra",
+                # A provider that serves only the dated snapshot (the shape a
+                # user reported on 2026-09-11 for gpt-5.6-terra); the audit
+                # must count it, not crash on the third provenance.
+                "openai/gpt-6-astra-2026-08-01",
             )
         )
         report = build_model_contract_coverage(
@@ -59,6 +99,10 @@ class CoverageMatrixTests(unittest.TestCase):
         comparison = report["comparison"]
         rows = {row["requested_model"]: row for row in comparison["models"]}
         self.assertEqual(rows[_ASTRA_FORMS[0]]["status"], "exact")
+        snapshot = rows["openai/gpt-6-astra-2026-08-01"]
+        self.assertEqual(snapshot["status"], "dated_snapshot")
+        self.assertEqual(snapshot["contract_model_id"], "gpt-6-astra")
+        self.assertEqual(snapshot["dimensions"]["calibration"]["high_effort"], "model_specific")
         for model_id in _ASTRA_FORMS[1:]:
             row = rows[model_id]
             with self.subTest(model_id=model_id):
@@ -77,9 +121,11 @@ class CoverageMatrixTests(unittest.TestCase):
                     row["dimensions"]["provider_eligibility"]["families"],
                     ["openai-codex", "openai"],
                 )
+                # deep-work joined architect and ultrabrain on 2026-09-11:
+                # it is the third shipped chain that names gpt-6-astra.
                 self.assertEqual(
                     row["dimensions"]["category_projection"]["categories"],
-                    ["architect", "ultrabrain"],
+                    ["architect", "deep-work", "ultrabrain"],
                 )
                 self.assertEqual(row["dimensions"]["price"]["status"], "documented_list")
                 self.assertEqual(row["dimensions"]["docs"]["status"], "covered")
@@ -110,6 +156,7 @@ class CoverageMatrixTests(unittest.TestCase):
         self.assertEqual(
             comparison["summary"]["status_counts"],
             {
+                "dated_snapshot": 1,
                 "declared_inheritance": 5,
                 "exact": 1,
                 "intentional_exclusion": 1,

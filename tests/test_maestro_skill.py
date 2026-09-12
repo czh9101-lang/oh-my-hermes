@@ -208,5 +208,96 @@ class MaestroHermesOwnerChecklistTests(unittest.TestCase):
         )
 
 
+class MaestroObserveToTerminalStateTests(unittest.TestCase):
+    """The dispatch lifecycle does not end at spawn.
+
+    A supervisor that dispatches and then answers each completion with a
+    status report leaves results unverified and the plan untouched -- the
+    2026-09-11 incident. Two rules close that: observe every unit to a
+    terminal state, and act on a finished one in the same turn. Both name a
+    real command and real roster fields, so this pins the words AND proves the
+    command they name parses.
+    """
+
+    def test_the_quality_bar_names_the_polling_command_and_its_interval(self) -> None:
+        combined = " ".join(_maestro_definition().quality_bar)
+        self.assertIn("omh coding fanout status --fanout-id <fanout-id> --json", combined)
+        self.assertIn("60 seconds", combined)
+
+    def test_the_polling_command_the_skill_names_actually_parses(self) -> None:
+        # Derived, not asserted from memory: if the verb is ever renamed, the
+        # skill body stops describing a command that exists and this fails.
+        from omh.commands.main import build_parser
+
+        args = build_parser().parse_args(
+            ["coding", "fanout", "status", "--fanout-id", "fanout-0123456789ab", "--json"]
+        )
+
+        self.assertEqual(args.fanout_id, "fanout-0123456789ab")
+        self.assertTrue(args.json)
+
+    def test_the_quality_bar_names_the_roster_fields_it_tells_the_agent_to_read(self) -> None:
+        from omh.coding.fanout_status import FANOUT_UNIT_STATES
+
+        combined = " ".join(_maestro_definition().quality_bar)
+        for field in ("lifecycle_state", "last_event_age_seconds", "failure_diagnostic"):
+            self.assertIn(f"`{field}`", combined)
+        for terminal in ("unit_verification_observed", "integration_ready"):
+            self.assertIn(terminal, FANOUT_UNIT_STATES)
+            self.assertIn(f"`{terminal}`", combined)
+
+    def test_every_stuck_state_is_named_as_needing_intervention_now(self) -> None:
+        from omh.coding.unit_execution_state import UNIT_STUCK_STATES
+
+        combined = " ".join(_maestro_definition().quality_bar)
+        for state in sorted(UNIT_STUCK_STATES):
+            self.assertIn(f"`{state}`", combined)
+        self.assertIn("needs intervention NOW, not more waiting", combined)
+        self.assertIn('Never end a turn on "waiting for the worker"', combined)
+
+    def test_the_quality_bar_names_the_rosters_own_stop_condition(self) -> None:
+        # Derived from the producer: the supervisor is told to read the stop
+        # condition the roster computes, so if those keys are ever renamed the
+        # skill stops describing a payload that exists and this fails.
+        import inspect
+
+        from omh.coding.fanout_status import project_fanout_status
+
+        produced = inspect.getsource(project_fanout_status)
+        combined = " ".join(_maestro_definition().quality_bar)
+        for key in ("all_units_terminal", "stuck_units"):
+            self.assertIn(f'"{key}"', produced)
+            self.assertIn(f"`{key}`", combined)
+
+    def test_the_quality_bar_bounds_the_poll_loop_on_a_unit_with_no_evidence(self) -> None:
+        # `all_units_terminal` is false for a unit with neither marker nor
+        # summary row, which is the safe direction and also an unbounded wait:
+        # without this sentence the poll loop is itself the stall it was added
+        # to catch.
+        combined = " ".join(_maestro_definition().quality_bar)
+        self.assertIn("still `unknown` after about ten minutes", combined)
+        self.assertIn("a poll loop with no bound is the stall it was meant to catch", combined)
+
+    def test_the_completion_chain_is_stated_as_one_turns_work(self) -> None:
+        combined = " ".join(_maestro_definition().quality_bar)
+        self.assertIn(
+            "A finished dispatch is an event to act on in the same turn, not a status to report",
+            combined,
+        )
+        self.assertIn("Never announce a continuation that has not actually started", combined)
+
+    def test_the_rendered_skill_body_carries_both_rules(self) -> None:
+        # The generated surface is what an agent loads; a rule that exists only
+        # in the definition would never reach one.
+        from pathlib import Path
+
+        body = (
+            Path(__file__).resolve().parents[1] / "skills" / "ulw-maestro" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("omh coding fanout status --fanout-id <fanout-id> --json", body)
+        self.assertIn("A finished dispatch is an event to act on in the same turn", body)
+
+
 if __name__ == "__main__":
     unittest.main()

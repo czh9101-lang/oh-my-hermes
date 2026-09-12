@@ -224,7 +224,10 @@ ROLE_CONTEXT_CHAR_LIMIT = 2600
 # skill's declared outputs, not the rule text; the operation table and the
 # native/fixture boundary live in `docs/AGENT-BOARD.md`, outside this budget;
 # warranted growth.
-FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 411570
+# 411570 -> 412999: the same two shared engine rules and the extended
+# interjection rule render into the capability sections of the executing
+# engines (the section carries each engine's quality bar); warranted growth.
+FULL_CAPABILITY_SKILL_SECTION_CHAR_LIMIT = 412999
 FULL_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 9000
 # 100000 -> 102070: the same three domain workflows each add one standalone
 # capability row, again measured on the merged tree; warranted growth for three
@@ -784,7 +787,59 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # result corrupts task evidence before any reference is opened; the operation
 # table and QA boundaries live in `docs/AGENT-BOARD.md`, outside this budget;
 # warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 925045
+# 925045 -> 925059: model-setup's chain line moved to the 2026-09-11
+# chains (DeepSeek Flash (V4.1) in, the superseded generations out) and
+# gained the one-sentence rule that a chain names the current generation
+# of each line (net +14 chars); warranted growth.
+# 925059 -> 925264: `model-setup` names the three categories added on
+# 2026-09-11 (capable, simple-work, deep-work) in the same sentence that
+# already enumerates every other shipped chain. This belongs in the
+# always-loaded body because that sentence IS the shipped-recommendation
+# enumeration the lane reads to a user choosing a category: one missing from
+# it reads as a category that does not exist. The chains themselves live in
+# the catalog, outside this budget; warranted growth.
+# 925264 -> 932859: the seven executing ULW engines gained two shared rules
+# from the Codex Desktop prompt review (follow-up authority triad,
+# closing-brief scaling with its required-closing-lines clause; +~500 chars
+# each across seven bars) and the shared interjection rule gained the
+# steering-not-objective sentence; harness discipline the engines read every
+# run, so it belongs in the always-loaded body; warranted growth.
+# 932859 -> 934125: `maestro` gains the two rules that close the dispatch
+# lifecycle -- observe every unit to a terminal state via `omh coding fanout
+# status`, and treat a finished unit as an event to act on in the same turn
+# (verify, record, then recover or advance). These belong in the always-loaded
+# body because both decisions are made while a worker is still running: a
+# supervisor that has already ended its turn on "waiting for the worker"
+# cannot be told afterwards that a live process with no new evidence was never
+# progress, and a completion already answered with a status report has already
+# left the result unverified. The state vocabulary and the reader that surfaces
+# an unacknowledged outcome live in `src/coding/unit_execution_state.py` and
+# `src/plugin_bundle/omh/dispatch_outcomes.py`, outside this budget; warranted
+# growth.
+# 934125 -> 934491: `model-setup` gained one recovery note for a provider
+# that serves only dated snapshot ids (`gpt-5.6-terra-2026-07-09`, reported
+# 2026-09-11): confirm the dated id as served, OMH reads the trailing date as
+# the base alias. The lane otherwise tells such a user their model is
+# unavailable, so the note belongs where the lane reads it; warranted growth.
+# Re-derived from the producer after this branch met the maestro entry above,
+# never by adding the two deltas.
+# 934491 -> 934924: `memory-new` gained a "retrieve instead" bullet
+# sending past-session history to Hermes' own session store rather than a
+# retained record. It belongs in the always-loaded body because the lane
+# applies it at the moment of capture, which is the only moment the choice
+# exists; a record admitted here is context every later turn pays for;
+# warranted growth. Re-derived from the producer after this branch met the
+# dated-snapshot entry above, never by adding the two deltas.
+# 934924 -> 935543: `maestro`'s observe-to-terminal rule now names the roster's
+# own stop condition (`all_units_terminal`, `stuck_units`, the per-unit
+# `terminal` / `unit_state` pair) instead of leaving a supervisor to re-derive
+# it from lifecycle rungs, and adds the bound that keeps the poll loop itself
+# from becoming the stall: a unit with neither a marker nor a summary row reads
+# `unknown` forever, so a wall clock of its own decides when a missing record
+# is chased rather than waited on. Both belong in the always-loaded body --
+# they are read on every poll, and a supervisor that has already ended its turn
+# cannot be told afterwards which field it should have read; warranted growth.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 935543
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

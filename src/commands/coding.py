@@ -1562,9 +1562,11 @@ def cmd_coding_model_contract(args: argparse.Namespace) -> int:
         print(f"- `{effort}`: {detail}")
     print(f"- tool calling: {contract['tool_calling']['api']} API — {contract['tool_calling']['note']}")
     print(f"- unsupported parameters: {', '.join(contract['unsupported_parameters'])}")
+    cutoff = str(contract.get("knowledge_cutoff", "") or "")
     print(
         f"- context {contract['context_window_tokens']:,} tokens; input {contract['max_input_tokens']:,}; "
-        f"output {contract['max_output_tokens']:,}; knowledge cutoff {contract['knowledge_cutoff']}"
+        f"output {contract['max_output_tokens']:,}"
+        + (f"; knowledge cutoff {cutoff}" if cutoff else "; knowledge cutoff not stated")
     )
     policy = payload["effort_policy"]
     if isinstance(policy, dict):
@@ -2331,15 +2333,31 @@ def _write_stderr_line(line: str) -> None:
 
 
 def _fanout_dispatch_exit_code(summary: dict) -> int:
-    """130 for a cut-short batch, 1 for a refusal, 0 otherwise.
+    """130 for a cut-short batch, 1 for a refusal or any failed unit, 0 otherwise.
 
     A spawn-guard refusal exits non-zero on purpose: the summary is still
     printed as JSON so a wrapper can read `refusal_reason`, but a shell that
     only checks the status must not read "nothing was dispatched" as success.
+
+    The same sentence applies to a unit that ran and failed, and until
+    2026-09-11 it did not: a batch whose every unit failed exited 0, so a
+    caller reading only the status was told the work succeeded. That is how a
+    real limit-exhausted run came back "ok" to its wrapper while the inner
+    dispatch had exit 1 and no report. `failure_kind` is the closed enum a
+    failed unit carries and a successful one leaves empty, so presence is the
+    signal and no status vocabulary is duplicated here. Most kinds come from
+    `classify_failure_kind` reading a finished process; `workspace_blocked` is
+    assigned before the spawn by the workspace preflight, and it reaches this
+    mapper by the same key for the same reason -- the work did not happen.
     """
     if summary.get("interrupted"):
         return 130
     if summary.get("refused"):
+        return 1
+    units = summary.get("units")
+    if isinstance(units, list) and any(
+        isinstance(unit, dict) and unit.get("failure_kind") for unit in units
+    ):
         return 1
     return 0
 
@@ -3198,8 +3216,9 @@ def _add_coding_commands(sub) -> None:
         "--category",
         default=None,
         help=(
-            "OMO/ULW model category for this run (ultrabrain, deep, architect, quick, writing, "
-            "visual-engineering, artistry, unspecified-high, unspecified-low); resolved through the "
+            "OMO/ULW model category for this run (ultrabrain, deep, deep-work, architect, capable, "
+            "quick, simple-work, writing, visual-engineering, artistry, unspecified-high, "
+            "unspecified-low); resolved through the "
             "category-maestro table when one is configured. --model still wins."
         ),
     )
@@ -3223,7 +3242,8 @@ def _add_coding_commands(sub) -> None:
         default=None,
         help=(
             "OMO/ULW model category, orthogonal to role: visual-engineering, ultrabrain, deep, "
-            "architect, artistry, quick, unspecified-low, unspecified-high, or writing; ulw-* aliases accepted."
+            "deep-work, architect, capable, artistry, quick, simple-work, unspecified-low, "
+            "unspecified-high, or writing; ulw-* aliases accepted."
         ),
     )
     model_route.add_argument(
@@ -3282,7 +3302,11 @@ def _add_coding_commands(sub) -> None:
     category_maestro_set.add_argument("profile", help="Dispatchable profile: codex or claude-code.")
     category_maestro_set.add_argument(
         "category",
-        help="Model category (ultrabrain, deep, architect, quick, writing, visual-engineering, artistry, unspecified-high, unspecified-low).",
+        help=(
+            "Model category (ultrabrain, deep, deep-work, architect, capable, quick, "
+            "simple-work, writing, visual-engineering, artistry, unspecified-high, "
+            "unspecified-low)."
+        ),
     )
     category_maestro_set.add_argument(
         "chain",

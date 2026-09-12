@@ -138,6 +138,43 @@ def _sync_ulw_region(*, path: Path, check: bool, label: str, site: bool = False)
     return 0
 
 
+def cmd_docs_chain_table(args: argparse.Namespace) -> int:
+    """Write or check the generated shipped-chain table region.
+
+    The failure path names the rows that disagree, not just the file: the byte
+    comparison knows the region is stale, and `model_chain_table_drift` knows
+    which chain moved, so the message carries both.
+    """
+    from ..catalogs.model_chain_table import (
+        installation_with_generated_region,
+        model_chain_table_drift,
+    )
+
+    path = Path(args.path).expanduser().resolve()
+    label = "shipped chain table region"
+    try:
+        current = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise OmhError(f"{label} check failed: {exc}") from exc
+    try:
+        updated = installation_with_generated_region(current)
+        findings = model_chain_table_drift(current)
+    except ValueError as exc:
+        raise OmhError(f"{label} check failed: {exc}") from exc
+    if args.check:
+        if current != updated:
+            raise OmhError(
+                f"{label} is stale: {path}: {'; '.join(findings)}. "
+                "Regenerate with: uv run python -m omh.cli docs chain-table"
+            )
+        _print_json({"ok": True, "checked": str(path)})
+        return 0
+    if updated != current:
+        atomic_write_text(path, updated)
+    _print_json({"written": str(path), "rewritten": updated != current})
+    return 0
+
+
 def cmd_docs_skill_trigger_report(args: argparse.Namespace) -> int:
     from ..skills.trigger_review import skill_trigger_review_payload
 
@@ -372,6 +409,14 @@ def _add_docs_commands(sub) -> None:
     docs_ulw_site.add_argument("--path", default="site/index.html")
     docs_ulw_site.add_argument("--check", action="store_true")
     docs_ulw_site.set_defaults(func=cmd_docs_ulw_site)
+
+    docs_chain_table = docs_sub.add_parser(
+        "chain-table",
+        help="Write or check the generated shipped model-chain table region of docs/INSTALLATION.md.",
+    )
+    docs_chain_table.add_argument("--path", default="docs/INSTALLATION.md")
+    docs_chain_table.add_argument("--check", action="store_true")
+    docs_chain_table.set_defaults(func=cmd_docs_chain_table)
 
     docs_skill_context_cost = docs_sub.add_parser(
         "skill-context-cost",

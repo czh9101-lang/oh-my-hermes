@@ -43,51 +43,51 @@ from typing import Any
 # touching code by writing the mixture_chain_overrides/v1 document at
 # ~/.omh/routing/model-chains.json (see effective_mixture_category_chains).
 HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
-    # GPT-6 Astra heads the GPT frontier slots (2026-09-03); Sol stays as
-    # fall-through so a machine the staged rollout has not reached keeps
-    # resolving to the GPT ecosystem.
-    "ultrabrain": (("gpt-6-astra", "xhigh"), ("gpt-5.6-sol", "xhigh")),
+    # GPT-6 Astra heads the GPT frontier slots (2026-09-03). Superseded
+    # generations left every shipped chain on 2026-09-11 (owner decision):
+    # Sol behind Astra, Fable 5 behind Fable 5.1, GLM 5.2 and its Ultrafast
+    # tier behind the 5.3 generation, DeepSeek V3.2 behind V4.1 Flash. A
+    # machine whose provider still serves only the older id keeps it through
+    # ~/.omh/routing/model-chains.json, not through the public table.
+    "ultrabrain": (("gpt-6-astra", "xhigh"),),
     # DeepSeek closes deep's single-ecosystem exposure (the owner rule below
     # applied to a chain that sat entirely on GPT) with a reasoning-capable
-    # budget candidate from a fourth provider ecosystem.
-    "deep": (("gpt-5.6-terra", "high"), ("deepseek-v3.2", "high")),
+    # budget candidate from a fourth provider ecosystem. V4.1 Flash's
+    # documented ladder is low/high/max (high default), so `high` here is a
+    # documented rung, not a nearest-match guess. The alias is the vendor's
+    # served pointer id (`deepseek-flash`); the first-party API rejects the
+    # versioned spelling, and the versioned contract sits behind the pointer
+    # as a declared projection.
+    "deep": (("gpt-5.6-terra", "high"), ("deepseek-flash", "high")),
     # Architecture/system-design lanes: full-depth effort across three
     # provider ecosystems. Fable and Kimi appear in other chains only at
     # low/high, so at xhigh `mixture_category_for` labels them architect;
-    # Sol at xhigh stays labeled ultrabrain (its canonical head), which is
+    # Astra at xhigh stays labeled ultrabrain (its canonical head), which is
     # the honest projection when the chain falls through to it.
-    # Claude vendor order (owner decision, 2026-09-06): Fable 5.1 -> Fable 5
-    # fall-through. Claude Mythos 5.1 is Fable 5.1 under Project Glasswing
-    # access, so no shipped chain names it; it stays recognized, priced, and
-    # routable for a user who asks for it by name.
+    # Claude vendor order (owner decision, 2026-09-06): Fable 5.1 -> Opus 5.
+    # Claude Mythos 5.1 is Fable 5.1 under Project Glasswing access, so no
+    # shipped chain names it; it stays recognized, priced, and routable for a
+    # user who asks for it by name.
     "architect": (
         ("claude-fable-5-1", "xhigh"),
-        ("claude-fable-5", "xhigh"),
         ("gpt-6-astra", "xhigh"),
-        ("gpt-5.6-sol", "xhigh"),
         ("kimi-k3", "xhigh"),
     ),
     "unspecified-high": (("kimi-k3", "medium"), ("claude-opus-5", "medium")),
     # A chain that would otherwise sit in one provider ecosystem ends with a
     # comparable-tier candidate from another (owner rule, 2026-08-19), so one
     # rejected ecosystem cannot exhaust the whole chain.
-    # GLM 5.3 leads (owner decision, 2026-08-31): 5.3 heads the low-cost
-    # chains and the 5.2 entries stay as fall-through so machines that only
-    # serve 5.2 keep resolving to GLM instead of skipping the ecosystem.
+    # GLM 5.3 leads (owner decision, 2026-08-31).
     "unspecified-low": (
         ("glm-5.3", "low"),
-        ("glm-5.2", "low"),
-        ("glm-5.2-ultrafast", "low"),
-        ("deepseek-v3.2", "low"),
+        ("deepseek-flash", "low"),
         ("claude-opus-5", "low"),
     ),
     "quick": (
         ("glm-5.3-flash", "low"),
-        ("glm-5.2-ultrafast", "low"),
         ("kimi-k3", "low"),
         ("gpt-5.6-luna", "low"),
         ("claude-fable-5-1", "low"),
-        ("claude-fable-5", "low"),
     ),
     "writing": (
         ("kimi-k3", "medium"),
@@ -96,15 +96,57 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "visual-engineering": (
         ("claude-fable-5-1", "high"),
-        ("claude-fable-5", "high"),
         ("kimi-k3", "high"),
     ),
     "artistry": (
         ("gemini-3.1-pro", "high"),
         ("claude-fable-5-1", "high"),
-        ("claude-fable-5", "high"),
         ("kimi-k3", "high"),
     ),
+    # The three categories below were added on 2026-09-11 and are APPENDED
+    # rather than interleaved. Position is load-bearing here: `mixture_category_for`
+    # resolves a head tie and a chain-position tie in canonical order, so
+    # inserting a name earlier would silently move an existing model's label.
+    #
+    # capable: strong general work one rung under the frontier categories,
+    # crossing four provider ecosystems so the owner rule above holds. Effort
+    # is medium because that is how claude-opus-5 and kimi-k3 are already used
+    # in unspecified-high, the closest existing lane. High was rejected:
+    # ("claude-fable-5-1", "high") is visual-engineering's head, and a capable
+    # chain at high would have taken that category's projection label.
+    "capable": (
+        ("claude-fable-5-1", "medium"),
+        ("claude-opus-5", "medium"),
+        ("kimi-k3", "medium"),
+        ("glm-5.3", "medium"),
+    ),
+    # simple-work: small tasks rather than fast ones. It leads with the GPT
+    # small model where quick leads with the cheapest GLM tier, so a user who
+    # wants GPT behavior on a trivial task can ask for it by category. Low
+    # throughout, matching quick. Note this moves one existing label:
+    # ("gpt-5.6-luna", "low") projected to quick by chain position and now
+    # head-matches simple-work.
+    "simple-work": (
+        ("gpt-5.6-luna", "low"),
+        ("deepseek-flash", "low"),
+        ("claude-haiku-4-5", "low"),
+    ),
+    # deep-work: the GPT frontier model held on a long task. Effort is high and
+    # deliberately NOT xhigh -- at xhigh this chain's head would be
+    # ("gpt-6-astra", "xhigh"), which is ultrabrain's head, and because a head
+    # match resolves in canonical order the earlier category wins every
+    # projection; deep-work would be a label nothing could ever carry. High
+    # also mirrors `deep`, the same shape one price rung down.
+    #
+    # The original request named GPT-5.6 Sol behind Astra here. The owner
+    # dropped it (decision 2026-09-11, taken after that request) for
+    # consistency with the same-day retirement of superseded generations from
+    # the shipped chains: a chain naming Sol behind Astra is the exact case
+    # that rule cites, so keeping it would have made a rule printed in the
+    # shipped model-setup text false. Single-entry is therefore deliberate,
+    # not an omission -- like ultrabrain and architect, which the same decision
+    # shortened.
+    "deep-work": (("gpt-6-astra", "high"),),
 }
 
 # User-editable chain overrides. The document replaces only the chains of the
@@ -274,8 +316,8 @@ SUBSCRIPTION_CLI_PROFILES: tuple[str, ...] = ("claude-code",)
 HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
     "kimi-k3": ("apitopia", "kimi-coding", "openrouter", "opencode"),
     "claude-opus-5": ("ccapi", "anthropic", "openrouter"),
-    "claude-fable-5": ("ccapi", "anthropic", "openrouter"),
     "claude-fable-5-1": ("ccapi", "anthropic", "openrouter"),
+    "claude-haiku-4-5": ("ccapi", "anthropic", "openrouter"),
     # Recognition-only: no shipped chain names Claude Mythos 5.1, but a user
     # who asks for it still deserves "which of my providers serves this"
     # answered rather than unknown. The parity gate lists it explicitly.
@@ -284,6 +326,14 @@ HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
     "gpt-5.6-sol": ("openai-codex", "openai"),
     "gpt-5.6-terra": ("openai-codex", "openai"),
     "gpt-5.6-luna": ("openai-codex", "openai"),
+    "deepseek-flash": ("deepseek", "openrouter", "opencode"),
+    # Recognition-only: the versioned spelling of the Flash pointer above
+    # (the gateway id `deepseek/deepseek-v4.1-flash` arrives this way).
+    "deepseek-v4.1-flash": ("deepseek", "openrouter", "opencode"),
+    # Recognition-only, retired generations (left the shipped chains on
+    # 2026-09-11): a machine-level chain override may still name them, and
+    # that operator deserves "which of my providers serves this" answered.
+    "claude-fable-5": ("ccapi", "anthropic", "openrouter"),
     "deepseek-v3.2": ("deepseek", "openrouter", "opencode"),
     "glm-5.2": ("zai", "openrouter", "opencode"),
     "glm-5.2-ultrafast": ("zai", "openrouter", "opencode"),
@@ -297,7 +347,7 @@ HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
 # Standalone mirror of coding.model_contracts' exact keys. Keep this separate
 # from declared aliases so a newly documented child contract stops inheriting
 # stale provider/category metadata until its own rows are added here.
-EXACT_MODEL_CONTRACT_ALIASES: frozenset[str] = frozenset({"gpt-6-astra"})
+EXACT_MODEL_CONTRACT_ALIASES: frozenset[str] = frozenset({"gpt-6-astra", "deepseek-v4.1-flash"})
 
 # Standalone mirror of coding.model_contracts' bounded declared projections.
 # This plugin is copied into Hermes and cannot import the source package; the
@@ -309,6 +359,19 @@ DECLARED_MODEL_ALIAS_PROJECTIONS: dict[str, tuple[str, str, str]] = {
     "gpt-6-astra-pro": ("gpt-6-astra", "pro", "standard"),
     "gpt-6-astra-pro-fast": ("gpt-6-astra", "pro", "fast"),
     "gpt-6-astra-pro-flex": ("gpt-6-astra", "pro", "flex"),
+    # DeepSeek's first-party API names the current Flash generation
+    # `deepseek-flash` (api-docs.deepseek.com, 2026-09-10); today that is
+    # DeepSeek-V4.1-Flash. The pointer moves with the next Flash release, so
+    # it is a declared projection with a read date, not an exact contract.
+    "deepseek-flash": ("deepseek-v4.1-flash", "thinking", "standard"),
+}
+
+# Standalone mirror of coding.model_contracts.EXACT_CONTRACT_POINTER_ALIASES:
+# the declared aliases that are the same model at the contract's own mode
+# and tier (a vendor's second spelling). Only these project in reverse — an
+# exact id never inherits a `-pro` / `-fast` / `-flex` chain entry's label.
+EXACT_CONTRACT_POINTER_ALIASES: dict[str, tuple[str, ...]] = {
+    "deepseek-v4.1-flash": ("deepseek-flash",),
 }
 
 
@@ -317,13 +380,48 @@ def _unqualified_model_alias(alias: object) -> str:
     return key.rsplit("/", 1)[-1]
 
 
+# Standalone mirror of coding.model_contracts.dated_snapshot_base: a vendor's
+# `<base>-YYYY-MM-DD` snapshot id (`gpt-5.6-terra-2026-07-09`) is the base
+# model pinned to a release date, the same model at the same mode and tier.
+# Shape only; every caller checks that the base is an alias it already knows
+# (a contract, a declared row, a priced or provider-mapped alias, a chain
+# entry). The parity test pins this pattern against the source copy.
+_DATED_SNAPSHOT_SUFFIX = re.compile(
+    r"^(?P<base>.+)-(?P<date>\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))$"
+)
+
+
+def _dated_snapshot_base(alias: object) -> str:
+    match = _DATED_SNAPSHOT_SUFFIX.match(_unqualified_model_alias(alias))
+    return match.group("base") if match else ""
+
+
+def _catalog_knows_alias(alias: str) -> bool:
+    """Whether the plugin's own tables describe ``alias`` (never a guess)."""
+    return (
+        alias in EXACT_MODEL_CONTRACT_ALIASES
+        or alias in DECLARED_MODEL_ALIAS_PROJECTIONS
+        or alias in HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES
+        or alias in APPROX_PRICE_PER_MTOK
+    )
+
+
 def _projected_model_alias(alias: object) -> tuple[str, str]:
-    """Return (declared base alias, service tier), without suffix guessing."""
+    """Return (declared base alias, service tier), without suffix guessing.
+
+    The one shape that projects without a declared row is a dated snapshot of
+    an alias the tables already describe; it inherits that base's projection.
+    """
     key = _unqualified_model_alias(alias)
     if key in EXACT_MODEL_CONTRACT_ALIASES:
         return key, "standard"
     projection = DECLARED_MODEL_ALIAS_PROJECTIONS.get(key)
-    return (projection[0], projection[2]) if projection is not None else (key, "standard")
+    if projection is not None:
+        return projection[0], projection[2]
+    snapshot_base = _dated_snapshot_base(key)
+    if snapshot_base and _catalog_knows_alias(snapshot_base):
+        return _projected_model_alias(snapshot_base)
+    return key, "standard"
 
 
 def is_provider_id_token(value: object) -> bool:
@@ -639,8 +737,10 @@ def configured_route_for_wire(
 # chain exhaustion clearing back to parent inheritance. omh_delegate_route
 # records each successful route write here so the HUD can label a fallback
 # lane as a fallback instead of rendering it indistinguishable from a head
-# route (and an exhausted chain as `category(model inherit)` — the category
-# names the lane and never changes — instead of plain inherit). The record is preparation evidence only: a label upgrade for an
+# route, an exhausted chain as `category(model inherit)`, and a lane routed
+# to the model the parent session itself runs as `category(model =parent)`
+# — the category names the lane and never changes — instead of plain
+# inherit. The record is preparation evidence only: a label upgrade for an
 # observed child whose wire identity matches, never execution evidence and
 # never a routing input.
 DELEGATION_ROUTE_PROVENANCE_SCHEMA_VERSION = "delegation_route_provenance/v1"
@@ -768,11 +868,16 @@ def _child_is_inherit(
     parent_models: Mapping[str, str],
     provider_routes: Mapping[str, tuple[str, str]],
 ) -> bool:
-    """Mirror the projection's inherit test: child alias == parent model."""
+    """Mirror the projection's inherit test: child alias == parent model.
+
+    The projection routes the model it resolved, so this reads the same
+    resolved model; testing the raw `sessions.model` made the two disagree
+    on a child whose model is only recorded in its usage rows.
+    """
     parent_model = _text(parent_models.get(child.get("parent_id", ""), ""))
     if not parent_model:
         return False
-    alias, _ = configured_route_for_wire(child["model"], provider_routes)
+    alias, _ = configured_route_for_wire(_observed_wire_model(child), provider_routes)
     return _text(alias).casefold() == parent_model.casefold()
 
 
@@ -819,11 +924,13 @@ def _provenance_for_dispatch(
                 return None
             claimed = (exhaustion_claims or {}).get(index, "")
             return record if session_id and session_id == claimed else None
-        if is_inherit:
-            # `inherit` wins over any chain match (the projection's
-            # documented invariant): a child on the parent session's own
-            # model was not routed, whatever the prepared route said.
-            return None
+        # A child on the parent session's own model may still have been
+        # ROUTED there: the owner's `deep` chain heads on the model the
+        # session itself runs, so every deep lane looked unrouted and the
+        # category the tool prepared was thrown away. The chain projection
+        # alone still says inherit (it cannot tell the two apart); a fresh
+        # record whose identity matches is what tells them apart, and the
+        # caller marks the row `same_as_parent` so the label says both.
         matched = (wire_model and wire_model == record["wire_model"]) or (
             alias and alias == record["alias"]
         )
@@ -880,7 +987,15 @@ APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     # output side dominates real spend; still an approximation, not billing.
     "glm-5.3": (1.4, 4.4),
     "glm-5.3-flash": (0.15, 0.5),
-    # DeepSeek list price (api-docs.deepseek.com pricing, 2026-08):
+    # DeepSeek list price (api-docs.deepseek.com/quick_start/pricing, 2026-09):
+    # peak-hour cache-miss input 0.30 / output 1.20; cache-hit input 0.006
+    # (the 0.02 ratio below); every rate halves off-peak (outside 01:00-04:00
+    # and 06:00-10:00 UTC, Monday-Friday). Peak is the honest approximation
+    # because a fanout wave has no off-peak guarantee.
+    "deepseek-v4.1-flash": (0.30, 1.20),
+    # DeepSeek list price (api-docs.deepseek.com pricing, 2026-08); the id
+    # left the shipped chains on 2026-09-11 but a machine-level override may
+    # still route it, so the row stays.
     "deepseek-v3.2": (0.28, 0.42),
     # Zhipu AI speed-tier ballpark (docs.z.ai pricing, 2026-08):
     "glm-5.2-ultrafast": (0.3, 1.2),
@@ -908,6 +1023,9 @@ APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
 APPROX_CACHE_READ_RATIO: dict[str, float] = {
     "claude-fable-5-1": 0.025,
     "claude-mythos-5-1": 0.025,
+    # DeepSeek V4.1 Flash cache hit 0.006 vs cache miss 0.30 per MTok input
+    # (api-docs.deepseek.com/quick_start/pricing, 2026-09).
+    "deepseek-v4.1-flash": 0.02,
 }
 _DEFAULT_CACHE_READ_RATIO = 0.1
 
@@ -1120,7 +1238,10 @@ def mixture_category_for(
     """Project an observed child model+effort onto a mixture category label.
 
     ``inherit`` wins over any chain match: a child on the parent session's own
-    model was not routed, whatever chain its model also appears in. Otherwise
+    model looks unrouted, whatever chain its model also appears in — the
+    projection cannot tell "routed to the model the parent also runs" from
+    "not routed"; a fresh matching provenance record can, and the reader
+    upgrades the row from it (`same_as_parent`). Otherwise
     the first category (canonical chain order) whose head matches wins, then
     the category where the model sits earliest in its chain (a shallow
     fall-through entry is a likelier route than a deep one; canonical order
@@ -1132,18 +1253,41 @@ def mixture_category_for(
     if not observed_model:
         return ""
     parent_key = _unqualified_model_alias(_text(parent_model))
-    if parent_key and observed_model == parent_key:
+    # A child on a dated snapshot of the parent's model is on the parent's
+    # model; the parent's own id is the base this reader knows. One direction
+    # only, like the resolver's explicit match: a child on the unpinned base
+    # of a date-pinned parent, or on a different date, is not the same run.
+    if parent_key and parent_key in (observed_model, _dated_snapshot_base(observed_model)):
         return "inherit"
 
     # Some explicitly declared catalog aliases represent a model contract plus
     # a reasoning mode/service tier. Project only those rows onto the contract
     # alias before retaining the older generic speed-tier category behavior.
     # Unknown suffixes therefore do not gain an Astra contract/category merely
-    # because their spelling looks similar.
+    # because their spelling looks similar. A dated snapshot
+    # (`gpt-5.6-terra-2026-07-09`) is the exception with its own bound: the
+    # base becomes a candidate, and it labels a category only when a chain
+    # entry names that base — an unknown base with a date matches nothing.
     candidates = [observed_model]
     projected_model, _service_tier = _projected_model_alias(observed_model)
-    if projected_model != observed_model:
-        candidates.append(projected_model)
+    snapshot_base = _dated_snapshot_base(observed_model)
+    for alias in (projected_model, snapshot_base):
+        if alias and alias not in candidates:
+            candidates.append(alias)
+    # The reverse direction: a chain may name the vendor's served pointer
+    # (`deepseek-flash`) while the child ran under the exact contract id
+    # (`deepseek/deepseek-v4.1-flash` on a gateway). Only a pointer — the
+    # same model at the same mode and tier — projects this way; a `-pro` /
+    # `-fast` / `-flex` entry is a different mode or price and never labels
+    # the base id. A dated snapshot of the exact id reaches the pointer
+    # through its snapshot base; a mode or tier variant's projected base is
+    # deliberately not a root here, or `-fast` would reach the pointer.
+    for root in (observed_model, snapshot_base):
+        candidates.extend(
+            alias
+            for alias in EXACT_CONTRACT_POINTER_ALIASES.get(root, ())
+            if root and alias not in candidates
+        )
     if observed_model not in EXACT_MODEL_CONTRACT_ALIASES:
         for speed_suffix in ("-ultrafast", "-highspeed", "-fast"):
             if observed_model.endswith(speed_suffix):
@@ -1287,6 +1431,77 @@ def _conversation_session_ids(connection: sqlite3.Connection, session_ref: str) 
     return {row[0] for row in rows}
 
 
+def _informative_cost_row_sql(columns: set[str]) -> str:
+    """One SQL predicate: does this usage row say anything about cost?
+
+    OMH still does not enumerate a host's BILLING words -- "included",
+    "billed_zero" and the rest stay unknown to this reader, and any of them
+    vouches for the zero it annotates. The one word named here is not a
+    billing word at all: `unknown` is the host's own NO-FIGURE status, the
+    one `usage_pricing._unknown_cost` stamps whenever it produced no amount
+    (`agent/usage_pricing.py:549`, returning `amount_usd=None`), whether the
+    route had no pricing entry at all (`:565`, paired with source `none`) or
+    only a partial rate (`:583`, which pairs it with an informative source).
+    The status is what carries the "no figure" meaning, so the source is not
+    part of the test. `agent/turn_usage.py:236,257` is what persists the pair
+    into `session_model_usage`; `agent/agent_init.py:2140` only seeds the
+    session attribute default.
+
+    Treating that status as provenance is what made every child on a custom
+    gateway provider render `$0.0000 (unknown)` -- a stated zero the host
+    never claimed. Evaluating it PER ROW instead of reducing with MAX is what
+    keeps a MIXED group safe: one row carrying a real billing word is enough
+    to stop the approximation, exactly as before.
+    """
+    status = "COALESCE(cost_status, '')" if "cost_status" in columns else "''"
+    source = "COALESCE(cost_source, '')" if "cost_source" in columns else "''"
+    return f"({status} <> '' OR {source} <> '') AND {status} <> 'unknown'"
+
+
+def _preferred_provenance_sql(column: str, informative: str, columns: set[str]) -> str:
+    """Read one provenance column from an informative row when the group has one.
+
+    `MAX` over a mixed group answers alphabetically, so a session with one
+    `included` row beside one `unknown` row reported `unknown` and rendered a
+    vouched zero as `$0.0000 (unknown)`. Prefer the informative rows; with
+    none, the host's no-figure status is the honest answer and `MAX` supplies
+    it unchanged.
+    """
+    if column not in columns:
+        return "NULL"
+    return f"COALESCE(MAX(CASE WHEN {informative} THEN {column} END), MAX({column}))"
+
+
+def _sole_distinct_value(value: Any, *, limit: int = 80) -> str:
+    """The single value a `GROUP_CONCAT(DISTINCT ...)` returned, else "".
+
+    `GROUP_CONCAT` joins distinct values with a comma, so more than one
+    arrives as a list this reader cannot resolve into a single row field. The
+    comma test runs on the WHOLE string: truncating first could cut the list
+    down to its first element and pass it off as the only one.
+    """
+    text = str(value or "").strip()
+    if not text or "," in text:
+        return ""
+    return text[:limit]
+
+
+def _observed_wire_model(child: Mapping[str, Any]) -> str:
+    """The model a child ran: recorded on the session, else observed in usage.
+
+    Hermes leaves `sessions.model` empty on a child whose session row was
+    created before the model was known, and the label then had nothing to
+    print. `session_model_usage.model` is written per call from the model
+    that actually answered, so one distinct value there names it. Two
+    distinct values (a child that switched models) or none leave the row
+    exactly as recorded -- this reads an observation, it never infers one.
+    """
+    recorded = _text(child.get("model"))
+    if recorded:
+        return recorded
+    return _text((child.get("usage") or {}).get("model"))
+
+
 def _query_state_db(state_db: Path, *, now: float, session_ref: str | None = None) -> dict[str, Any]:
     """Read child sessions, usage tallies, and delegation states, read-only."""
     result: dict[str, Any] = {"children": [], "delegation_states": {}, "parent_models": {}, "scope": "global"}
@@ -1361,15 +1576,29 @@ def _query_state_db(state_db: Path, *, now: float, session_ref: str | None = Non
                     'PRAGMA table_info("session_model_usage")'
                 ).fetchall()
             }
-            cost_status = "MAX(cost_status)" if "cost_status" in columns else "NULL"
-            cost_source = "MAX(cost_source)" if "cost_source" in columns else "NULL"
+            informative = _informative_cost_row_sql(columns)
+            cost_status = _preferred_provenance_sql("cost_status", informative, columns)
+            cost_source = _preferred_provenance_sql("cost_source", informative, columns)
+            # One distinct value, or nothing. `billing_provider` is part of
+            # the table's primary key, so a session that reached two
+            # providers has two rows and no single answer to give a row.
+            # `NULLIF` drops the column's own empty default first: a real
+            # provider beside an unattributed row is still one provider.
+            billing_provider = (
+                "GROUP_CONCAT(DISTINCT NULLIF(billing_provider, ''))"
+                if "billing_provider" in columns
+                else "NULL"
+            )
             cursor = connection.execute(
                 f"""
                 SELECT session_id, SUM(api_call_count), SUM(input_tokens),
                        SUM(output_tokens), SUM(cache_read_tokens),
                        SUM(actual_cost_usd), SUM(estimated_cost_usd),
                        {cost_status}, {cost_source},
-                       MIN(first_seen), MAX(last_seen)
+                       MIN(first_seen), MAX(last_seen),
+                       SUM(CASE WHEN {informative} THEN 1 ELSE 0 END),
+                       {billing_provider},
+                       GROUP_CONCAT(DISTINCT NULLIF(model, ''))
                 FROM session_model_usage
                 WHERE session_id IN ({placeholders})
                 GROUP BY session_id
@@ -1389,6 +1618,9 @@ def _query_state_db(state_db: Path, *, now: float, session_ref: str | None = Non
                     "cost_source": _text(row[8]) or None,
                     "first_seen": _finite(row[9]),
                     "last_seen": _finite(row[10]),
+                    "informative_cost_rows": int(_finite(row[11]) or 0.0),
+                    "billing_provider": _sole_distinct_value(row[12]),
+                    "model": _sole_distinct_value(row[13]),
                 }
             for child in children:
                 child["usage"] = usage.get(child["session_id"], {})
@@ -1536,6 +1768,10 @@ def read_hermes_native_subagents(
             row_state = "failed"
             failure_hint = "no model usage observed"
 
+        # An empty `sessions.model` is filled from the one model the child's
+        # usage rows observed, never from a guess; see `_observed_wire_model`.
+        wire_model = _observed_wire_model(child)
+
         input_tokens = usage.get("input_tokens") or 0.0
         output_tokens = usage.get("output_tokens") or 0.0
         cache_read = usage.get("cache_read_tokens") or 0.0
@@ -1559,7 +1795,16 @@ def read_hermes_native_subagents(
         # rows) collapse to a fake zero when MAX(cost_status) surfaced the
         # hardcoded word, and let a host's confirmed billed-zero get
         # approximated over because its status was not that word.
+        #
+        # The single exception is the host's own no-figure status, tested per
+        # usage row by `_informative_cost_row_sql`: `unknown` is what Hermes
+        # stamps when its pricing produced no amount at all, so it says the
+        # host has no figure rather than naming a billing outcome.
+        # `informative_cost_rows` is therefore the count of rows carrying
+        # provenance that IS a claim about cost; zero means every row either
+        # recorded nothing or recorded that it knows nothing.
         cost_provenance = cost_status or cost_source
+        informative_cost_rows = int(usage.get("informative_cost_rows") or 0)
         # A positive observed aggregate always stands as recorded; only a
         # zero consults provenance at all.
         cost = usage.get("actual_cost_usd") or usage.get("estimated_cost_usd")
@@ -1573,33 +1818,37 @@ def read_hermes_native_subagents(
         # this line as the same 0.0 -- cost_status/cost_source are the only
         # fields that tell them apart, and they are nullable, so unlike the
         # summed costs they CAN distinguish "recorded" from "absent". The
-        # approximation therefore fires only on a zero with NO provenance.
+        # approximation therefore fires on a zero that no usage row made an
+        # informative claim about -- none recorded, or every one of them the
+        # host's no-figure status.
         # What must NOT happen is the third case: no recorded cost, no
         # provenance, AND no price for the model (`_approximate_cost_usd`
         # returns None for an unpriced model, and for a run with no tokens).
         # That left `cost` at 0.0 with no approximate flag, so the row
         # claimed the run was free. An unknown cost is unknown: send None and
         # let the surface say nothing rather than state a zero it cannot
-        # support.
+        # support. A no-figure row is the one place the bare zero stays: the
+        # host wrote a word for it, so the surface can still render
+        # `$0.0000 (unknown)` instead of falling silent.
         cost_approximate = False
         # A figure derived from the operator's own rate and one derived from
         # our shipped ballpark are both approximations, but they are not
         # equally arguable: only the first is a number the operator chose.
         # The row says which, so a surface can tell them apart.
-        cost_override = bool(_model_price_override_key(child["model"], price_overrides))
-        if not cost and cost_provenance is None:
+        cost_override = bool(_model_price_override_key(wire_model, price_overrides))
+        if not cost and not informative_cost_rows:
             approx = _approximate_cost_usd(
-                child["model"], input_tokens, output_tokens, cache_read, price_overrides
+                wire_model, input_tokens, output_tokens, cache_read, price_overrides
             )
             if approx is not None:
                 cost = approx
                 cost_approximate = True
-            else:
+            elif cost_provenance is None:
                 cost = None
 
         parent_model = state.get("parent_models", {}).get(child["parent_id"], "")
         route_alias, route_provider = configured_route_for_wire(
-            child["model"],
+            wire_model,
             provider_routes,
         )
         session_tail = child["session_id"].rsplit("_", 1)[-1][:8]
@@ -1615,7 +1864,7 @@ def read_hermes_native_subagents(
             "action": _text(task.get("goal", ""), limit=_ACTION_LIMIT),
             "alias": route_alias,
             "provider": route_provider,
-            "model": child["model"],
+            "model": wire_model,
             "effort": child["effort"],
             # A terminal row's zero is observed, not missing: the failure
             # hint above is derived from this same absence, so sending `None`
@@ -1635,16 +1884,32 @@ def read_hermes_native_subagents(
         }
         if route_provider:
             row["provider_source"] = "model_provider_routes"
+        elif usage.get("billing_provider"):
+            # No `model-providers.json` row names this wire model, so OMH has
+            # no configured provider of its own -- but the host recorded which
+            # provider it billed the calls under, which answers the same
+            # question. This fills the payload field for the `read_omh_hud`
+            # JSON payload; the TUI widget renders the model, not the
+            # provider, so nothing on screen changes. The source marker keeps
+            # an observed billing fact distinguishable from OMH's own
+            # configuration.
+            row["provider"] = usage["billing_provider"]
+            row["provider_source"] = "hermes_billing_provider"
         # Prepared-route provenance is a best-effort label upgrade, never
         # row identity: when the child's identity matches the newest route
         # prepared before its dispatch, a fallback lane says so and an
         # exhausted chain keeps its category with an `inherit` model token
-        # (`category(model inherit)`) instead of converging into plain
-        # inherit. The upgrade carries its own source marker.
+        # (`category(model inherit)`), and a lane routed to the parent's own
+        # model keeps its category with a `=parent` token, instead of
+        # converging into plain inherit. The upgrade carries its own source
+        # marker. The model that matches here is the same observed wire
+        # model the alias and category above were derived from, so the three
+        # stay one identity; a child whose model the host never recorded and
+        # never used matches nothing, which is the safe degradation.
         provenance = _provenance_for_dispatch(
             route_provenance,
             started_at=child["started_at"],
-            wire_model=child["model"],
+            wire_model=wire_model,
             alias=route_alias,
             is_inherit=row["category"] == "inherit",
             session_id=child["session_id"],
@@ -1658,6 +1923,16 @@ def read_hermes_native_subagents(
                     row["category_source"] = "route_provenance"
             else:
                 if provenance["category"]:
+                    if row["category"] == "inherit":
+                        # Routed to the model the parent also runs: the
+                        # category is the lane's, and the row says the
+                        # model is the parent's own so nobody reads the
+                        # label as a cheaper dispatch than it was. Gated on
+                        # the record carrying a category by decision: an
+                        # explicit bare-model route (`set` with a model and
+                        # no category) onto the parent's model has no lane
+                        # to name, so it stays the plain `inherit(model)`.
+                        row["same_as_parent"] = True
                     row["category"] = provenance["category"]
                     row["category_source"] = "route_provenance"
                 if provenance["origin"] == "fallback":

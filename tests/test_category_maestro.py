@@ -319,9 +319,9 @@ class CategoryMaestroFanoutTests(unittest.TestCase):
         )
         route = contract["units"][0]["handoff"]["model_route"]
         self.assertEqual(route["selected_model"], "gpt-6-astra")
-        self.assertEqual(
-            [entry["model_id"] for entry in route["chain"]], ["gpt-6-astra", "gpt-5.6-sol"]
-        )
+        # Sol no longer trails Astra (superseded generations left the shipped
+        # chains, 2026-09-11); the codex frontier slots name Astra alone.
+        self.assertEqual([entry["model_id"] for entry in route["chain"]], ["gpt-6-astra"])
         self.assertEqual(route["catalog_kind"], "built_in_defaults")
 
     def test_unit_scale_survives_normalization_into_routing(self) -> None:

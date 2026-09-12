@@ -57,6 +57,7 @@ from omh.coding.fanout_dispatch import (  # noqa: E402
     verify_goal_matches_contract,
 )
 from omh.coding.verification_execution import VerificationExecutionGate  # noqa: E402
+from omh.commands.coding import _fanout_dispatch_exit_code  # noqa: E402
 from omh.coding.parallelism_policy import (  # noqa: E402
     FANOUT_MAX_DEPTH_DEFAULT,
     FANOUT_RUN_SPAWN_CEILING_DEFAULT,
@@ -1706,6 +1707,84 @@ class FanoutDispatchEngineTests(unittest.TestCase):
             self.assertIn("already exists", by_unit["core"]["reason"])
 
 
+class FanoutWorkspacePreflightTests(unittest.TestCase):
+    """A worktree that cannot take the work must not be handed a spawned CLI."""
+
+    def test_a_failing_preflight_blocks_the_spawn_and_says_which_check_failed(self) -> None:
+        root_runner = _agent_runner()
+
+        def runner(argv, **kwargs):
+            # `git cat-file -e <ref>^{commit}` is the workspace preflight
+            # asking whether the commits the work names are present here. A
+            # non-zero answer is the incident's condition: the ref was
+            # described, and the object is not in this isolation.
+            if argv[:2] == ["git", "cat-file"]:
+                return _FakeCompleted(128, "")
+            return root_runner(argv, **kwargs)
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, _UNITS))
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=runner,
+                readiness=_ready,
+            )
+
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertEqual(core["status"], "worktree_failed")
+            self.assertEqual(core["reason_code"], "workspace_preflight_blocked")
+            self.assertEqual(core["failure_kind"], "workspace_blocked")
+            self.assertEqual(core["unit_state"], "data_missing")
+            self.assertFalse(core["process_succeeded"])
+            preflight = core["workspace_preflight"]
+            self.assertEqual(preflight["schema_version"], "workspace_preflight/v1")
+            self.assertEqual(preflight["blocking"], ["objects_present"])
+            self.assertIn("is not a commit present in", core["reason"])
+            # The point of the whole check: no agent CLI was started.
+            self.assertEqual(root_runner.spawned, [])
+            # ...and the outer command must not call that success. The mapper
+            # keys on `failure_kind` being present, which is exactly what a
+            # pre-spawn blocker sets, so a blocked unit exits 1 like any other
+            # failed one rather than reporting work that never happened.
+            self.assertEqual(_fanout_dispatch_exit_code(summary), 1)
+
+    def test_a_healthy_worktree_reports_a_passing_preflight_and_still_spawns(self) -> None:
+        # The negative control for the test above: the same dispatch with git
+        # answering normally must not acquire a new way to refuse.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+            repo, sha = _make_repo(root)
+            contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, _UNITS))
+            runner = _agent_runner()
+
+            summary = dispatch_fanout(
+                paths,
+                contract,
+                goal_text=_GOAL,
+                repo_root=repo,
+                base_sha=sha,
+                only_units=["core"],
+                runner=runner,
+                readiness=_ready,
+            )
+
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertNotIn("workspace_preflight", core)
+            self.assertNotIn("failure_kind", core)
+            self.assertTrue(core["process_succeeded"])
+            self.assertEqual(len(runner.spawned), 1)
+
+
 class FanoutUnitRecoveryTests(unittest.TestCase):
     """A failed unit still owns its worktree; the summary must say what survived."""
 
@@ -2105,7 +2184,13 @@ class FanoutUnitRecoveryTests(unittest.TestCase):
         def runner(argv, **kwargs):
             # argv[:2], so `git worktree add` (which creates the unit worktree)
             # is not caught by the `add` arm and the probe is actually reached.
-            if argv[:2] in (["git", "diff"], ["git", "add"], ["git", "rev-parse"]):
+            # `--absolute-git-dir` is excluded for the same reason: that is the
+            # workspace preflight resolving the git directory before the spawn,
+            # and faulting it would block the unit before the recovery probe
+            # this test is about ever runs.
+            if argv[:2] in (["git", "diff"], ["git", "add"], ["git", "rev-parse"]) and argv[2:3] != [
+                "--absolute-git-dir"
+            ]:
                 return _NoReturnCode()
             if argv[0] == "git":
                 return subprocess.run(argv, **kwargs)
@@ -2735,6 +2820,36 @@ class FanoutDispatchTelemetryTests(unittest.TestCase):
             shown = show_run(paths, by_unit["core"]["run_ref"])
             result_events = [e for e in shown["journal_events"] if e["event"] == "executor_result_observed"]
             self.assertIn("limit-shaped failure (usage_limit)", result_events[-1]["summary"])
+
+    def test_a_session_limit_is_limit_shaped_and_not_a_crash(self) -> None:
+        # Observed 2026-09-11: two real dispatches ended with this exact line and
+        # were recorded as `crash`, so the recoverable lane never opened for a
+        # condition that clears by itself at a stated time. Quoted verbatim,
+        # middle dot and timezone included, because the earlier patterns missed
+        # it on wording alone.
+        with TemporaryDirectory() as tmp:
+            units = [
+                {"unit_id": "core", "title": "Core", "owner": "codex", "file_scope": ["src/core/"]},
+            ]
+            paths, repo, sha, contract = self._setup(tmp, units=units)
+
+            def runner(argv, **kwargs):
+                if argv[0] == "git":
+                    return subprocess.run(argv, **kwargs)
+                if argv[0] == "codex":
+                    return _FakeCompleted(
+                        1, "You've hit your session limit \u00b7 resets 6:10pm (Asia/Seoul)"
+                    )
+                return _FakeCompleted(0, "done")
+
+            summary = dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                runner=runner, readiness=_ready,
+            )
+            core = {entry["unit_id"]: entry for entry in summary["units"]}["core"]
+            self.assertTrue(core["limit_shaped"])
+            self.assertEqual(core["limit_pattern"], "session_limit")
+            self.assertEqual(core["failure_kind"], "limit_shaped")
 
     def test_unrelated_429_and_disk_quota_text_are_not_limit_shaped(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -3835,6 +3950,11 @@ class FanoutDispatchVerificationTests(unittest.TestCase):
             self.assertTrue(_unit_verification_is_observed(paths, core["run_ref"]))
             self.assertTrue(core["unit_verification_observed"])
             self.assertTrue(core["integration_ready"])
+            # The one state that means the work is done: a validated result
+            # record AND an observed verification. Nothing below both rungs
+            # reaches it -- see `FanoutDispatchUnitProgressTests`.
+            self.assertEqual(core["unit_state"], "verified")
+            self.assertEqual(core["unit_state_reason"], "")
             self.assertEqual(len(runner.verified), 2)
 
     def test_verification_receives_only_its_declared_capability_not_the_owner_capability(self) -> None:
@@ -5492,6 +5612,87 @@ class FanoutDispatchLiveUnitTelemetryTests(unittest.TestCase):
         # Absent counts stay absent, and bools never read as counts.
         self.assertIsNone(_reported_unit_tokens({}))
         self.assertIsNone(_reported_unit_tokens({"tokens_total": True}))
+
+
+class FanoutDispatchUnitProgressTests(unittest.TestCase):
+    """The in-flight marker and the unit record answer "is the WORK moving?",
+    which no dispatch surface could answer before: every one of them could
+    only say that a process existed. See `omh.coding.unit_progress`."""
+
+    def _setup(self, tmp: str):
+        root = Path(tmp)
+        paths = OmhPaths(omh_home=root / ".omh", hermes_home=root / ".hermes")
+        repo, sha = _make_repo(root)
+        contract = write_fanout_contract(paths, build_fanout_contract(_GOAL, _UNITS))
+        return paths, repo, sha, contract
+
+    def _marker_spy(self, dispatch_module):
+        """Every marker write, snapshotted. The dispatch mutates one fields
+        dict for the unit's whole lifetime and clears the file in `finally`,
+        so neither the live dict nor the filesystem survives to be asserted on
+        afterwards -- only a copy taken at each write does."""
+        recorded: list[dict[str, str]] = []
+        original = dispatch_module._write_inflight
+
+        def spy(paths, fanout_id, unit_id, fields):
+            recorded.append(dict(fields))
+            return original(paths, fanout_id, unit_id, fields)
+
+        return recorded, spy
+
+    def test_the_marker_reports_progress_stalled_when_one_line_repeats(self) -> None:
+        from omh.coding import fanout_dispatch as dispatch_module
+
+        # Output grows on every snapshot and says the same thing each time:
+        # the 2026-09-11 incident's shape, and the one a byte-growth rule
+        # alone reads as healthy progress.
+        line = "error: unable to read file, retrying (n={n})\n"
+        loop = [
+            "preparing worktree\n" + "".join(line.format(n=turn) for turn in range(1, count + 1))
+            for count in range(0, 4)
+        ]
+        runner = _live_output_runner({"core": loop})
+        recorded, spy = self._marker_spy(dispatch_module)
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            with mock.patch.object(dispatch_module, "_write_inflight", spy):
+                dispatch_fanout(
+                    paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                    only_units=["core"], runner=runner, readiness=_ready,
+                )
+
+        self.assertIn("progress_stalled", [fields.get("unit_state", "") for fields in recorded])
+        stalled = next(fields for fields in recorded if fields.get("unit_state") == "progress_stalled")
+        self.assertTrue(stalled["state_reason"].startswith("repeated_error:"))
+        # The retry counter is collapsed, which is what makes three turns of
+        # the same failure countable as one repeated line.
+        self.assertIn("retrying (n=<n>)", stalled["state_reason"])
+        self.assertEqual(stalled["repeat_count"], "3")
+        # A progress write must never erase the dispatch bookkeeping an
+        # earlier write recorded.
+        self.assertEqual(stalled["run_ref"], recorded[0]["run_ref"])
+        # The first write happens before any snapshot and claims nothing about
+        # the work -- absent is not "moving".
+        self.assertEqual(recorded[0].get("unit_state", ""), "")
+
+    def test_exit_zero_without_a_result_record_is_a_failed_unit(self) -> None:
+        # `_agent_runner` exits 0 and writes no sidecar. That combination read
+        # as success on every surface; the ladder's answer is that nothing was
+        # verified because nothing was returned.
+        with TemporaryDirectory() as tmp:
+            paths, repo, sha, contract = self._setup(tmp)
+            summary = dispatch_fanout(
+                paths, contract, goal_text=_GOAL, repo_root=repo, base_sha=sha,
+                only_units=["core"], runner=_agent_runner(), readiness=_ready,
+            )
+        entry = summary["units"][0]
+        self.assertEqual(entry["exit_code"], 0)
+        self.assertEqual(entry["unit_state"], "failed")
+        self.assertEqual(entry["unit_state_reason"], "result_missing")
+        self.assertFalse(entry["result_schema_valid"])
+        # The evidence rides along, so no reader has to re-derive it.
+        self.assertEqual(entry["progress"]["schema_version"], "omh_unit_progress/v1")
+        self.assertFalse(entry["progress"]["result_record_present"])
 
 
 if __name__ == "__main__":

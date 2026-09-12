@@ -25,8 +25,9 @@ from ..context_budget_plan import context_budget_continuation, render_context_bu
 from ..host_context import record_active_main_agent_model
 from ..host_observation import observe_plugin_hook_call
 from ..omh_roles import extract_role_marker, role_context_payload
-from ..runtime_reader import read_omh_activity, read_omh_hud, read_omh_status
-from ..todo_reconciliation import open_todo_reminder
+from ..dispatch_outcomes import unacknowledged_outcomes
+from ..runtime_reader import read_omh_activity, read_omh_hud, read_omh_status, read_omh_todo
+from ..todo_reconciliation import continuation_claim_without_resume, open_todo_reminder
 from ..status_board_reader import (
     last_running_work_board_fingerprint,
     read_running_work_board,
@@ -34,6 +35,11 @@ from ..status_board_reader import (
     render_running_work_block_text,
     running_work_board_fingerprint,
 )
+
+
+# A closing claim lives at the END of a message, so the bound keeps the tail;
+# the guard only needs to recognize the phrasing, not fold a whole long reply.
+_MAX_ASSISTANT_CLAIM_CHARS = 4000
 
 
 def _token_metadata_from_kwargs(kwargs: dict) -> dict[str, object]:
@@ -95,6 +101,44 @@ def _primer_already_in_api_history(conversation_history: object, primer: str) ->
         if primer in injected_content:
             return True
     return False
+
+
+def _last_assistant_text(conversation_history: object) -> str:
+    """The previous turn's closing text, or "" when the host replays none.
+
+    Hermes hands `pre_llm_call` the conversation so far; the newest assistant
+    message in it is the closing text of the turn that just ended. `content`
+    is the clean message -- `api_content` carries host-injected context that
+    the model never wrote, so a plugin reminder quoting a continuation phrase
+    could otherwise flag itself.
+    """
+    if not isinstance(conversation_history, (list, tuple)):
+        return ""
+    for message in reversed(conversation_history):
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role", "")) != "assistant":
+            continue
+        content = message.get("content")
+        return content[-_MAX_ASSISTANT_CLAIM_CHARS:] if isinstance(content, str) else ""
+    return ""
+
+
+def _todo_stall_status(omh_home: str, hermes_home: str, session_ref: str) -> str:
+    """The reader's own stall verdict for this session's plan.
+
+    `todo.stall` is where that verdict lives, so the guard reads it instead of
+    re-deriving "has this plan stopped moving" from an age and a liveness
+    flag -- the duplication the projection exists to end. A read that raises
+    leaves the guard resting on the unacknowledged count alone; an absent
+    verdict is never inverted into a stall.
+    """
+    try:
+        todo = read_omh_todo(omh_home or None, hermes_home or None, session_ref=session_ref)
+    except (OSError, ValueError, TypeError):
+        return ""
+    stall = todo.get("stall")
+    return str(stall.get("status", "")) if isinstance(stall, dict) else ""
 
 
 def _tracker_event_is_present(kwargs: dict) -> bool:
@@ -204,8 +248,16 @@ def pre_llm_call(**kwargs) -> dict[str, object] | None:
     # carries the reconciliation line so a completion claim cannot part ways
     # with the HUD checklist unnoticed. Honors the caller's awareness opt-out.
     if include_awareness:
+        outcomes = unacknowledged_outcomes(
+            str(kwargs.get("omh_home", "") or ""),
+            str(kwargs.get("hermes_home", "") or ""),
+            session_id,
+        )
         todo_reminder = open_todo_reminder(
-            omh_home=str(kwargs.get("omh_home", "") or ""), session_ref=session_id
+            omh_home=str(kwargs.get("omh_home", "") or ""),
+            hermes_home=str(kwargs.get("hermes_home", "") or ""),
+            session_ref=session_id,
+            outcomes=outcomes,
         )
         if todo_reminder:
             context_parts.append(todo_reminder)
@@ -221,6 +273,28 @@ def pre_llm_call(**kwargs) -> dict[str, object] | None:
         if budget_context:
             payload["omh_context_budget"] = budget_context
             context_parts.append(render_context_budget(budget_context))
+        # The only seam OMH has on assistant text: Hermes replays the prior
+        # turn in `conversation_history`, so a continuation promised last turn
+        # is checked at the start of this one -- which is exactly when it can
+        # still be kept. There is no post-turn hook that sees the closing
+        # message as it is written.
+        claim_finding = continuation_claim_without_resume(
+            _last_assistant_text(kwargs.get("conversation_history")),
+            # An outstanding outcome already answers the question, so the plan
+            # is only re-read when there is none.
+            todo_stall_status=(
+                ""
+                if outcomes
+                else _todo_stall_status(
+                    str(kwargs.get("omh_home", "") or ""),
+                    str(kwargs.get("hermes_home", "") or ""),
+                    session_id,
+                )
+            ),
+            unacknowledged=len(outcomes),
+        )
+        if claim_finding:
+            context_parts.append(f"[OMH continuation claim] {claim_finding}")
 
     omh_home: str | None = None
     try:

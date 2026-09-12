@@ -340,6 +340,198 @@ class ModelOptiDocCoverageTests(unittest.TestCase):
         self.assertIn("floor_raised", doc)
 
 
+_DEEPSEEK_FORMS = (
+    "deepseek-v4.1-flash",
+    "deepseek/deepseek-v4.1-flash",
+    "openrouter/deepseek-v4.1-flash",
+    "DeepSeek-V4.1-Flash",
+)
+
+
+class DeepSeekV41FlashTests(unittest.TestCase):
+    """The second exact contract (2026-09-11): a vendor whose undocumented
+    rungs map to a neighbour instead of erroring, and whose first-party id
+    is a moving pointer declared with a read date."""
+
+    def test_every_served_form_resolves_the_exact_contract(self) -> None:
+        for form in _DEEPSEEK_FORMS:
+            with self.subTest(form=form):
+                self.assertEqual(model_family(form), "deepseek")
+                self.assertEqual(contract_model_id(form), "deepseek-v4.1-flash")
+                projection = model_contract_projection(form)
+                assert projection is not None
+                self.assertEqual(projection["provenance"], "exact")
+                self.assertEqual(projection["reasoning_mode"], "thinking")
+
+    def test_first_party_pointer_is_a_declared_projection_not_a_second_contract(self) -> None:
+        for form in ("deepseek-flash", "deepseek/deepseek-flash"):
+            with self.subTest(form=form):
+                projection = model_contract_projection(form)
+                assert projection is not None
+                self.assertEqual(projection["contract_model_id"], "deepseek-v4.1-flash")
+                self.assertEqual(projection["provenance"], "declared_inheritance")
+                self.assertEqual(projection["requested_model"], form)
+        self.assertNotIn("deepseek-flash", MODEL_CONTRACTS)
+        # The vendor routes these to V4.1 Flash on its own API; that is a
+        # wire concern, not an inheritance the catalog declares.
+        for form in ("deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v3.2", "deepseek"):
+            with self.subTest(form=form):
+                self.assertIsNone(model_contract_projection(form))
+
+    def test_contract_records_the_three_rung_ladder_without_a_floor_to_raise_to(self) -> None:
+        contract = model_contract("deepseek-flash")
+        assert contract is not None
+        self.assertEqual(contract["reasoning_efforts"], ("low", "high", "max"))
+        self.assertEqual(contract["effort_default"], "high")
+        self.assertEqual(contract["unsupported_efforts"], {})
+        self.assertNotIn("dynamic_effort", contract)
+        self.assertEqual(contract["max_output_tokens"], 384_000)
+        self.assertTrue(all(source.startswith("https://") for source in contract["sources"]))
+        self.assertNotIn("entitled", json.dumps(dict(contract)).casefold())
+        # An undocumented rung passes through on record: the API maps it to
+        # a neighbour it does not name, so OMH raises nothing and guesses
+        # nothing.
+        for effort in ("off", "minimal", "medium", "xhigh"):
+            self.assertIsNone(contract_effort_floor("deepseek-v4.1-flash", effort), effort)
+        route = resolve_model_route("hermes", requested_model="deepseek-flash", requested_effort="medium")
+        self.assertEqual(route["selected_reasoning_effort"], "medium")
+        self.assertNotEqual(route["effort_change"]["kind"], EFFORT_FLOOR_KIND)
+        self.assertIsNone(dynamic_effort_guidance("deepseek-v4.1-flash", "hermes"))
+
+    def test_price_row_mirrors_the_peak_list_rate_and_cache_ratio(self) -> None:
+        from omh.plugin_bundle.omh.hermes_delegation import APPROX_CACHE_READ_RATIO
+
+        contract = model_contract("deepseek-v4.1-flash")
+        assert contract is not None
+        pricing = contract["pricing_usd_per_mtok"]
+        self.assertEqual(APPROX_PRICE_PER_MTOK["deepseek-v4.1-flash"], (pricing["input"], pricing["output"]))
+        self.assertAlmostEqual(
+            APPROX_CACHE_READ_RATIO["deepseek-v4.1-flash"] * pricing["input"], pricing["cached_input"]
+        )
+        self.assertNotIn("deepseek-flash", APPROX_PRICE_PER_MTOK)
+
+    def test_override_resolves_before_the_family_and_older_generations_keep_the_family_block(self) -> None:
+        flash = {"selected_model": "deepseek/deepseek-flash", "model_family": "deepseek", "selected_reasoning_effort": "high"}
+        v32 = {"selected_model": "deepseek-v3.2", "model_family": "deepseek", "selected_reasoning_effort": "high"}
+        self.assertEqual(calibration_for_route(flash), MODEL_HIGH_EFFORT_CALIBRATIONS["deepseek-v4.1-flash"])
+        self.assertEqual(calibration_for_route(v32), HIGH_EFFORT_CALIBRATIONS["deepseek"])
+        self.assertEqual(calibration_for_route(flash, family_only=True), HIGH_EFFORT_CALIBRATIONS["deepseek"])
+        self.assertEqual(calibration_for_route({**flash, "selected_reasoning_effort": "low"}), "")
+        self.assertEqual(
+            composition_calibration_for_model("deepseek-flash"),
+            MODEL_COMPOSITION_CALIBRATIONS["deepseek-v4.1-flash"],
+        )
+        self.assertEqual(
+            composition_calibration_for_model("deepseek-v4-pro"),
+            MAIN_AGENT_COMPOSITION_CALIBRATIONS["deepseek"],
+        )
+
+    def test_shipped_chains_name_the_served_pointer_not_the_versioned_id(self) -> None:
+        # The first-party API rejects `deepseek-v4.1-flash` by name (HTTP
+        # 400, observed in the Hermes DeepSeek profile 2026-09-11), so a
+        # shipped chain names the pointer and reaches the contract through
+        # the declared projection.
+        from omh.coding.model_recommendations import SHIPPED_MODEL_RECOMMENDATIONS
+
+        aliases = {
+            str(candidate["model_alias"])
+            for chain in SHIPPED_MODEL_RECOMMENDATIONS["categories"].values()
+            for candidate in chain
+        }
+        self.assertIn("deepseek-flash", aliases)
+        self.assertNotIn("deepseek-v4.1-flash", aliases)
+        self.assertEqual(contract_model_id("deepseek-flash"), "deepseek-v4.1-flash")
+        # The contract records which spelling each surface serves; the chain
+        # alias is the first-party one and the gateway one is the exact id.
+        contract = model_contract("deepseek-v4.1-flash")
+        assert contract is not None
+        self.assertEqual(contract["served_ids"]["first_party"], "deepseek-flash")
+        self.assertEqual(contract["served_ids"]["openrouter"], "deepseek/deepseek-v4.1-flash")
+        self.assertEqual(contract["limits_note"].split(";")[0], "1M context and 384K max output are documented literally")
+
+    def test_counters_name_the_documented_traits_and_never_push(self) -> None:
+        subagent = MODEL_HIGH_EFFORT_CALIBRATIONS["deepseek-v4.1-flash"]
+        composer = MODEL_COMPOSITION_CALIBRATIONS["deepseek-v4.1-flash"]
+        self.assertIn("thinking on by default", subagent)
+        self.assertIn("never only in reasoning", subagent)
+        self.assertIn("exact literal strings", subagent)
+        self.assertIn("report the blocker", subagent)
+        self.assertIn("byte-identical", composer)
+        self.assertIn("low, high, or max", composer)
+        self.assertIn("no synthetic thinking instructions", composer)
+        for text in (subagent, composer):
+            lowered = text.casefold()
+            for word in _MONITORING_WORDS:
+                self.assertNotIn(word, lowered, word)
+            # The Astra round's lesson: a sentence that asks for completion
+            # costs tokens on the tasks the model fails.
+            for push in ("to completion", "keep going", "keep working", "instead of pausing"):
+                self.assertNotIn(push, lowered, push)
+
+
+class DatedSnapshotTests(unittest.TestCase):
+    """A vendor's `<base>-YYYY-MM-DD` id is the base pinned to a date (a
+    provider that serves only `gpt-5.6-terra-2026-07-09` was reported on
+    2026-09-11). The rule is shape-only and projects only onto a base the
+    tables already resolve; nothing else about suffix guessing changes."""
+
+    def test_dated_snapshot_of_a_contracted_id_resolves_its_contract(self) -> None:
+        from omh.coding.model_contracts import dated_snapshot_base
+
+        base = model_contract("gpt-6-astra")
+        for requested, canonical, mode in (
+            ("gpt-6-astra-2026-08-01", "gpt-6-astra-2026-08-01", "standard"),
+            ("openai/gpt-6-astra-2026-08-01", "gpt-6-astra-2026-08-01", "standard"),
+            ("GPT-6-Astra-2026-08-01", "gpt-6-astra-2026-08-01", "standard"),
+            # A snapshot of a declared row inherits that row's mode.
+            ("gpt-6-astra-pro-2026-08-01", "gpt-6-astra-pro-2026-08-01", "pro"),
+        ):
+            with self.subTest(requested=requested):
+                projection = model_contract_projection(requested)
+                assert projection is not None
+                self.assertEqual(projection["requested_model"], requested)
+                self.assertEqual(projection["canonical_model_id"], canonical)
+                self.assertEqual(projection["contract_model_id"], "gpt-6-astra")
+                self.assertEqual(projection["reasoning_mode"], mode)
+                self.assertEqual(projection["provenance"], "dated_snapshot")
+                self.assertIs(model_contract(requested), base)
+                self.assertEqual(contract_model_id(requested), "gpt-6-astra")
+                self.assertEqual(dated_snapshot_base(requested), canonical.rsplit("-", 3)[0])
+        # The pointer alias projects through to the exact contract as well.
+        projection = model_contract_projection("deepseek/deepseek-flash-2026-09-01")
+        assert projection is not None
+        self.assertEqual(projection["contract_model_id"], "deepseek-v4.1-flash")
+        self.assertEqual(projection["reasoning_mode"], "thinking")
+        self.assertEqual(projection["provenance"], "dated_snapshot")
+
+    def test_dated_snapshot_keeps_the_exact_model_calibration(self) -> None:
+        base_route = {"selected_model": "gpt-6-astra", "selected_reasoning_effort": "xhigh", "model_family": "gpt"}
+        dated_route = {**base_route, "selected_model": "openai/gpt-6-astra-2026-08-01"}
+        self.assertEqual(calibration_for_route(dated_route), calibration_for_route(base_route))
+        self.assertEqual(calibration_for_route(dated_route), MODEL_HIGH_EFFORT_CALIBRATIONS["gpt-6-astra"])
+
+    def test_only_the_exact_trailing_shape_on_a_known_base_projects(self) -> None:
+        from omh.coding.model_contracts import dated_snapshot_base
+
+        for model_id in (
+            "gpt-6-terra-2026-07-09",  # date on a base the tables never met
+            "gpt-6-astra-turbo-2026-08-01",  # date on an undeclared variant
+            "gpt-6-astra-2026-13-01",  # not a calendar month
+            "gpt-6-astra-2026-08-32",  # not a calendar day
+            "gpt-6-astra-20260801",  # a different vendor's compact shape
+            "gpt-6-astra-2026-08",  # no day
+            "gpt-6-astra-2026-08-01-fast",  # date is not trailing
+            "gpt-6-astra-2026-08-01-2026-08-02",  # a snapshot of a snapshot
+        ):
+            with self.subTest(model_id=model_id):
+                self.assertIsNone(model_contract_projection(model_id))
+                self.assertIsNone(model_contract(model_id))
+                self.assertEqual(contract_model_id(model_id), model_id)
+        self.assertEqual(dated_snapshot_base("gpt-6-astra-20260801"), "")
+        self.assertEqual(dated_snapshot_base("gpt-6-astra"), "")
+        self.assertEqual(dated_snapshot_base(""), "")
+
+
 class ModelContractCliTests(unittest.TestCase):
     def test_model_contract_prints_the_record_and_the_per_turn_policy(self) -> None:
         status, stdout, _stderr = run_cli(["coding", "model-contract", "--model", "openai/gpt-6-astra", "--json"])

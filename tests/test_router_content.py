@@ -1217,6 +1217,43 @@ class RouterContentTests(unittest.TestCase):
                 f"{planning_name} is a planning lane, not an executing engine",
             )
 
+    def test_ulw_executing_engines_carry_follow_up_authority_and_closing_brief_rules(self) -> None:
+        """The two rules adopted from the Codex Desktop prompt review (MODEL_OPTI.md,
+        2026-09-11) ride the same executing-engine bars as the interjection rule and,
+        like it, stay off the planning lanes; the interjection rule itself now says a
+        mid-run message is steering, not a replacement objective.
+        """
+        from omh.skills.catalog import (
+            ENGINE_CLOSING_BRIEF_RULE,
+            ENGINE_FOLLOW_UP_AUTHORITY_RULE,
+            ENGINE_INTERJECTION_RESUME_RULE,
+        )
+
+        engines = ("ultrawork", "ultraqa", "loop", "research", "context", "ultraperf", "maestro")
+        definitions = {definition.name: definition for definition in installable_skill_definitions()}
+        for name in engines:
+            with self.subTest(engine=name):
+                for rule in (ENGINE_FOLLOW_UP_AUTHORITY_RULE, ENGINE_CLOSING_BRIEF_RULE):
+                    self.assertIn(rule, definitions[name].quality_bar, name)
+        templates = {template.name: template for template in builtin_skill_templates()}
+        for name in engines:
+            self.assertIn("persistence never broadens the authorized scope", templates[name].content, name)
+            self.assertIn("omit abandoned approaches unless they explain a tradeoff", templates[name].content, name)
+            self.assertIn("not automatically a replacement objective", templates[name].content, name)
+            # The brief's scaling never licenses dropping the mandatory close.
+            self.assertIn("Required closing lines stay outside this scaling", templates[name].content, name)
+        for planning_name in ("ralplan", "plan", "deep-interview"):
+            for rule in (ENGINE_FOLLOW_UP_AUTHORITY_RULE, ENGINE_CLOSING_BRIEF_RULE):
+                self.assertNotIn(rule, definitions[planning_name].quality_bar, planning_name)
+        # The vocabulary the review rejected (the persistence push) never
+        # enters ANY engine bar, whichever constant or bullet carries it.
+        rejected = ("helpful enough", "persist until", "do not stop", "carry them to completion", "keep going")
+        for name in engines:
+            bar_text = " ".join(definitions[name].quality_bar).casefold()
+            for phrase in rejected:
+                self.assertNotIn(phrase, bar_text, f"{name}: {phrase}")
+        self.assertIn("it replaces the objective when the user says so", ENGINE_INTERJECTION_RESUME_RULE)
+
     def test_ultrawork_closes_with_observed_run_summary_or_not_available(self) -> None:
         """The owner reported ultrawork's closing brief showing deploy/verification
         status but not total tokens or elapsed time. `omh_run_summary` reads those
@@ -3730,9 +3767,12 @@ class RouterContentTests(unittest.TestCase):
             # owner-directed) landed in every language, and from 450 when the
             # Quick Start took the English shape (script installers, setup,
             # doctor, then an "other installation paths" toggle, ~45 lines,
-            # owner-directed) in every language; it still sits below
-            # README.md's length.
-            self.assertLess(len(localized_readme.splitlines()), 490)
+            # owner-directed) in every language, and from 494 when a separate
+            # model-setup routing block was added to each localized Quick
+            # Start, and from 495 when the capable / simple-work / deep-work
+            # rows (3 lines) joined the model-chain table in every language;
+            # it still sits below README.md's length.
+            self.assertLess(len(localized_readme.splitlines()), 500)
             # The trust surface is the evidence table, not the wire token that
             # used to stand in for it. Pinning the token meant a README could
             # satisfy this by naming a value no reader could decode; pinning
@@ -3821,7 +3861,7 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh | sh", quick_start)
         self.assertIn("omh setup", quick_start)
         # `omh doctor` belongs in its own block, never bundled into the install
-        # step: a first-time reader must not read a health check as part of setup.
+        # step: model setup guidance follows in a separate shell block.
         self.assertIn("```sh\nomh setup\n```", quick_start)
         self.assertIn("```sh\nomh update\n```", quick_start)
         self.assertIn("```sh\nomh doctor\n```", quick_start)

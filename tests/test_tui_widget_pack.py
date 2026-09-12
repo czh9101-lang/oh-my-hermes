@@ -377,7 +377,10 @@ class TuiWidgetPackTests(unittest.TestCase):
             widget,
         )
         self.assertIn("color: item.state === 'active' ? (live ? t.color.ok : t.color.warn)", widget)
-        self.assertIn("stallElapsed ? h(Text, { color: t.color.muted }, ` (stalled ${stallElapsed})`)", widget)
+        self.assertIn(
+            "unchangedElapsed ? h(Text, { color: t.color.muted }, ` (unchanged ${unchangedElapsed})`)",
+            widget,
+        )
         self.assertIn("const seconds = todo.updated_age_seconds", widget)
         self.assertNotIn("Date.parse(safeText(todo.updated_at)", widget)
 
@@ -399,6 +402,24 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertIn("'updated_age_seconds',", widget)
         self.assertNotIn("'open_call_count',", widget)
         self.assertNotIn("'live',", widget)
+
+    def test_a_stuck_unit_never_renders_as_the_dispatch_state(self) -> None:
+        # "Process alive" and "work progressing" are different states and must
+        # never render the same. A graph node whose reader assessed its own
+        # output and found it stuck replaces the dispatch word outright and
+        # carries the reason and the stall age beside it.
+        widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
+
+        self.assertIn("const stuckState = safeText(node.unit_state)", widget)
+        self.assertIn("const state = stuckState || dispatchState", widget)
+        self.assertIn("const stallSeconds = Number(node.stalled_for_seconds) || 0", widget)
+        self.assertIn("safeText(node.state_reason)", widget)
+        self.assertIn("since new output", widget)
+        # Its own marker and the warn tone, so a stuck node is visible before
+        # the line is read at all.
+        self.assertIn("const marker = stuckState\n          ? '[~]'", widget)
+        self.assertIn("color: stuckState\n              ? t.color.warn", widget)
+        self.assertIn("${state}${stuckSuffix}${suffix}", widget)
 
     def test_widget_is_bottom_docked_and_omits_host_status_fields(self) -> None:
         widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
@@ -692,7 +713,7 @@ class TuiWidgetPackTests(unittest.TestCase):
             "const live = answerable ? !!(payload.activity && payload.activity.live) : true",
             widget,
         )
-        self.assertIn("stalled ${stallElapsed}", widget)
+        self.assertIn("unchanged ${unchangedElapsed}", widget)
         self.assertNotIn("Number.MAX_SAFE_INTEGER", widget)
         # Changed on purpose: the parallel-shot badge moved off the bottom
         # status line onto the dock-top frame rule — the transcript's
@@ -736,8 +757,17 @@ class TuiWidgetPackTests(unittest.TestCase):
         # One label shape for every lane: category(model tag). The category
         # names the lane and never changes; only the parenthesized model and
         # its state token (fallback / inherit) move.
-        self.assertIn("routeOrigin === 'fallback' ? 'fallback'", widget)
+        self.assertIn("routeOrigin === 'fallback' ? ['fallback', parentTag]", widget)
         self.assertIn("routeOrigin === 'exhausted_to_inherit' ? 'inherit'", widget)
+        # A lane routed to the parent's own model keeps its category and
+        # wears `=parent`; a child with no route record on that model is
+        # the plain `inherit(model)` — inherit is not a category, so it
+        # never wears the `category:` prefix.
+        self.assertIn("const parentTag = row.same_as_parent === true ? '=parent' : ''", widget)
+        # A fallback that landed on the parent's model keeps both tokens.
+        self.assertIn("['fallback', parentTag].filter(Boolean).join(' ')", widget)
+        self.assertIn("displayCategory === 'inherit'", widget)
+        self.assertIn("? `inherit${model ? `(${model})` : ''}`", widget)
         self.assertNotIn("→inherit", widget)
         self.assertIn("row.route_category", widget)
         self.assertIn("tools", widget)

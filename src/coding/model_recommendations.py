@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 from typing import Final, Iterable, Mapping
 
+from .model_contracts import dated_snapshot_base
 from .model_routing import MODEL_CATEGORIES, MODEL_ROLES
 
 
@@ -87,20 +88,15 @@ _OPUS_5 = _candidate(
     ("ccapi", "anthropic", "openrouter"),
     reasoning="Editorial high-capability alternative; not a benchmark claim.",
 )
-_FABLE_5 = _candidate(
-    "claude-fable-5",
-    "claude",
-    ("ccapi", "anthropic", "openrouter"),
-    reasoning="Editorial visual-work recommendation; not a benchmark claim.",
-)
-# The Claude vendor order inside every chain is Fable 5.1 -> the older Claude
-# entry (owner decision, 2026-09-06). Claude Mythos 5.1 is the same model as
-# Fable 5.1 served only to Project Glasswing-approved organizations, so a
-# shipped chain naming it would read as a second model most accounts cannot
-# reach; a user who explicitly names it is still recognized and routed. Fable 5
-# stays as fall-through behind Fable 5.1 so a machine whose provider only
-# serves 5 keeps resolving to the Claude ecosystem instead of skipping it
-# (same rule as GLM 5.2 behind 5.3).
+# The Claude vendor order inside every chain is Fable 5.1 -> Opus 5 (owner
+# decision, 2026-09-06). Claude Mythos 5.1 is the same model as Fable 5.1
+# served only to Project Glasswing-approved organizations, so a shipped chain
+# naming it would read as a second model most accounts cannot reach; a user
+# who explicitly names it is still recognized and routed. Fable 5 left the
+# shipped chains with the other superseded generations (owner decision,
+# 2026-09-11): a shipped chain names the current generation of each line, and
+# a machine whose provider still serves only the older id keeps it through
+# ~/.omh/routing/model-chains.json rather than through the public table.
 _FABLE_51 = _candidate(
     "claude-fable-5-1",
     "claude",
@@ -114,12 +110,11 @@ _SOL = _candidate(
     reasoning_effort="medium",
     reasoning="Editorial reasoning recommendation; not a benchmark claim.",
 )
-_SOL_XHIGH = dict(_SOL, reasoning_effort="xhigh")
 # GPT-6 Astra (2026-09-03) heads the slots GPT-5.6 Sol held as the GPT
-# frontier; Sol stays directly behind it as fall-through so a machine the
-# staged rollout has not reached keeps resolving to the GPT ecosystem (same
-# rule as GLM 5.2 behind 5.3 and Fable 5 behind 5.1). The Terra and Luna
-# lanes are cost-tier picks and stay as they were: Astra lists at 8x Sol.
+# frontier. Sol no longer trails it (owner decision, 2026-09-11: superseded
+# generations leave the shipped chains); it stays in the shared last resort
+# as the cheap GPT entry. The Terra and Luna lanes are cost-tier picks and
+# stay as they were (#1313): Astra lists at 8x Sol.
 _ASTRA = _candidate(
     "gpt-6-astra",
     "gpt",
@@ -134,23 +129,22 @@ _TERRA = _candidate(
     reasoning_effort="high",
     reasoning="Editorial deep-work recommendation; not a benchmark claim.",
 )
-_DEEPSEEK = _candidate(
-    "deepseek-v3.2",
+# DeepSeek V4.1 Flash (released 2026-09-10) takes the slots DeepSeek V3.2
+# held: the reasoning-capable budget fall-through behind Terra on `deep` and
+# the DeepSeek entry on `unspecified-low`. Its documented effort ladder is
+# low/high/max with high as the default, so both placements name a
+# documented rung. The chain names `deepseek-flash` — the id the vendor's
+# own API serves and Hermes forwards — because the first-party endpoint
+# rejects the versioned spelling `deepseek-v4.1-flash` with HTTP 400
+# (observed in the Hermes DeepSeek profile, 2026-09-11). The exact contract
+# stays versioned in `model_contracts.py`; `deepseek-flash` reaches it as a
+# declared projection with a read date, and the next Flash release re-pins
+# the pointer through the onboarding loop rather than by accident.
+_DEEPSEEK_FLASH = _candidate(
+    "deepseek-flash",
     "deepseek",
     ("deepseek", "openrouter", "opencode"),
     reasoning="Editorial budget reasoning recommendation; not a benchmark claim.",
-)
-_GLM = _candidate(
-    "glm-5.2",
-    "glm",
-    ("zai", "openrouter", "opencode"),
-    reasoning="Editorial low-cost work recommendation; not a benchmark claim.",
-)
-_GLM_FAST = _candidate(
-    "glm-5.2-ultrafast",
-    "glm",
-    ("zai", "openrouter", "opencode"),
-    reasoning="Editorial fast alternative; not a benchmark claim.",
 )
 _GLM_53 = _candidate(
     "glm-5.3",
@@ -188,6 +182,18 @@ _LUNA = _candidate(
     ("openai-codex", "openai"),
     reasoning="Editorial fast GPT-tier quick candidate; not a benchmark claim.",
 )
+# Claude Haiku 4.5 was priced before it was ever recommended: the price table
+# has carried a `claude-haiku-4-5` row for a user who names it, but no shipped
+# chain recommended it, so it had no editorial candidate and no
+# provider-families row. `simple-work` is the first chain to name it, and that
+# is what pulls it onto the catalog side. Families match every other Claude
+# entry, so the entitlement vocabulary does not widen.
+_HAIKU_45 = _candidate(
+    "claude-haiku-4-5",
+    "claude",
+    ("ccapi", "anthropic", "openrouter"),
+    reasoning="Editorial low-cost Claude candidate; not a benchmark claim.",
+)
 
 # The category keys are exactly the existing closed vocabulary. Categories for
 # which the approved profile defines no recommendation remain explicit empty
@@ -206,20 +212,18 @@ def _with_effort(candidate: Mapping[str, object], effort: str) -> dict[str, obje
 SHIPPED_MODEL_RECOMMENDATIONS: Final[dict[str, object]] = {
     "schema_version": MODEL_RECOMMENDATION_CATALOG_SCHEMA_VERSION,
     "categories": {
-        "ultrabrain": [deepcopy(_ASTRA), deepcopy(_SOL_XHIGH)],
+        "ultrabrain": [deepcopy(_ASTRA)],
         # DeepSeek gives deep a reasoning-capable budget fallback from a
         # fourth provider ecosystem — before it, deep sat entirely on GPT
         # and one rejected ecosystem exhausted the chain (owner rule below).
-        "deep": [deepcopy(_TERRA), _with_effort(_DEEPSEEK, "high")],
+        "deep": [deepcopy(_TERRA), _with_effort(_DEEPSEEK_FLASH, "high")],
         # Architecture and system-design lanes (owner request, 2026-08-19):
         # deepest declared effort across three provider ecosystems so a
         # rejected ecosystem cannot exhaust the chain. Efforts stay xhigh
         # end-to-end — the category IS "design at full depth".
         "architect": [
             _with_effort(_FABLE_51, "xhigh"),
-            _with_effort(_FABLE_5, "xhigh"),
             _with_effort(_ASTRA, "xhigh"),
-            _with_effort(_SOL, "xhigh"),
             _with_effort(_KIMI_K3, "xhigh"),
         ],
         "unspecified-high": [_with_effort(_KIMI_K3, "medium"), _with_effort(_OPUS_5, "medium")],
@@ -230,23 +234,18 @@ SHIPPED_MODEL_RECOMMENDATIONS: Final[dict[str, object]] = {
         # quick fell straight to inherit). Tails are the owner's explicit
         # picks: Opus 5 at low closes unspecified-low, and quick runs the
         # owner-ordered Ultrafast -> Kimi -> Luna -> Fable sequence.
-        # GLM 5.3 leads (owner decision, 2026-08-31): 5.3 heads the low-cost
-        # chains and the 5.2 entries stay as fall-through so machines that only
-        # serve 5.2 keep resolving to GLM instead of skipping the ecosystem.
+        # GLM 5.3 leads (owner decision, 2026-08-31). The 5.2 entries left
+        # with the other superseded generations (owner decision, 2026-09-11).
         "unspecified-low": [
             _with_effort(_GLM_53, "low"),
-            _with_effort(_GLM, "low"),
-            _with_effort(_GLM_FAST, "low"),
-            _with_effort(_DEEPSEEK, "low"),
+            _with_effort(_DEEPSEEK_FLASH, "low"),
             _with_effort(_OPUS_5, "low"),
         ],
         "quick": [
             _with_effort(_GLM_53_FLASH, "low"),
-            _with_effort(_GLM_FAST, "low"),
             _with_effort(_KIMI_K3, "low"),
             _with_effort(_LUNA, "low"),
             _with_effort(_FABLE_51, "low"),
-            _with_effort(_FABLE_5, "low"),
         ],
         "writing": [
             _with_effort(_KIMI_K3, "medium"),
@@ -255,24 +254,59 @@ SHIPPED_MODEL_RECOMMENDATIONS: Final[dict[str, object]] = {
         ],
         "visual-engineering": [
             _with_effort(_FABLE_51, "high"),
-            _with_effort(_FABLE_5, "high"),
             _with_effort(_KIMI_K3, "high"),
         ],
         "artistry": [
             _with_effort(_GEMINI, "high"),
             _with_effort(_FABLE_51, "high"),
-            _with_effort(_FABLE_5, "high"),
             _with_effort(_KIMI_K3, "high"),
         ],
+        # The three categories below are appended rather than interleaved
+        # (owner request, 2026-09-11). Position is not cosmetic: canonical
+        # order breaks ties in `mixture_category_for`, so appending is what
+        # keeps `(claude-opus-5, medium)` labeled unspecified-high instead of
+        # moving to capable on an equal-position tie.
+        #
+        # capable: the strong general-work lane, one rung under the frontier
+        # categories, spanning four provider ecosystems. Effort is medium
+        # because that is how opus-5 and kimi-k3 are already used in
+        # unspecified-high, the nearest neighbour to what this is for. High
+        # was rejected: `(claude-fable-5-1, high)` is visual-engineering's
+        # chain head, so a capable chain at high would have taken that
+        # category's projection label away from it.
+        "capable": [
+            _with_effort(_FABLE_51, "medium"),
+            _with_effort(_OPUS_5, "medium"),
+            _with_effort(_KIMI_K3, "medium"),
+            _with_effort(_GLM_53, "medium"),
+        ],
+        # simple-work: cheap models for work that is small rather than fast.
+        # It differs from quick in what leads — quick leads with the
+        # cheapest-available GLM tier, simple-work leads with a GPT-family
+        # small model — so a user who wants GPT behavior on a trivial task
+        # has somewhere to ask for it. Low throughout, matching quick.
+        "simple-work": [
+            _with_effort(_LUNA, "low"),
+            _with_effort(_DEEPSEEK_FLASH, "low"),
+            _with_effort(_HAIKU_45, "low"),
+        ],
+        # deep-work: the GPT frontier model on a long task. Effort is high,
+        # NOT xhigh: at xhigh this chain's head would be ultrabrain's head,
+        # and since head-match resolves in canonical order the earlier
+        # category would take every projection and leave deep-work a label
+        # nothing could ever carry. High also mirrors `deep`, the same shape
+        # one price rung down. The original request named Sol behind Astra;
+        # the owner dropped it (2026-09-11, after that request) for
+        # consistency with the same-day superseded-generation retirement, so
+        # the single entry is deliberate.
+        "deep-work": [_with_effort(_ASTRA, "high")],
     },
     "role_suggestions": {
         "main": [
             deepcopy(_KIMI_K3),
             deepcopy(_FABLE_51),
             deepcopy(_OPUS_5),
-            deepcopy(_FABLE_5),
             deepcopy(_ASTRA),
-            deepcopy(_SOL),
             deepcopy(_TERRA),
         ],
     },
@@ -700,16 +734,29 @@ def _normalized_active_models(
     return normalized
 
 
+def _active_spellings(active: Mapping[str, str]) -> set[str]:
+    """Every spelling a confirmed-active model answers to.
+
+    As recorded, unqualified, and — when the provider serves a dated snapshot
+    (`gpt-5.6-terra-2026-07-09`) — the base alias it is a snapshot of, so the
+    chain entry `gpt-5.6-terra` still counts the model as available and the
+    route keeps the id as served.
+    """
+    model_id = active["model_id"]
+    spellings = {active["model_alias"], model_id, model_id.rsplit("/", 1)[-1]}
+    for spelling in tuple(spellings):
+        base = dated_snapshot_base(spelling)
+        if base:
+            spellings.add(base)
+    return spellings
+
+
 def _active_for_candidate(
     candidate: Mapping[str, object],
     active_models: list[dict[str, str]],
 ) -> dict[str, str] | None:
     alias = str(candidate["model_alias"])
-    matches = [
-        active
-        for active in active_models
-        if alias in {active["model_alias"], active["model_id"], active["model_id"].rsplit("/", 1)[-1]}
-    ]
+    matches = [active for active in active_models if alias in _active_spellings(active)]
     if not matches:
         return None
     preferred = [str(item) for item in candidate.get("preferred_provider_families", [])]
@@ -729,16 +776,15 @@ def _active_for_explicit(
     requested: str,
     active_models: list[dict[str, str]],
 ) -> dict[str, str] | None:
+    # An explicit request for the base alias is met by a confirmed dated
+    # snapshot of it; the reverse stays fail-closed — a request pinned to a
+    # date is not met by an unpinned base the provider may serve differently.
     matches = [
         active
         for active in active_models
         if requested
-        in {
-            active["model_alias"],
-            active["model_id"],
-            active["model_id"].rsplit("/", 1)[-1],
-            f"{active['provider']}/{active['model_id']}" if active["provider"] else "",
-        }
+        in _active_spellings(active)
+        | {f"{active['provider']}/{active['model_id']}" if active["provider"] else ""}
     ]
     return min(matches, key=lambda item: (item["provider"], item["model_id"], item["model_alias"])) if matches else None
 

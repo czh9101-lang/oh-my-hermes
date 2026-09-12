@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from _local_package import load_local_package
+from _platform_support import requires_enforced_file_lock
 
 load_local_package()
 from omh.goal_ledger import (
@@ -70,14 +71,6 @@ from omh.wrapper_sessions import (
     record_plan_decision,
     select_wrapper_session_executor,
 )
-
-try:
-    import fcntl as _fcntl  # noqa: F401 - import used only to probe platform availability
-
-    HAS_FCNTL = True
-except ImportError:
-    HAS_FCNTL = False
-
 
 def _bump(current: dict[str, object]) -> dict[str, object]:
     return {**current, "value": int(current.get("value", 0)) + 1}
@@ -969,7 +962,7 @@ class RequireNotTerminalTests(unittest.TestCase):
 
 
 class GuardedUpdateConcurrencyTests(unittest.TestCase):
-    @unittest.skipUnless(HAS_FCNTL, "fcntl advisory locking is POSIX-only")
+    @requires_enforced_file_lock
     def test_concurrent_guarded_updates_do_not_lose_writes(self) -> None:
         worker_count = 24
         with TemporaryDirectory() as tmp:
@@ -1006,7 +999,7 @@ class GuardedUpdateConcurrencyTests(unittest.TestCase):
             for index in range(worker_count):
                 self.assertEqual(final.get(f"key-{index}"), index)
 
-    @unittest.skipUnless(HAS_FCNTL, "fcntl advisory locking is POSIX-only")
+    @requires_enforced_file_lock
     def test_concurrent_same_mutation_id_retries_apply_exactly_once(self) -> None:
         worker_count = 16
         with TemporaryDirectory() as tmp:
@@ -1497,7 +1490,7 @@ class WorkflowStateRevisionTests(unittest.TestCase):
             self.assertEqual(finished[RECORD_REVISION_KEY], 2)
             self.assertFalse(finished["active"])
 
-    @unittest.skipUnless(HAS_FCNTL, "fcntl advisory locking is POSIX-only")
+    @requires_enforced_file_lock
     def test_concurrent_starts_do_not_both_become_active(self) -> None:
         from omh.workflow_state import WorkflowStateError, active_workflow_states, start_workflow_state
 

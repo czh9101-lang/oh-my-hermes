@@ -144,10 +144,15 @@ def read_running_work_board(omh_home: str | Path | None, *, limit: int = DEFAULT
 
     units = sorted(merged.values(), key=_sort_key)
     running_count = sum(1 for unit in units if unit["status"] == "running")
+    # Counted apart from `running_count`, which is the DISPATCH tally this
+    # block's own >= 2 gate reads; its meaning stays put. The rendered line is
+    # what must not fold a stuck unit into "N running".
+    stuck_count = sum(1 for unit in units if str(unit.get("unit_state", "") or "") in _STUCK_STATES)
     shown = units[:effective_limit]
     return {
         "schema_version": RUNNING_WORK_BOARD_SCHEMA_VERSION,
         "running_count": running_count,
+        "stuck_count": stuck_count,
         "unit_count": len(units),
         "units": shown,
         "truncated": len(units) > len(shown),
@@ -172,8 +177,13 @@ def render_running_work_block_text(board: dict[str, Any]) -> str:
     """
     running_count = int(board.get("running_count", 0) or 0)
     unit_count = int(board.get("unit_count", 0) or 0)
+    # Same split as `omh.coding.status_board._header_line`: a stuck unit is
+    # subtracted from the headline and named, never folded into "N running".
+    stuck_count = min(int(board.get("stuck_count", 0) or 0), running_count)
+    moving = running_count - stuck_count
+    stuck_text = f", {stuck_count} stuck" if stuck_count else ""
     units = [unit for unit in board.get("units", []) if isinstance(unit, dict)]
-    lines = [f"[OMH] Running coding work: {running_count} running of {unit_count} observed."]
+    lines = [f"[OMH] Running coding work: {moving} running{stuck_text} of {unit_count} observed."]
     for unit in units:
         lines.append(
             f"- {unit.get('fanout_id', 'unknown')}/{unit.get('unit_id', 'unknown')}: "
@@ -336,7 +346,12 @@ def _merge_inflight(
             runtime=str(payload.get("owner", "") or ""),
             model=str(payload.get("model", "") or ""),
             reasoning_effort=str(payload.get("reasoning_effort", "") or ""),
+            # The dispatch word, not a claim about the work; `unit_state`
+            # beside it is what says whether the work is moving.
             status="running",
+            unit_state=str(payload.get("unit_state", "") or ""),
+            state_reason=str(payload.get("state_reason", "") or ""),
+            stalled_for_seconds=str(payload.get("stalled_for_seconds", "") or ""),
         )
     return unreadable
 
@@ -391,6 +406,9 @@ def _unit_row(
     reasoning_effort: str,
     status: str,
     unmapped_source_status: str = "",
+    unit_state: str = "",
+    state_reason: str = "",
+    stalled_for_seconds: str = "",
 ) -> dict[str, Any]:
     row = {
         "fanout_id": fanout_id,
@@ -404,6 +422,15 @@ def _unit_row(
     # status was accepted verbatim -- never that nothing was checked.
     if unmapped_source_status:
         row["unmapped_source_status"] = unmapped_source_status
+    # Absent unless a stdout snapshot was actually assessed. An absent
+    # `unit_state` means nothing observed the work, which is exactly what a
+    # reader must not confuse with "the work is moving".
+    if unit_state:
+        row["unit_state"] = unit_state
+    if state_reason:
+        row["state_reason"] = state_reason
+    if stalled_for_seconds:
+        row["stalled_for_seconds"] = stalled_for_seconds
     return row
 
 
@@ -472,11 +499,48 @@ def _status_label(value: str) -> str:
 def _status_text(unit: dict[str, Any]) -> str:
     """The status a person reads, with any refused source word attached.
 
+    A stuck `unit_state` replaces the cell outright, for the reason spelled
+    out on the surface this mirrors: `running` only ever meant "a process was
+    spawned", and it must never render over a unit whose work stopped moving.
+
     Mirrors `omh.coding.status_board.status_text_for`.
     """
+    stuck = _stuck_state_text(unit)
+    if stuck:
+        return stuck
     status = _status_label(str(unit.get("status", "") or "unknown"))
     source = str(unit.get("unmapped_source_status", "") or "")
     return f"{status} (reported {source})" if source else status
+
+
+# Hand-mirror of `omh.coding.unit_execution_state.UNIT_STUCK_STATES`, which
+# this bundle cannot import. Every state where the process may well be alive
+# and the work is still not moving; parity gated in
+# `tests/test_coding_status_board.py`.
+_STUCK_STATES: Final[frozenset[str]] = frozenset(
+    {
+        "awaiting_input",
+        "permission_blocked",
+        "account_limit",
+        "data_missing",
+        "progress_stalled",
+    }
+)
+
+
+def _stuck_state_text(unit: dict[str, Any]) -> str:
+    """Mirrors `omh.coding.status_board.stuck_state_text`."""
+    state = str(unit.get("unit_state", "") or "")
+    if state not in _STUCK_STATES:
+        return ""
+    parts: list[str] = []
+    reason = str(unit.get("state_reason", "") or "")
+    if reason:
+        parts.append(reason)
+    elapsed = str(unit.get("stalled_for_seconds", "") or "")
+    if elapsed.isdigit() and int(elapsed) > 0:
+        parts.append(f"{elapsed}s since new output")
+    return f"{state} ({', '.join(parts)})" if parts else state
 
 
 def _sort_key(unit: dict[str, Any]) -> tuple[int, str, str]:

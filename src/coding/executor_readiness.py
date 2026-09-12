@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 import re
 import shutil
@@ -11,7 +12,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .fanout_executor_sessions import BinaryIdentity, SessionCapability, bounded_session_probe
+from .fanout_executor_sessions import (
+    SESSION_HELP_PROBE_BYTES,
+    BinaryIdentity,
+    SessionCapability,
+    bounded_session_probe,
+)
 
 from ..executors import EXECUTOR_PROFILES, executor_label
 from ..local_store import atomic_write_json, read_json_object_result, utc_now
@@ -61,25 +67,48 @@ def negotiate_session_capability(owner: str, binary: str, *, env: Mapping[str, s
     capability = SessionCapability(owner, None, identity, None)
     if owner not in ('codex', 'claude-code'):
         return capability
-    version_bytes, _reason = bounded_session_probe([identity.resolved_path, '--version'], env=env)
+    version_bytes, version_reason = bounded_session_probe([identity.resolved_path, '--version'], env=env)
     help_args = ['exec', '--help'] if owner == 'codex' else ['--help']
-    help_bytes, _reason = bounded_session_probe([identity.resolved_path, *help_args], env=env)
-    if version_bytes is None or help_bytes is None:
-        return capability
+    # The help probe reads a document, so it gets a document-sized budget and
+    # keeps what it read when even that was not enough: finding every flag in
+    # the part that was read settles the question, and only a flag MISSING
+    # from a truncated read is ambiguous. Before this, a help page that
+    # outgrew the shared 16 KiB cap silently switched the whole lane off.
+    help_bytes, help_reason = bounded_session_probe(
+        [identity.resolved_path, *help_args],
+        env=env,
+        limit_bytes=SESSION_HELP_PROBE_BYTES,
+        keep_partial=True,
+    )
+    if version_bytes is None:
+        return replace(capability, reason=f'version_probe_{version_reason}')
+    if help_bytes is None:
+        return replace(capability, reason=f'help_probe_{help_reason}')
     try:
         version, help_text = version_bytes.decode('utf-8').strip(), help_bytes.decode('utf-8')
     except UnicodeError:
-        return capability
+        return replace(capability, reason='probe_output_not_utf8')
     # Retain only the version token, never arbitrary help/version output.
     match = re.fullmatch(r'(?:[A-Za-z][A-Za-z0-9_. -]{0,64}\s+)?([0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?)(?: \(Claude Code\))?', version, re.IGNORECASE)
     if match is None:
-        return capability
+        return replace(capability, reason='version_output_unrecognized')
     flags = ('--json', 'resume') if owner == 'codex' else ('--output-format', 'stream-json', '--verbose', '--resume')
-    supported = all(re.search(r'(?<![\w-])' + re.escape(flag) + r'(?![\w-])', help_text) for flag in flags)
+    absent = [flag for flag in flags
+              if not re.search(r'(?<![\w-])' + re.escape(flag) + r'(?![\w-])', help_text)]
     if observe_session_binary(identity.resolved_path) != identity:
-        return capability
-    return SessionCapability(owner, ('codex_exec_json' if owner == 'codex' else 'claude_stream_json')
-                             if supported else None, identity, match[1])
+        return replace(capability, reason='binary_changed_during_probe')
+    if absent:
+        # A flag missing from a help page that was cut off is unanswered, not
+        # answered "no" -- both refuse the protocol, and the reason says which
+        # so an operator knows whether to raise the budget or to update the CLI.
+        detail = 'help_truncated' if help_reason == 'probe_output_limited' else 'help_complete'
+        return replace(capability, reason=f'flags_absent[{detail}]:' + ','.join(absent))
+    return SessionCapability(
+        owner,
+        'codex_exec_json' if owner == 'codex' else 'claude_stream_json',
+        identity,
+        match[1],
+    )
 
 
 EXECUTOR_READINESS_SCHEMA_VERSION = "executor_readiness/v1"
@@ -104,6 +133,29 @@ EXECUTOR_VERSION_POLICY = (
     "OMH pins no executor CLI version. Version requirements come from the executor's own "
     "output at run time; the probe reports every PATH resolution it observed so a stale "
     "binary shadowing a newer install is visible instead of silently selected."
+)
+
+# What this probe actually observed, stated as a value so no reader has to
+# infer it from the absence of anything else. The probe runs one command and
+# reads its version line; it has no worktree, touches no repository, and
+# therefore cannot answer whether the work can be done anywhere.
+READINESS_OBSERVED_BINARY_VERSION_ONLY = "binary_version_only"
+
+# Appended to a ready summary. The workspace question is not left unanswered --
+# it is answered LATER, by `workspace_preflight` running in the unit's own
+# isolation immediately before the spawn, which is the only place a worktree
+# exists to probe.
+READINESS_WORKSPACE_PROBE_NOTE = (
+    "Binary runs; workspace not yet probed — the dispatch runs `workspace_preflight` in the unit's "
+    "isolation before spawning."
+)
+
+READINESS_BINARY_ONLY_CLAIM_BOUNDARY = (
+    "`available: true` means one command was run and it exited 0. It is not a claim that the work "
+    "can be done: file writes, git index writes, the presence of the commits the work needs, and "
+    "case-collision safety are properties of the unit's isolation, which this probe never sees. "
+    "The dispatch observes those four with `workspace_preflight` before it spawns anything. "
+    "Readiness is not dispatch, execution, verification, review, CI, or merge evidence."
 )
 _COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "codex": ("codex", ("--version",)),
@@ -269,7 +321,15 @@ def probe_executor_readiness(
         )
         result = dict(cached)
         result["pre_handoff_readiness"] = verdict
-        result["claim_boundary"] = contract["claim_boundary"]
+        # A cached command probe keeps the boundary that describes what it
+        # observed. Replacing it with the generic contract sentence would put
+        # the "binary runs; the workspace was never probed" qualification back
+        # out of reach of exactly the readers who read a cached `ready`.
+        result["claim_boundary"] = (
+            READINESS_BINARY_ONLY_CLAIM_BOUNDARY
+            if result.get("observed") == READINESS_OBSERVED_BINARY_VERSION_ONLY
+            else contract["claim_boundary"]
+        )
         if verdict["usable"]:
             result["cache_status"] = "cached"
             result["first_use_skipped"] = True
@@ -492,6 +552,7 @@ def _run_probe(contract: dict[str, object]) -> dict[str, object]:
             {
                 "status": "missing",
                 "available": False,
+                "observed": READINESS_OBSERVED_BINARY_VERSION_ONLY,
                 "observed_once": True,
                 "summary": f"`{command}` was not found on PATH.",
                 "next_action": "choose_executor_or_configure_path",
@@ -511,6 +572,7 @@ def _run_probe(contract: dict[str, object]) -> dict[str, object]:
             {
                 "status": "blocked",
                 "available": False,
+                "observed": READINESS_OBSERVED_BINARY_VERSION_ONLY,
                 "observed_once": True,
                 "summary": str(exc),
                 "next_action": "choose_executor_or_configure_path",
@@ -527,10 +589,19 @@ def _run_probe(contract: dict[str, object]) -> dict[str, object]:
             f"{row['path']} ({row['observed_version']})" for row in resolutions[1:]
         )
         summary = f"{summary} — PATH also resolves: {others}"[:400]
+    if completed.returncode == 0:
+        # `available: true` used to be read as "this executor can do the work".
+        # It never meant that, and on 2026-09-11 the gap cost 36 minutes: the
+        # binary ran, and the isolation it was pointed at could not take a git
+        # index write. The sentence is appended to the summary rather than kept
+        # only in a field because the summary is what a person reads.
+        summary = f"{summary} {READINESS_WORKSPACE_PROBE_NOTE}"[:600]
     result.update(
         {
             "status": "ready" if completed.returncode == 0 else "blocked",
             "available": completed.returncode == 0,
+            "observed": READINESS_OBSERVED_BINARY_VERSION_ONLY,
+            "claim_boundary": READINESS_BINARY_ONLY_CLAIM_BOUNDARY,
             "observed_once": True,
             "exit_code": completed.returncode,
             "command_path": resolved,

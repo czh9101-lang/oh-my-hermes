@@ -48,6 +48,7 @@ from .fanout_failure_diagnostics import FailureDiagnostic, is_object_list, is_st
 from .context_safety import sanitize_user_facing_progress_text
 from .executor_progress import project_active_executor_status
 from .inflight import read_inflight_markers
+from .unit_execution_state import is_stuck
 from .routing_observation import (
     authenticate_executor_observation,
     build_routing_observation,
@@ -146,11 +147,19 @@ def build_status_board(paths: OmhPaths, *, limit: int = DEFAULT_LIMIT, now: str 
 
     units = sorted(merged.values(), key=_board_sort_key)
     running_count = sum(1 for unit in units if unit["status"] == "running")
+    # Counted apart from `running_count` rather than subtracted out of it:
+    # `running_count` is the DISPATCH tally (how many units have a live-looking
+    # marker) and existing consumers gate on it, so its meaning stays put. What
+    # changes is that the header no longer reports that tally alone, because
+    # "2 running" over a board with a unit stuck for half an hour is the exact
+    # reading the 2026-09-11 incident acted on.
+    stuck_count = sum(1 for unit in units if is_stuck(str(unit.get("unit_state", "") or "")))
     return {
         "schema_version": CODING_STATUS_BOARD_SCHEMA_VERSION,
         "observed_at": observed_at,
         "unit_count": len(units),
         "running_count": running_count,
+        "stuck_count": stuck_count,
         "units": units[:effective_limit],
         "sources_used": [source for source in SOURCE_ORDER if source in sources_used],
         "claim_boundary": CODING_STATUS_BOARD_CLAIM_BOUNDARY,
@@ -276,10 +285,21 @@ def status_text_for(unit: Mapping[str, Any]) -> str:
     the same cell rather than in a column of its own, so a board with nothing
     refused is byte-identical to the one this repo already renders.
 
+    A unit whose `unit_state` is stuck replaces the cell outright. `running`
+    here only ever meant "a process was spawned and its marker is still
+    there", and rendering that word over a unit that has been repeating one
+    error for half an hour is the failure this whole surface exists to stop;
+    the stuck word, its reason, and how long output has been still take the
+    cell instead. A `running` or absent `unit_state` changes nothing, so a
+    board of healthy units renders exactly as it did before.
+
     Hand-mirrored by `plugin_bundle/omh/status_board_reader._status_text`, which
     cannot import this module; `tests/test_coding_status_board.py` gates the two
     against each other.
     """
+    stuck = stuck_state_text(unit)
+    if stuck:
+        return stuck
     # Every row on this board is a coding unit, so `Code` is the phase when the
     # value does not imply a more specific one (`worktree_failed` implies
     # `Setup`). The wire value stays in `unit["status"]` for anything parsing
@@ -287,6 +307,28 @@ def status_text_for(unit: Mapping[str, Any]) -> str:
     status = status_label(str(unit.get("status", "") or UNKNOWN), default_phase=PHASE_CODE)
     source = str(unit.get("unmapped_source_status", "") or "")
     return f"{status} (reported {source})" if source else status
+
+
+def stuck_state_text(unit: Mapping[str, Any]) -> str:
+    """`progress_stalled (no_new_output, 1920s since new output)`, or "".
+
+    Empty for every unit whose observed state is `running`, absent, or not a
+    stuck one -- `is_stuck` owns that judgement, so a state added to the
+    vocabulary starts rendering here without a second list to update.
+
+    Hand-mirrored by `plugin_bundle/omh/status_board_reader._stuck_state_text`.
+    """
+    state = str(unit.get("unit_state", "") or "")
+    if not is_stuck(state):
+        return ""
+    parts: list[str] = []
+    reason = str(unit.get("state_reason", "") or "")
+    if reason:
+        parts.append(reason)
+    elapsed = str(unit.get("stalled_for_seconds", "") or "")
+    if elapsed.isdigit() and int(elapsed) > 0:
+        parts.append(f"{elapsed}s since new output")
+    return f"{state} ({', '.join(parts)})" if parts else state
 
 
 def _merge_unit(
@@ -333,6 +375,12 @@ def _inflight_units(paths: OmhPaths, observed_at: str) -> list[dict[str, Any]]:
                 runtime_host=str(marker.get("owner_host", "") or ""),
                 model=str(marker.get("model", "") or ""),
                 reasoning_effort=str(marker.get("reasoning_effort", "") or ""),
+                # `status` stays the dispatch word: a marker exists, so a
+                # process was spawned. Whether the WORK is moving is a
+                # different question, carried beside it in `unit_state` and
+                # rendered by `status_text_for`. Keeping the two apart is the
+                # point -- `STATUS_VOCABULARY` is read as a closed enum by the
+                # graph roster, and "alive" must never render as "progressing".
                 status="running",
                 elapsed_seconds=elapsed,
                 # A running unit has reported no total yet. Anything we put here
@@ -343,6 +391,9 @@ def _inflight_units(paths: OmhPaths, observed_at: str) -> list[dict[str, Any]]:
                 # The worktree path is deliberately not shown: it is a local
                 # filesystem path, not observed progress.
                 summary="",
+                unit_state=str(marker.get("unit_state", "") or ""),
+                state_reason=str(marker.get("state_reason", "") or ""),
+                stalled_for_seconds=str(marker.get("stalled_for_seconds", "") or ""),
             )
         )
     return units
@@ -478,6 +529,9 @@ def _unit_row(
     session_ref: str,
     summary: str,
     unmapped_source_status: str = "",
+    unit_state: str = "",
+    state_reason: str = "",
+    stalled_for_seconds: str = "",
     routing_observation: Mapping[str, object] | None = None,
     failure_diagnostic: FailureDiagnostic | None = None,
 ) -> dict[str, Any]:
@@ -506,6 +560,15 @@ def _unit_row(
     # status was accepted verbatim -- never that nothing was checked.
     if unmapped_source_status:
         row["unmapped_source_status"] = unmapped_source_status
+    # Absent unless a stdout snapshot was actually assessed. An absent
+    # `unit_state` means nothing observed the work, which is exactly what a
+    # reader must not confuse with "the work is moving".
+    if unit_state:
+        row["unit_state"] = unit_state
+    if state_reason:
+        row["state_reason"] = state_reason
+    if stalled_for_seconds:
+        row["stalled_for_seconds"] = stalled_for_seconds
     if routing_observation is not None:
         row["routing_observation"] = dict(routing_observation)
         row["routing_status_rows"] = list(render_routing_status_rows(routing_observation))
@@ -641,10 +704,18 @@ def _bullet_line(unit: dict[str, Any]) -> str:
 def _header_line(payload: dict[str, Any], *, korean: bool) -> str:
     running = int(payload.get("running_count", 0) or 0)
     total = int(payload.get("unit_count", 0) or 0)
+    # Stuck units are SUBTRACTED from the headline count and named separately.
+    # They still carry `status: running` on the wire (a marker exists), but a
+    # header that folds them into "N running" is the one line a reader takes
+    # at a glance, and it must not say work is moving when it is not.
+    stuck = min(int(payload.get("stuck_count", 0) or 0), running)
+    moving = running - stuck
     observed_at = str(payload.get("observed_at", "") or UNKNOWN)
     if korean:
-        return f"코딩 작업 현황 (실행 중 {running} / 전체 {total}) — 관측 시각 {observed_at}"
-    return f"Coding status board ({running} running of {total} observed) — observed at {observed_at}"
+        stuck_text = f", 멈춤 {stuck}" if stuck else ""
+        return f"코딩 작업 현황 (실행 중 {moving}{stuck_text} / 전체 {total}) — 관측 시각 {observed_at}"
+    stuck_text = f", {stuck} stuck" if stuck else ""
+    return f"Coding status board ({moving} running{stuck_text} of {total} observed) — observed at {observed_at}"
 
 
 def _empty_line(*, korean: bool) -> str:

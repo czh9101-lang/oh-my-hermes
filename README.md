@@ -135,6 +135,11 @@ registration.
 omh doctor
 ```
 
+```sh
+# To onboard models or configure model routing, use this skill in Hermes:
+/omh-model-setup
+```
+
 <details>
 <summary><b>Other installation paths</b> — Homebrew, Bun, npm, Hermes skill tap, manual fallback</summary>
 
@@ -389,18 +394,21 @@ credential, dispatch, or execution evidence:
 
 | Category alias | What it is for | Editable recommendation order |
 | --- | --- | --- |
-| `ultrabrain` | Deepest reasoning | GPT-6 Astra, then GPT-5.6 Sol (xhigh) |
-| `deep` | Strong default tier | GPT-5.6 Terra, then DeepSeek V3.2 (high) |
-| `architect` | Architecture and system design | Claude Fable 5.1, then Claude Fable 5, then GPT-6 Astra, then GPT-5.6 Sol, then Kimi K3 (xhigh) |
+| `ultrabrain` | Deepest reasoning | GPT-6 Astra (xhigh) |
+| `deep` | Strong default tier | GPT-5.6 Terra, then DeepSeek Flash (V4.1) (high) |
+| `architect` | Architecture and system design | Claude Fable 5.1, then GPT-6 Astra, then Kimi K3 (xhigh) |
 | `unspecified-high` | Default working model | Kimi K3, then Claude Opus 5 (medium) |
-| `unspecified-low` | Cheaper fallback | GLM 5.3, then GLM 5.2, then GLM 5.2 Ultrafast, then DeepSeek V3.2, then Claude Opus 5 (low) |
-| `quick` | Short tasks | GLM 5.3 Flash, then GLM 5.2 Ultrafast, then Kimi K3, then GPT-5.6 Luna, then Claude Fable 5.1, then Claude Fable 5 (low) |
+| `unspecified-low` | Cheaper fallback | GLM 5.3, then DeepSeek Flash (V4.1), then Claude Opus 5 (low) |
+| `quick` | Short tasks | GLM 5.3 Flash, then Kimi K3, then GPT-5.6 Luna, then Claude Fable 5.1 (low) |
 | `writing` | Prose and docs | Kimi K3, then Qwen3-Coder, then Gemini 3.1 Pro (medium) |
-| `visual-engineering` | Frontend and visual | Claude Fable 5.1, then Claude Fable 5, then Kimi K3 (high) |
-| `artistry` | Unconventional work | Gemini 3.1 Pro, then Claude Fable 5.1, then Claude Fable 5, then Kimi K3 (high) |
+| `visual-engineering` | Frontend and visual | Claude Fable 5.1, then Kimi K3 (high) |
+| `artistry` | Unconventional work | Gemini 3.1 Pro, then Claude Fable 5.1, then Kimi K3 (high) |
+| `capable` | Strong general work | Claude Fable 5.1, then Claude Opus 5, then Kimi K3, then GLM 5.3 (medium) |
+| `simple-work` | Small everyday tasks | GPT-5.6 Luna, then DeepSeek Flash (V4.1), then Claude Haiku 4.5 (low) |
+| `deep-work` | Long tasks at frontier depth | GPT-6 Astra (high) |
 
 Want to try the Ultrafast tier — Kimi K3 Ultrafast (300 TPS) and
-GLM 5.2 Ultrafast (600 TPS)? They are served on
+GLM 5.3 Ultrafast? They are served on
 [OpenGateway](https://opengateway.ai/).
 
 Every chain above is user-editable without touching code. The chains are
@@ -428,7 +436,7 @@ fallback, and HUD labels alike —
     ],
     "quick": [
       {"model": "kimi-k3-ultrafast", "reasoning_effort": "low"},
-      {"model": "glm-5.2-ultrafast", "reasoning_effort": "low"}
+      {"model": "glm-5.3-ultrafast", "reasoning_effort": "low"}
     ]
   }
 }
@@ -436,7 +444,7 @@ fallback, and HUD labels alike —
 
 Check the chains currently in effect with `omh model-chains show`. If you
 would rather not edit the file by hand, make the same change from the command
-line: `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.2-ultrafast:low"`.
+line: `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.3-ultrafast:low"`.
 When an alias uses a provider-specific wire ID, map it once in
 `~/.omh/routing/model-providers.json` with
 `model_provider_routes/v1`; `set`, `status`, fallback, and HUD then report the

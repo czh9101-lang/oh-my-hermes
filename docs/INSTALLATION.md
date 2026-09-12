@@ -264,24 +264,31 @@ applied.
 
 The shipped catalog is editorial policy, not benchmark output:
 
+<!-- omh:model-chain-table:begin (generated: uv run python -m omh.cli docs chain-table; source: src/coding/model_recommendations.py) -->
 | Surface | What it is for | Shipped editable order |
 | --- | --- | --- |
-| Hermes `main` suggestion | The session's own model | Kimi K3, Claude Fable 5.1, Claude Opus 5, Claude Fable 5, GPT-5.6 Sol, GPT-5.6 Terra |
-| `ultrabrain` | Deepest reasoning | GPT-5.6 Sol (`xhigh`) |
-| `deep` | Strong default tier | GPT-5.6 Terra, DeepSeek V3.2 (`high`) |
-| `architect` | Architecture and system design | Claude Fable 5.1, Claude Fable 5, GPT-5.6 Sol, Kimi K3 (`xhigh`) |
-| `unspecified-high` | Default working model | Kimi K3, Claude Opus 5 |
-| `unspecified-low` | Cheaper fallback | GLM 5.3, GLM 5.2, GLM 5.2 Ultrafast, DeepSeek V3.2, Claude Opus 5 (low) |
-| `visual-engineering` | Frontend and visual | Claude Fable 5.1, Claude Fable 5, Kimi K3 |
-| `quick` | Short tasks | GLM 5.3 Flash, GLM 5.2 Ultrafast, Kimi K3, GPT-5.6 Luna, Claude Fable 5.1, Claude Fable 5 (low) |
-| `writing` | Prose and docs | Kimi K3, Qwen3-Coder, Gemini 3.1 Pro |
-| `artistry` | Unconventional work | Gemini 3.1 Pro, Claude Fable 5.1, Claude Fable 5, Kimi K3 |
-| `x_platform_data` affinity | X-platform data affinity | Grok, Kimi K3, Gemini |
-| Shared final order (`last_resort.any`) | Last resort when a chain is exhausted | Claude Opus 5, GPT-5.6 Sol |
+| Hermes `main` suggestion | The session's own model | Kimi K3, Claude Fable 5.1, Claude Opus 5, GPT-6 Astra (`xhigh`), GPT-5.6 Terra (`high`) |
+| `ultrabrain` | Deepest reasoning | GPT-6 Astra (`xhigh`) |
+| `deep` | Strong default tier | GPT-5.6 Terra (`high`), DeepSeek Flash (V4.1) (`high`) |
+| `architect` | Architecture and system design | Claude Fable 5.1 (`xhigh`), GPT-6 Astra (`xhigh`), Kimi K3 (`xhigh`) |
+| `unspecified-high` | Default working model | Kimi K3 (`medium`), Claude Opus 5 (`medium`) |
+| `unspecified-low` | Cheaper fallback | GLM 5.3 (`low`), DeepSeek Flash (V4.1) (`low`), Claude Opus 5 (`low`) |
+| `quick` | Short tasks | GLM 5.3 Flash (`low`), Kimi K3 (`low`), GPT-5.6 Luna (`low`), Claude Fable 5.1 (`low`) |
+| `writing` | Prose and docs | Kimi K3 (`medium`), Qwen3-Coder (`medium`), Gemini 3.1 Pro (`medium`) |
+| `visual-engineering` | Frontend and visual | Claude Fable 5.1 (`high`), Kimi K3 (`high`) |
+| `artistry` | Unconventional work | Gemini 3.1 Pro (`high`), Claude Fable 5.1 (`high`), Kimi K3 (`high`) |
+| `capable` | Strong general work | Claude Fable 5.1 (`medium`), Claude Opus 5 (`medium`), Kimi K3 (`medium`), GLM 5.3 (`medium`) |
+| `simple-work` | Small everyday tasks | GPT-5.6 Luna (`low`), DeepSeek Flash (V4.1) (`low`), Claude Haiku 4.5 (`low`) |
+| `deep-work` | Long tasks at frontier depth | GPT-6 Astra (`high`) |
+| `x_platform_data` affinity | X-platform data affinity | Grok Code Fast, Kimi K3, Gemini 3.1 Pro |
+| Shared final order (`last_resort.any`) | Last resort when a chain is exhausted | Claude Opus 5, GPT-5.6 Sol (`medium`) |
+<!-- omh:model-chain-table:end -->
 
 Chain customization is a config edit, not a source edit — `omh model-chains
 show` prints the current per-category state, `omh model-chains interview`
-walks every category with numbered choices on a terminal, and
+walks every category with numbered choices on a terminal — the interactive
+`omh setup` offers that walk as its last question, default No, and a "no"
+leaves the seeded defaults in effect — and
 `omh model-chains set <category> "model[:effort], ..."` is the scriptable
 write (agents included). All of them edit the same document: `omh setup` seeds
 `~/.omh/routing/model-chains.json` (`mixture_chain_overrides/v1`) with an
@@ -295,10 +302,13 @@ document is ignored whole (defaults apply) and reported by
 Next to those two documents, `omh_delegate_route` maintains
 `~/.omh/routing/route-provenance.json` (`delegation_route_provenance/v1`): a
 capped history of the routes it prepared (head, explicit, fallback, chain
-exhaustion, clear) that the HUD uses to label a fallback lane as a fallback
-and an exhausted chain as `category(model inherit)` — one `category(model
-tag)` shape for every lane, where the category names the lane and only the
-parenthesized model and state token move. It is written automatically,
+exhaustion, clear) that the HUD uses to label a fallback lane as a fallback,
+an exhausted chain as `category(model inherit)`, and a lane routed to the
+model the parent session itself runs as `category(model =parent)` — one
+`category(model tag)` shape for every lane, where the category names the
+lane and only the parenthesized model and state token move. A child on the
+parent's model with no route record at all is the plain `inherit(model)`:
+inherit is not a category. It is written automatically,
 carries its own `claim_boundary` (prepared routes only, never dispatch
 evidence), and is safe to delete — an absent or invalid file only means HUD
 rows fall back to plain category projection.
@@ -342,14 +352,30 @@ under what name, belongs to one account — so OMH ships no routes and hardcodes
 no provider.
 
 Which providers and subscriptions a machine holds is a third, separate
-question. The interactive `omh setup` asks it — for each provider id in
-Hermes' config (`providers.<id>` and `model.provider`, except `auto`) and
-for each builtin provider whose key NAME appears in `$HERMES_HOME/.env` or
-the environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, ...; values are never
-read): do you hold it, and is it a vendor provider or a multi-vendor
-gateway; then any further provider id you type; and, when the Claude Code
-CLI is on PATH, whether you have a Claude Code subscription — and records
-the answers in `~/.omh/routing/providers.json` (`provider_entitlements/v1`):
+question. The interactive `omh setup` asks it as one ticked list of the
+services you have an account, key, or login for: every provider family, plus
+each provider id in Hermes' config (`providers.<id>` and `model.provider`,
+except `auto`) and each builtin provider whose key NAME appears in
+`$HERMES_HOME/.env` or the environment (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, ...; values are never read), plus OpenGateway — OMH's own
+gateway, offered whether or not `OPENGATEWAY_API_KEY` is set yet, because a
+row that appears only once the key exists is a row nobody discovers. Rows
+found on the machine arrive ticked, because a found config key or variable
+name is a sensible default — it is not proof of a working account, so every
+ticked row can be cleared and only what you leave ticked is recorded.
+
+The list's last row is **Skip — leave everything as it is**. Choosing it
+writes nothing at all: no entitlement document, no dispatch-model seed, so
+the built-in chain order stays in effect and the machine behaves exactly as
+it does for someone who never answered. It is exclusive — ticked beside a
+provider the prompt asks again rather than guessing which half you meant —
+and it is never pre-ticked.
+
+After the list you can type any further provider id (that one is asked for
+its kind, since OMH knows nothing about it), and, when the Claude Code CLI is
+on PATH, you are asked whether you have a Claude Code subscription. The
+answers are recorded in `~/.omh/routing/providers.json`
+(`provider_entitlements/v1`):
 
 ```json
 {
@@ -372,8 +398,8 @@ its only effect is seeding the Claude Code `--model` preference in
 `dispatch-models.json` when none is set (a Codex login is spent by Hermes'
 own `openai-codex` provider and belongs under providers). `--yes`, `--json`,
 and runs without `--interactive` on a non-TTY ask nothing and write nothing;
-rerun `omh setup` interactively to answer again (existing answers are the
-defaults) or edit the file.
+rerun `omh setup` interactively to answer again (existing answers arrive
+pre-ticked) or edit the file.
 
 Supply wire-id routes in `~/.omh/routing/model-providers.json`
 (`model_provider_routes/v1`), a sibling of the chain document:
@@ -419,6 +445,18 @@ only reach the approximation that fires when nothing was recorded, and an
 approximated figure still renders with its `~` marker. A row whose figure
 came from your own rate is marked `cost_override` beside `cost_approximate`,
 so a number you chose can be told apart from our shipped ballpark.
+
+"Nothing was recorded" covers two shapes, both of them the host declining to
+state a cost: no cost provenance at all, and Hermes' own `unknown` status,
+which it stamps whenever its pricing produced no amount
+(`agent/usage_pricing.py:549`, persisted into the usage table by
+`agent/turn_usage.py:236,257`). Every child served through a custom gateway
+provider carries that status, because Hermes prices only the routes it has
+rates for. A row where the host did record an outcome — `included`, a billed
+zero, any word it chose — keeps that figure untouched, and in a session whose
+rows mix the two the recorded outcome is what the row reports. When the model
+has no rate on either side, the row keeps rendering `$0.0000 (unknown)` rather
+than gaining a figure OMH cannot support.
 
 Every shipped rate carries the vendor page it was read from and the month, so
 a reader can tell a current price from one that drifted.
@@ -864,18 +902,29 @@ zero OMH skills while the default chat has the full set.
 
 `omh setup` and `omh update` sync every profile automatically:
 
-- an already-registered profile is refreshed to the running version;
+- an already-registered profile is refreshed to the running version — its
+  plugin bundle, TUI widget, and skin, under the same manifest-checked
+  refusals the primary home gets;
 - a profile with no OMH bundle at all — including a bot created after
   install — gets the full bootstrap on the next `omh setup` or `omh update`;
 - a deliberately unregistered profile (see below) is left alone.
+
+"Registered" means the profile names any OMH-managed skills directory, not
+the exact one this install would write today. A profile registered at
+`~/.omh/skills` before the command install moved to its shared generation
+pointer is still registered: it gets refreshed and carried forward, not read
+as an opt-out and frozen on the generation it was installed at. Only a
+profile naming none of them has opted out.
 
 `omh uninstall` is symmetric with the sync. A full uninstall (`omh uninstall`,
 `--all`, or `--purge`) clears every profile's registration and removes its
 managed artifacts — the plugin bundle, the TUI widget, and the skin — through
 the same manifest checks the primary home gets: a profile directory OMH cannot
 prove it owns is kept and reported, never deleted blind. `--registration-only`
-unregisters every profile while keeping their plugin directories, which is
-exactly the deliberate opt-out state described below.
+removes every OMH-managed entry from each profile — the same directories the
+sync reads, so nothing is left behind for the next update to score as still
+registered — while keeping their plugin directories, which is exactly the
+deliberate opt-out state described below.
 
 After a sync, restart Hermes Desktop so bot chats reload their skills.
 
@@ -885,8 +934,10 @@ To keep OMH out of one bot, unregister that profile only:
 omh --hermes-home ~/.hermes/profiles/<name> uninstall --registration-only
 ```
 
-The plugin directory stays in place as the opt-out marker; setup and update
-never re-register a profile in that state.
+That removes every OMH-managed skills directory the profile's config named,
+whichever one it was registered at. The plugin directory stays in place as
+the opt-out marker; setup and update never re-register a profile in that
+state.
 
 OMH workflows are skill triggers, not Hermes slash commands, so they do not
 appear in the `/` autocomplete — in any chat, bot or default. Invoke them as

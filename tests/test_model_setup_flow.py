@@ -384,6 +384,7 @@ class ModelSetupFlowTests(unittest.TestCase):
         expected = {
             "ultrabrain", "deep", "architect", "unspecified-high", "unspecified-low",
             "quick", "writing", "visual-engineering", "artistry",
+            "capable", "simple-work", "deep-work",
         }
         self.assertEqual(set(recommendations["hermes_native"]["categories"]), expected)
         self.assertEqual(set(recommendations["maestro"]["categories"]), expected)

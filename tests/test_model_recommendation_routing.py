@@ -32,12 +32,15 @@ _KIMI = _active("kimi-k3", "apitopia", "kimi")
 _OPUS = _active("claude-opus-5", "ccapi", "claude")
 _GROK = _active("grok-code-fast", "xai", "grok")
 _GEMINI = _active("gemini-3.1-pro", "google", "gemini")
-_GLM_FAST = _active("glm-5.2-ultrafast", "zai", "glm")
-_FABLE = _active("claude-fable-5", "ccapi", "claude")
+# Shipped chain members (the superseded GLM 5.2 Ultrafast and Fable 5
+# entries left the chains on 2026-09-11): the quick head and the Claude
+# head of visual-engineering.
+_GLM_FLASH = _active("glm-5.3-flash", "zai", "glm")
+_FABLE = _active("claude-fable-5-1", "ccapi", "claude")
 
 
 _CATEGORY_ACTIVE = {
-    "quick": _GLM_FAST,
+    "quick": _GLM_FLASH,
     "writing": _KIMI,
     "artistry": _GEMINI,
     "visual-engineering": _FABLE,
@@ -117,6 +120,44 @@ class HermesRecommendationRoutingTests(unittest.TestCase):
         recommendation = route["recommendation"]
         self.assertEqual(recommendation["inactive_candidates"][0], "kimi-k3")
 
+    def test_dated_snapshot_counts_as_its_base_and_routes_as_served(self) -> None:
+        from omh.coding.model_recommendations import resolve_model_recommendation
+
+        # A provider that serves only `<base>-YYYY-MM-DD` ids (reported
+        # 2026-09-11 for gpt-5.6-terra / gpt-5.6-luna): the snapshot satisfies
+        # the chain entry naming its base, and the route carries the id as
+        # served rather than the catalog spelling.
+        dated = _active("gpt-5.6-terra-2026-07-09", "openai", "gpt")
+        recommendation = resolve_model_recommendation(owner="hermes", active_models=[dated], category="deep")
+        self.assertEqual(recommendation["status"], "resolved")
+        self.assertEqual(recommendation["selected"]["model_alias"], "gpt-5.6-terra")
+        self.assertEqual(recommendation["selected"]["model_id"], "gpt-5.6-terra-2026-07-09")
+        qualified = _active("openai/gpt-5.6-terra-2026-07-09", "openai", "gpt")
+        self.assertEqual(
+            resolve_model_recommendation(owner="hermes", active_models=[qualified], category="deep")["status"],
+            "resolved",
+        )
+        # An explicit request for the base is met by its confirmed snapshot;
+        # a request pinned to a date is not met by an unpinned base.
+        self.assertEqual(
+            resolve_model_recommendation(owner="hermes", active_models=[dated], explicit_model="gpt-5.6-terra")["status"],
+            "resolved",
+        )
+        self.assertEqual(
+            resolve_model_recommendation(
+                owner="hermes",
+                active_models=[_active("gpt-5.6-terra", "openai", "gpt")],
+                explicit_model="gpt-5.6-terra-2026-07-09",
+            )["status"],
+            "choice_required",
+        )
+        # A date on a base no chain names still resolves nothing.
+        unknown = _active("gpt-7-nova-2026-07-09", "openai", "gpt")
+        self.assertEqual(
+            resolve_model_recommendation(owner="hermes", active_models=[unknown], category="deep")["status"],
+            "owner_default",
+        )
+
     def test_no_confirmed_candidate_uses_the_hermes_executor_default(self) -> None:
         route = resolve_model_route(
             "hermes",
@@ -173,13 +214,13 @@ class HermesRecommendationRoutingTests(unittest.TestCase):
             role="implementation",
             requested_category="quick",
             requested_domain="x_platform_data",
-            active_models=[_GLM_FAST, _OPUS],
+            active_models=[_GLM_FLASH, _OPUS],
         )
 
-        self.assertEqual(route["selected_model"], "zai/glm-5.2-ultrafast")
+        self.assertEqual(route["selected_model"], "zai/glm-5.3-flash")
         self.assertEqual(
             route["recommendation"]["projection"]["binding"],
-            "zai/glm-5.2-ultrafast",
+            "zai/glm-5.3-flash",
         )
         affinity = next(
             entry for entry in route["attempted"] if entry["stage"] == "domain_affinity"
@@ -288,7 +329,7 @@ class HermesRecommendationRoutingTests(unittest.TestCase):
                     {
                         "source": "omo",
                         "provider": "zai",
-                        "model_id": "glm-5.2-ultrafast",
+                        "model_id": "glm-5.3-flash",
                         "variant": "",
                         "timestamp": "",
                         "status": "confirmed_active",
@@ -308,7 +349,7 @@ class HermesRecommendationRoutingTests(unittest.TestCase):
         route = json.loads(stdout)
         self.assertEqual(route["category"], "quick")
         self.assertEqual(route["role"], "implementation")
-        self.assertEqual(route["selected_model"], "zai/glm-5.2-ultrafast")
+        self.assertEqual(route["selected_model"], "zai/glm-5.3-flash")
 
     def test_cli_routes_hermes_from_confirmed_discovery_and_freezes_missing_explicit(self) -> None:
         inventory = {

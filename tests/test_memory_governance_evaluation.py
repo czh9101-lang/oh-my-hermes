@@ -213,6 +213,43 @@ class SafetyAndEvaluationTests(unittest.TestCase):
                 self.assertEqual(governance.classify_memory_admission(content)["status"], "safe")
         self.assertEqual(governance.classify_memory_admission("token-based auth uses rotating tokens")["status"], "safe")
 
+    def test_the_shared_classifier_screens_protected_values_and_leaves_prose_shapes_alone(self) -> None:
+        # This primitive is shared: action gates, handoff manifests, batch
+        # identifiers and reviewer labels all call it, and several turn any
+        # non-safe verdict into a raise. So a line-shape heuristic must not
+        # live here -- an ordinary note whose lines open with "Error" or
+        # "User:" would fail, and fail by exception. The log/transcript shape
+        # is screened by the domain-vocabulary gate instead.
+        for label, content in (
+            ("prose opening with log-level words", "Error handling in the router is centralized.\nWarning banners use the amber token.\nDebug output goes to stderr."),
+            ("glossary with speaker labels", "User: the person at the keyboard.\nAssistant: the model.\nSystem: the harness."),
+            ("fields joined for one candidate", "Error budget\nError rate crossed 2% on Tuesday.\nError budget: error rate crossed 2% on Tuesday."),
+            ("a pasted log", "2026-09-11 08:12 starting run\n2026-09-11 08:13 fetched 12 rows\n2026-09-11 08:14 done\n"),
+        ):
+            with self.subTest(label=label):
+                self.assertEqual(governance.classify_memory_admission(content)["status"], "safe")
+
+        # A credential anywhere in that same material still blocks.
+        self.assertEqual(
+            governance.classify_memory_admission("INFO boot\nWARN retry\nERROR password=hunter2\n")["status"],
+            "blocked",
+        )
+
+    def test_the_log_and_transcript_shape_gate_lives_in_the_lane_that_can_refuse(self) -> None:
+        from omh.workflows.domain_intelligence_admission import _ensure_vocabulary_safe
+
+        for label, content in (
+            ("three full timestamps", "2026-09-11 08:12:01 one\n2026-09-11 08:12:02 two\n2026-09-11 08:12:03 three"),
+            ("raw log marker", "Traceback (most recent call last): boom"),
+            ("role marker", "User: why is the build red"),
+        ):
+            with self.subTest(label=label):
+                with self.assertRaises(ValueError):
+                    _ensure_vocabulary_safe(content)
+
+        # The same words inside ordinary prose stay usable.
+        _ensure_vocabulary_safe("Error handling in the router is centralized")
+
     def test_bare_credential_shapes_are_blocked_and_unknown_opaque_values_need_review(self) -> None:
         aws = "AK" + "IA" + "A" * 16
         github = "gh" + "p_" + "a" * 36

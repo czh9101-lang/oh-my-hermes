@@ -161,6 +161,18 @@ export default function register(sdk) {
   // host recorded. A zero with no provenance renders nothing: the reader
   // only sends a bare zero it can vouch for, but the check stays so this
   // surface never states a billing fact the row does not carry.
+  //
+  // A child the host could not price (a custom gateway provider, where
+  // Hermes' pricing produces no amount and stamps its `unknown` no-figure
+  // status -- `agent/usage_pricing.py:549`, persisted into the usage table
+  // by `agent/turn_usage.py:236,257`) reaches this function one of two
+  // ways, and the reader decides which. When OMH knows a rate for the
+  // model it sends the token-derived figure with the approximate flag, so
+  // the row reads `~$0.0431`. When it does not, the recorded zero and the
+  // host's own word arrive untouched and the row still reads
+  // `$0.0000 (unknown)`. Nothing here matches on that word -- the rule is
+  // the one above, and only a successful approximation changes what
+  // renders.
   function costSegmentText(row) {
     if (!Number.isFinite(row.cost_usd)) return ''
     if (row.cost_usd > 0) return `${row.cost_approximate ? '~' : ''}$${row.cost_usd.toFixed(4)}`
@@ -312,19 +324,28 @@ export default function register(sdk) {
     // Prepared-route provenance from the reader, rendered as one shape:
     // `category(model tag)`. The category names the LANE and never changes;
     // only the parenthesized model (and its state token) moves — a fallback
-    // lane reads `category(model fallback)`, and an exhausted chain running
-    // the parent's model reads `category(model inherit)` instead of being
-    // relabeled away from its category.
+    // lane reads `category(model fallback)`, an exhausted chain running the
+    // parent's model reads `category(model inherit)`, and a lane the tool
+    // routed to the model the parent itself runs reads
+    // `category(model =parent)` — its category survives, and the token says
+    // the dispatch cost what the parent costs. A child with no route record
+    // at all on the parent's model is the one plain `inherit(model)`: inherit
+    // is not a category, so it never wears the `category:` prefix.
     const routeOrigin = safeText(row.route_origin)
     const routeCategory = safeText(row.route_category)
-    const routeTag = routeOrigin === 'fallback' ? 'fallback'
+    // A fallback that landed on the parent's own model keeps both tokens:
+    // the fallback is what happened, `=parent` is what it cost.
+    const parentTag = row.same_as_parent === true ? '=parent' : ''
+    const routeTag = routeOrigin === 'fallback' ? ['fallback', parentTag].filter(Boolean).join(' ')
       : routeOrigin === 'exhausted_to_inherit' ? 'inherit'
-        : ''
+        : parentTag
     const routeDetail = [model, routeTag].filter(Boolean).join(' ')
     const displayCategory = routeOrigin === 'exhausted_to_inherit' && routeCategory ? routeCategory : category
-    const route = displayCategory
-      ? `category:${displayCategory}${routeDetail ? `(${routeDetail})` : ''}`
-      : model
+    const route = displayCategory === 'inherit'
+      ? `inherit${model ? `(${model})` : ''}`
+      : displayCategory
+        ? `category:${displayCategory}${routeDetail ? `(${routeDetail})` : ''}`
+        : model
     const routeKind = routeOrigin === 'fallback' || routeOrigin === 'exhausted_to_inherit' ? 'route-fallback' : 'route'
     return dispatchLane ? metricSegment('maestro', dispatchIdentity) : metricSegment(routeKind, route)
   }
@@ -618,29 +639,48 @@ export default function register(sdk) {
       ),
       ...nodes.map((node, index) => {
         const blockedBy = Array.isArray(node.blocked_by) ? node.blocked_by : []
-        const state = safeText(node.state) || 'unknown'
-        const marker = node.in_frontier
-          ? '[R]'
-          : failedStates.has(state)
-            ? '[!]'
-            : successStates.has(state)
-              ? '[+]'
-              : '[.]'
+        // `node.state` is the DISPATCH word: `running` means a marker exists,
+        // not that the work is moving. When the reader has assessed the
+        // unit's own output and found it stuck, that word REPLACES `running`
+        // on this line and carries its reason and stall age -- a supervisor
+        // reading `running` over a unit that has repeated one error for half
+        // an hour is the whole failure this surface exists to stop.
+        const dispatchState = safeText(node.state) || 'unknown'
+        const stuckState = safeText(node.unit_state)
+        const state = stuckState || dispatchState
+        const stallSeconds = Number(node.stalled_for_seconds) || 0
+        const stuckReason = stuckState
+          ? [safeText(node.state_reason), stallSeconds > 0 ? `${elapsedText(stallSeconds)} since new output` : '']
+              .filter(Boolean)
+              .join(', ')
+          : ''
+        const stuckSuffix = stuckReason ? ` (${stuckReason})` : ''
+        const marker = stuckState
+          ? '[~]'
+          : node.in_frontier
+            ? '[R]'
+            : failedStates.has(state)
+              ? '[!]'
+              : successStates.has(state)
+                ? '[+]'
+                : '[.]'
         const suffix = blockedBy.length ? ` · blocked_by ${blockedBy.map(safeText).join(' + ')}` : ''
         return h(
           Text,
           {
-            color: node.in_frontier
-              ? t.color.ok
-              : marker === '[!]'
-                ? t.color.error
-                : marker === '[+]'
-                  ? t.color.muted
-                  : t.color.text,
+            color: stuckState
+              ? t.color.warn
+              : node.in_frontier
+                ? t.color.ok
+                : marker === '[!]'
+                  ? t.color.error
+                  : marker === '[+]'
+                    ? t.color.muted
+                    : t.color.text,
             key: `${safeText(node.node_id)}-${index}`,
             wrap: 'truncate-end',
           },
-          graphLine(`  ${marker} ${safeText(node.node_id)} · ${state}${suffix}`),
+          graphLine(`  ${marker} ${safeText(node.node_id)} · ${state}${stuckSuffix}${suffix}`),
         )
       }),
     )
@@ -871,13 +911,24 @@ export default function register(sdk) {
     // no stall hint, same as before this signal existed.
     const answerable = !!(payload.activity && payload.activity.post_tool_call_observed)
     const live = answerable ? !!(payload.activity && payload.activity.live) : true
-    // The reader computes this age fresh on every read_omh_hud call (see
-    // `updated_age_seconds` in runtime_reader.py's `_todo_summary`) so it
-    // stays honest even when applySnapshot's byte-identical-payload check
-    // skips a repaint; a Date.now() computed here in render would freeze at
-    // whatever second it last actually rendered on an idle snapshot.
-    const stallElapsed = (() => {
-      if (live) return ''
+    // Colour and motion above answer "is anything running right now", which
+    // is an instantaneous reading and rightly flips the moment a call opens
+    // or closes. The elapsed hint below answers a different question -- has
+    // this checklist visibly stopped moving -- and that verdict is the
+    // READER's (`todo.stall` in runtime_reader.py's `_todo_stall`), so the
+    // TUI panel, the text HUD line and the per-turn reminder all state the
+    // same finding under the same rule instead of this renderer owning one
+    // copy of it. It fires only past the tool-call in-flight TTL, so a gap a
+    // single running call could still explain says nothing at all. The word
+    // is "unchanged", not "stalled": a plan waiting on the person is
+    // unchanged, and the payload's claim_boundary says so too.
+    // The age itself the reader computes fresh on every read_omh_hud call
+    // (see `updated_age_seconds`), so it stays honest even when
+    // applySnapshot's byte-identical-payload check skips a repaint; a
+    // Date.now() computed here in render would freeze at whatever second it
+    // last actually rendered on an idle snapshot.
+    const unchangedElapsed = (() => {
+      if (!todo.stall || todo.stall.status !== 'unchanged') return ''
       const seconds = todo.updated_age_seconds
       return Number.isFinite(seconds) ? elapsedText(Math.max(0, seconds)) : ''
     })()
@@ -924,9 +975,10 @@ export default function register(sdk) {
         h(Text, { color: t.color.muted }, `... (${count} ${side} task${count === 1 ? '' : 's'})`),
       )
     // The active item's text carries the colour wave ONLY while live; motion
-    // implies "actually running", so a stalled item renders as static warn
-    // text plus an elapsed hint instead -- the marker and indent stay the
-    // same shape either way, only the state they claim changes.
+    // implies "actually running", so a not-live item renders as static warn
+    // text instead, plus the reader's elapsed hint once the checklist has
+    // been unchanged long enough to be a finding -- the marker and indent
+    // stay the same shape either way, only the state they claim changes.
     const itemNode = (item, indent) =>
       item.state === 'active'
         ? live
@@ -940,7 +992,7 @@ export default function register(sdk) {
               Text,
               { wrap: 'truncate-end' },
               h(Text, itemProps(item), `${indent}${markers.active} ${truncateCells(item.text, budget)}`),
-              stallElapsed ? h(Text, { color: t.color.muted }, ` (stalled ${stallElapsed})`) : null,
+              unchangedElapsed ? h(Text, { color: t.color.muted }, ` (unchanged ${unchangedElapsed})`) : null,
             )
         : h(Text, itemProps(item), `${indent}${itemLabel(item)}`)
     const rows = []

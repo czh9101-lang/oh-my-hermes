@@ -9,10 +9,11 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from _local_package import load_local_package
-from _platform_support import requires_fcntl_locks, requires_symlinks
+from _platform_support import requires_enforced_file_lock, requires_symlinks
 
 load_local_package()
 from omh.paths import resolve_paths
+from omh.system import local_store
 from omh.workflows import memory_batches as memory_batches_workflow
 from omh.workflows.memory import (
     _memory_snapshots,
@@ -1546,7 +1547,7 @@ class MemoryBatchTests(TestCase):
 
             self.assertEqual(item["replay_evaluation"]["reason_code"], "review_required_legacy")
 
-    @requires_fcntl_locks
+    @requires_enforced_file_lock
     def test_two_process_apply_serializes_same_scope_and_preserves_different_scopes(self) -> None:
         for distinct_scopes in (False, True):
             with self.subTest(distinct_scopes=distinct_scopes), TemporaryDirectory() as home:
@@ -1572,3 +1573,47 @@ class MemoryBatchTests(TestCase):
                 self.assertCountEqual([queue.get(timeout=2), queue.get(timeout=2)], [("applied", first["batch_id"]), ("applied", second["batch_id"])])
                 ids = {item["item_id"] for item in build_handoff_context_pack(paths)["included_context"]}
                 self.assertTrue({first["items"][0]["item_id"], second["items"][0]["item_id"]} <= ids)
+
+
+class ScopePathContainmentTests(TestCase):
+    """The batch scope check is `memory_store`'s twin and carried its race."""
+
+    def test_containment_does_not_depend_on_how_much_of_the_path_exists(self) -> None:
+        real_resolve = Path.resolve
+
+        def existence_dependent_resolve(self_path: Path, strict: bool = False) -> Path:
+            resolved = real_resolve(self_path, strict=strict)
+            if self_path.exists():
+                return Path(str(resolved).replace("literal", "CANONICAL"))
+            return resolved
+
+        with TemporaryDirectory() as home:
+            base = Path(home) / "literal"
+            paths = resolve_paths(base / ".omh", base / ".hermes")
+            paths.memory_dir.mkdir(parents=True)
+            with patch.object(Path, "resolve", existence_dependent_resolve):
+                path = memory_batches_workflow._checked_scope_path(paths, "scopes/project.json")
+            self.assertEqual(path, paths.memory_dir / "scopes" / "project.json")
+
+    def test_a_symlinked_component_is_still_unsafe(self) -> None:
+        with TemporaryDirectory() as home:
+            paths = resolve_paths(Path(home) / ".omh", Path(home) / ".hermes")
+            paths.memory_dir.mkdir(parents=True)
+            outside = Path(home) / "outside"
+            outside.mkdir()
+            (paths.memory_dir / "scopes").symlink_to(outside, target_is_directory=True)
+
+            with self.assertRaisesRegex(ValueError, "scope path is unsafe"):
+                memory_batches_workflow._checked_scope_path(paths, "scopes/project.json")
+
+    def test_a_junction_component_is_unsafe_even_though_is_symlink_says_no(self) -> None:
+        with TemporaryDirectory() as home:
+            paths = resolve_paths(Path(home) / ".omh", Path(home) / ".hermes")
+            paths.memory_dir.mkdir(parents=True)
+            junction = paths.memory_dir / "scopes"
+            junction.mkdir()
+
+            with patch.object(local_store, "is_junction", lambda probe: probe == junction):
+                self.assertFalse(junction.is_symlink())
+                with self.assertRaisesRegex(ValueError, "scope path is unsafe"):
+                    memory_batches_workflow._checked_scope_path(paths, "scopes/project.json")

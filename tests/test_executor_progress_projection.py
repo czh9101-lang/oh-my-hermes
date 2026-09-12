@@ -9,6 +9,8 @@ from _local_package import load_local_package
 
 load_local_package()
 from omh.codex_progress import summarize_codex_jsonl_text
+from omh.coding.executor_progress import _ROUTING_CATEGORIES
+from omh.coding.model_routing import MODEL_CATEGORIES
 from omh.executor_progress import (
     build_progress_binding,
     build_safe_progress_signal,
@@ -22,6 +24,16 @@ from omh.runtime_artifacts import create_run, show_run, write_delegation
 
 
 class ExecutorProgressProjectionTests(unittest.TestCase):
+    def test_the_observed_category_allowlist_mirrors_the_closed_vocabulary(self) -> None:
+        """A category this surface does not list is dropped, not reported.
+
+        `_observed_category` blanks anything outside the allowlist, so a name
+        added to MODEL_CATEGORIES and forgotten here would strip the routed
+        label off every progress event with nothing failing to say so. Pin the
+        mirror instead of trusting two lists to be edited together.
+        """
+        self.assertEqual(_ROUTING_CATEGORIES, frozenset(MODEL_CATEGORIES))
+
     def test_codex_summary_projects_testing_progress_without_raw_jsonl(self) -> None:
         with TemporaryDirectory() as tmp:
             paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")

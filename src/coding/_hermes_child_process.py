@@ -48,8 +48,12 @@ class BoundedStreamCapture:
 class PipeDrainer:
     """Drain one pipe to EOF while retaining no more than the byte cap."""
 
-    def __init__(self, pipe: BinaryIO, *, name: str) -> None:
+    def __init__(self, pipe: BinaryIO, *, name: str, limit_bytes: int = MAX_CAPTURE_BYTES) -> None:
         self._pipe = pipe
+        # Per-instance so one caller can read a larger document without
+        # raising the cap for every child this module drains. The default is
+        # the shared cap; only a caller that states a reason passes more.
+        self._limit = max(0, int(limit_bytes))
         self._parts: list[bytes] = []
         self._retained = 0
         self._seen = 0
@@ -81,7 +85,7 @@ class PipeDrainer:
                 # Counted, never retained: this is what lets the truncation
                 # record name the real original size at zero memory cost.
                 self._seen += len(chunk)
-                remaining = MAX_CAPTURE_BYTES - self._retained
+                remaining = self._limit - self._retained
                 if remaining > 0:
                     kept = chunk[:remaining]
                     self._parts.append(kept)
@@ -97,12 +101,14 @@ class PipeDrainer:
             self.done.set()
 
 
-def start_pipe_drainers(process: subprocess.Popen[bytes]) -> tuple[PipeDrainer, PipeDrainer]:
+def start_pipe_drainers(
+    process: subprocess.Popen[bytes], *, limit_bytes: int = MAX_CAPTURE_BYTES
+) -> tuple[PipeDrainer, PipeDrainer]:
     """Start both readers before the child can fill either OS pipe."""
     if process.stdout is None or process.stderr is None:
         raise ValueError("Hermes child output pipes are required")
-    stdout = PipeDrainer(process.stdout, name=f"hermes-stdout-{process.pid}")
-    stderr = PipeDrainer(process.stderr, name=f"hermes-stderr-{process.pid}")
+    stdout = PipeDrainer(process.stdout, name=f"hermes-stdout-{process.pid}", limit_bytes=limit_bytes)
+    stderr = PipeDrainer(process.stderr, name=f"hermes-stderr-{process.pid}", limit_bytes=limit_bytes)
     stdout.start()
     stderr.start()
     return stdout, stderr
