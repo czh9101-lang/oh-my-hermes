@@ -4,6 +4,85 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 2.0.3 - 2026-09-12
+
+Everything merged since the 2.0.2 tag (2026-09-07). Highlights, grouped:
+
+- **A dispatched unit that stops working now says so.** A session limit read as
+  `crash`, a batch whose every unit failed exited 0, a worker alive for 36
+  minutes retrying one git workaround read as progress, and a plan with open
+  items sat unchanged while each turn ended on a status report. That whole
+  chain is closed. Provider refusals classify as limit-shaped, and any unit
+  carrying a `failure_kind` makes the command exit non-zero (a derived gate
+  fails any future exit-code mapper that maps failed work to 0). A unit's
+  execution state is named apart from its process: `running` requires new
+  evidence, and a live process without it is `progress_stalled`, beside
+  `awaiting_input`, `permission_blocked`, `account_limit`, `data_missing`,
+  `failed`, and `verified` — the only success state, which requires a validated
+  result record. Progress is read from the unit's own output, including the
+  same failure line repeating while bytes still grow. The status board, the
+  plugin reader, the TUI widget, and `omh coding fanout status --json` all
+  report that state with its reason and how long output has been still, and the
+  roster answers the supervisor's own question with `all_units_terminal` and
+  `stuck_units`.
+- **A unit is refused before the spawn when its workspace cannot take the
+  work.** File write, git index write, the objects the work needs actually
+  present (including a partial clone whose promisor fetch is forbidden), and
+  case-only filename collisions on a case-insensitive filesystem, all probed in
+  the unit's own isolation with no network call. A failing check ends the unit
+  as `workspace_blocked` before any CLI starts. Executor readiness stops
+  claiming more than it saw: a passing `--version` is `binary_version_only`.
+- **Recovery matches the cause.** A permission denial re-probes the workspace,
+  a limit checks the account and its reset before any retry, missing objects
+  are supplemented and verified before one unit resumes, and a stall is only
+  re-run with changed conditions or from a checkpoint. A live in-flight marker
+  on a scope outranks every cause: no second worker is added to work already
+  running. The account a CLI is configured with is recorded as a redacted
+  one-way tag so a limit can be told apart from the account that hit it.
+- **The plan drives the work.** Open items mean the plan is not finished: the
+  per-turn reminder says to advance the next item rather than end on a status
+  report, and it stops when every item is done or one is recorded blocked with
+  its reason. A plan that stops moving is a finding even while tool calls keep
+  running. A finished dispatch arrives as an event with the verb it owes —
+  verify, record, then recover or advance — and a continuation announced with
+  nothing started is reported back.
+- **Fixed: a grown `--help` page silently disabled the structured-session
+  lane.** The help probe was capped at 16 KiB; `claude --help` reached 21,401
+  bytes with `--verbose` past the cut, so the negotiation refused a protocol
+  the CLI does support, the spawn omitted `--output-format stream-json`, and
+  every Claude unit ran with no token counts and no session id to steer with —
+  visible only as an empty column. The help probe now gets a document-sized
+  budget, a truncated read still answers the question when every flag was found
+  in what was read, and a refusal states its reason.
+- **Setup and routing.** Provider entitlements are asked as one plain ticked
+  list with detected providers pre-ticked; the native-lane chain interview is
+  offered during setup; `capable`, `simple-work`, and `deep-work` join the model
+  categories. DeepSeek V4.1 Flash onboarded with superseded generations retired
+  from the shipped chains, and a vendor's dated snapshot id is recognized as the
+  base alias it is a snapshot of.
+- **Memory and HUD.** Past-session history routes to the session store rather
+  than a record; reviewed records and consolidation briefs reach the Hermes turn
+  with the host saying so; store containment is decided lexically instead of by
+  two resolves. A lane routed to the parent's own model keeps its category and
+  says `=parent`; a gateway child the host could not price is approximated with
+  its provenance.
+- **Install and update.** An `omh update` survives a symlinked plugin
+  directory; a Hermes profile registered at any OMH-managed skills path counts
+  as registered and opting out removes every one; the pre-pointer skills home is
+  a managed registration on managed installs too.
+- **Windows fixes found through "flaky" tests.** A sharing-denial retry for the
+  store write that silently dropped a record, and containment decided without a
+  resolve race. Both Windows shards now run to completion, and a process-global
+  interrupt flag is restored after every test that sets it, which was showing up
+  as a CI-only failure in whichever test ran next.
+- **Docs and gates.** Public documentation structure is gated by an offline
+  navigation check, the shipped chain table in `docs/INSTALLATION.md` is
+  generated and gated, and the two traps that cost a day of diagnosis (the stale
+  editable install, and concluding a platform fact settles a call site) are
+  written into `CLAUDE.md`.
+
+Entries recorded during the cycle, in full:
+
 - Added bounded GPT-6 Astra mode/service-tier contract inheritance and a deterministic `model_contract_coverage/v1` audit CLI for local model inventories, preserving exact-versus-declared provenance without treating catalog rows as provider availability or execution evidence.
 - Added a read-only shape view for one selected work artifact. The common facade supports registered handoff, plan, status, and review source schemas; the persisted wrapper path projects prompt/runtime handoffs plus every recorded `coding_briefing/v1` artifact through `omh runtime artifacts show-shape --artifact-id <id> --lens flow --json`, retaining the exact source schema rather than relabeling it. The lens vocabulary is `flow`, `structure`, `change`, `state`, and `ownership`, with each source family exposing only the lenses its fields can support, and every node and edge carries the source refs it was projected from. `ascii` is the default format, `tree` and `diff` are the other text formats (`diff` requires the `change` lens), and `mermaid` stays unavailable until a Mermaid capability is observed rather than inferred from a flag. An unknown artifact id, an unrecorded source, an unsupported lens or schema, unsafe content, or an exhausted render budget all come back as an explicit `unavailable` result with a named reason and an empty body. People keep asking Hermes about the work in plain language; the projection is a wrapper-facing selected action, and the command above is the observed operator/agent path into it. Showing a shape never advances the session, and it is not dispatch, execution, verification, review, CI, merge-readiness, or merge evidence.
 - Added `omh coding paired-run dispatch --decision <paired_run_decision/v1>` as an explicit operator/maintainer boundary for an already-committed paired-run decision. `--dry-run` prints the inert plan and launches nothing. Without `--dry-run`, dispatch refuses unless `--confirm-dispatch` is typed. A confirmed Hermes matrix requires one digest-matching `--task-file` per frozen task, an exact repository revision, and a provider; it reuses the sanctioned Hermes-child bridge, passes task bytes over stdin, runs independent cells with a derived concurrency ceiling of two in detached worktrees under an atomically unique invocation-owned parent, verifies the signed evaluation binding, removes only paths reserved by that invocation, and persists no task body. The paired path opts into that bounded scheduler while the child bridge remains single-dispatch by default for every other caller. A timed-out Git worktree command becomes one `crashed` cell with explicit partial-cleanup evidence rather than aborting the matrix. Executors without a receipt-capable adapter are refused without substitution, while caller-injected adapters remain the executor-neutral extension seam. The plan carries the isolation mode, shared-resource keys, launch waves, and the global/per-executor/per-provider concurrency and cost/time budgets derived from the frozen decision, never from CLI overrides. Execution evidence closes back into a decision only through an authenticated receipt fan-in: a missing, stale, mismatched, unauthenticated, partial, timed-out, cancelled, crashed, or rate-limited cell blocks the decision instead of degrading it, and behavior verdicts stay explicit request values rather than being read off exit codes or process output. Confirmed cells also write bounded metadata-only queue/start/finish and cleanup events, so `omh runtime health-summary --run-id <decision-id>` projects evaluation critical-path health directly.
