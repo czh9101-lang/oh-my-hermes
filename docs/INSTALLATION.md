@@ -958,6 +958,8 @@ and list what is installed with `/skills`. The one `/` entry OMH adds is
 registers as a modal app; it exists only in the Modern TUI, where the widget
 loads.
 
+![/omh-model in the Modern TUI: the same rows and keys as the CLI picker, over the transcript](../assets/omh-model-tui.png)
+
 The curl installer intentionally stops before setup. It installs the isolated
 command package and `omh` executable only. `omh setup` is the explicit,
 repairable step that installs generated managed skills and registers them with

@@ -53,7 +53,8 @@ const apps = []
 const held = { state: null, closed: false }
 const sdk = {
   Box: 'Box', Dialog: 'Dialog', Overlay: 'Overlay', Text: 'Text',
-  h: (type, props, ...children) => ({ type, props, children }),
+  // Function components expand so their text is in the frame, as on screen.
+  h: (type, props, ...children) => (typeof type === 'function' ? type({ ...(props || {}), children }) : { type, props, children }),
   defineWidgetApp: app => { apps.push(app); return app },
   openWidget() {},
   updateWidget: (app, fn) => { if (app && app.id === 'omh-model' && held.state) held.state = fn(held.state) },
@@ -77,11 +78,12 @@ for (const token of JSON.parse(keysJson)) {
   frames.push(render())
 }
 await settle(['saving'])
-console.log(JSON.stringify({
+const report = JSON.stringify({
   phase: held.state.phase, message: held.state.message, chains: held.state.chains, cursor: held.state.cursor,
   closed: held.closed, usage: app.init('extra') === null, frames,
-}))
-process.exit(0)
+})
+// A pipe write is asynchronous; exiting before it drains truncates the report.
+process.stdout.write(`${report}\n`, () => process.exit(0))
 """
 
 
@@ -147,15 +149,19 @@ class ModelWidgetTests(unittest.TestCase):
         for name in HERMES_MIXTURE_CATEGORY_CHAINS:
             self.assertIn(name, first)
         self.assertIn("gpt-6-astra", first)
-        self.assertIn("Enter save", first)
-        self.assertIn("1 unsaved change; Enter writes", result["frames"][-1])
+        self.assertIn("⏎", first)
+        self.assertIn("save", first)
+        self.assertIn("▍", result["frames"][-1])
+        self.assertIn("◂ ", result["frames"][-1])
+        self.assertIn("● edited", result["frames"][-1])
+        self.assertIn("1 unsaved change · ⏎ writes", result["frames"][-1])
         self.assertTrue(result["usage"])
 
     def test_escape_after_edits_writes_nothing(self) -> None:
         result, document, _ = self._drive(["right", "minus", "quit"])
         self.assertTrue(result["closed"])
         self.assertIsNone(document)
-        self.assertIn("edited", result["frames"][-1])
+        self.assertIn("● edited", result["frames"][-1])
 
     def test_default_clears_an_override_and_unknown_keys_are_swallowed(self) -> None:
         quick_index = list(HERMES_MIXTURE_CATEGORY_CHAINS).index("quick")
@@ -163,7 +169,7 @@ class ModelWidgetTests(unittest.TestCase):
         result, document, _ = self._drive(keys, overrides={"quick": OVERRIDE_QUICK})
         self.assertEqual(result["phase"], "saved", result["message"])
         self.assertEqual(document["categories"], {})
-        self.assertIn("override", result["frames"][0])
+        self.assertIn("◆ override", result["frames"][0])
 
     def test_enter_without_edits_closes_without_a_file(self) -> None:
         result, document, _ = self._drive(["down", "up", "enter"])

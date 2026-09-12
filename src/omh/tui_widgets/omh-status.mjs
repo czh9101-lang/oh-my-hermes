@@ -1229,23 +1229,46 @@ export default function register(sdk) {
       return {
         ...state,
         phase: 'saved',
-        message: `Saved ${count} categor${count === 1 ? 'y' : 'ies'} to ${pathText(result.path)}`,
+        message: `Saved ${count} categor${count === 1 ? 'y' : 'ies'} to ${homeText(result.path)}`,
       }
     }))
   }
-  const ModelPickerBody = ({ cols, rows, state, t }) => {
+  // The picker's design vocabulary, shared with the CLI picker frame: the
+  // cursor row sits on the theme's selection background with `◂ model ▸` and
+  // `− effort +` markers showing which keys act on which cell, effort bars
+  // are toned by rung, and a row's state is a glyph plus a word.
+  const EFFORT_TONE = { low: 'muted', medium: 'ok', high: 'warn', xhigh: 'primary', max: 'label' }
+  const STATE_GLYPH = { edited: '●', override: '◆', default: '·' }
+  const STATE_TONE = { edited: 'warn', override: 'primary', default: 'muted' }
+  const PICKER_KEYS = [['↑↓', 'category'], ['←→', 'head model'], ['−/+', 'effort'], ['d', 'default'], ['⏎', 'save'], ['esc', 'close']]
+  const homeText = value => {
+    const text = pathText(value)
+    const home = process.env.HOME || ''
+    return home && text.startsWith(home) ? `~${text.slice(home.length)}` : text
+  }
+  const clipCells = (text, width) => (text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`)
+  const PickerRule = ({ t, width }) => h(Text, { color: t.color.border }, '─'.repeat(Math.max(1, width)))
+  const PickerHint = ({ t }) => h(
+    Text,
+    { wrap: 'truncate-end' },
+    ...PICKER_KEYS.flatMap(([keys, what], index) => [
+      h(Text, { bold: true, color: t.color.primary }, `${index ? '   ' : ''}${keys}`),
+      h(Text, { color: t.color.muted }, ` ${what}`),
+    ]),
+  )
+  const ModelPickerBody = ({ cols, rows, state, t, width }) => {
     if (state.phase === 'loading') return [h(Text, { color: t.color.muted }, 'reading model chains…')]
     if (state.phase === 'error') {
       return [
         h(Text, { color: t.color.error }, state.message),
-        h(Text, { color: t.color.muted }, 'Esc closes · `omh model-chains` on a terminal is the same editor'),
+        h(Text, { color: t.color.muted }, 'esc closes · `omh model-chains` on a terminal is the same editor'),
       ]
     }
     if (state.phase === 'saved') {
       return [
-        h(Text, { color: t.color.ok }, state.message),
+        h(Text, { color: t.color.ok }, `✓ ${state.message}`),
         h(Text, { color: t.color.muted }, 'New delegations use this order; running children keep theirs.'),
-        h(Text, { color: t.color.muted }, 'Enter or Esc closes'),
+        h(Text, { color: t.color.muted }, '⏎ or esc closes'),
       ]
     }
     const payload = state.payload
@@ -1253,13 +1276,15 @@ export default function register(sdk) {
     const ring = payload.efforts
     const served = Object.fromEntries(payload.models.map(row => [row.alias, !!row.served]))
     const labels = Object.fromEntries(payload.models.map(row => [row.alias, safeText(row.label || row.alias)]))
-    // Dialog chrome, the detail block and the hint take twelve rows; the
-    // category list gets the rest and windows around the cursor when the
-    // terminal is shorter than the twelve categories need.
-    const visible = Math.max(3, Math.min(categories.length, rows - 12))
+    const inner = Math.max(40, width - 6)
+    // Dialog chrome, the header, the detail block and the hint take
+    // fourteen rows; the category list gets the rest and windows around the
+    // cursor when the terminal is shorter than the twelve categories need.
+    const visible = Math.max(3, Math.min(categories.length, rows - 14))
     const start = Math.max(0, Math.min(state.cursor - Math.floor(visible / 2), categories.length - visible))
     const lines = []
-    if (start > 0) lines.push(h(Text, { color: t.color.muted }, `  ↑ ${start} more`))
+    lines.push(h(Text, { color: t.color.muted, wrap: 'truncate-end' }, `   ${padCells('CATEGORY', 19)}${padCells('  HEAD MODEL', 26)}${padCells('  EFFORT', 16)}STATE`))
+    if (start > 0) lines.push(h(Text, { color: t.color.muted }, `   ↑ ${start} more`))
     categories.slice(start, start + visible).forEach((row, offset) => {
       const index = start + offset
       const chain = state.chains[row.category]
@@ -1267,30 +1292,47 @@ export default function register(sdk) {
       const isCursor = index === state.cursor
       const status = sameChain(chain, state.original[row.category]) ? row.origin : 'edited'
       const unserved = served[headModel] === false
+      const label = clipCells(`${labels[headModel] || safeText(headModel)}${unserved ? ' !' : ''}`, 21)
+      const tone = t.color[EFFORT_TONE[headEffort] || 'muted']
+      const cell = (text, color, extra) => h(Text, { color, ...(isCursor ? { backgroundColor: t.color.selectionBg, bold: true } : {}), ...(extra || {}) }, text)
       lines.push(h(
         Text,
-        { bold: isCursor, color: isCursor ? t.color.primary : t.color.text, wrap: 'truncate-end' },
-        `${isCursor ? '>' : ' '} ${padCells(safeText(row.category), 19)}${padCells(labels[headModel] || safeText(headModel), 24)}`,
-        `${effortCells(headEffort, ring)} ${padCells(headEffort || '-', 7)}`,
-        h(Text, { color: t.color.warn }, unserved ? '!' : ' '),
-        ` ${status}`,
+        { wrap: 'truncate-end' },
+        cell(isCursor ? ' ▍ ' : '   ', t.color.primary),
+        cell(padCells(safeText(row.category), 19), t.color.label),
+        cell(isCursor ? '◂ ' : '  ', t.color.primary),
+        cell(label, unserved ? t.color.error : t.color.text),
+        cell(isCursor ? ' ▸' : '  ', t.color.primary),
+        cell(' '.repeat(Math.max(0, 22 - label.length)), t.color.text),
+        cell(isCursor ? '− ' : '  ', t.color.primary),
+        cell(effortCells(headEffort, ring), isCursor ? t.color.primary : tone),
+        cell(isCursor ? ' +' : '  ', t.color.primary),
+        cell(` ${padCells(headEffort || '-', 7)}`, tone),
+        cell(`${STATE_GLYPH[status] || '·'} ${status}`, t.color[STATE_TONE[status] || 'muted']),
+        // The selection bar runs to the dialog's edge, not to the last word.
+        // 3 margin + 19 category + 26 model + 16 effort + 2 glyph-and-space.
+        cell(' '.repeat(Math.max(0, inner - 66 - status.length)), t.color.text),
       ))
     })
     const hidden = categories.length - start - visible
-    if (hidden > 0) lines.push(h(Text, { color: t.color.muted }, `  ↓ ${hidden} more`))
+    if (hidden > 0) lines.push(h(Text, { color: t.color.muted }, `   ↓ ${hidden} more`))
     const current = categories[state.cursor]
     const chain = state.chains[current.category]
     const defaultChain = chainPairs(current.default_chain)
     const changed = Object.keys(changedChains(state)).length
-    lines.push(h(Text, {}, ' '))
-    lines.push(h(Text, { wrap: 'truncate-end' }, h(Text, { bold: true, color: t.color.label }, `[${safeText(current.category)}]`), current.purpose ? ` ${safeText(current.purpose)}` : ''))
-    lines.push(h(Text, { wrap: 'truncate-end' }, `chain: ${chainText(chain)}`))
-    lines.push(h(Text, { color: t.color.muted, wrap: 'truncate-end' }, sameChain(chain, defaultChain) ? 'shipped default' : `shipped default: ${chainText(defaultChain)}`))
+    const headModel = chain[0][0]
+    lines.push(h(PickerRule, { t, width: inner }))
+    lines.push(h(Text, { wrap: 'truncate-end' }, h(Text, { bold: true, color: t.color.label }, `   ${safeText(current.category)}`), current.purpose ? h(Text, { color: t.color.muted }, ` · ${safeText(current.purpose)}`) : ''))
+    lines.push(h(Text, { wrap: 'truncate-end' }, h(Text, { color: t.color.muted }, `   ${padCells('chain', 18)}`), h(Text, { color: t.color.text }, chainText(chain))))
+    lines.push(h(Text, { color: t.color.muted, wrap: 'truncate-end' }, `   ${padCells('shipped default', 18)}${sameChain(chain, defaultChain) ? '✓ same as shipped' : chainText(defaultChain)}`))
     lines.push(h(
       Text,
       { color: changed ? t.color.warn : t.color.muted, wrap: 'truncate-end' },
-      changed ? `${plural(changed, 'unsaved change')}; Enter writes ${pathText(payload.path)}` : 'no unsaved changes; Enter or Esc leaves the file as it is',
+      changed ? `   ${plural(changed, 'unsaved change')} · ⏎ writes ${homeText(payload.path)}` : '   no unsaved changes · ⏎ or esc leaves the file as it is',
     ))
+    if (served[headModel] === false) {
+      lines.push(h(Text, { color: t.color.error, wrap: 'truncate-end' }, `   ! ${labels[headModel] || safeText(headModel)} is not served by this machine's recorded providers`))
+    }
     return lines
   }
   if (Overlay && Dialog) {
@@ -1332,21 +1374,24 @@ export default function register(sdk) {
         else return state
         return { ...state, chains: { ...state.chains, [name]: next } }
       },
-      render: ({ cols, rows, state, t }) => h(
-        Overlay,
-        { backdrop: true },
-        h(
-          Dialog,
-          {
-            hint: state.phase === 'ready'
-              ? '↑↓ category · ←→ head model · -/+ effort · d default · Enter save · Esc close'
-              : (state.phase === 'saving' ? 'writing…' : undefined),
-            title: 'OMH model chains',
-            width: Math.min(96, Math.max(48, cols - 4)),
-          },
-          ...ModelPickerBody({ cols, rows, state, t }),
-        ),
-      ),
+      render: ({ cols, rows, state, t }) => {
+        const width = Math.min(100, Math.max(56, cols - 4))
+        return h(
+          Overlay,
+          { backdrop: true },
+          h(
+            Dialog,
+            {
+              hint: state.phase === 'ready'
+                ? h(PickerHint, { t })
+                : (state.phase === 'saving' ? 'writing…' : undefined),
+              title: '⚚ OMH · Model chains',
+              width,
+            },
+            ...ModelPickerBody({ cols, rows, state, t, width }),
+          ),
+        )
+      },
     })
   }
 
