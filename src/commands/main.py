@@ -77,6 +77,7 @@ from .goal import (
     cmd_goal_create,
     cmd_goal_status,
 )
+from .handoff_risk_scan import add_handoff_risk_scan_command
 from .hermes import _add_hermes_commands, cmd_hermes_plan
 from .hud import _add_hud_commands, cmd_hud
 from .learning import (
@@ -269,6 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_quickstart_commands(sub)
     _add_docs_commands(sub)
     _add_harness_commands(sub)
+    add_handoff_risk_scan_command(sub)
     _add_cases_commands(sub)
     _add_playbook_commands(sub)
     _add_release_commands(sub)

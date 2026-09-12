@@ -46,6 +46,7 @@ references rather than normal user steps.
 | Apply Apple UI design/review/improvement guidance | [Apple Design Guidance](APPLE-DESIGN.md) |
 | Track the external skill sources our skills reconstruct | [Skill Upstream Sources](SKILL-SOURCES.md) |
 | Prepare coding work for a selected executor | [Delegation-First Completeness](DELEGATION_FIRST_COMPLETENESS.md) |
+| Inspect an unattended handoff's advisory risk signals (agents/operators) | [Handoff Risk Scan](HANDOFF-RISK-SCAN.md) |
 | Integrate OMH into a Hermes wrapper | [Hermes Agent Integration Runbook](HERMES_AGENT_INTEGRATION_RUNBOOK.md) |
 | Capture and recall reviewed project context | [Project Memory](MEMORY.md) |
 | Find out which stage failed when a saved memory was not used | [Memory Recall Incident](MEMORY-RECALL-INCIDENT.md) |

@@ -841,7 +841,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # is chased rather than waited on. Both belong in the always-loaded body --
 # they are read on every poll, and a supervisor that has already ended its turn
 # cannot be told afterwards which field it should have read; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 935543
+# 935543 -> 935940: #1495 adds the explicit post-composition advisory scan
+# before unattended handoff, including confirmation/error routing and the
+# no-permission boundary. The dispatching lane must read this before handoff;
+# warranted always-loaded guidance, re-derived from the full-profile producer.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 935940
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 

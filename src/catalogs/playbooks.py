@@ -277,7 +277,7 @@ _PLAYBOOKS = (
                 "handoff_or_retain",
                 "Prepare handoff or retain in Hermes",
                 "handoff-guide",
-                "Prepare a selected executor/runtime handoff only when accepted work requires code; otherwise keep research, planning, review, or status in Hermes.",
+                "Prepare a selected executor/runtime handoff only when accepted work requires code; otherwise keep research, planning, review, or status in Hermes. After composing a final unattended coding brief, explicitly request handoff-risk-scan over that brief and workspace metadata before handoff; route high_risk to existing confirmation or security-safety-review. A clear scan never grants permission.",
                 "coding_delegation/v1",
                 ("choose_executor", "show_prompt_handoff", "show_runtime_handoff", "send_to_executor", "show_status"),
                 ("prepared handoff or Hermes-owned result",),
