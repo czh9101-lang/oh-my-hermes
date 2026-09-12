@@ -96,6 +96,10 @@ RESUME_CLAIM_BOUNDARY = (
 TERMINAL_SUCCEEDED = "succeeded"
 TERMINAL_FAILED = "failed"
 TERMINAL_DECLINED = "declined"
+TERMINAL_INPUT_REQUIRED = "input_required"
+RESUME_INPUT_HOLDS = frozenset({"hold_input_required", "hold_input_cancelled", "hold_input_expired",
+    "hold_input_exhausted", "hold_input_stale", "hold_input_redispatched", "hold_input_redispatch_reserved",
+    "hold_input_explicit_unit_required"})
 TERMINAL_SKIPPED_BY_DEPENDENCY = "skipped_by_dependency"
 TERMINAL_NOT_ATTEMPTED = "not_attempted"
 # A unit whose process was running when the dispatch was stopped, or that was in
@@ -135,7 +139,7 @@ RESUME_RERUN_AWAITING_RETRY = "rerun_awaiting_retry"
 RESUME_RERUN_CANCELLED = "rerun_cancelled"
 
 RESUME_HOLD_ACTIONS = frozenset(
-    {RESUME_HOLD_SUCCEEDED, RESUME_HOLD_REPLAY_UNSAFE, RESUME_HOLD_BLOCKED_DEPENDENCY, RESUME_HOLD_DECLINED}
+    {RESUME_HOLD_SUCCEEDED, RESUME_HOLD_REPLAY_UNSAFE, RESUME_HOLD_BLOCKED_DEPENDENCY, RESUME_HOLD_DECLINED, *RESUME_INPUT_HOLDS}
 )
 RESUME_RERUN_ACTIONS = frozenset(
     {
@@ -144,6 +148,7 @@ RESUME_RERUN_ACTIONS = frozenset(
         RESUME_UNSKIP_DEPENDENT,
         RESUME_RERUN_AWAITING_RETRY,
         RESUME_RERUN_CANCELLED,
+        "rerun_answered",
     }
 )
 
@@ -511,6 +516,14 @@ def _unit_resume_decision(
             ),
             row=row,
         )
+    if prior_state == TERMINAL_INPUT_REQUIRED:
+        state = str(row.get("clarification_state", "prepared_not_answered"))
+        action = "rerun_answered" if state == "answered" else (
+            "hold_input_required" if state == "prepared_not_answered" else "hold_input_" + state)
+        if action not in RESUME_INPUT_HOLDS and action != "rerun_answered":
+            action = "hold_input_stale"
+        return _decision(unit_id, prior_state=prior_state, action=action,
+            reason="parent decision " + state + "; original workspace must remain unchanged", row=row)
     if not bool(row.get("replay_safe")):
         return _decision(
             unit_id,
@@ -615,7 +628,7 @@ def _decision(
         # only record a skip for it. Its prior verdict rides along so the next
         # journal restates it instead of downgrading a refused replay to
         # "never attempted".
-        decision["carry_forward"] = {key: row[key] for key in _JOURNAL_UNIT_KEYS if key in row}
+        decision["carry_forward"] = {key: row[key] for key in (*_JOURNAL_UNIT_KEYS, "attempt_id", "clarification_state") if key in row}
     return decision
 
 
@@ -634,6 +647,8 @@ def _carried_forward(entry: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def _terminal_state(entry: Mapping[str, Any]) -> str:
+    if entry.get("status") == "input_required":
+        return TERMINAL_INPUT_REQUIRED
     if entry.get("status") in _SUCCEEDED_STATUSES or bool(entry.get("process_succeeded")):
         return TERMINAL_SUCCEEDED
     if entry.get("status") in {"blocked_by_dependency", "blocked_by_cancelled_dependency", 'blocked_by_capacity_dependency'}:
@@ -693,8 +708,8 @@ def _failure_classification(entry: Mapping[str, Any], *, state: str = "") -> dic
         return {'failure_class': str(entry['status']), 'failure_label': ''}
     if state == TERMINAL_DECLINED:
         return {"failure_class": FAILURE_CLASS_DECLINED_CONCLUSIVE, "failure_label": ""}
-    if state == TERMINAL_CANCELLED:
-        # A cancelled unit observed no failure. Classifying its signal exit code
+    if state in {TERMINAL_CANCELLED, TERMINAL_INPUT_REQUIRED}:
+        # A cancelled or decision-blocked unit observed no implementation failure. Classifying its signal exit code
         # would attribute a fault to work that was never allowed to reach a
         # verdict, and the recovery interview reads this field.
         return {"failure_class": "", "failure_label": ""}

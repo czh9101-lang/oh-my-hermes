@@ -76,6 +76,8 @@ class HookManifestTests(unittest.TestCase):
         self.assertIn("pre_llm_call", hooks)
         self.assertIn("omh_awareness_primer", hooks["pre_llm_call"]["payload_fields"])
         self.assertIn("omh_context_brief", hooks["pre_llm_call"]["payload_fields"])
+        self.assertIn("omh_active_workflow", hooks["pre_llm_call"]["payload_fields"])
+        self.assertIn("omh_context_budget", hooks["pre_llm_call"]["payload_fields"])
         self.assertIn("omh_route_hint", hooks["pre_llm_call"]["payload_fields"])
         self.assertIn("bounded_status_context", hooks["pre_llm_call"]["payload_fields"])
         self.assertNotIn("omh_generic_tool_checkpoint", hooks["pre_tool_call"]["payload_fields"])

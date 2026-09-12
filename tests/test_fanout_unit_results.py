@@ -153,13 +153,20 @@ class FanoutUnitResultTests(unittest.TestCase):
     def test_accepts_every_declared_process_status(self) -> None:
         self.assertEqual(
             FANOUT_UNIT_RESULT_PROCESS_STATUSES,
-            ("process_succeeded", "process_failed", "process_declined"),
+            ("process_succeeded", "process_failed", "process_declined", "input_required"),
         )
         for status in FANOUT_UNIT_RESULT_PROCESS_STATUSES:
             with self.subTest(status=status):
                 overrides: dict[str, object] = {"process_status": status}
                 if status == "process_declined":
                     overrides["decline_reason"] = "target_not_found"
+                if status == "input_required":
+                    overrides["input_required"] = {
+                        "decision_id": "decision-d1", "question": "Choose output format",
+                        "blocking_reason": "The encoding determines implementation",
+                        "answer_shape": {"kind": "options", "options": ["json", "text"]},
+                        "affected_unit_ids": [VALID_PAYLOAD["unit_id"]], "redacted_context": [],
+                    }
                 self.assertEqual(validate_unit_result(_payload(**overrides))["process_status"], status)
 
     def test_process_declined_requires_a_closed_decline_reason(self) -> None:

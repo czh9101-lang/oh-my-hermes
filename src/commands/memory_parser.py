@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 
 from ..plugin_bundle.omh.memory_blocks import DEFAULT_BLOCK_LIMIT_CHARS
-from ..plugin_bundle.omh.memory_governance import SOURCE_CLASSES
+from ..plugin_bundle.omh.memory_governance import SCOPE_KINDS, SOURCE_CLASSES
 from ..workflows.memory import MEMORY_ATTENTION_TIERS
 from . import memory
 from .domain_intelligence_parser import add_domain_intelligence_commands
@@ -40,7 +40,7 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     capture.add_argument("--type", choices=("fact", "decision", "lesson", "procedure", "episode"), default="fact", help="Typed memory record category.")
     capture.add_argument("--content", default="", help="Optional raw source text. It is hashed/length-counted, not persisted raw.")
     capture.add_argument("--stdin", action="store_true", help="Read optional raw source text from stdin without persisting it raw.")
-    capture.add_argument("--scope-kind", choices=("project", "target", "thread", "run"), default="project")
+    capture.add_argument("--scope-kind", choices=tuple(sorted(SCOPE_KINDS)), default="project")
     capture.add_argument("--scope-ref", default="default")
     capture.add_argument("--source", default="cli")
     capture.add_argument(
@@ -103,11 +103,33 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     _add_candidate_revision_argument(reject, "reject")
     reject.set_defaults(func=memory.cmd_memory_reject)
 
+    incident = memory_sub.add_parser(
+        "recall-incident",
+        help="Diagnose one expected memory from local evidence without changing memory.",
+    )
+    anchor = incident.add_mutually_exclusive_group(required=True)
+    anchor.add_argument("--record-id", default="", help="Expected OMH record or candidate ID.")
+    anchor.add_argument("--claim-digest", default="", help="SHA256 of the exact expected claim.")
+    incident.add_argument("--query", default="", help="Recall query; only its digest is retained.")
+    incident.add_argument("--session-id", default="")
+    incident.add_argument("--scope-kind", choices=tuple(sorted(SCOPE_KINDS)), default="project")
+    incident.add_argument("--scope-ref", default="default")
+    incident.add_argument("--observer", default=None)
+    incident.add_argument("--observed", default=None)
+    incident.add_argument("--limit", type=int, default=6)
+    incident.add_argument("--max-chars", type=int, default=None)
+    incident.add_argument(
+        "--provider-served-count", type=int, default=None,
+        help="Optional aggregate count; never authoritative record-delivery evidence.",
+    )
+    incident.add_argument("--write", action="store_true", help="Save only the metadata incident artifact.")
+    incident.set_defaults(func=memory.cmd_memory_recall_incident)
+
     recall = memory_sub.add_parser("recall", help="Recall reviewed OMH project memory for a task as prepared context.")
     recall.add_argument("query", nargs="*", help="Task/query text used for deterministic keyword recall.")
     recall.add_argument("--executor", default="generic", help="Executor target label to record in the recall pack.")
     recall.add_argument("--session-id", default="", help="Optional wrapper session id to bind to the recall pack.")
-    recall.add_argument("--scope-kind", choices=("project", "target", "thread", "run"), default=None)
+    recall.add_argument("--scope-kind", choices=tuple(sorted(SCOPE_KINDS)), default=None)
     recall.add_argument("--scope-ref", default=None)
     recall.add_argument("--limit", type=int, default=6)
     recall.add_argument(

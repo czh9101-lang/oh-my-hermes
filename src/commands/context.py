@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
+import sys
+
+from ..plugin_bundle.omh.context_budget_plan_capacity import parse_must_keep, parse_route_capacity_input
+from ..runtime.context_budget_plan import (
+    build_route_identity, context_budget_plan_status, prepare_context_budget_plan, rebind_context_budget_plan,
+)
 
 from ..context import build_context_brief
 from ..workflows.hermes_achievements import observe_achievements
@@ -85,6 +93,38 @@ def _print_context_brief_summary(payload: dict[str, object]) -> None:
     print("For machine-readable output, rerun with `--json`.")
 
 
+def cmd_context_budget_plan(args: argparse.Namespace) -> int:
+    """Agent-facing publication; never fetch limits or perform compaction."""
+    try:
+        paths = _paths(args)
+        if args.budget_operation == "status":
+            payload = context_budget_plan_status(paths, session_ref=args.session_ref)
+        else:
+            identity = build_route_identity(args.executor_profile, args.provider, args.model)
+            raw = Path(args.capacity).read_text(encoding="utf-8") if args.capacity else json.dumps({"schema_version": "route_capacity_input/v1"})
+            capacity = parse_route_capacity_input(raw)
+            if args.budget_operation == "prepare":
+                pack = parse_must_keep(Path(args.must_keep).read_text(encoding="utf-8"))
+                payload = prepare_context_budget_plan(paths, session_ref=args.session_ref, identity=identity, capacity=capacity, must_keep=pack)
+            else:
+                payload = rebind_context_budget_plan(paths, session_ref=args.session_ref, identity=identity, capacity=capacity)
+    except (OSError, ValueError, UnicodeError, RecursionError) as exc:
+        print(f"Context budget plan unavailable: {type(exc).__name__}", file=sys.stderr)
+        return 2
+    if _wants_json(args):
+        _print_json(payload)
+    else:
+        record = payload["route_capacity"]
+        route = record["route_identity"]
+        print(f"Context budget: {route['executor_profile']} / {route['provider'] or 'unknown'} / {route['wire_model']}")
+        print(f"Usable tokens: {record['usable_budget_tokens']['value']} ({record['usable_budget_tokens']['class']})")
+        for name, evidence in record["capacity"].items():
+            print(f"  {name}: {evidence['value']} ({evidence['class']}; {evidence['source']}; clock={evidence['observed_at'] or 'unknown'})")
+        print(f"Continuation: {payload['invalidation']['action']} ({payload['invalidation']['reason']})")
+        print("Prepared obligation only. Provider usage, compaction and billing: not observed.")
+    return 0
+
+
 def _add_context_commands(sub) -> None:
     context = sub.add_parser("context", help="Build compact Hermes-facing OMH context for wrappers or plugin hosts.")
     context_sub = context.add_subparsers(dest="context_command", required=True)
@@ -100,3 +140,18 @@ def _add_context_commands(sub) -> None:
     )
     brief.add_argument("--json", action="store_true", help="Print machine-readable context payload.")
     brief.set_defaults(func=cmd_context_brief)
+
+    budget = context_sub.add_parser("budget-plan", help="Agent/operator route-bound context plan publication and status.")
+    operations = budget.add_subparsers(dest="budget_operation", required=True)
+    for operation in ("prepare", "rebind", "status"):
+        parser = operations.add_parser(operation)
+        parser.add_argument("--session-ref", required=True)
+        parser.add_argument("--json", action="store_true")
+        if operation != "status":
+            parser.add_argument("--executor-profile", required=True)
+            parser.add_argument("--provider", default="", help="Explicit provider identity; absent stays unknown.")
+            parser.add_argument("--model", required=True, help="Exact host wire-model spelling, not a family alias.")
+            parser.add_argument("--capacity", help="Local route_capacity_input/v1 JSON; absent limits stay unknown.")
+        if operation == "prepare":
+            parser.add_argument("--must-keep", required=True, help="JSON digest and estimated_tokens_total; never pack content.")
+        parser.set_defaults(func=cmd_context_budget_plan)

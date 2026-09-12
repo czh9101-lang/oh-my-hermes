@@ -53,6 +53,7 @@ from ..workflows.observation_journal import (
     read_observation_events_result,
 )
 from .fanout_contracts import FANOUT_ID_PATTERN
+from .fanout_clarification import clarification_evidence, read_clarification, clarification_path, clarification_state
 from .fanout_failure_diagnostics import is_object_list, is_string_map
 from .fanout_executor_sessions import (
     duplicate_session_references, observe_session_workspace, project_session_resume,
@@ -81,6 +82,7 @@ FANOUT_STATUS_CLAIM_BOUNDARY = (
 # observed successful result.
 FANOUT_UNIT_STATES = (
     "not_dispatched",
+    "input_required",
     "dispatched_not_succeeded",
     "process_succeeded",
     "result_schema_valid",
@@ -144,6 +146,16 @@ def project_fanout_status(paths: OmhPaths, fanout_id: str, *, unit_id: str | Non
     except (OSError, ValueError, RecursionError):
         contract = None  # Legacy journal-only status stays readable; resume is unavailable.
     for unit in units:
+        request = read_clarification(clarification_path(paths, validated_id, str(unit['unit_id'])))
+        clarification = clarification_evidence(request, events_by_unit[str(unit['unit_id'])])
+        if clarification is not None and request is not None:
+            unit['clarification'] = clarification
+            unit['clarification_state'] = clarification_state(request)
+            if clarification['redispatch'] == 'none':
+                unit['lifecycle_state'] = 'input_required'
+                unit['process_succeeded'] = False
+                unit['unit_verification_observed'] = False
+                unit['integration_ready'] = False
         unit['resume'] = _resume_for_unit(unit, contract, duplicates)
         current = None
         seen: set[str] = set()

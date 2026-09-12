@@ -283,6 +283,10 @@ class OmhPaths:
         return self.memory_dir / "index.json"
 
     @property
+    def memory_incidents_dir(self) -> Path:
+        return self.memory_dir / "incidents"
+
+    @property
     def memory_operations_dir(self) -> Path:
         return self.memory_dir / "operations"
 

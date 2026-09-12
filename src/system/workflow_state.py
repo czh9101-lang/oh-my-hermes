@@ -7,16 +7,15 @@ from typing import Any
 from ..local_store import file_lock, read_json_object, utc_now
 from ..paths import OmhPaths
 from ..skill_pack import routable_skill_names
+from ..plugin_bundle.omh.active_workflow_context_state import (
+    ALLOWED_TRANSITIONS as ALLOWED_TRANSITIONS,
+    session_fingerprint,
+    valid_session_binding,
+)
 from .record_revision import DuplicateMutationReplay, guarded_record_update
 
 SCHEMA_VERSION = 1
-LIFECYCLE_OUTCOMES = ("finished", "blocked", "failed", "user_interlude", "question_pending")
-
-ALLOWED_TRANSITIONS: dict[str, tuple[str, ...]] = {
-    "deep-interview": ("plan", "ralplan"),
-    "plan": ("ultrawork", "ultraqa"),
-    "ralplan": ("ultrawork", "ultraqa"),
-}
+LIFECYCLE_OUTCOMES = ("finished", "blocked", "failed", "user_interlude", "question_pending", "cancelled")
 
 
 class WorkflowStateError(ValueError):
@@ -45,7 +44,18 @@ def read_workflow_state(paths: OmhPaths, workflow: str) -> dict[str, Any] | None
         return None
     if data.get("workflow") not in {None, workflow}:
         raise WorkflowStateError(f"state file {path} belongs to {data.get('workflow')!r}")
+    reference = data.get("session_ref", "")
+    if not isinstance(reference, str) or (reference and not valid_session_binding(reference)):
+        raise WorkflowStateError("invalid workflow session binding")
+    if data.get("session_binding", "bound" if reference else "unbound") != ("bound" if reference else "unbound"):
+        raise WorkflowStateError("inconsistent workflow session binding")
     return data
+
+
+def _require_session(stored_ref: str, session_ref: str) -> None:
+    """Every mutation of a bound record requires its exact host session."""
+    if stored_ref and (not session_ref or stored_ref != session_fingerprint(session_ref)):
+        raise WorkflowStateError("matching session_ref required for bound workflow state")
 
 
 def read_workflow_state_result(paths: OmhPaths, workflow: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -120,10 +130,11 @@ def _write_workflow_state(paths: OmhPaths, workflow: str, record: dict[str, Any]
     return result.record if isinstance(result, DuplicateMutationReplay) else result
 
 
-def finish_workflow_state(paths: OmhPaths, workflow: str, outcome: str = "finished", note: str = "") -> dict[str, Any]:
+def finish_workflow_state(paths: OmhPaths, workflow: str, outcome: str = "finished", note: str = "", *, session_ref: str = "") -> dict[str, Any]:
     validate_workflow_name(workflow)
     with file_lock(_workflow_state_lock_anchor(paths), private=True):
         state = read_workflow_state(paths, workflow)
+        _require_session((state or {}).get("session_ref", ""), session_ref)
         result = _terminal_state(workflow, state, outcome, note)
         return _write_workflow_state(paths, workflow, result)
 
@@ -132,7 +143,7 @@ def _transition_allowed(source: str, destination: str) -> bool:
     return destination in ALLOWED_TRANSITIONS.get(source, ())
 
 
-def start_workflow_state(paths: OmhPaths, workflow: str, note: str = "") -> dict[str, Any]:
+def start_workflow_state(paths: OmhPaths, workflow: str, note: str = "", *, session_ref: str = "") -> dict[str, Any]:
     validate_workflow_name(workflow)
     # Read the active set and write every state file it authorizes inside one
     # lock. Reading outside the lock let two concurrent starts each observe an
@@ -143,11 +154,23 @@ def start_workflow_state(paths: OmhPaths, workflow: str, note: str = "") -> dict
         if errors:
             first = errors[0]
             raise WorkflowStateError(f"cannot start workflow while state is unreadable: {first['path']}: {first['error']}")
+        if len(active) > 1:
+            raise WorkflowStateError("multiple active workflows require explicit recovery")
+        target = read_workflow_state(paths, workflow)
+        _require_session((target or {}).get("session_ref", ""), session_ref)
+        for current in active:
+            _require_session(current.get("session_ref", ""), session_ref)
+        binding = {
+            "session_binding": "bound" if session_ref else "unbound",
+            "activation": {"source": "explicit_api", "observed_by_host": "not_observed"},
+        }
+        if session_ref:
+            binding["session_ref"] = session_fingerprint(session_ref)
         now = utc_now()
         for current in active:
             source = str(current.get("workflow", ""))
             if source == workflow:
-                updated = {**current, "schema_version": SCHEMA_VERSION, "active": True, "updated_at": now}
+                updated = {**current, **binding, "schema_version": SCHEMA_VERSION, "active": True, "updated_at": now}
                 if note:
                     updated["note"] = note
                 return _write_workflow_state(paths, workflow, updated)
@@ -158,6 +181,7 @@ def start_workflow_state(paths: OmhPaths, workflow: str, note: str = "") -> dict
             completed = _terminal_state(source, current, "finished", f"auto-completed before starting {workflow}", workflow)
             _write_workflow_state(paths, source, completed)
         state = {
+            **binding,
             "schema_version": SCHEMA_VERSION,
             "workflow": workflow,
             "active": True,
@@ -170,9 +194,13 @@ def start_workflow_state(paths: OmhPaths, workflow: str, note: str = "") -> dict
         return _write_workflow_state(paths, workflow, state)
 
 
-def clear_workflow_state(paths: OmhPaths, workflow: str) -> bool:
+def clear_workflow_state(paths: OmhPaths, workflow: str, *, session_ref: str = "") -> bool:
     path = workflow_state_path(paths, workflow)
-    if not path.exists():
-        return False
-    path.unlink()
-    return True
+    with file_lock(_workflow_state_lock_anchor(paths), private=True):
+        state = read_workflow_state(paths, workflow)
+        _require_session((state or {}).get("session_ref", ""), session_ref)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return False
+        return True

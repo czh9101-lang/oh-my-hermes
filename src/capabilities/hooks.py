@@ -98,6 +98,8 @@ def _hook_payload_fields(name: str) -> list[str]:
             "omh_context_brief",
             "omh_route_hint",
             "omh_degradation",
+            "omh_active_workflow",
+            "omh_context_budget",
             "bounded_status_context",
             "redacted",
         ]

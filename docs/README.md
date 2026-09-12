@@ -48,6 +48,7 @@ references rather than normal user steps.
 | Prepare coding work for a selected executor | [Delegation-First Completeness](DELEGATION_FIRST_COMPLETENESS.md) |
 | Integrate OMH into a Hermes wrapper | [Hermes Agent Integration Runbook](HERMES_AGENT_INTEGRATION_RUNBOOK.md) |
 | Capture and recall reviewed project context | [Project Memory](MEMORY.md) |
+| Find out which stage failed when a saved memory was not used | [Memory Recall Incident](MEMORY-RECALL-INCIDENT.md) |
 | Answer what a web page said as of a date, or compare then versus now | [Temporal Source Receipts](TEMPORAL-SOURCE-RECEIPTS.md) |
 | Judge whether a realtime voice connector keeps whole spoken turns | [Realtime Voice Trial Receipts](REALTIME-VOICE-TRIAL-RECEIPTS.md) |
 | See which OMH workflow owns each plugin in the active host catalog | [Plugin Catalog Coverage](PLUGIN-CATALOG-COVERAGE.md) |
@@ -145,6 +146,7 @@ findable only by knowing its filename.
 | Bounded feedback rounds over a closed design-direction set | [Design Direction Iterations](DESIGN-DIRECTION-ITERATIONS.md) |
 | Deterministic comparison of submitted cross-harness machine facts | [Cross-Harness Benchmark](CROSS_HARNESS_BENCHMARK.md) |
 | Freshness identity behind `omh goal checkpoint` and quality-evidence assessment | [Working-Tree Fingerprint](WORKING-TREE-FINGERPRINT.md) |
+| Provider-neutral input fidelity and per-attempt sync receipts for an optional memory provider | [Memory Sync Fidelity](MEMORY-SYNC-FIDELITY.md) |
 | Bounded retry/replan/stop/escalate decisions for an observed error | [Failure Mender](failure-mender.md) |
 
 ## Documentation Checks

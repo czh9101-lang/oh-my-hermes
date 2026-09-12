@@ -36,6 +36,7 @@ import stat
 from typing import Callable, Mapping, Sequence
 
 from .fanout_contracts import FANOUT_ID_PATTERN
+from .fanout_clarification_schema import parse_input_required
 
 
 FANOUT_UNIT_RESULT_SCHEMA_VERSION = "fanout_unit_result/v1"
@@ -49,7 +50,7 @@ FANOUT_UNIT_RESULT_SCHEMA_VERSION = "fanout_unit_result/v1"
 # executor's to assert here -- a decline is reportable precisely because it is
 # not a claim of success or of a bug, so there is nothing here for the
 # dispatcher to launder.
-FANOUT_UNIT_RESULT_PROCESS_STATUSES = ("process_succeeded", "process_failed", "process_declined")
+FANOUT_UNIT_RESULT_PROCESS_STATUSES = ("process_succeeded", "process_failed", "process_declined", "input_required")
 # The closed reasons a decline may cite. `decline_reason` is required exactly
 # when `process_status` is `process_declined` and refused otherwise, enforced
 # by `_validated_process_status_and_decline_reason` below.
@@ -133,6 +134,10 @@ def validate_unit_result(payload: Mapping[str, object]) -> dict[str, object]:
         payload.get("process_status"), "process_status", FANOUT_UNIT_RESULT_PROCESS_STATUSES
     )
     _validate_decline_reason(payload, result)
+    if result["process_status"] == "input_required":
+        result["input_required"] = parse_input_required(payload.get("input_required"), str(result["unit_id"]))
+    elif "input_required" in payload:
+        raise ValueError("input_required is only valid with process_status input_required")
     result["changed_paths"] = _validated_changed_paths(payload.get("changed_paths"))
     result["checks"] = _validated_checks(payload.get("checks"))
     result["findings"] = _validated_findings(payload.get("findings"))

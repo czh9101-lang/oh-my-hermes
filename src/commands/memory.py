@@ -61,6 +61,11 @@ from ..memory import (
 )
 from ..system.local_store import read_json_object_result
 from ..workflows.memory_evaluation import run_memory_evaluation, run_memory_retrieval_evaluation
+from ..workflows.memory_recall_incident import (
+    RecallIncidentRequest,
+    build_memory_recall_incident,
+    write_memory_recall_incident,
+)
 from ..workflows.memory_lifecycle import (
     apply_memory_correction,
     apply_memory_prune,
@@ -260,6 +265,32 @@ def cmd_memory_recall(args: argparse.Namespace) -> int:
             observed=args.observed,
             query_intent=args.intent,
         )
+    except (OSError, ValueError) as exc:
+        raise OmhError(str(exc)) from exc
+    _print_json(payload)
+    return 0
+
+
+def cmd_memory_recall_incident(args: argparse.Namespace) -> int:
+    try:
+        request = RecallIncidentRequest(
+            record_id=args.record_id,
+            claim_digest=args.claim_digest,
+            query=args.query,
+            session_id=args.session_id,
+            scope_kind=args.scope_kind,
+            scope_ref=args.scope_ref,
+            observer=args.observer,
+            observed=args.observed,
+            limit=args.limit,
+            max_chars=args.max_chars,
+            provider_served_count=args.provider_served_count,
+        )
+        paths = _paths(args)
+        if args.write:
+            payload = write_memory_recall_incident(paths, request)
+        else:
+            payload = build_memory_recall_incident(paths, request)
     except (OSError, ValueError) as exc:
         raise OmhError(str(exc)) from exc
     _print_json(payload)

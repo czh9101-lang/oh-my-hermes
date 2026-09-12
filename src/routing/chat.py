@@ -3042,6 +3042,13 @@ def _agent_ops_status_freeform_match(value: str) -> bool:
 # The technical-domain lanes whose trigger vocabulary doubles as the vocabulary
 # of a question about the term itself.
 _DOMAIN_LANE_FAST_PATH_SKILLS = frozenset({"backend", "rust", "native-debugging"})
+_MEMORY_RECALL_INCIDENT_CUES = (
+    "why was my saved response preference not used",
+    "why was my saved preference not used",
+    "did not use my preference",
+    "forgot my preference",
+    "memory was not used",
+)
 _OPERATOR_SURFACE_FAST_PATH_RULES: tuple[tuple[str, tuple[str, ...], str, str], ...] = (
     (
         "ralplan",
@@ -3544,6 +3551,12 @@ _OPERATOR_SURFACE_FAST_PATH_RULES: tuple[tuple[str, tuple[str, ...], str, str], 
         ),
         "operator_surface_fast_path:memory_new",
         "Clear new-memory capture request; prepare a reviewed candidate without routing to existing-memory curation.",
+    ),
+    (
+        "memory-sync",
+        _MEMORY_RECALL_INCIDENT_CUES,
+        "operator_surface_fast_path:memory_recall_incident",
+        "Expected memory recall complaint; inspect evidence through memory-sync without authorizing a write.",
     ),
     (
         "memory-sync",
@@ -4507,6 +4520,10 @@ def _operator_surface_fast_path_match(
         if skill == "live-info-operator" and normalized_pattern == "환율" and "전환율" in text:
             continue
         if skill == "memory-new" and _memory_new_scope_overroutes_curation(text):
+            continue
+        if marker == "operator_surface_fast_path:memory_recall_incident":
+            if contains_cue_phrase(message, (phrase,)):
+                return skill, phrase, marker, reason
             continue
         if normalized_pattern in text or (normalized_compact and normalized_compact in compact):
             return skill, phrase, marker, reason
@@ -7115,7 +7132,7 @@ def _is_narration_not_request(message: str) -> bool:
         return False
     if contains_cue_phrase(normalized, _NARRATION_DECLINE_CUES):
         return True
-    if contains_cue_phrase(normalized, _NARRATION_REQUEST_PHRASES):
+    if contains_cue_phrase(normalized, _NARRATION_REQUEST_PHRASES + _MEMORY_RECALL_INCIDENT_CUES):
         return False
     words = normalized.split()
     if not words:

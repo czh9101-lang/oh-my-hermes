@@ -18,8 +18,10 @@ from ..degradation import (
     degradation_payload,
     safe_error_type,
 )
+from ..active_workflow_context import active_workflow_context, render_active_workflow_context
 from ..approval_bypass import record_approval_bypass
 from ..awareness_delivery import claim_route_guidance_delivery, record_awareness_delivery
+from ..context_budget_plan import context_budget_continuation, render_context_budget
 from ..host_context import record_active_main_agent_model
 from ..host_observation import observe_plugin_hook_call
 from ..omh_roles import extract_role_marker, role_context_payload
@@ -259,6 +261,18 @@ def pre_llm_call(**kwargs) -> dict[str, object] | None:
         )
         if todo_reminder:
             context_parts.append(todo_reminder)
+        workflow_context = active_workflow_context(
+            str(kwargs.get("omh_home", "") or ""), session_id
+        )
+        if workflow_context:
+            payload["omh_active_workflow"] = workflow_context
+            context_parts.append(render_active_workflow_context(workflow_context))
+        budget_context = context_budget_continuation(
+            str(kwargs.get("omh_home", "") or ""), session_id, str(kwargs.get("model", "") or "")
+        )
+        if budget_context:
+            payload["omh_context_budget"] = budget_context
+            context_parts.append(render_context_budget(budget_context))
         # The only seam OMH has on assistant text: Hermes replays the prior
         # turn in `conversation_history`, so a continuation promised last turn
         # is checked at the start of this one -- which is exactly when it can
