@@ -21,7 +21,8 @@ class LifecycleGrowthConfigurationTests(unittest.TestCase):
 
     def test_C3_ships_when_all_five_actual_artifacts_match(self):
         # Given: one sealed observation and five actual artifact bindings.
-        payload = self.observed()
+        from _lifecycle_metrics import cover
+        payload = cover(self.observed())
         # When: the wrapped readout takes the same gate as evaluation.
         result = operation("readout", payload)
         # Then: healthy observed inputs can ship, with explicit integrity.

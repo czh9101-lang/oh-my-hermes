@@ -292,7 +292,8 @@ class AnalysisReadinessTests(unittest.TestCase):
         from test_lifecycle_growth_exposure import exposure_inputs
         artifacts = _launch_artifacts()
         from _lifecycle_configuration import bind
-        artifacts.update(bind(exposure_inputs()))
+        from _lifecycle_metrics import cover
+        artifacts.update(cover(bind(exposure_inputs())))
 
         readiness = prepare_lifecycle_growth(artifacts)
 

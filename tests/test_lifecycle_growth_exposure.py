@@ -75,9 +75,11 @@ def exposure_inputs() -> dict[str, dict[str, object]]:
 
 def evaluate(payload: dict[str, dict[str, object]]) -> dict[str, object]:
     from _lifecycle_configuration import bind
-    observed = bind(payload)
+    from _lifecycle_metrics import cover
+    observed = cover(bind(payload))
     return evaluate_lifecycle_growth(payload["experiment"], payload["readout"], exposure_evidence=payload["exposure_evidence"],
-        audience_review=observed["audience_review"], configuration_binding=observed["configuration_binding"])
+        audience_review=observed["audience_review"], configuration_binding=observed["configuration_binding"],
+        metric_coverage=observed["metric_coverage"])
 
 
 class LifecycleGrowthExposureTests(unittest.TestCase):
@@ -254,7 +256,8 @@ class LifecycleGrowthExposureTests(unittest.TestCase):
                     del payload["exposure_evidence"]
                 if "exposure_evidence" in payload:
                     from _lifecycle_configuration import bind
-                    payload = bind(payload)
+                    from _lifecycle_metrics import cover
+                    payload = cover(bind(payload))
                 before = deepcopy(payload)
                 result = subprocess.run([*cli, "runtime", "workflow-artifact", "lifecycle-growth", operation, "--input", "-"],
                     cwd=root, env={**os.environ, "PYTHONPATH": str(root / "tests"), "PYTHONDONTWRITEBYTECODE": "1",

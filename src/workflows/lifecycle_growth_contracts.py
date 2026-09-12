@@ -65,7 +65,7 @@ def prepare_lifecycle_growth(artifacts: Mapping[str, Mapping[str, Any]]) -> dict
         if evidence.get("channel_refs") != records["brief"].get("available_surface_refs"):
             errors.append("channel_scope_mismatch")
     records["exposure_evidence"] = evidence if isinstance(evidence, Mapping) else {}
-    for key in ("configuration_binding", "audience_review", "evaluation_context"):
+    for key in ("configuration_binding", "audience_review", "evaluation_context", "metric_coverage", "metric_plan_binding"):
         if key in artifacts:
             records[key] = artifacts[key]
     binding = artifacts.get("configuration_binding")
@@ -140,7 +140,8 @@ def _hold_for_analysis(records: Mapping[str, Mapping[str, Any]], errors: list[st
         return
     result = evaluate_lifecycle_growth(records["experiment"], readout,
         exposure_evidence=records.get("exposure_evidence"), audience_review=records.get("audience_review"),
-        configuration_binding=records.get("configuration_binding"), evaluation_context=records.get("evaluation_context"))
+        configuration_binding=records.get("configuration_binding"), evaluation_context=records.get("evaluation_context"),
+        metric_coverage=records.get("metric_coverage"), metric_plan_binding=records.get("metric_plan_binding"))
     if result["interpretation_state"] == "HOLD":
         errors.append("observed readout interpretation is on hold")
         reasons = result["evidence_reason_codes"]

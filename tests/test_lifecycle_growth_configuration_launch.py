@@ -62,7 +62,7 @@ class ConfigurationLaunchTests(unittest.TestCase):
         result = operation("evaluate", payload)
         # Then: absence is insufficient data, not invented observed drift.
         self.assertEqual(result["disposition"], "insufficient_data")
-        self.assertEqual(result["evidence_reason_codes"], ["configuration_identity_unknown"])
+        self.assertEqual(result["evidence_reason_codes"], ["configuration_identity_unknown", "metric_coverage_legacy"])
 
     def test_C8_keeps_unknown_when_a_predecessor_exists_but_current_digest_is_absent(self):
         # Given: a known predecessor, but no current assignment observation.
@@ -75,7 +75,7 @@ class ConfigurationLaunchTests(unittest.TestCase):
         # When: current identity is unavailable, not observed different.
         result = operation("evaluate", payload)
         # Then: an old receipt cannot prove current drift or current integrity.
-        self.assertEqual(result["evidence_reason_codes"], ["configuration_identity_unknown"])
+        self.assertEqual(result["evidence_reason_codes"], ["configuration_identity_unknown", "metric_coverage_legacy"])
         self.assertEqual(result["disposition"], "insufficient_data")
 
     def test_C8_reports_legacy_when_explicit_legacy_companion_is_read(self):

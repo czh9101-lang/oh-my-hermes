@@ -21,8 +21,11 @@ from tempfile import TemporaryDirectory
 from omh.workflows.lifecycle_growth_configuration import build_configuration_binding
 from omh.workflows.lifecycle_growth_configuration_identity import build_configuration_identity
 from omh.workflows.lifecycle_growth_configuration_values import record
-
+from omh.workflows.lifecycle_growth_evaluation import evaluate_lifecycle_growth
 ROOT = Path(__file__).resolve().parents[2]
+# Only QA support comes from the checkout; OMH above resolves from the selected interpreter.
+sys.path.append(str(ROOT / "tools"))
+from qa._lifecycle_metric_fixtures import METRIC_SCENARIOS, load, metric_fixtures
 
 
 class ScenarioFailure(RuntimeError):
@@ -91,8 +94,9 @@ def fixtures(output: Path) -> None:
     write_json(output / "successor-drift.json", {**successor_artifacts, "configuration_binding": successor})
 
 
-def run(output: Path) -> dict[str, object]:
+def run(output: Path, issue: str) -> dict[str, object]:
     fixtures(output)
+    metric_fixtures(output, write_json)
     results: list[dict[str, object]] = []
     with TemporaryDirectory(prefix="omh-seven-lifecycle-") as temporary:
         scratch = Path(temporary)
@@ -114,6 +118,7 @@ def run(output: Path) -> dict[str, object]:
                             "disposition": result.get("disposition"), "verdict": result.get("verdict"),
                             "reason_codes": result.get("evidence_reason_codes"), "blocked": result.get("blocked"),
                             "configuration_integrity": result.get("configuration_integrity"), "stdout_sha256": receipt["stdout_sha256"],
+                            "metric_completeness": result.get("metric_completeness"),
                             "command": command})
             return result
 
@@ -138,24 +143,43 @@ def run(output: Path) -> dict[str, object]:
             check(result["disposition"] == disposition and result["blocked"] is True
                   and isinstance(codes, list) and reason in codes, fixture + "_decision")
         cli("evaluate", "malformed", 2)
+        if issue == "1504":
+            check(cli("metrics", "metrics-input") == load(output / "metric-coverage.json"), "metrics_builder_parity")
+            check(cli("validate", "metric-coverage")["valid"] is True, "metrics_schema")
+            for fixture, disposition, reason in METRIC_SCENARIOS:
+                result = cli("readout" if "rollback" in fixture else "evaluate", fixture, 2 if disposition is None else 0)
+                if disposition is None:
+                    continue
+                check(result["disposition"] == disposition, fixture + "_disposition")
+                check(result["blocked"] == (disposition != "ship"), fixture + "_blocked")
+                if reason:
+                    codes = result["evidence_reason_codes"]
+                    check(isinstance(codes, list) and reason in codes, fixture + "_reason")
+                payload = load(output / (fixture + ".json"))
+                public = evaluate_lifecycle_growth(record(payload["experiment"]), record(payload["readout"]),
+                    configuration_binding=payload.get("configuration_binding"), audience_review=payload.get("audience_review"),
+                    exposure_evidence=payload.get("exposure_evidence"), metric_coverage=payload.get("metric_coverage"),
+                    metric_plan_binding=payload.get("metric_plan_binding"))
+                check(public == result, fixture + "_public_api_parity")
+            check(cli("prepare", "metric-prepare-missing")["verdict"] == "HOLD", "metric_prepare_hold")
         check(not (scratch / "omh").exists() and not (scratch / "hermes").exists(), "unexpected_provider_or_omh_state")
     # The invocation-owned cleanup receipt is required by this QA protocol.
     absent = not scratch.exists()
     check(absent, "scratch_cleanup_failed")
-    return {"issue": 1503, "pass": True, "scenario_count": len(results), "provider_execution_observed": False,
+    return {"issue": int(issue), "pass": True, "scenario_count": len(results), "provider_execution_observed": False,
             "scenarios": results, "cleanup": {"owned_resources": [str(scratch)], "verified_absent": absent}}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--issue", choices=("1503",), required=True)
+    parser.add_argument("--issue", choices=("1503", "1504"), required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     try:
-        result = run(args.output_dir.resolve())
+        result = run(args.output_dir.resolve(), args.issue)
     except (ScenarioFailure, ValueError, OSError, subprocess.TimeoutExpired) as exc:
-        print(json.dumps({"issue": 1503, "pass": False, "error_category": type(exc).__name__, "detail": str(exc)[:160]}))
+        print(json.dumps({"issue": int(args.issue), "pass": False, "error_category": type(exc).__name__, "detail": str(exc)[:160]}))
         return 1
     write_json(args.output_dir / "result.json", result)
     print(json.dumps(result, sort_keys=True))

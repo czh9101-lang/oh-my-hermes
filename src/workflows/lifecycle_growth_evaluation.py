@@ -9,6 +9,7 @@ from .lifecycle_growth_configuration import review_configuration
 from .lifecycle_growth_launch import lifecycle_growth_evaluation_context
 from .lifecycle_growth_exposure import review_exposure_evidence
 from .lifecycle_growth_readout import derive_readout_disposition
+from .lifecycle_growth_metrics import review_metric_coverage
 from .lifecycle_growth_validation import expected_errors, experiment_hold_reasons
 
 LIFECYCLE_GROWTH_READOUT_SCHEMA_VERSION: Final = "lifecycle_growth_readout/v1"
@@ -17,12 +18,14 @@ LIFECYCLE_GROWTH_READOUT_SCHEMA_VERSION: Final = "lifecycle_growth_readout/v1"
 def evaluate_lifecycle_growth(
     experiment: Mapping[str, object], readout: Mapping[str, object], *, evaluation_context: object = None,
     exposure_evidence: object = None, audience_review: object = None, configuration_binding: object = None,
+    metric_coverage: object = None, metric_plan_binding: object = None,
 ) -> dict[str, object]:
     """Existing public API keeps keyword companions instead of rewriting v1 records."""
     errors = expected_errors(experiment, "growth_experiment_plan/v1", "experiment")
     errors.extend(expected_errors(readout, "growth_measurement_readout/v1", "readout"))
     if not errors and experiment.get("lifecycle_growth_id") != readout.get("lifecycle_growth_id"):
         errors.append("experiment and readout lifecycle_growth_id differ")
+    structural_errors = bool(errors)
     result = _readout_lifecycle_growth(readout, experiment, exposure_evidence)
     errors.extend(experiment_hold_reasons(experiment))
     observed_days = readout.get("runtime_days_observed")
@@ -51,6 +54,14 @@ def evaluate_lifecycle_growth(
             result["disposition"] = "review" if not errors and any(code in configuration_reasons for code in (
                 "configuration_drift", "configuration_binding_mismatch", "configuration_seal_conflict",
             )) else "insufficient_data"
+    metrics = review_metric_coverage({**supplied, "metric_coverage": metric_coverage, "metric_plan_binding": metric_plan_binding})
+    reasons.extend(metrics["reasons"])
+    if metrics["rollback"] and not structural_errors:
+        result.update(disposition="rollback", interpretation_state="HOLD")
+    if metrics["reasons"]:
+        result["interpretation_state"] = "HOLD"
+        if result["disposition"] != "rollback" and not configuration_reasons:
+            result["disposition"] = "review" if metrics["complete"] and not errors else "insufficient_data"
     return {
         "schema_version": LIFECYCLE_GROWTH_READOUT_SCHEMA_VERSION,
         "interpretation_state": result["interpretation_state"], "disposition": result["disposition"],
@@ -61,20 +72,24 @@ def evaluate_lifecycle_growth(
         "claim_boundary": "Assignment is not exposure; evaluation is derived from bounded caller-supplied metadata only.",
         "evidence_reason_codes": list(dict.fromkeys(reasons)), "configuration_integrity": not configuration_reasons,
         "blocked": bool(errors or reasons or result["interpretation_state"] == "HOLD"),
+        "metric_completeness": metrics["complete"], "metric_results": metrics["results"],
+        "missing_metric_refs": metrics["missing_metric_refs"], "metric_composites": metrics["composites"],
     }
 
 
 def readout_lifecycle_growth(
     readout: Mapping[str, object], *, experiment: Mapping[str, object] | None = None,
     exposure_evidence: object = None, audience_review: object = None, configuration_binding: object = None,
+    metric_coverage: object = None, metric_plan_binding: object = None,
 ) -> dict[str, object]:
     """Read historic artifacts without integrity, or evaluate all supplied companions."""
     if experiment is not None:
         return evaluate_lifecycle_growth(experiment, readout, exposure_evidence=exposure_evidence,
-            audience_review=audience_review, configuration_binding=configuration_binding)
+            audience_review=audience_review, configuration_binding=configuration_binding,
+            metric_coverage=metric_coverage, metric_plan_binding=metric_plan_binding)
     result = _readout_lifecycle_growth(readout, None, exposure_evidence)
-    result["configuration_integrity"] = False
-    result["evidence_reason_codes"] = [*_errors(result["evidence_reason_codes"]), "configuration_identity_legacy"]
+    result.update(configuration_integrity=False, metric_completeness=False, metric_results=[], missing_metric_refs=[], metric_composites=[])
+    result["evidence_reason_codes"] = [*_errors(result["evidence_reason_codes"]), "configuration_identity_legacy", "metric_coverage_legacy"]
     return result
 
 

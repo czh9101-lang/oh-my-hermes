@@ -325,9 +325,10 @@ class LifecycleGrowthUpstreamTests(unittest.TestCase):
         self.assertEqual(set(result), {"schema_version", "interpretation_state", "disposition", "assignment_unit", "exposure_unit",
                                        "actual_exposure_count", "delivery_count", "runtime_days_observed", "artifact_errors",
                                        "analysis_run_state", "analysis_delay_state", "analysis_observed_at", "claim_boundary",
-                                       "populations", "channels", "evidence_reason_codes", "blocked", "configuration_integrity"})
+                                       "populations", "channels", "evidence_reason_codes", "blocked", "configuration_integrity",
+                                       "metric_completeness", "metric_results", "missing_metric_refs", "metric_composites"})
         self.assertEqual(result["disposition"], "insufficient_data")
-        self.assertEqual(result["evidence_reason_codes"], ["exposure_evidence_missing", "configuration_identity_missing"])
+        self.assertEqual(result["evidence_reason_codes"], ["exposure_evidence_missing", "configuration_identity_missing", "metric_coverage_legacy"])
         self.assertTrue(result["blocked"])
         self.assertEqual((result["delivery_count"], result["actual_exposure_count"]), (7, 6))
         self.assertEqual((result["assignment_unit"], result["exposure_unit"]), ("account", "account"))
@@ -422,7 +423,7 @@ class LifecycleGrowthPublicTests(unittest.TestCase):
         self.assertEqual(result["delivery_count"], 7)
         self.assertEqual(result["disposition"], "insufficient_data")
         self.assertIn("evidence_reason_codes", result)
-        self.assertEqual(result["evidence_reason_codes"], ["exposure_evidence_missing", "exposure_absent", "configuration_identity_missing"])
+        self.assertEqual(result["evidence_reason_codes"], ["exposure_evidence_missing", "exposure_absent", "configuration_identity_missing", "metric_coverage_legacy"])
 
     def test_l3_public_promotion_approval_and_result_are_separate(self):
         for dependencies, schedules in product((False, True), repeat=2):
@@ -454,7 +455,8 @@ class LifecycleGrowthPublicTests(unittest.TestCase):
     def test_l5_public_evaluation_context_and_invalid_controls(self):
         from test_lifecycle_growth_exposure import exposure_inputs
         from _lifecycle_configuration import bind
-        source = bind(exposure_inputs())
+        from _lifecycle_metrics import cover
+        source = cover(bind(exposure_inputs()))
         for reference, baseline in product(("resolved", "deleted", "unknown"), ("observed", "absent", "unknown")):
             context = {"experiment_reference_state": reference, "baseline_exposure_state": baseline}
             result = self.cli("evaluate", dict(source, evaluation_context=context))

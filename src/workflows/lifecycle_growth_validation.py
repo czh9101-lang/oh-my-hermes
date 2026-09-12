@@ -8,6 +8,7 @@ from .lifecycle_growth_configuration import BINDING_SCHEMA, validate_configurati
 from .lifecycle_growth_configuration_identity import IDENTITY_SCHEMA
 from .lifecycle_growth_exposure import is_exposure_evidence, validate_exposure_evidence
 from .lifecycle_growth_readout import validate_readout
+from .lifecycle_growth_metrics import METRIC_SCHEMA, MEMBER_SCHEMA, PLAN_BINDING_SCHEMA, validate_metric_artifact
 from .lifecycle_growth_values import artifact_shape_errors
 
 
@@ -15,6 +16,8 @@ def validate_lifecycle_growth_artifact(record: object) -> list[str]:
     """Return structural errors without changing readable historic artifacts."""
     if isinstance(record, Mapping) and record.get("schema_version") in (IDENTITY_SCHEMA, BINDING_SCHEMA):
         return validate_configuration_artifact(record)
+    if isinstance(record, Mapping) and record.get("schema_version") in (METRIC_SCHEMA, MEMBER_SCHEMA, PLAN_BINDING_SCHEMA):
+        return validate_metric_artifact(record)
     if is_exposure_evidence(record):
         return validate_exposure_evidence(record)
     schema, errors = artifact_shape_errors(record)

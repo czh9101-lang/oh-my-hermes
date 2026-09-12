@@ -19,7 +19,7 @@ Each workflow has its own contract page, linked from the first column.
 | Workflow | Operations | Explicit durable operation |
 | --- | --- | --- |
 | [`decision-prototype`](DECISION-PROTOTYPES.md) | `prepare`, `validate`, `observe`, `receipt`, `handoff`, `persist` | `persist` writes the validated existing prototype artifact store. |
-| [`lifecycle-growth`](LIFECYCLE-GROWTH.md) | `build`, `prepare`, `validate`, `evaluate`, `readout`, `audience`, `promote`, `graduate`, `configuration` | `build` derives the five prepared artifacts from semantic fields; returned JSON is the durable serializable artifact. |
+| [`lifecycle-growth`](LIFECYCLE-GROWTH.md) | `build`, `prepare`, `validate`, `evaluate`, `readout`, `audience`, `promote`, `graduate`, `configuration`, `metrics` | `build` derives the five prepared artifacts from semantic fields; returned JSON is the durable serializable artifact. |
 | [`product-discovery-validation`](PRODUCT-DISCOVERY-VALIDATION.md) | `build`, `prepare`, `validate`, `audience-gate`, `evaluate`, `handoff`, `append` | `build` derives the five pre-decision artifacts and their hashes; `append` uses the existing append-only discovery store. |
 | [`sales-pipeline-review`](SALES-PIPELINE-REVIEW.md) | `prepare`, `validate`, `evaluate`, `handoff` | None; returned JSON is the durable serializable artifact. |
 
@@ -51,6 +51,12 @@ exposure evidence and readout to evaluate/prepare-with-readout/wrapped-readout.
 Legacy artifacts remain readable but cannot prove configuration integrity or
 justify a fresh ship decision. First-launch preparation needs no fictional
 readout; independent rollback still wins over drift.
+`metrics` builds the closed [metric coverage companion](LIFECYCLE-GROWTH.md#metric-level-completeness-issue-1504)
+from actual experiment/readout/configuration bindings and adapter-supplied results.
+Forward `metric_coverage` and optional reviewed `metric_plan_binding` through those
+same evaluation routes. Completed runs and passing aggregates cannot substitute
+for missing or errored metrics. Confirmed harm still rolls back; missing evidence
+alone never does. `validate` accepts the coverage and composite binding schemas.
 No operation launches treatment, carries
 configuration into a provider, or deletes a gate; `READY` is local preparation,
 not observed execution. These contracts are provider- and executor-neutral.
