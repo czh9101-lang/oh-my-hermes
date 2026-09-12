@@ -387,6 +387,10 @@ What the terminal shows while OMH workflows run:
 
 ## Recommended models
 
+<p align="center">
+  <img src="assets/omh-model-tui.png" alt="/omh-model in the Hermes Modern TUI: one row per category with its head model, effort bar and state; the cursor row shows the left/right and -/+ handles" width="820">
+</p>
+
 OMH ships with these editable, ordered recommendation chains. Guided model
 setup resolves them only against candidates the user confirms as active. The
 result is prepared routing configuration, not provider availability,
