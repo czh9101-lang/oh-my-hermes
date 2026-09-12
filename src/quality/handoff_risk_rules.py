@@ -107,8 +107,9 @@ def brief_findings(brief: str, context: RuleContext) -> list[Finding]:
     illustrative = False
     fenced = False
     offset = 0
-    # Preserve byte offsets for ASCII continuation pairs.
-    text = brief.replace("\\\n", "  ")
+    # Preserve byte offsets for ASCII continuation pairs, LF or CRLF: a brief
+    # file written on Windows carries \<CR><LF>, which must join identically.
+    text = brief.replace("\\\r\n", "   ").replace("\\\n", "  ")
     for line in text.splitlines(keepends=True):
         stripped = line.strip()
         line_bytes = line.encode("utf-8")

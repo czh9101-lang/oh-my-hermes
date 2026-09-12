@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -242,7 +243,10 @@ class MemoryPrincipalTests(unittest.TestCase):
             self.assertEqual(identity["executor_perspective"], "hermes")
             self.assertNotIn(raw_id, serialized)
             self.assertNotIn(raw_body, serialized)
-            self.assertEqual((paths.memory_dir / "principal.key").stat().st_mode & 0o777, 0o600)
+            # The chmod contract is POSIX-only; Windows attains 0o666 instead
+            # (docs/INSTALLATION.md, POSIX-only surfaces).
+            expected_mode = 0o666 if os.name == "nt" else 0o600
+            self.assertEqual((paths.memory_dir / "principal.key").stat().st_mode & 0o777, expected_mode)
 
     def test_M7_receipts_and_native_write_observation_are_redacted(self) -> None:
         # Given a provider with one principal-bound record.

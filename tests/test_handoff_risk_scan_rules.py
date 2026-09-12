@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from _handoff_risk_fixture import scan
+from omh.quality.handoff_risk_rules import RuleContext, brief_findings
 
 
 class HandoffRiskRulesTests(unittest.TestCase):
@@ -44,6 +45,13 @@ class HandoffRiskRulesTests(unittest.TestCase):
                 report = scan(brief)
                 # Then
                 self.assertIn(expected, {f["id"] for f in report.get("findings", [])})
+
+    def test_S3_crlf_continuation_pairs_join_like_lf(self):
+        # Given a brief whose shell continuation arrives with Windows CRLF endings,
+        # as any brief file written on Windows carries.
+        report = brief_findings("git reset \\\r\n --hard", RuleContext(protected_branches=("main",)))
+        # Then the continuation joins exactly like the LF form and the rule fires.
+        self.assertIn("destructive_git", {finding["id"] for finding in report})
 
     def test_S3_clear_when_negated_or_illustrative_or_safe(self):
         # Given
