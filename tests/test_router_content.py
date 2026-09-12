@@ -3770,9 +3770,11 @@ class RouterContentTests(unittest.TestCase):
             # owner-directed) in every language, and from 494 when a separate
             # model-setup routing block was added to each localized Quick
             # Start, and from 495 when the capable / simple-work / deep-work
-            # rows (3 lines) joined the model-chain table in every language;
-            # it still sits below README.md's length.
-            self.assertLess(len(localized_readme.splitlines()), 500)
+            # rows (3 lines) joined the model-chain table in every language,
+            # and from 500 when the /omh-model capture (a centred figure under
+            # the recommended-models heading, 4 lines, owner-directed) landed
+            # in every language; it still sits below README.md's length.
+            self.assertLess(len(localized_readme.splitlines()), 505)
             # The trust surface is the evidence table, not the wire token that
             # used to stand in for it. Pinning the token meant a README could
             # satisfy this by naming a value no reader could decode; pinning
@@ -4075,12 +4077,15 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("irm https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.ps1 | iex", hero)
         self.assertIn("omh setup", hero)
         # The landing page carries the character mark four times (header,
-        # hero, Hermes executor card, footer) plus the terminal boot banner,
-        # and nothing else. The exact count keeps decorative images off the
-        # page; the three surface demos are <video> elements.
-        self.assertEqual(site.count("<img"), 5)
+        # hero, Hermes executor card, footer) plus two product captures --
+        # the terminal boot banner and the /omh-model chain picker under
+        # Recommended chains -- and nothing else. The exact count keeps
+        # decorative images off the page; the three surface demos are
+        # <video> elements.
+        self.assertEqual(site.count("<img"), 6)
         self.assertEqual(site.count('src="assets/omh-character-mask.png"'), 4)
         self.assertEqual(site.count('src="assets/omh-terminal-boot-banner.png"'), 1)
+        self.assertEqual(site.count('src="assets/omh-model-tui.png"'), 1)
         self.assertEqual(site.count("<video"), 3)
         for stem in ("omh-setup", "hermes-desktop", "hermes-messenger"):
             self.assertEqual(site.count(f'src="assets/{stem}.webm"'), 1)

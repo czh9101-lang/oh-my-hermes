@@ -118,10 +118,13 @@ class ModelWidgetTests(unittest.TestCase):
             harness.write_text(HARNESS, encoding="utf-8")
             env = {**os.environ, "HERMES_HOME": str(hermes_home), "OMH_HOME": str(omh_home), "HOME": str(root)}
             env.pop("HERMES_TUI_ACTIVE_SESSION_FILE", None)
+            # Node writes the report as UTF-8; without saying so, Windows
+            # decodes the pipe in its code page and the frames' glyphs fail.
             completed = subprocess.run(
                 [NODE, str(harness), str(widget), json.dumps(keys)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=120,
                 env=env,
                 cwd=str(root),
