@@ -284,13 +284,21 @@ The shipped catalog is editorial policy, not benchmark output:
 | Shared final order (`last_resort.any`) | Last resort when a chain is exhausted | Claude Opus 5, GPT-5.6 Sol (`medium`) |
 <!-- omh:model-chain-table:end -->
 
-Chain customization is a config edit, not a source edit — `omh model-chains
-show` prints the current per-category state, `omh model-chains interview`
-walks every category with numbered choices on a terminal — the interactive
-`omh setup` offers that walk as its last question, default No, and a "no"
-leaves the seeded defaults in effect — and
+Chain customization is a config edit, not a source edit — bare
+`omh model-chains` (or `omh model`) opens an arrow-key picker on a terminal:
+one row per category, up/down to move, left/right to step the head model
+through the aliases chains name today, `-`/`+` to step its effort, `d` to
+restore the shipped default, Enter to save and `q` to leave the file alone;
+`omh model-chains show` prints the current per-category state,
+`omh model-chains interview` walks every category with numbered choices — the
+interactive `omh setup` offers that walk as its last question, default No, and
+a "no" leaves the seeded defaults in effect — and
 `omh model-chains set <category> "model[:effort], ..."` is the scriptable
-write (agents included). All of them edit the same document: `omh setup` seeds
+write (agents included).
+
+![Bare omh model-chains: one row per category with its head model, effort bar and state; the cursor row shows the left/right and -/+ handles](../assets/model-chain-picker-cli.png)
+
+All of them edit the same document: `omh setup` seeds
 `~/.omh/routing/model-chains.json` (`mixture_chain_overrides/v1`) with an
 empty `categories` object, meaning the shipped defaults above stay live and
 keep updating with `omh update`. A category written into that file replaces

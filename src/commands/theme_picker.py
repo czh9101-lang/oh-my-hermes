@@ -45,10 +45,18 @@ BOLD = f"{ESC}[1m"
 
 KEY_UP = "up"
 KEY_DOWN = "down"
+KEY_LEFT = "left"
+KEY_RIGHT = "right"
+KEY_MINUS = "minus"
+KEY_PLUS = "plus"
+KEY_DEFAULT = "default"
 KEY_ENTER = "enter"
 KEY_QUIT = "quit"
 KEY_NONE = ""
 
+# One vocabulary for every OMH picker. The theme picker uses the vertical
+# tokens only and ignores the rest; the chain picker (`model_chain_picker`)
+# steps a row's model with left/right and its effort with -/+.
 _PLAIN_KEYS = {
     "\r": KEY_ENTER,
     "\n": KEY_ENTER,
@@ -60,8 +68,18 @@ _PLAIN_KEYS = {
     "J": KEY_DOWN,
     "k": KEY_UP,
     "K": KEY_UP,
+    "h": KEY_LEFT,
+    "H": KEY_LEFT,
+    "l": KEY_RIGHT,
+    "L": KEY_RIGHT,
+    "-": KEY_MINUS,
+    "_": KEY_MINUS,
+    "+": KEY_PLUS,
+    "=": KEY_PLUS,  # the unshifted key under + on most layouts
+    "d": KEY_DEFAULT,
+    "D": KEY_DEFAULT,
 }
-_CSI_KEYS = {"A": KEY_UP, "B": KEY_DOWN}
+_CSI_KEYS = {"A": KEY_UP, "B": KEY_DOWN, "C": KEY_RIGHT, "D": KEY_LEFT}
 _ESCAPE_PEEK_SECONDS = 0.05
 
 

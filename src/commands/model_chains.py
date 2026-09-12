@@ -5,6 +5,10 @@ The chains live as user config in `<omh-home>/routing/model-chains.json`
 names and the shipped defaults keep serving the rest. This command is the
 supported editing surface over that file:
 
+* `omh model-chains` (bare, on a terminal) — the arrow-key picker: one row
+  per category, left/right steps the head model, -/+ its effort, Enter saves.
+  `omh model` is the same command under a shorter name. Off a terminal the
+  bare form prints `show`.
 * `omh model-chains show` — the current effective chain per category, with
   its origin (shipped default vs override) and the document status.
 * `omh model-chains set <category> "model[:effort], model[:effort]"` — write
@@ -23,11 +27,11 @@ import json
 import re
 import sys
 
+from ..catalogs.model_chain_table import CHAIN_SURFACE_PURPOSES, MODEL_DISPLAY_LABELS
 from ..local_store import atomic_write_text
 from ..plugin_bundle.omh.hermes_delegation import (
     APPROX_PRICE_PER_MTOK,
     HERMES_MIXTURE_CATEGORY_CHAINS,
-    MIXTURE_CHAIN_OVERRIDES_SCHEMA_VERSION,
     alias_is_served,
     entitlement_shaped_chain,
     load_mixture_chain_overrides,
@@ -37,7 +41,21 @@ from ..plugin_bundle.omh.hermes_delegation import (
     parse_mixture_chain_overrides,
     provider_entitlements_path,
 )
+from ..plugin_bundle.omh.model_chain_picker import (
+    chain_text,
+    compose_override_document,
+    picker_rows,
+    read_override_document,
+)
+from ..install.config_adapter import display_skin_selection, read_config
+from ..skin_pack import skin_colors, theme_for_skin_name
 from .common import _paths
+from .model_chain_picker import default_palette, pick_chains_interactively
+
+# From `quickstart`, not `setup`, for the reason `theme` gives: importing the
+# parser module back here would close an import cycle.
+from .quickstart import _use_color
+from .theme_picker import picker_available
 
 _ENTRY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
 
@@ -55,11 +73,7 @@ _ULTRAFAST_SWAPS = {
 }
 
 
-def _chain_text(chain: tuple[tuple[str, str], ...]) -> str:
-    return ", ".join(model + (f":{effort}" if effort else "") for model, effort in chain)
-
-
-def _parse_chain_text(text: str) -> tuple[tuple[str, str], ...]:
+def _parsechain_text(text: str) -> tuple[tuple[str, str], ...]:
     """Parse `model[:effort], model[:effort]` into chain entries or raise ValueError."""
     entries: list[tuple[str, str]] = []
     for piece in text.split(","):
@@ -77,17 +91,6 @@ def _parse_chain_text(text: str) -> tuple[tuple[str, str], ...]:
     if not entries:
         raise ValueError("a chain needs at least one `model[:effort]` entry")
     return tuple(entries)
-
-
-def _read_document(omh_home) -> dict[str, object]:
-    path = mixture_chain_overrides_path(omh_home)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, UnicodeDecodeError, ValueError):
-        raw = None
-    if isinstance(raw, dict) and isinstance(raw.get("categories"), dict):
-        return raw
-    return {"schema_version": MIXTURE_CHAIN_OVERRIDES_SCHEMA_VERSION, "categories": {}}
 
 
 def _write_document(omh_home, document: dict[str, object]) -> str:
@@ -125,7 +128,7 @@ def _state(omh_home) -> dict[str, object]:
                     }
                     for model, effort in shaped
                 ],
-                "chain_text": _chain_text(shaped),
+                "chain_text": chain_text(shaped),
                 "origin": "override" if name in overrides else "default",
                 "entitlement_shaped": shaped != chain,
             }
@@ -172,7 +175,7 @@ def cmd_model_chains_set(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    document = _read_document(omh_home)
+    document = read_override_document(omh_home)
     categories = document["categories"]
     assert isinstance(categories, dict)
     if args.clear:
@@ -182,7 +185,7 @@ def cmd_model_chains_set(args: argparse.Namespace) -> int:
             print("omh: set needs a chain (`model[:effort], ...`) or --clear", file=sys.stderr)
             return 2
         try:
-            entries = _parse_chain_text(" ".join(args.chain))
+            entries = _parsechain_text(" ".join(args.chain))
         except ValueError as exc:
             print(f"omh: {exc}", file=sys.stderr)
             return 2
@@ -201,6 +204,44 @@ def cmd_model_chains_set(args: argparse.Namespace) -> int:
         row = next(r for r in state["categories"] if r["category"] == category)
         print(f"{category}: {row['chain_text']} ({row['origin']})")
         print(f"Written to {path}. New delegations use this order; running children keep theirs.")
+    return 0
+
+
+def _active_palette(paths) -> dict[str, str]:
+    """The active OMH skin's colours, so the picker matches the TUI; the
+    default skin when `display.skin` is unset or not an OMH theme."""
+    theme = theme_for_skin_name(display_skin_selection(read_config(paths.hermes_config_path)))
+    return skin_colors(theme.skin_name) if theme else default_palette()
+
+
+def cmd_model_chains_pick(args: argparse.Namespace) -> int:
+    """Bare `omh model-chains` picks interactively; anything else prints `show`.
+
+    The split is the theme command's: `show` is the scriptable surface and
+    stays byte-predictable, the bare form is what a person types to SEE the
+    chains and move them. `--json` and any non-terminal end degrade the bare
+    form to the same listing.
+    """
+    if getattr(args, "json", False) or not picker_available():
+        return cmd_model_chains_show(args)
+    paths = _paths(args)
+    omh_home = paths.omh_home
+    payload = picker_rows(omh_home, labels=MODEL_DISPLAY_LABELS, purposes=CHAIN_SURFACE_PURPOSES)
+    changes = pick_chains_interactively(payload, use_color=_use_color(), palette=_active_palette(paths))
+    if changes is None:
+        print(f"Cancelled; {payload['path']} was not changed.")
+        return 0
+    if not changes:
+        print("No changes.")
+        return 0
+    try:
+        document = compose_override_document(read_override_document(omh_home), changes)
+        path = _write_document(omh_home, document)
+    except ValueError as exc:
+        print(f"omh: refused to write an invalid document: {exc}", file=sys.stderr)
+        return 2
+    print(f"Saved {len(changes)} categor{'y' if len(changes) == 1 else 'ies'} to {path}.")
+    _print_state(_state(omh_home))
     return 0
 
 
@@ -234,7 +275,7 @@ def model_chains_interview(paths) -> int:
         return 2
     omh_home = paths.omh_home
     overrides, _ = load_mixture_chain_overrides(omh_home)
-    document = _read_document(omh_home)
+    document = read_override_document(omh_home)
     categories = document["categories"]
     assert isinstance(categories, dict)
     print("Model chain interview — Enter keeps the current order.")
@@ -242,13 +283,13 @@ def model_chains_interview(paths) -> int:
     for name, default_chain in HERMES_MIXTURE_CATEGORY_CHAINS.items():
         current = overrides.get(name, default_chain)
         options: list[tuple[str, tuple[tuple[str, str], ...] | None]] = [
-            (f"keep current: {_chain_text(current)}", current),
+            (f"keep current: {chain_text(current)}", current),
         ]
         if current != default_chain:
-            options.append((f"shipped default: {_chain_text(default_chain)}", default_chain))
+            options.append((f"shipped default: {chain_text(default_chain)}", default_chain))
         ultrafast = _ultrafast_variant(current)
         if ultrafast is not None:
-            options.append((f"Ultrafast tier: {_chain_text(ultrafast)}", ultrafast))
+            options.append((f"Ultrafast tier: {chain_text(ultrafast)}", ultrafast))
         options.append(("custom entry (`model[:effort], ...`)", None))
         print(f"\n[{name}]")
         for index, (label, _chain) in enumerate(options, start=1):
@@ -265,7 +306,7 @@ def model_chains_interview(paths) -> int:
         if selected is None:
             custom = input("  chain: ").strip()
             try:
-                selected = _parse_chain_text(custom)
+                selected = _parsechain_text(custom)
             except ValueError as exc:
                 print(f"  {exc}; keeping current")
                 continue
@@ -298,9 +339,12 @@ def cmd_model_chains_interview(args: argparse.Namespace) -> int:
 def _add_model_chains_commands(sub) -> None:
     chains = sub.add_parser(
         "model-chains",
+        aliases=["model"],
         help="View and edit the per-category mixture model chains (routing, fallback, HUD labels).",
     )
-    chains_sub = chains.add_subparsers(dest="model_chains_command", required=True)
+    chains.add_argument("--json", action="store_true", help="Print the machine-readable state payload.")
+    chains.set_defaults(func=cmd_model_chains_pick, model_chains_command=None)
+    chains_sub = chains.add_subparsers(dest="model_chains_command")
 
     show = chains_sub.add_parser("show", help="Show the effective chain per category and its origin.")
     show.add_argument("--json", action="store_true", help="Print the machine-readable state payload.")
