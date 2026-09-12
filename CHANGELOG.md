@@ -4,6 +4,16 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+- **Model chains get a picker.** Bare `omh model-chains` (alias `omh model`)
+  on a terminal opens an arrow-key editor: one row per mixture category with
+  its head model, effort bar, origin and whether this machine's providers
+  serve it; left/right step the head model through the aliases chains name
+  today, `-`/`+` step its effort, `d` restores the shipped default, Enter
+  writes through the same validated document `omh model-chains set` writes
+  and `q` writes nothing. Off a terminal the bare form prints `show`. The
+  chain rules live in the plugin bundle so the Modern-TUI widget can walk the
+  same rows.
+
 ## 2.0.3 - 2026-09-12
 
 Everything merged since the 2.0.2 tag (2026-09-07). Highlights, grouped:

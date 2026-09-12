@@ -22,10 +22,15 @@ from _platform_support import requires_posix_select
 
 from omh.commands.theme_picker import (
     ESC,
+    KEY_DEFAULT,
     KEY_DOWN,
     KEY_ENTER,
+    KEY_LEFT,
+    KEY_MINUS,
     KEY_NONE,
+    KEY_PLUS,
     KEY_QUIT,
+    KEY_RIGHT,
     KEY_UP,
     picker_available,
     preview_lines,
@@ -173,7 +178,19 @@ class TerminalKeyReaderTests(unittest.TestCase):
 
     @requires_posix_select
     def test_an_unrecognised_escape_sequence_is_ignored_not_obeyed(self) -> None:
-        self.assertEqual(read_terminal_key(self._reader(b"\x1b[C")), KEY_NONE)
+        # Shift-Tab: no OMH picker binds it. (`[C` used to be the example
+        # here and is the right arrow now, a token the chain picker uses.)
+        self.assertEqual(read_terminal_key(self._reader(b"\x1b[Z")), KEY_NONE)
+
+    @requires_posix_select
+    def test_horizontal_arrows_and_their_vi_keys_share_tokens(self) -> None:
+        # The theme picker ignores these; the chain picker steps a row with
+        # them. One reader serves both, so the tokens are pinned here.
+        stream = self._reader(b"\x1b[D\x1b[Chl-+=d")
+        self.assertEqual(
+            [read_terminal_key(stream) for _ in range(9)],
+            [KEY_LEFT, KEY_RIGHT, KEY_LEFT, KEY_RIGHT, KEY_MINUS, KEY_PLUS, KEY_PLUS, KEY_DEFAULT, KEY_QUIT],
+        )
 
 
 class PickerAvailabilityTests(unittest.TestCase):
