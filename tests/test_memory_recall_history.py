@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import chdir
 import hashlib
 from importlib import import_module
 import json
@@ -21,7 +22,7 @@ from omh.workflows.memory_lifecycle_executor import execute_memory_lifecycle
 class MemoryRecallHistoryTests(unittest.TestCase):
     def test_corrected_claim_is_diagnosed_from_history(self) -> None:
         for anchor_kind in ("record", "digest"):
-            with self.subTest(anchor_kind=anchor_kind), TemporaryDirectory() as directory:
+            with self.subTest(anchor_kind=anchor_kind), TemporaryDirectory() as directory, chdir(directory):
                 # Given a real correction that moves the old claim to history.
                 root = Path(directory)
                 paths = resolve_paths(root / "omh", root / "hermes")
@@ -65,7 +66,7 @@ class MemoryRecallHistoryTests(unittest.TestCase):
                 self.assertEqual(before, {p: p.read_bytes() for p in paths.memory_dir.rglob("*.json")})
 
     def test_history_digest_lookup_does_not_cross_project_scope(self) -> None:
-        with TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory, chdir(directory):
             # Given a superseded claim owned by another project.
             root = Path(directory)
             paths = resolve_paths(root / "omh", root / "hermes")
@@ -94,7 +95,7 @@ class MemoryRecallHistoryTests(unittest.TestCase):
             self.assertNotIn("record_id", incident["anchor"])
 
     def test_corrupt_history_cannot_prove_claim_absence(self) -> None:
-        with TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory, chdir(directory):
             # Given a history store the reader cannot completely inspect.
             root = Path(directory)
             paths = resolve_paths(root / "omh", root / "hermes")

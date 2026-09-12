@@ -100,7 +100,7 @@ def cmd_memory_project_identity(args: argparse.Namespace) -> int:
 
     try:
         paths = _paths(args)
-        root = project_identity_root(paths.omh_home.parent) or project_identity_root() or Path.cwd()
+        root = project_identity_root() or Path.cwd()
         if args.identity_command == "init":
             mint_explicit_project_identity(root)
             payload = asdict(resolve_project_identity(root))
@@ -141,7 +141,7 @@ def cmd_memory_capture(args: argparse.Namespace) -> int:
             content=content,
             record_type=args.type,
             scope_kind=args.scope_kind,
-            scope_ref=(require_project_identity(project_identity_root(_paths(args).omh_home.parent) or project_identity_root() or _paths(args).omh_home.parent) if args.scope_kind == "project" and args.scope_ref is None else args.scope_ref),
+            scope_ref=(require_project_identity() if args.scope_kind == "project" and args.scope_ref is None else args.scope_ref),
             source=args.source,
             source_ref=args.source_ref,
             tags=args.tag or [],
@@ -301,7 +301,7 @@ def cmd_memory_recall(args: argparse.Namespace) -> int:
         query = " ".join(args.query).strip()
         paths = _paths(args)
         automatic = args.scope_kind is None and args.scope_ref is None
-        resolution = resolve_project_identity(project_identity_root(paths.omh_home.parent) or project_identity_root() or paths.omh_home.parent)
+        resolution = resolve_project_identity()
         payload = build_project_memory_recall_pack(
             paths,
             query,

@@ -52,9 +52,23 @@ filesystem-only resolver prefers a valid `.omh/project-identity.json` explicit
 `prj:<64 hex>` identity. Otherwise it reads Git metadata (including linked
 worktree `commondir`) and hashes the normalized remote URL into
 `repo:<32 hex>`. Origin wins; conflicting remotes without origin fail closed.
-Credentials and transport schemes are removed before hashing. Checkout renames
-retain identity, worktrees share their common remote, and distinct forks do
-not share memory merely because their directories have the same name.
+Git value quotes, escapes and inline comments are decoded before credentials
+and transport schemes are removed. Local filesystem remotes are resolved
+strictly against the checkout containing the common Git metadata directory;
+the canonical endpoint URI is domain-separated and hashed, never emitted.
+Missing or unsupported local endpoints fail closed. Relative, absolute and
+file-URI spellings of one endpoint agree, while separate sibling upstreams
+remain distinct. Local endpoint relocation changes that evidence; use an
+explicit identity when endpoint-location independence is needed.
+Checkout renames retain identity while their remote endpoint remains the same,
+worktrees share their common remote, and distinct forks do not share memory
+merely because their directories have the same name.
+
+CLI identity, capture, automatic recall and incident diagnosis use the active
+checkout, not the selected store's parent. Selecting another checkout's store
+does not authorize its project records. Incident workflow callers may supply
+`invocation_cwd`; otherwise the current working directory is the active context.
+That transient filesystem context is not persisted in incident metadata.
 
 Invalid explicit evidence, absent or ambiguous remotes, unreadable metadata,
 and an unbound checkout produce closed diagnostics, never a basename fallback.
@@ -81,7 +95,11 @@ Agent/operator maintenance path:
    binds approval to that exact inventory and creates reviewed successor
    revisions through the existing lifecycle journal. Original revisions and
    reviews are preserved, not rewritten in place. Repeating the same completed
-   migration is a no-op.
+   migration is a no-op. Report entries retain exact source revision, source
+   digest and immutable review bindings. A source or review changed between
+   reporting and locked apply is skipped with `source_changed_since_report`,
+   included in the receipt's `skipped` list, and requires a fresh report and
+   approval. Apply never substitutes the newly read revision's digest.
 4. `omh memory project-identity migrate --rollback <receipt_id>` retires those
    successors and restores original eligibility for explicit legacy inspection.
    It does not re-enable basename-based automatic recall.

@@ -88,6 +88,69 @@ class ProjectIdentityMigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "approval_digest_mismatch"):
             self.migrate(report["report_digest"])
 
+    def test_approved_source_change_is_skipped_after_report(self):
+        self._assert_approved_source_change_is_skipped("report")
+
+    def test_approved_source_change_is_skipped_at_locked_preflight(self):
+        self._assert_approved_source_change_is_skipped("preflight")
+
+    def _assert_approved_source_change_is_skipped(self, seam: str):
+        from datetime import datetime, timezone
+        from omh.workflows._memory_lifecycle_plans import _approved_record, _review
+        from omh.system.local_store import atomic_write_json
+        from omh.workflows import memory_project_identity as migration
+        approved = self.report()
+        original_report = migration.build_project_identity_migration_report
+        original_execute = migration.execute_memory_lifecycle
+        current = json.loads(self.record_path.read_bytes())
+        changed = _approved_record({**current, "summary": f"separately reviewed {seam}"}, current["record_id"], current["revision"] + 1, "independent-reviewer", datetime.now(timezone.utc))
+        admission = changed["admission"]
+        assert isinstance(admission, dict)
+        review_id = admission["review_id"]
+        review = _review(changed, review_id, "independent-reviewer")
+
+        def replace_source():
+            atomic_write_json(self.paths.memory_dir / "reviews" / f"{review_id}.json", review, private=True)
+            atomic_write_json(self.record_path, changed, private=True)
+
+        def race_report(*args, **kwargs):
+            report = original_report(*args, **kwargs)
+            replace_source()
+            return report
+
+        def race_execute(*args, **kwargs):
+            replace_source()
+            return original_execute(*args, **kwargs)
+
+        target = "build_project_identity_migration_report" if seam == "report" else "execute_memory_lifecycle"
+        with patch.object(migration, target, side_effect=race_report if seam == "report" else race_execute):
+            receipt = self.migrate(approved["report_digest"])
+        self.assertEqual(json.loads(self.record_path.read_bytes()), changed)
+        self.assertEqual(receipt["successors"], [])
+        self.assertEqual(receipt["skipped"], [{"record_id": current["record_id"], "store": "project", "reason_code": "source_changed_since_report"}])
+        self.assertFalse((self.paths.memory_dir / "history" / f'{current["record_id"]}.r{current["revision"]}.json').exists())
+        self.assertNotEqual(self.report()["report_digest"], approved["report_digest"])
+
+    def test_approved_review_change_is_not_rebound_to_fresh_review(self):
+        from omh.workflows import memory_project_identity as migration
+        from omh.system.local_store import atomic_write_json
+        approved = self.report()
+        original_report = migration.build_project_identity_migration_report
+        record = self.record
+        review_path = self.paths.memory_dir / "reviews" / f'{record["admission"]["review_id"]}.json'
+        original_review = json.loads(review_path.read_bytes())
+
+        def race_report(*args, **kwargs):
+            report = original_report(*args, **kwargs)
+            atomic_write_json(review_path, {**original_review, "reviewer_claim": "different-reviewer"}, private=True)
+            return report
+
+        with patch.object(migration, "build_project_identity_migration_report", side_effect=race_report):
+            receipt = self.migrate(approved["report_digest"])
+        self.assertEqual(self.record_path.read_bytes(), self.original)
+        self.assertEqual(receipt["successors"], [])
+        self.assertEqual(receipt["skipped"][0]["reason_code"], "source_changed_since_report")
+
     def test_successor_original_preservation_idempotency_and_rollback(self):
         report = self.report()
         receipt = self.migrate(report["report_digest"])

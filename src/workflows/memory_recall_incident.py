@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from ..plugin_bundle.omh.hermes_memory import HERMES_MEMORY_FILES, read_hermes_memory_file
@@ -31,7 +32,7 @@ __all__ = ['RecallIncidentRequest', 'build_memory_recall_incident',
            'write_memory_recall_incident', 'diagnose_synthetic_recall_stage']
 
 
-def _read_live_receipt(paths: OmhPaths, request: RecallIncidentRequest) -> tuple[EvidenceSurface, dict[str, Any] | None]:
+def _read_live_receipt(paths: OmhPaths, request: RecallIncidentRequest, *, invocation_cwd: str | Path | None = None) -> tuple[EvidenceSurface, dict[str, Any] | None]:
     """Bind the provider's persisted receipt to this store, session, configuration and scope.
 
     Absent or unreadable proof is unknown. A receipt that exists but names a
@@ -69,7 +70,7 @@ def _read_live_receipt(paths: OmhPaths, request: RecallIncidentRequest) -> tuple
     home_digests = store.get('home_digests') if isinstance(store, dict) else None
     if not isinstance(home_digests, list) or digest(str(paths.omh_home.resolve())) not in home_digests:
         return rejected('receipt_store_mismatch')
-    resolution = resolve_project_identity(paths.omh_home.parent)
+    resolution = resolve_project_identity(invocation_cwd)
     if receipt.get('resolver_version') != resolution.resolver_version or receipt.get('project_identity') != resolution.identity:
         return rejected('receipt_project_identity_mismatch')
     lens = receipt['lens']
@@ -123,10 +124,10 @@ def _receipt_stage(receipt: dict[str, Any], record_id: str, claim_digest: str) -
     return 'live_selection_excluded', 'selected'
 
 
-def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest) -> Incident:
-    """Inspect one scoped anchor; never attach raw recall packs to an incident."""
+def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest, *, invocation_cwd: str | Path | None = None) -> Incident:
+    """Inspect an anchor under the active checkout, independently of store location."""
     if request.scope_kind == 'project' and not request.scope_ref:
-        request = replace(request, scope_ref=resolve_project_identity(paths.omh_home.parent).identity)
+        request = replace(request, scope_ref=resolve_project_identity(invocation_cwd).identity)
     pack = memory.build_project_memory_recall_pack(
         paths, request.query, session_id=request.session_id,
         scope_kind=request.scope_kind, scope_ref=request.scope_ref,
@@ -143,7 +144,7 @@ def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest
             ('provider_recall_status', 'not_supplied'),
         )
     }
-    surfaces['live_prefetch_receipt'], receipt = _read_live_receipt(paths, request)
+    surfaces['live_prefetch_receipt'], receipt = _read_live_receipt(paths, request, invocation_cwd=invocation_cwd)
     surfaces['canonical_recall_pack'] = {'status': 'observed', 'basis': 'prepared_local_selection'}
     surfaces['omh_approved_records'] = {
         'status': 'unavailable' if unreadable else 'observed',
@@ -264,8 +265,8 @@ def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest
                         (reason, last), basis = staged, 'live_prefetch_receipt'
     if not pack['enabled']:
         reason = 'project_memory_disabled'
-    root = project_identity_root(paths.omh_home.parent)
-    resolution = resolve_project_identity(paths.omh_home.parent)
+    root = project_identity_root(invocation_cwd)
+    resolution = resolve_project_identity(invocation_cwd)
     if root is not None and resolution.state == 'resolved' and request.scope_kind == 'project' and request.scope_ref == legacy_project_scope(root)['ref']:
         reason = LEGACY_BASENAME_STATE
         basis = 'project_identity_resolution'
@@ -295,9 +296,9 @@ def build_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest
     return result
 
 
-def write_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest) -> Incident:
+def write_memory_recall_incident(paths: OmhPaths, request: RecallIncidentRequest, *, invocation_cwd: str | Path | None = None) -> Incident:
     """Explicitly persist only the bounded diagnosis, never caller-supplied artifacts."""
-    result = build_memory_recall_incident(paths, request)
+    result = build_memory_recall_incident(paths, request, invocation_cwd=invocation_cwd)
     destination = paths.memory_incidents_dir / f"{result['incident_id']}.json"
     memory._assert_under_memory_root(paths, destination)
     atomic_write_json(destination, dict(result), private=True)

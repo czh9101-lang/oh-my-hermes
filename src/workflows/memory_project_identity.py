@@ -34,7 +34,7 @@ def _digest(value: object) -> str:
 
 
 def _root(paths: OmhPaths, root: Path | None) -> Path:
-    return root if root is not None else (project_identity_root(paths.omh_home.parent) or Path.cwd())
+    return root if root is not None else (project_identity_root() or Path.cwd())
 
 
 def _stores(paths: OmhPaths, root: Path) -> dict[str, OmhPaths]:
@@ -67,10 +67,31 @@ def _source_review(paths: OmhPaths, record: dict[str, Any]) -> dict[str, Any]:
     return review
 
 
+class ProjectIdentitySourceChangedError(ValueError):
+    """The approved snapshot no longer describes this exact record/review pair."""
+
+
+def _bound_source(paths: OmhPaths, entry: dict[str, Any], relative: str) -> dict[str, Any]:
+    source, error = read_json(paths.memory_dir, relative)
+    if error or source is None or source.get("revision") != entry["revision"] or _digest(source) != entry["source_digest"]:
+        raise ProjectIdentitySourceChangedError("source_changed_since_report")
+    review_id = entry.get("review_id")
+    if not safe_token(review_id):
+        raise ProjectIdentitySourceChangedError("source_changed_since_report")
+    review, error = read_json(paths.memory_dir, f"reviews/{review_id}.json")
+    if error or review is None or _digest(review) != entry.get("review_digest"):
+        raise ProjectIdentitySourceChangedError("source_changed_since_report")
+    return source
+
+
+def _skipped(entry: dict[str, Any]) -> dict[str, str]:
+    return {"record_id": entry["record_id"], "store": entry["store"], "reason_code": "source_changed_since_report"}
+
+
 def build_project_identity_migration_report(paths: OmhPaths, *, root: Path | None = None) -> dict[str, Any]:
     root = _root(paths, root)
     resolution = resolve_project_identity(root)
-    entries, bindings = [], []
+    entries = []
     if resolution.state == "resolved":
         for store, local in _stores(paths, root).items():
             for relative, error in json_files(local.memory_dir, "records"):
@@ -83,18 +104,19 @@ def build_project_identity_migration_report(paths: OmhPaths, *, root: Path | Non
                 record_id, current_ref = record.get("record_id"), scope.get("ref")
                 if not safe_token(record_id) or not safe_token(current_ref):
                     raise ValueError("migration_metadata_invalid")
-                entries.append({"record_id": record_id, "current_ref": current_ref, "proposed_ref": resolution.identity, "store": store})
-                # Approval binds every source byte-equivalent payload and its
-                # immutable review, not just IDs or a printed scope label.
+                # Keep the approved record/review snapshot in each report row;
+                # apply must not replace these bindings with a subsequent read.
                 admission = record.get("admission", {})
                 review_id = admission.get("review_id", "") if isinstance(admission, dict) else ""
                 review = _read(local, f"reviews/{review_id}.json") if safe_token(review_id) else {}
-                bindings.append({"record": _digest(record), "review": _digest(review)})
+                entries.append({"record_id": record_id, "current_ref": current_ref, "proposed_ref": resolution.identity, "store": store,
+                                "revision": record.get("revision"), "source_digest": _digest(record),
+                                "review_id": review_id if safe_token(review_id) else "", "review_digest": _digest(review)})
     body = {"schema_version": REPORT_SCHEMA, "resolution": asdict(resolution), "entries": entries,
             "compatibility_state": LEGACY_BASENAME_STATE, "redaction_policy": "metadata_only"}
     if resolution.state != "resolved":
         body["guidance"] = "omh memory project-identity init"
-    return {**body, "report_digest": _digest({"report": body, "bindings": bindings})}
+    return {**body, "report_digest": _digest(body)}
 
 
 def _receipt_path(paths: OmhPaths, receipt_id: str) -> Path:
@@ -137,23 +159,28 @@ def migrate_project_identity(paths: OmhPaths, *, approve: str, root: Path | None
         if report["report_digest"] != approve or resolution.state != "resolved":
             raise ValueError("approval_digest_mismatch")
         now = datetime.now(timezone.utc)
-        rows = []
+        rows, skipped = [], []
         for entry in report["entries"]:
             local = stores[entry["store"]]
-            source = _read(local, f'records/{entry["record_id"]}.json')
+            try:
+                source = _bound_source(local, entry, f'records/{entry["record_id"]}.json')
+            except ProjectIdentitySourceChangedError:
+                skipped.append(_skipped(entry))
+                continue
             if source.get("schema_version") not in {"project_memory_record/v2", "project_memory_record/v3"} or source.get("source_class") != "omh_local" or type(source.get("revision")) is not int:
                 raise ValueError("migration_requires_reviewed_revision")
             _source_review(local, source)
             successor, review = project_identity_successor(source, resolution.identity, now, operation_id=f'project-migrate-{receipt_id[4:28]}-{entry["record_id"]}')
             if (local.memory_dir / f'history/{entry["record_id"]}.r{source["revision"]}.json').exists() or (local.memory_dir / f'reviews/{review["review_id"]}.json').exists():
                 raise ValueError("migration_successor_conflict")
-            rows.append({**entry, "revision": source["revision"], "source_digest": _digest(source), "target_digest": _digest(successor)})
+            rows.append({**entry, "target_digest": _digest(successor)})
         receipt = {"schema_version": RECEIPT_SCHEMA, "receipt_id": receipt_id, "report_digest": approve,
-                   "project_identity": resolution.identity, "created_at": now.isoformat(), "successors": rows,
+                   "project_identity": resolution.identity, "created_at": now.isoformat(), "successors": rows, "skipped": skipped,
                    "rollback_token": receipt_id, "state": "prepared", "redaction_policy": "metadata_only"}
         atomic_write_json(destination, receipt, private=True)
     now = datetime.fromisoformat(receipt["created_at"])
     changed = []
+    skipped = list(receipt.get("skipped", []))
     for row in receipt["successors"]:
         local = stores[row["store"]]
         current, _ = read_json(local.memory_dir, f'records/{row["record_id"]}.json')
@@ -162,28 +189,29 @@ def migrate_project_identity(paths: OmhPaths, *, approve: str, root: Path | None
             if not target_present:
                 raise ValueError("migration_target_changed")
             continue
-        if current is None or target_present:
-            source = _read(local, f'history/{row["record_id"]}.r{row["revision"]}.json')
-        else:
-            source = current
-        if _digest(source) != row["source_digest"]:
-            raise ValueError("migration_source_changed")
-        _source_review(local, source)
-        def preflight(locked: OmhPaths) -> None:
-            if resolve_project_identity(root).identity != receipt["project_identity"]:
-                raise ValueError("migration_identity_changed")
-            live_source = _read(locked, f'records/{row["record_id"]}.json')
-            if _digest(live_source) != row["source_digest"]:
-                raise ValueError("migration_source_changed")
-            _source_review(locked, live_source)
-            if (locked.memory_dir / f'history/{row["record_id"]}.r{row["revision"]}.json').exists():
-                raise ValueError("migration_successor_conflict")
+        relative = f'history/{row["record_id"]}.r{row["revision"]}.json' if current is None or target_present else f'records/{row["record_id"]}.json'
+        try:
+            source = _bound_source(local, row, relative)
+            _source_review(local, source)
 
-        result = execute_memory_lifecycle(local, _plan(row, source, now, receipt_id), preflight=preflight)
+            def preflight(locked: OmhPaths) -> None:
+                if resolve_project_identity(root).identity != receipt["project_identity"]:
+                    raise ValueError("migration_identity_changed")
+                live_source = _bound_source(locked, row, f'records/{row["record_id"]}.json')
+                _source_review(locked, live_source)
+                if (locked.memory_dir / f'history/{row["record_id"]}.r{row["revision"]}.json').exists():
+                    raise ValueError("migration_successor_conflict")
+
+            result = execute_memory_lifecycle(local, _plan(row, source, now, receipt_id), preflight=preflight)
+        except ProjectIdentitySourceChangedError:
+            skipped.append(_skipped(row))
+            continue
         if "receipt" not in result:
             raise ValueError("migration_operation_incomplete")
         changed.append(row)
-    receipt = {**receipt, "state": "completed"}
+    skipped_keys = {(row["store"], row["record_id"]) for row in skipped}
+    receipt = {**receipt, "state": "completed", "skipped": skipped,
+               "successors": [row for row in receipt["successors"] if (row["store"], row["record_id"]) not in skipped_keys]}
     atomic_write_json(destination, receipt, private=True)
     return {**receipt, "successors": changed, "idempotent": not changed}
 

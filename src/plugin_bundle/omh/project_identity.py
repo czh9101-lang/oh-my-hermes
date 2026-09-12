@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 import re
 import secrets
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 RESOLVER_VERSION = "project_identity/v2"
 EXPLICIT_SCHEMA_VERSION = "project_identity_file/v1"
@@ -67,21 +67,66 @@ def _explicit(path: Path) -> str:
     return identity
 
 
-def _normalize_remote(raw: str) -> str:
-    value = raw.strip()
+def _git_config_value(raw: str) -> str:
+    """Decode Git quotes/escapes and comments before interpreting a remote URL."""
+    decoded: list[str] = []
+    quoted = escaped = False
+    escapes = {"n": "\n", "t": "\t", "b": "\b", '"': '"', "\\": "\\"}
+    for char in raw:
+        if escaped:
+            if char not in escapes:
+                raise ValueError("remote_invalid")
+            decoded.append(escapes[char])
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        elif char in "#;" and not quoted:
+            break
+        else:
+            decoded.append(char)
+    if quoted or escaped:
+        raise ValueError("remote_invalid")
+    return "".join(decoded).strip()
+
+
+def _local_remote(value: str, anchor: Path) -> str:
+    # Local endpoints have no host authority. Qualify them against the common
+    # Git directory's checkout, never hash an ambiguous relative spelling.
+    if not value or (os.name != "nt" and re.match(r"^(?:[A-Za-z]:|\\\\)", value)):
+        raise ValueError("remote_invalid")
+    endpoint = (anchor / Path(value).expanduser()).resolve(strict=True)
+    if not endpoint.is_dir() and not endpoint.is_file():
+        raise ValueError("remote_invalid")
+    return "local:" + endpoint.as_uri()
+
+
+def _normalize_remote(raw: str, *, local_anchor: Path) -> str:
+    value = _git_config_value(raw)
+    if any(char in value for char in ("\n", "\r", "\x00")):
+        raise ValueError("remote_invalid")
     if "://" in value:
         parsed = urlsplit(value)
+        if parsed.scheme == "file":
+            if parsed.query or parsed.fragment or parsed.hostname not in (None, "", "localhost"):
+                raise ValueError("remote_invalid")
+            local = unquote(parsed.path)
+            if os.name == "nt" and re.match(r"^/[A-Za-z]:/", local):
+                local = local[1:]
+            return _local_remote(local, local_anchor)
         host = parsed.hostname or ""
+        if not host:
+            raise ValueError("remote_invalid")
         # Keep non-default ports: they can identify distinct repositories.
         port = f":{parsed.port}" if parsed.port is not None else ""
         value = host.lower() + port + parsed.path
     else:
         scp = re.fullmatch(r"(?:[^/@:]+@)?([^/:]+):(.+)", value)
-        if scp:
+        if scp and not re.match(r"^[A-Za-z]:[\\\\/]", value):
             value = scp[1].lower() + "/" + scp[2].lstrip("/")
         else:
-            host, sep, path = value.rpartition("@")[-1].partition("/")
-            value = host.lower() + sep + path
+            return _local_remote(value, local_anchor)
     value = value.rstrip("/")
     if value.endswith(".git"):
         value = value[:-4]
@@ -114,13 +159,14 @@ def resolve_project_identity(cwd: str | Path | None = None) -> ProjectIdentityRe
             if not relative or "\n" in relative:
                 return _unresolved("git_metadata_unreadable")
             gitdir = gitdir / relative
+        gitdir = gitdir.resolve(strict=True)
         config = configparser.RawConfigParser(interpolation=None)
         config.read_string((gitdir / "config").read_text(encoding="utf-8"))
         remotes = {}
         for section in config.sections():
             match = re.fullmatch(r'remote "([^"]+)"', section)
             if match and config.has_option(section, "url"):
-                remotes[match[1]] = _normalize_remote(config.get(section, "url"))
+                remotes[match[1]] = _normalize_remote(config.get(section, "url"), local_anchor=gitdir.parent)
         if not remotes:
             return _unresolved("remote_absent")
         if "origin" in remotes:

@@ -10,6 +10,8 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 from typing import Any
+from unittest.mock import patch
+from datetime import datetime, timezone
 
 from omh.plugin_bundle.omh.memory_provider import OmhMemoryProvider
 
@@ -59,7 +61,13 @@ def exercise(scratch: Path) -> dict[str, object]:
         assert receipt is not None
         assert receipt["schema_version"] == "omh_memory_prefetch_receipt/v3"
         assert len([scope for scope in receipt["lens"]["scope_allowlist"] if scope["kind"] == "project"]) == 1
+        incident = cli(root, "recall-incident", "--record-id", included, "--session-id", "qa-session", "--observed", "hermes")
+        assert incident["evidence_surfaces"]["live_prefetch_receipt"]["status"] == "observed"
+        assert incident["reason_code"] == "rendered_delivery_not_observed"
         provider.shutdown()
+    approve(first, "foreign checkout store sentinel", home=first / ".omh")
+    assert cli(second, "recall", home=first / ".omh")["included_records"] == []
+    assert cli(second, "project-identity", "show", home=first / ".omh")["identity"] == second_id
     renamed = first.with_name("renamed")
     first.rename(renamed)
     assert cli(renamed, "project-identity", "show")["identity"] == first_id
@@ -71,6 +79,23 @@ def exercise(scratch: Path) -> dict[str, object]:
     linked.mkdir()
     (linked / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
     assert cli(linked, "project-identity", "show")["identity"] == first_id
+    (renamed / ".git" / "config").write_text('[remote "origin"]\n url = "https://user:password@example.invalid/first/project.git" # origin\n', encoding="utf-8")
+    assert cli(linked, "project-identity", "show")["identity"] == first_id
+
+    local_user = scratch / "local-user"
+    local_repos = [repository(scratch / name / "same-name", "unused") for name in ("local-one", "local-two")]
+    for local in local_repos:
+        (local.parent / "upstream.git").mkdir()
+        (local / ".git" / "config").write_text('[remote "origin"]\n url = ../upstream.git\n', encoding="utf-8")
+    assert cli(local_repos[0], "project-identity", "show")["identity"] != cli(local_repos[1], "project-identity", "show")["identity"]
+    local_id = approve(local_repos[0], "local endpoint sentinel", home=local_user)
+    local_provider = OmhMemoryProvider(local_user)
+    local_provider.initialize("local", cwd=local_repos[0], agent_context="subagent")
+    assert local_id in local_provider.prefetch()
+    local_provider.initialize("local", cwd=local_repos[1], agent_context="subagent")
+    assert local_id not in local_provider.prefetch()
+    local_provider.shutdown()
+    assert cli(local_repos[1], "recall", home=local_user)["included_records"] == []
 
     migration_root = repository(scratch / "migration", "migration/project")
     migration_user = scratch / "migration-user"
@@ -97,7 +122,45 @@ def exercise(scratch: Path) -> dict[str, object]:
     for home in (migration_root / ".omh", migration_user):
         assert cli(migration_root, "recall", home=home)["included_records"] == []
         assert cli(migration_root, "recall", "--scope-kind", "project", "--scope-ref", "legacy-checkout", home=home)["record_count"] == 1
+    # Inject an independent reviewed successor at exact synchronous boundaries;
+    # the actual report, preflight, transaction and source preservation still run.
+    from omh.paths import resolve_paths
+    from omh.workflows import memory_project_identity as migration
+    from omh.workflows._memory_lifecycle_plans import _approved_record, _review
+    from omh.system.local_store import atomic_write_json
+
+    for seam in ("report", "preflight"):
+        race_root = repository(scratch / f"race-{seam}", f"race/{seam}")
+        race_home = scratch / f"race-{seam}-user"
+        record_id = approve(race_root, "approved legacy source", home=race_home, legacy=True)
+        paths = resolve_paths(race_home, hermes)
+        approved = migration.build_project_identity_migration_report(paths, root=race_root)
+        source_path = paths.memory_dir / "records" / f"{record_id}.json"
+        source = json.loads(source_path.read_bytes())
+        replacement = _approved_record({**source, "summary": "independently reviewed successor"}, record_id, source["revision"] + 1, "qa-reviewer", datetime.now(timezone.utc))
+        admission = replacement["admission"]
+        assert isinstance(admission, dict)
+        review_id = admission["review_id"]
+        review = _review(replacement, review_id, "qa-reviewer")
+        original_operation = migration.build_project_identity_migration_report if seam == "report" else migration.execute_memory_lifecycle
+
+        def race(*args, **kwargs):
+            result = original_operation(*args, **kwargs) if seam == "report" else None
+            atomic_write_json(paths.memory_dir / "reviews" / f"{review_id}.json", review, private=True)
+            atomic_write_json(source_path, replacement, private=True)
+            return result if seam == "report" else original_operation(*args, **kwargs)
+
+        target = "build_project_identity_migration_report" if seam == "report" else "execute_memory_lifecycle"
+        with patch.object(migration, target, side_effect=race):
+            refused = migration.migrate_project_identity(paths, root=race_root, approve=approved["report_digest"])
+        assert refused["successors"] == []
+        assert refused["skipped"] == [{"record_id": record_id, "store": "user", "reason_code": "source_changed_since_report"}]
+        assert json.loads(source_path.read_bytes()) == replacement
+
     return {"same_basename_isolation": True, "capture_recall": True, "rename_stability": True,
+            "local_remote_isolation": True, "quoted_credentials_normalized": True,
+            "foreign_store_isolation": True, "external_store_receipt_accepted": True,
+            "approval_race_report_skipped": True, "approval_race_preflight_skipped": True,
             "worktree_sharing": True, "migration_stores": 2, "migrated_successors": 2,
             "report_read_only": True, "idempotent": True, "rollback": True, "cli_calls": calls}
 

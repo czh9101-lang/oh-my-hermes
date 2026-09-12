@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from contextlib import chdir
 from datetime import datetime, timezone
 from importlib import import_module
 from typing import TypedDict
@@ -37,6 +38,7 @@ class MemoryRecallIncidentTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.root = Path(self.enterContext(TemporaryDirectory()))
+        self.enterContext(chdir(self.root))
 
     @property
     def paths(self):

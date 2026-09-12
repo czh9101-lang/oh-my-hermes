@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from contextlib import chdir
 import hashlib
 import json
 import os
@@ -56,6 +57,121 @@ class ProjectIdentityTests(unittest.TestCase):
         live.initialize("s", cwd=a)
         self.assertIn(record["record_id"], live.prefetch())
         self.assertEqual(candidate["scope"]["ref"], self.api.resolve_project_identity(a).identity)
+
+    def test_local_remotes_are_anchored_and_cannot_cross_recall(self):
+        from omh.paths import resolve_paths
+        from omh.workflows import memory
+        from omh.plugin_bundle.omh.memory_provider import OmhMemoryProvider
+        a = repository(self.root / "one" / "repo", "../upstream.git")
+        b = repository(self.root / "two" / "repo", "../upstream.git")
+        for repo in (a, b):
+            (repo.parent / "upstream.git").mkdir()
+        first = self.api.resolve_project_identity(a)
+        second = self.api.resolve_project_identity(b)
+        self.assertEqual((first.state, second.state), ("resolved", "resolved"))
+        paths = resolve_paths(self.root / "user", self.root / "hermes")
+        candidate = memory.capture_project_memory_candidate(paths, "local remote sentinel", scope_ref=first.identity, retention_class="durable")["candidate"]
+        assert isinstance(candidate, dict)
+        record = memory.approve_project_memory_candidate(paths, candidate["candidate_id"])["record"]
+        assert isinstance(record, dict)
+        provider = OmhMemoryProvider(paths.omh_home)
+        provider.initialize("local", cwd=b)
+        self.assertNotIn(record["record_id"], provider.prefetch())
+        self.assertNotEqual(first.identity, second.identity)
+        provider.initialize("local", cwd=a)
+        self.assertIn(record["record_id"], provider.prefetch())
+        config = a / ".git" / "config"
+        for remote in ((a.parent / "upstream.git").as_posix(), (a.parent / "upstream.git").as_uri()):
+            config.write_text(f'[remote "origin"]\n url = {remote}\n', encoding="utf-8")
+            self.assertEqual(self.api.resolve_project_identity(a).identity, first.identity)
+        config.write_text('[remote "origin"]\n url = ../upstream.git\n', encoding="utf-8")
+        gitdir = a / ".git" / "worktrees" / "local-linked"
+        gitdir.mkdir(parents=True)
+        (gitdir / "commondir").write_text("../..\n", encoding="utf-8")
+        linked = self.root / "local-linked"
+        linked.mkdir()
+        (linked / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+        self.assertEqual(self.api.resolve_project_identity(linked).identity, first.identity)
+        renamed = a.with_name("renamed")
+        a.rename(renamed)
+        self.assertEqual(self.api.resolve_project_identity(renamed).identity, first.identity)
+        config = renamed / ".git" / "config"
+        config.write_text('[remote "origin"]\n url = ../missing.git\n', encoding="utf-8")
+        missing = self.api.resolve_project_identity(renamed)
+        self.assertEqual((missing.state, missing.identity), ("unresolved", ""))
+        self.assertEqual(missing.diagnostics, ("git_metadata_unreadable",))
+
+    def test_quoted_git_values_strip_credentials_and_inline_comments(self):
+        repo = repository(self.root / "quoted")
+        expected = "repo:" + hashlib.sha256(b"example.test/team/project").hexdigest()[:32]
+        variants = ('"https://example.test/team/project.git"',
+                    '"https://user:password@EXAMPLE.test/team/project.git" # origin',
+                    '"https://other:rotated@EXAMPLE.test/team/project.git" ; rotated',
+                    'https://example.test/team/project.git # origin',
+                    '"git@example.test:team/project.git"')
+        for value in variants:
+            with self.subTest(value_digest=hashlib.sha256(value.encode()).hexdigest()):
+                (repo / ".git" / "config").write_text(f'[remote "origin"]\n url = {value}\n', encoding="utf-8")
+                resolution = self.api.resolve_project_identity(repo)
+                self.assertEqual(resolution.identity, expected)
+                for private in ("password", "rotated", "https", "example.test"):
+                    self.assertNotIn(private, json.dumps(asdict(resolution)))
+        (repo / ".git" / "config").write_text('[remote "origin"]\n url = "https://example.test/team/project.git\n', encoding="utf-8")
+        self.assertEqual(self.api.resolve_project_identity(repo).state, "unresolved")
+
+    def test_cli_uses_current_checkout_not_selected_store(self):
+        from _cli_harness import run_cli
+        from omh.paths import resolve_paths
+        from omh.workflows import memory
+        a = repository(self.root / "one" / "repo")
+        b = repository(self.root / "two" / "repo", "https://example.test/other/project.git")
+        paths = resolve_paths(a / ".omh", self.root / "hermes")
+        candidate = memory.capture_project_memory_candidate(paths, "foreign store sentinel", retention_class="durable")["candidate"]
+        assert isinstance(candidate, dict)
+        memory.approve_project_memory_candidate(paths, candidate["candidate_id"])
+        prefix = ["--omh-home", str(paths.omh_home), "--hermes-home", str(paths.hermes_home), "memory"]
+        with chdir(b):
+            status, stdout, stderr = run_cli(prefix + ["recall"])
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(json.loads(stdout)["included_records"], [])
+            status, stdout, stderr = run_cli(prefix + ["project-identity", "show"])
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(json.loads(stdout)["identity"], self.api.resolve_project_identity(b).identity)
+            status, stdout, stderr = run_cli(prefix + ["capture", "active checkout sentinel"])
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(json.loads(stdout)["candidate"]["scope"]["ref"], self.api.resolve_project_identity(b).identity)
+            status, stdout, stderr = run_cli(prefix + ["recall", "--scope-kind", "project", "--scope-ref", self.api.resolve_project_identity(a).identity])
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(json.loads(stdout)["record_count"], 1)
+        with chdir(self.root):
+            status, stdout, stderr = run_cli(prefix + ["recall"])
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(json.loads(stdout)["included_records"], [])
+
+    def test_incident_accepts_current_checkout_receipt_in_external_user_store(self):
+        from omh.paths import resolve_paths
+        from omh.workflows import memory
+        from omh.workflows.memory_recall_incident import RecallIncidentRequest, build_memory_recall_incident
+        from omh.plugin_bundle.omh.memory_provider import OmhMemoryProvider
+        repo = repository(self.root / "active")
+        identity = self.api.resolve_project_identity(repo).identity
+        paths = resolve_paths(self.root / "external-user", self.root / "hermes")
+        candidate = memory.capture_project_memory_candidate(paths, "external user sentinel", scope_ref=identity, retention_class="durable")["candidate"]
+        assert isinstance(candidate, dict)
+        record = memory.approve_project_memory_candidate(paths, candidate["candidate_id"])["record"]
+        assert isinstance(record, dict)
+        provider = OmhMemoryProvider(paths.omh_home)
+        provider.initialize("external", cwd=repo)
+        self.assertIn(record["record_id"], provider.prefetch())
+        with chdir(repo):
+            for reference in (identity, ""):
+                incident = build_memory_recall_incident(paths, RecallIncidentRequest(record_id=record["record_id"], session_id="external", scope_ref=reference, observed="hermes"))
+                self.assertEqual(incident["evidence_surfaces"]["live_prefetch_receipt"], {"status": "observed", "basis": "canonical_1452_receipt_bound"})
+                self.assertEqual(incident["reason_code"], "rendered_delivery_not_observed")
+        foreign = repository(self.root / "foreign", "https://example.test/foreign.git")
+        with chdir(foreign):
+            incident = build_memory_recall_incident(paths, RecallIncidentRequest(record_id=record["record_id"], session_id="external", scope_ref=identity))
+            self.assertEqual(incident["evidence_surfaces"]["live_prefetch_receipt"]["basis"], "receipt_project_identity_mismatch")
 
     def test_rename_and_transport_normalization(self):
         a = repository(self.root / "before")
@@ -131,10 +247,10 @@ class ProjectIdentityTests(unittest.TestCase):
         receipt = provider.latest_prefetch_receipt()
         assert receipt is not None
         self.assertEqual(validate_prefetch_receipt(receipt), [])
-        legacy = build_memory_recall_incident(paths, RecallIncidentRequest(record_id=record["record_id"], session_id="s", scope_ref="repo"))
+        legacy = build_memory_recall_incident(paths, RecallIncidentRequest(record_id=record["record_id"], session_id="s", scope_ref="repo"), invocation_cwd=repo)
         self.assertEqual(legacy["reason_code"], "legacy_basename")
         (repo / ".git" / "config").write_text('[remote "origin"]\n url = https://example.test/other\n', encoding="utf-8")
-        incident = build_memory_recall_incident(paths, RecallIncidentRequest(record_id=record["record_id"], session_id="s", observed="hermes"))
+        incident = build_memory_recall_incident(paths, RecallIncidentRequest(record_id=record["record_id"], session_id="s", observed="hermes"), invocation_cwd=repo)
         self.assertEqual(incident["evidence_surfaces"]["live_prefetch_receipt"]["basis"], "receipt_project_identity_mismatch")
         provider.queue_prefetch()
         self.assertNotIn(record["record_id"], provider.prefetch())
