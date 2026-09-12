@@ -115,7 +115,7 @@ def host_child(host: Path, homes: Path, enabled: bool) -> dict[str, JSON]:
         assert status_entry is not None
         status = json.loads(status_entry.handler({}))["group_chat_activity"]
         assert status["readiness"] == ("unavailable" if enabled else "disabled")
-        assert status["compatibility"] == "member_activity_contract_unsupported"
+        assert status["compatibility"] == ("member_activity_contract_unsupported" if enabled else "not_observed")
         assert not any(name.startswith(spec.name + ".activity_observer") for name in sys.modules)
         hook_results = [callback(omh_home=str(homes / "omh"), host="hermes-agent", session_id="qa-synthetic-session")
                         for callback in manager._hooks["on_session_end"]]
@@ -153,12 +153,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", required=True, choices=("normalized-lifecycle", "installed-host-compatibility", "supported-host-lifecycle"))
     parser.add_argument("--host-source", type=Path)
+    parser.add_argument("--host-python", type=Path, help="Interpreter with host dependencies for a disposable upstream source fixture.")
     parser.add_argument("--host-child", choices=("enabled", "disabled"), help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.scenario == "supported-host-lifecycle":
-        print(json.dumps({"scenario": args.scenario, "exit": 3, "reason": "member_activity_contract_unsupported",
-                          "host_collection": "not_observed", "cleanup": {"verified_absent": True}}))
-        return 3
+        if args.host_source is None:
+            print(json.dumps({"scenario": args.scenario, "exit": 3, "reason": "host_source_required",
+                              "host_collection": "not_observed", "cleanup": {"verified_absent": True}}))
+            return 3
+        python = args.host_python or args.host_source / "venv/bin/python"
+        result = subprocess.run([sys.executable, str(ROOT / "tools/qa/seven_issues_observer_native.py"),
+                                 "--host-source", str(args.host_source), "--host-python", str(python)],
+                                text=True, capture_output=True, timeout=120)
+        sys.stdout.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        return result.returncode
     with TemporaryDirectory(prefix="omh-observer-qa-") as tmp:
         homes = Path(tmp)
         if args.host_child:

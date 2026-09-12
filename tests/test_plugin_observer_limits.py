@@ -13,7 +13,7 @@ from omh.workflows.session_activity_receipts import read_session_activity_receip
 
 
 class ObserverLimitsTests(fixtures.ObserverFixture):
-    def test_O9_doctor_and_probe_advertise_unsupported_contract(self):
+    def test_O9_doctor_and_probe_require_a_profile_snapshot(self):
         with self.home() as tmp:
             paths = OmhPaths(Path(tmp) / "omh", Path(tmp) / "hermes")  # Given
             checks, probe = run_doctor(paths), probe_capabilities(paths)  # When
@@ -22,7 +22,7 @@ class ObserverLimitsTests(fixtures.ObserverFixture):
             self.assertTrue(status.ok)
             self.assertFalse(status.observed)
             self.assertEqual(probe.get("group_chat_activity", {}).get("compatibility"),
-                             "member_activity_contract_unsupported")
+                             "not_observed")
 
     def test_O6_new_events_after_terminal_are_rejected(self):
         with self.home() as tmp:

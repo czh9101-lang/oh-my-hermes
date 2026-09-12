@@ -34,11 +34,11 @@ class Room:
                    partial=event.kind != Kind.SESSION_START or event.sequence != 0)
 
     def is_replay(self, event: ActivityEvent) -> bool:
-        return self.seen.get(event.event_ref) == hashlib.sha256(repr(event).encode()).hexdigest()
+        return self.seen.get(event.event_ref) == event.identity_digest
 
     def accept(self, event: ActivityEvent) -> Literal["duplicate", "gap", "accepted"]:
         """Reject conflicts/staleness, retain dedupe keys, stop counting at capacity."""
-        fingerprint = hashlib.sha256(repr(event).encode()).hexdigest()
+        fingerprint = event.identity_digest
         previous = self.seen.get(event.event_ref)
         if previous is not None:
             if self.is_replay(event):
@@ -75,7 +75,7 @@ class Room:
                 metric = "compaction_boundaries"
             case Kind.SESSION_START:
                 self.partial |= len(self.seen) != 1
-            case Kind.SESSION_END | Kind.MEMBER_START | Kind.MEMBER_COMPLETE:
+            case Kind.SESSION_END | Kind.MEMBER_START | Kind.MEMBER_COMPLETE | Kind.ACTIVITY:
                 pass
             case unreachable:
                 assert_never(unreachable)

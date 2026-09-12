@@ -1,4 +1,4 @@
-"""Explicit local producer engine. No supported live Hermes adapter exists yet.
+"""Bounded producer engine for normalized metadata and supported native adapters.
 
 Importing this module does not collect anything. Only constructing ActivityObserver
 starts its owned worker; plugin registration never does so on unsupported hosts.
@@ -6,7 +6,7 @@ starts its owned worker; plugin registration never does so on unsupported hosts.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import json
 from threading import Condition, Event, Thread
 from time import monotonic
@@ -38,8 +38,9 @@ class ActivityObserver:
     The condition protects queue/control counters only, never aggregation or I/O.
     Call close and check its result before disposing the invocation's state home.
     """
-    def __init__(self, paths: OmhPaths, profile_ref: OpaqueRef) -> None:
+    def __init__(self, paths: OmhPaths, profile_ref: OpaqueRef, *, on_status: Callable[[ObserverStatus], None] | None = None) -> None:
         self.paths, self.profile_ref = paths, profile_ref
+        self._on_status = on_status
         self.checkpoint_path = paths.runtime_dir / f"group-activity-{profile_ref[7:]}.json"
         self._condition = Condition()
         self._pending: deque[ActivityEvent | Event] = deque()
@@ -57,7 +58,7 @@ class ActivityObserver:
         try:
             event = parse_event(raw, self.profile_ref)
         except EventError as exc:
-            self._reject(exc.code)
+            self.reject_event(exc.code)
             return False
         with self._condition:
             if self._closing or len(self._pending) >= 1024:
@@ -97,7 +98,8 @@ class ActivityObserver:
         self._worker.join()
         return True
 
-    def _reject(self, reason: str) -> None:
+    def reject_event(self, reason: str) -> None:
+        """Record a bounded adapter/parser category without retaining rejected metadata."""
         with self._condition:
             self._status["rejected"] = min(10**9, self._status["rejected"] + 1)
             self._status["last_outcome"] = reason
@@ -124,7 +126,7 @@ class ActivityObserver:
         except FileNotFoundError:
             return
         except (EventError, ValueError, UnicodeError):
-            self._reject("invalid_checkpoint")
+            self.reject_event("invalid_checkpoint")
             # Missing trust in a checkpoint permanently lowers subsequent intervals.
             with self._condition:
                 self._status["dropped"] += 1
@@ -141,6 +143,14 @@ class ActivityObserver:
             self._failed_write()
             for room in self._rooms.values():
                 room.partial = True
+        self._publish_status()
+
+    def _publish_status(self) -> None:
+        if self._on_status is not None:
+            try:
+                self._on_status(self.status())
+            except OSError:
+                self._failed_write()
 
     def _emit(self, room: Room, final: bool) -> None:
         room.partial |= bool(self.status()["dropped"])
@@ -157,7 +167,7 @@ class ActivityObserver:
         terminal = self._terminal.get(event.scope)
         if terminal is not None:
             if not terminal[1].is_replay(event):
-                self._reject("stale_after_final")
+                self.reject_event("stale_after_final")
             return  # Admission remains authoritative after this bounded cache expires.
         room = self._rooms.get(event.scope)
         if room is None:
@@ -171,7 +181,7 @@ class ActivityObserver:
         try:
             outcome = room.accept(event)
         except EventError as exc:
-            self._reject(exc.code)
+            self.reject_event(exc.code)
             return
         match outcome:
             case "duplicate":
@@ -190,7 +200,7 @@ class ActivityObserver:
                 if len(self._terminal) >= 64:
                     del self._terminal[next(iter(self._terminal))]
                 self._terminal[event.scope] = (now, room)
-            case Kind.SESSION_START | Kind.MEMBER_START | Kind.MEMBER_COMPLETE | Kind.TOOL_CALL | Kind.TOOL_ERROR | Kind.COMPACTION:
+            case Kind.SESSION_START | Kind.MEMBER_START | Kind.MEMBER_COMPLETE | Kind.TOOL_CALL | Kind.TOOL_ERROR | Kind.COMPACTION | Kind.ACTIVITY:
                 pass
             case unreachable:
                 assert_never(unreachable)
@@ -199,6 +209,7 @@ class ActivityObserver:
     def _run(self) -> None:
         try:
             self._recover()
+            self._publish_status()
             while True:
                 with self._condition:
                     # Wake at the earliest retention deadline, not a polling interval.
@@ -215,6 +226,7 @@ class ActivityObserver:
                     case None:
                         continue
                     case Event():
+                        self._publish_status()
                         item.set()
                     case ActivityEvent():
                         try:
@@ -230,4 +242,5 @@ class ActivityObserver:
                     self._emit(room, False)
                 self._checkpoint()
         finally:
+            self._publish_status()
             self._done.set()

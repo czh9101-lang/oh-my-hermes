@@ -13,16 +13,16 @@ class _PluginContext(Protocol):
 _TOOLSET = "omh"
 
 
-def _host_supports_hook(hook_name: str) -> bool:
+def _host_supports_hook(hook_name: str, *, require_declared: bool = False) -> bool:
     try:
         hermes_plugins = import_module("hermes_cli.plugins")
     except ModuleNotFoundError as exc:
         if exc.name in {"hermes_cli", "hermes_cli.plugins"}:
-            return True
+            return not require_declared
         raise
     valid_hooks = getattr(hermes_plugins, "VALID_HOOKS", None)
     if not isinstance(valid_hooks, (list, tuple, set, frozenset)):
-        return True
+        return not require_declared
     return hook_name in valid_hooks
 
 
@@ -86,10 +86,21 @@ def register(ctx: _PluginContext) -> None:
     # ``get_config`` is a real Hermes PluginContext API.  Disabled installs
     # neither import the guard nor import SQLite nor register its hooks.
     get_config = getattr(ctx, "get_config", None)
-    # No supported member lifecycle producer exists on inspected Hermes hosts.
-    # Do not register an invented hook or import/start the local fixture engine.
     activity_config = get_config("group_chat_activity", None) if callable(get_config) else None
     activity_enabled = isinstance(activity_config, dict) and activity_config.get("enabled") is True
+    activity_status = None
+    if activity_enabled and _host_supports_hook("on_room_member_activity", require_declared=True):
+        from .tools.status_tool import group_activity_status
+        try:
+            from .native_activity_observer import ObserverHost, register as register_activity
+            if isinstance(ctx, ObserverHost):
+                activity_status = register_activity(ctx).status
+            else:
+                activity_status = lambda: {**group_activity_status(True), "compatibility": "unload_contract_unsupported"}
+        except (OSError, ValueError, ImportError):
+            # An optional observer failure must not unregister the normal bridge.
+            activity_status = lambda: {**group_activity_status(True), "compatibility": "observer_setup_failed",
+                                       "last_outcome": "setup_failed", "next_action": "Check OMH core availability and profile key permissions."}
     egress_config = get_config("egress_attempts", None) if callable(get_config) else None
     if isinstance(egress_config, dict) and egress_config.get("enabled") is True:
         from .egress_attempts import register as register_egress_attempts
@@ -219,7 +230,7 @@ def register(ctx: _PluginContext) -> None:
         "omh_status",
         _TOOLSET,
         OMH_STATUS_SCHEMA,
-        partial(omh_status_handler, group_activity_enabled=activity_enabled),
+        partial(omh_status_handler, group_activity_enabled=activity_enabled, group_activity_observer=activity_status),
         description=OMH_STATUS_SCHEMA["description"],
     )
     _ = ctx.register_tool(

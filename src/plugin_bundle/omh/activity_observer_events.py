@@ -27,6 +27,7 @@ class Kind(StrEnum):
     TOOL_ERROR = "tool_error"
     COMPACTION = "compaction"
     SESSION_END = "session_end"
+    ACTIVITY = "activity"  # Observed metadata with no justified metric mapping.
 
 
 class EventError(ValueError):
@@ -78,6 +79,12 @@ class ActivityEvent:
     @property
     def scope(self) -> tuple[OpaqueRef, OpaqueRef, OpaqueRef]:
         return self.profile_ref, self.room_ref, self.session_ref
+
+    @property
+    def identity_digest(self) -> str:
+        # Collector arrival time can change on replay; producer facts cannot.
+        facts = (self.scope, self.member_ref, self.turn_ref, self.kind, self.event_ref, self.sequence)
+        return hashlib.sha256(repr(facts).encode()).hexdigest()
 
 
 def parse_event(raw: Mapping[str, EventValue], profile: OpaqueRef) -> ActivityEvent:

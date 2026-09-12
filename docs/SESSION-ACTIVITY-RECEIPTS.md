@@ -15,11 +15,11 @@ OMH validates that summary, records it once, and projects it for consumers.
 
 A receipt is not:
 
-- automatic host execution or collection. OMH does not crawl Hermes
-  databases, patch Hermes hooks, or start any telemetry of its own. The only
-  live input remains a payload someone chose to supply, through
-  `omh runtime session-receipt ingest --input <file>`. The local normalized
-  observer engine described below is not a live-host adapter.
+- automatic host execution or hidden collection. OMH does not crawl Hermes
+  databases or patch Hermes hooks. Records come from explicitly supplied
+  payloads through `omh runtime session-receipt ingest --input <file>`, or the
+  default-off supported native activity adapter described below. A local
+  normalized lifecycle fixture is not proof of a native room terminal.
 - proof of an unobserved interval. A producer loaded mid-session reports a
   floor for the part it watched, never the whole session.
 - execution, verification, review, CI, merge-readiness, or merge evidence.
@@ -132,23 +132,66 @@ plugins:
           enabled: false
 ```
 
-OMH reads this via the host's `get_config("group_chat_activity", None)` API,
-including its legacy `config` fallback. Merely enabling the option currently
-reports `unavailable/member_activity_contract_unsupported` through `omh_status`.
-It registers no member callback, imports no observer engine, starts no worker,
-and writes no observer state. Existing tools, memory provider registration,
-and session hooks continue to work. Doctor and probe report this static
-compatibility boundary without failing normal chat or implying activation.
+Set `enabled: true` explicitly to collect metadata on a supported host. OMH
+reads this through `get_config("group_chat_activity", None)`, including the
+host's legacy `config` fallback. Disabled collection registers no member
+callback, imports no producer, starts no worker, and writes no observer state.
+Existing tools, memory provider registration and session hooks are preserved.
 
-**Live group-chat collection is not implemented on the supported host surface.**
-The inspected Hermes revisions `c32e0acb0ec59d53ac964007c75630e098bcd045` and
-`63de8e74ef91af66386336df27399f64828d0182` expose no documented room/member
-lifecycle producer. The installed group/session observation plugin does not
-publish one either. Platform reactions, edits, thread creation, streaming
-text, and pre-auth dispatch are not substitutes. A future adapter requires a
-supported callback signature, sequence semantics, and terminal fire-site;
-there is no guessed hook, event-bus publisher, transcript reader, or runtime
-patch here. Keep collection disabled until that integration is available.
+The adapter registers the documented `on_room_member_activity` hook only when
+Hermes declares it in its supported hook set and offers unload cleanup. This
+API is present in official revision
+`a84a2223f82c3d9906fd4a9d778a188774e7a08e`. Older inspected revisions
+`c32e0acb0ec59d53ac964007c75630e098bcd045` and
+`63de8e74ef91af66386336df27399f64828d0182` remain
+`unavailable/member_activity_contract_unsupported` when enabled. A host missing
+OMH core admission support, a valid private profile key, or required cleanup
+support stays unavailable without breaking the rest of the plugin. Nothing
+updates or patches Hermes automatically.
+
+### Native member activity is partial evidence
+
+The upstream `tui_gateway/hosted_room_member_activity.py` projector feeds the
+real per-consumer plugin stream queue. The callback receives room, thread,
+member, turn, task, execution-generation and sequence metadata plus a raw
+`payload`. OMH discards that payload before constructing or queuing anything;
+it never reads tool arguments/results, approval commands, message text or
+reasoning. Only `tool.started` maps to `tool_calls`. `turn.error` is **not** a
+tool error. Other documented activity kinds preserve sequence observations
+without supplying a metric; unsupported metrics stay null/unavailable.
+
+Native sequences belong to hidden member sessions, not a whole room. The
+adapter isolates `(room, thread, member, turn, task, execution_generation)`
+intervals under its immutable registration profile. A private random key per
+profile is created at registration under
+`$OMH_HOME/runtime/group-activity-keys/`; HMAC-SHA256 domain-separated opaque
+references are derived before enqueue. The key is reused on reload, never
+silently regenerated when malformed. Retain it with the profile's receipts.
+Superseded generations are rejected once a newer attempt has been observed.
+Missing sequence identities cannot support deduplication and are rejected
+instead of inventing a producer counter. Collector arrival time does not make
+a replay into a different event.
+
+**This hook guarantees neither session start nor a room-terminal boundary.**
+Native records therefore always remain floors/partial, including on contiguous
+sequences. `on_session_end` runs at conversation-turn finalization and has no
+room-terminal guarantee; OMH does not reinterpret it as one. Supported unload
+stops accepting callbacks, disposes the registration and drains already queued
+OMH metadata with a bounded timeout, emitting `process_exit` partial receipts.
+There is no invented native final receipt. Upstream drops are not measurable
+by this API; sequence discontinuities indicate possible loss, not a proven
+number of dropped callbacks. `dropped` counts OMH-local enqueue loss only.
+
+Native task-generation metadata is bounded to 64 task scopes, and the engine
+bounds active native intervals to 64. Without a native terminal contract,
+these slots remain active until unload; reaching the bound rejects/drops new
+intervals rather than silently evicting state or claiming complete collection.
+
+`omh_status` reports current adapter readiness, compatibility, bounded counters
+and last outcome. Doctor/probe read one bounded profile-local status snapshot
+written by the worker; they label it historical rather than proving current
+activation or a terminal result. Status corruption is reported without exposing
+file contents. Storage/aggregation never occurs on the native callback path.
 
 ### Local normalized producer engine
 
@@ -163,7 +206,8 @@ standalone unsupported-host registration does not import it. Its closed
   payload, extension, approval, or transport slot. References must be
   `sha256:<64 lowercase hex>`; timestamps are UTC seconds ending in `Z`.
 - Kinds: `session_start`, `member_start`, `member_complete`, `tool_call`,
-  `tool_error`, `compaction`, `session_end`. Member/turn refs are null only on
+  `tool_error`, `compaction`, `session_end`, `activity` (no metric inference).
+  Member/turn refs are null only on
   room boundaries. Profile-local keyed SHA-256 derivation happens before
   enqueue; the adapter must own its secret key and never retain raw IDs.
 - Scope is `(profile, room, session)`, with nested member/turn identities.
@@ -194,22 +238,29 @@ standalone unsupported-host registration does not import it. Its closed
 ### Maintainer proof surfaces
 
 ```sh
-PYTHONPATH=tests uv run python -m unittest tests/test_plugin_observer.py tests/test_plugin_observer_limits.py -v
+PYTHONPATH=tests uv run python -m unittest tests/test_plugin_observer.py tests/test_plugin_observer_limits.py tests/test_plugin_observer_controls.py tests/test_plugin_observer_native.py -v
 uv run python tools/qa/seven_issues_observer.py --scenario normalized-lifecycle
 uv run python tools/qa/seven_issues_observer.py --scenario installed-host-compatibility --host-source /path/to/hermes-agent
-uv run python tools/qa/seven_issues_observer.py --scenario supported-host-lifecycle
+uv run python tools/qa/seven_issues_observer.py --scenario supported-host-lifecycle --host-source /path/to/disposable/current-source --host-python /path/to/host/venv/bin/python
 ```
 
 The first QA scenario exercises the real local producer, receipt admission,
 manual-ingestion replay, all six consumer projections, and CLI listing. The
 second uses the actual host interpreter, PluginContext, PluginManager, tool
 registry and existing session-end callback in disposable homes, then unloads
-registrations. Both report cleanup and bounded machine outputs, not live
-collection. A pristine fixture home's doctor may independently report missing
-installation state; its exit is retained separately from the advisory observer
-check. The supported-host lifecycle scenario exits **3 (unavailable)** until
-an actual adapter and callback producer exist. Exit 3 must not be aggregated
-as passing or used to close #1505.
+registrations. The supported-host scenario delegates to
+`seven_issues_observer_native.py` and executes the original upstream projector,
+actual registered callback and host queue over synthetic native frames in
+isolated homes. It proves default-off behavior, opt-in collection, replay,
+privacy, callback completion while OMH storage is held, and a CLI-listed
+**partial** receipt after unload. It does not launch a gateway, model or agent,
+or prove a native room terminal. Fetch public upstream source into a disposable
+fixture; never update the operator's installed Hermes for this check.
+
+All scenarios report bounded machine output and cleanup. Missing source,
+interpreter or callback prerequisites exit **3 (unavailable)**, never GREEN.
+A pristine fixture home's doctor may independently report missing installation
+state; its exit is retained separately from the advisory observer check.
 
 ## Boundaries the producer owns
 

@@ -4,7 +4,7 @@ hud_preset: focused
 inject_context: true
 privacy: metadata_only
 # Profile-local plugins.entries.omh.settings.group_chat_activity (legacy config fallback).
-# Enabled remains unavailable until a documented Hermes member lifecycle adapter exists.
+# Requires on_room_member_activity and OMH core admission; native coverage is partial.
 group_chat_activity:
   enabled: false
 claim_boundary: "Prepared handoffs are not execution, review, CI, merge-readiness, or merge evidence."
