@@ -445,8 +445,9 @@ fallback, and HUD labels alike —
 Check the chains currently in effect with `omh model-chains show`. If you
 would rather not edit the file by hand, bare `omh model-chains` (or
 `omh model`) opens an arrow-key picker — up/down picks a category, left/right
-steps its head model, `-`/`+` its effort — and the scriptable form makes the
-same change from the command line:
+steps its head model, `-`/`+` its effort — `/omh-model` opens the same picker
+inside the Modern TUI, and the scriptable form makes the same change from the
+command line:
 `omh model-chains set quick "kimi-k3-ultrafast:low, glm-5.3-ultrafast:low"`.
 When an alias uses a provider-specific wire ID, map it once in
 `~/.omh/routing/model-providers.json` with

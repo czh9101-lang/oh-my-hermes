@@ -268,7 +268,9 @@ class TuiWidgetPackTests(unittest.TestCase):
         # carries status and activity rows with no closing rule.
         widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
 
-        self.assertEqual(widget.count("defineWidgetApp({"), 2)
+        # Three apps: the two ambient docks framing the composer, plus the
+        # modal chain picker (`/omh-model`), which renders no dock at all.
+        self.assertEqual(widget.count("defineWidgetApp({"), 3)
         self.assertEqual(widget.count("zone: 'dock-bottom'"), 1)
         self.assertEqual(widget.count("zone: 'dock-top'"), 1)
         self.assertIn("id: 'omh-todo'", widget)
@@ -421,7 +423,27 @@ class TuiWidgetPackTests(unittest.TestCase):
         self.assertIn("color: stuckState\n              ? t.color.warn", widget)
         self.assertIn("${state}${stuckSuffix}${suffix}", widget)
 
-    def test_widget_is_bottom_docked_and_omits_host_status_fields(self) -> None:
+    def test_widget_registers_the_chain_picker_as_a_modal_app_behind_a_guard(self) -> None:
+        widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
+
+        # The host's own /model picks the session model and cannot be
+        # shadowed; OMH's per-category picker lives under its own id, as a
+        # modal (it owns every keypress while open) and only when the host
+        # exposes the overlay primitives -- an older host keeps the docks.
+        self.assertIn("id: 'omh-model'", widget)
+        self.assertNotIn("id: 'model'", widget)
+        self.assertEqual(widget.count("mode: 'modal'"), 1)
+        self.assertIn("if (Overlay && Dialog) {", widget)
+        self.assertIn("const { Box, Dialog, Overlay, Text, defineWidgetApp, h, openWidget, updateWidget } = sdk", widget)
+        # Reading and saving go through the installed bundle's picker model,
+        # with the same isolated interpreter spawn the HUD reader uses.
+        self.assertIn("from omh.model_chain_picker import picker_rows", widget)
+        self.assertIn("from omh.model_chain_picker import apply_picker_changes", widget)
+        self.assertIn("['-I', '-c', script]", widget)
+        self.assertIn("Mirror of model_chain_picker.step_head_model", widget)
+        self.assertIn("Mirror of model_chain_picker.step_effort", widget)
+        self.assertNotIn("useInput", widget)
+
         widget = resources.files("omh.tui_widgets").joinpath("omh-status.mjs").read_text(encoding="utf-8")
 
         self.assertIn("zone: 'dock-bottom'", widget)

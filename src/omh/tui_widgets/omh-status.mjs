@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { readFileSync, statSync } from 'node:fs'
 
 export default function register(sdk) {
-  const { Box, Text, defineWidgetApp, h, openWidget, updateWidget } = sdk
+  const { Box, Dialog, Overlay, Text, defineWidgetApp, h, openWidget, updateWidget } = sdk
   const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
   const HOME = process.env.OMH_HOME || `${process.env.HOME}/.omh`
   const HERMES_HOME = process.env.HERMES_HOME || `${process.env.HOME}/.hermes`
@@ -1114,6 +1114,241 @@ export default function register(sdk) {
       )
     },
   })
+
+  // ── /omh-model: the per-category chain picker as a modal app ──────────
+  // Hermes' own `/model` picks the SESSION model and cannot be shadowed by
+  // a widget, so OMH's picker registers under its own id and edits the
+  // per-category mixture chains that bare `omh model-chains` walks on a
+  // terminal. Reading and saving go through the installed plugin bundle's
+  // `model_chain_picker` — the same rows, the same validated document —
+  // and the two step functions below mirror its `step_head_model` and
+  // `step_effort` so a keypress never waits on a python spawn;
+  // tests/test_tui_model_widget.py drives this app end to end against the
+  // python original so the mirror cannot drift. Registered only when the
+  // host exposes the overlay primitives; an older host keeps the docks and
+  // the CLI picker.
+  const PICKER_READER = [
+    'import json,os,sys',
+    "sys.path.insert(0, os.path.join(os.environ['HERMES_HOME'], 'plugins'))",
+    'from omh.model_chain_picker import picker_rows',
+    "print(json.dumps(picker_rows(os.environ.get('OMH_HOME'))))",
+  ].join(';')
+  const PICKER_WRITER = [
+    'import json,os,sys',
+    "sys.path.insert(0, os.path.join(os.environ['HERMES_HOME'], 'plugins'))",
+    'from omh.model_chain_picker import apply_picker_changes',
+    "print(json.dumps(apply_picker_changes(os.environ.get('OMH_HOME'), json.load(sys.stdin))))",
+  ].join(';')
+  const PICKER_EFFORT_LADDER = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+  const runPickerScript = (script, stdinText) => new Promise(resolve => {
+    const child = execFile(
+      __OMH_PYTHON_EXECUTABLE__,
+      ['-I', '-c', script],
+      { encoding: 'utf8', env: READER_ENV, maxBuffer: 262144, timeout: 8000 },
+      (error, stdout, stderr) => {
+        if (error) return resolve({ error: sanitizeText(stderr).trim().slice(-160) || 'omh picker script failed' })
+        try {
+          resolve(JSON.parse(stdout))
+        } catch {
+          resolve({ error: 'unreadable picker payload' })
+        }
+      },
+    )
+    if (stdinText !== undefined && child.stdin) child.stdin.end(stdinText)
+  })
+  const chainPairs = entries => entries.map(entry => [String(entry.model), String(entry.reasoning_effort || '')])
+  const chainText = chain => chain.map(([model, effort]) => (effort ? `${model}:${effort}` : model)).join(', ')
+  const sameChain = (left, right) => JSON.stringify(left) === JSON.stringify(right)
+  // Mirror of model_chain_picker.step_head_model: the ring neighbour keeps
+  // the head's effort, the tail loses any entry now equal to the new head,
+  // and a head the ring does not know is one step from either end.
+  const stepHeadModel = (chain, aliases, direction) => {
+    if (!chain.length || !aliases.length) return chain
+    const [headModel, headEffort] = chain[0]
+    const index = aliases.indexOf(headModel)
+    const newHead = index >= 0
+      ? aliases[(index + direction + aliases.length) % aliases.length]
+      : (direction > 0 ? aliases[0] : aliases[aliases.length - 1])
+    return [[newHead, headEffort], ...chain.slice(1).filter(([model]) => model !== newHead)]
+  }
+  // Mirror of model_chain_picker.step_effort: one rung along the ring,
+  // clamped; below the ring or absent enters at its low end, `max` holds on
+  // + and re-enters at the ring's high end on -.
+  const stepEffort = (chain, ring, direction) => {
+    if (!chain.length || !ring.length) return chain
+    const [headModel, current] = chain[0]
+    const low = PICKER_EFFORT_LADDER.indexOf(ring[0])
+    const high = PICKER_EFFORT_LADDER.indexOf(ring[ring.length - 1])
+    const index = PICKER_EFFORT_LADDER.includes(current) ? PICKER_EFFORT_LADDER.indexOf(current) : low - 1
+    let next
+    if (index < low) next = low
+    else if (index > high) next = direction < 0 ? high : index
+    else next = Math.min(Math.max(index + direction, low), high)
+    return [[headModel, PICKER_EFFORT_LADDER[next]], ...chain.slice(1)]
+  }
+  const effortCells = (effort, ring) => {
+    const filled = effort === 'max' ? ring.length : ring.indexOf(effort) + 1
+    return '■'.repeat(Math.max(0, filled)) + '□'.repeat(Math.max(0, ring.length - Math.max(0, filled)))
+  }
+  const pickerPayloadIsSound = payload =>
+    !!payload && !payload.error &&
+    Array.isArray(payload.categories) && payload.categories.length > 0 &&
+    Array.isArray(payload.models) && Array.isArray(payload.efforts) &&
+    payload.categories.every(row => Array.isArray(row.chain) && row.chain.length > 0 && Array.isArray(row.default_chain))
+  const changedChains = state => Object.fromEntries(
+    Object.entries(state.chains).filter(([name, chain]) => !sameChain(chain, state.original[name])),
+  )
+  // A path is shown as written (control characters aside): the host-text
+  // allowlist above would strip the `@` and `~` a home directory may carry.
+  const pathText = value => String(value ?? '').replace(/\p{C}/gu, '').slice(0, 200)
+  const ctrlKey = (key, ch, target) => !!key.ctrl && String(ch || '').toLowerCase() === target
+  const padCells = (text, width) => {
+    const value = String(text)
+    return value.length >= width ? `${value.slice(0, Math.max(0, width - 2))}… ` : value.padEnd(width)
+  }
+  const pickerDefaultState = () => ({ phase: 'loading', payload: null, chains: {}, original: {}, cursor: 0, message: '' })
+  let modelApp = null
+  const loadPicker = () => {
+    runPickerScript(PICKER_READER).then(payload => updateWidget(modelApp, state => {
+      if (!pickerPayloadIsSound(payload)) {
+        return { ...state, phase: 'error', message: safeText(payload && payload.error) || 'OMH could not read the model chains' }
+      }
+      const chains = Object.fromEntries(payload.categories.map(row => [row.category, chainPairs(row.chain)]))
+      return { ...state, phase: 'ready', payload, chains, original: { ...chains }, cursor: 0, message: '' }
+    }))
+  }
+  const savePicker = changes => {
+    const body = JSON.stringify(Object.fromEntries(
+      Object.entries(changes).map(([name, chain]) => [name, chain.map(([model, effort]) => ({ model, reasoning_effort: effort }))]),
+    ))
+    runPickerScript(PICKER_WRITER, body).then(result => updateWidget(modelApp, state => {
+      if (!result || result.error) {
+        return { ...state, phase: 'error', message: safeText(result && result.error) || 'OMH could not write the model chains' }
+      }
+      const count = Array.isArray(result.changed) ? result.changed.length : 0
+      return {
+        ...state,
+        phase: 'saved',
+        message: `Saved ${count} categor${count === 1 ? 'y' : 'ies'} to ${pathText(result.path)}`,
+      }
+    }))
+  }
+  const ModelPickerBody = ({ cols, rows, state, t }) => {
+    if (state.phase === 'loading') return [h(Text, { color: t.color.muted }, 'reading model chains…')]
+    if (state.phase === 'error') {
+      return [
+        h(Text, { color: t.color.error }, state.message),
+        h(Text, { color: t.color.muted }, 'Esc closes · `omh model-chains` on a terminal is the same editor'),
+      ]
+    }
+    if (state.phase === 'saved') {
+      return [
+        h(Text, { color: t.color.ok }, state.message),
+        h(Text, { color: t.color.muted }, 'New delegations use this order; running children keep theirs.'),
+        h(Text, { color: t.color.muted }, 'Enter or Esc closes'),
+      ]
+    }
+    const payload = state.payload
+    const categories = payload.categories
+    const ring = payload.efforts
+    const served = Object.fromEntries(payload.models.map(row => [row.alias, !!row.served]))
+    const labels = Object.fromEntries(payload.models.map(row => [row.alias, safeText(row.label || row.alias)]))
+    // Dialog chrome, the detail block and the hint take twelve rows; the
+    // category list gets the rest and windows around the cursor when the
+    // terminal is shorter than the twelve categories need.
+    const visible = Math.max(3, Math.min(categories.length, rows - 12))
+    const start = Math.max(0, Math.min(state.cursor - Math.floor(visible / 2), categories.length - visible))
+    const lines = []
+    if (start > 0) lines.push(h(Text, { color: t.color.muted }, `  ↑ ${start} more`))
+    categories.slice(start, start + visible).forEach((row, offset) => {
+      const index = start + offset
+      const chain = state.chains[row.category]
+      const [headModel, headEffort] = chain[0]
+      const isCursor = index === state.cursor
+      const status = sameChain(chain, state.original[row.category]) ? row.origin : 'edited'
+      const unserved = served[headModel] === false
+      lines.push(h(
+        Text,
+        { bold: isCursor, color: isCursor ? t.color.primary : t.color.text, wrap: 'truncate-end' },
+        `${isCursor ? '>' : ' '} ${padCells(safeText(row.category), 19)}${padCells(labels[headModel] || safeText(headModel), 24)}`,
+        `${effortCells(headEffort, ring)} ${padCells(headEffort || '-', 7)}`,
+        h(Text, { color: t.color.warn }, unserved ? '!' : ' '),
+        ` ${status}`,
+      ))
+    })
+    const hidden = categories.length - start - visible
+    if (hidden > 0) lines.push(h(Text, { color: t.color.muted }, `  ↓ ${hidden} more`))
+    const current = categories[state.cursor]
+    const chain = state.chains[current.category]
+    const defaultChain = chainPairs(current.default_chain)
+    const changed = Object.keys(changedChains(state)).length
+    lines.push(h(Text, {}, ' '))
+    lines.push(h(Text, { wrap: 'truncate-end' }, h(Text, { bold: true, color: t.color.label }, `[${safeText(current.category)}]`), current.purpose ? ` ${safeText(current.purpose)}` : ''))
+    lines.push(h(Text, { wrap: 'truncate-end' }, `chain: ${chainText(chain)}`))
+    lines.push(h(Text, { color: t.color.muted, wrap: 'truncate-end' }, sameChain(chain, defaultChain) ? 'shipped default' : `shipped default: ${chainText(defaultChain)}`))
+    lines.push(h(
+      Text,
+      { color: changed ? t.color.warn : t.color.muted, wrap: 'truncate-end' },
+      changed ? `${plural(changed, 'unsaved change')}; Enter writes ${pathText(payload.path)}` : 'no unsaved changes; Enter or Esc leaves the file as it is',
+    ))
+    return lines
+  }
+  if (Overlay && Dialog) {
+    modelApp = defineWidgetApp({
+      id: 'omh-model',
+      help: 'edit the OMH per-category model chains (the omh model-chains picker)',
+      mode: 'modal',
+      usage: 'usage: /omh-model',
+      init: arg => {
+        if (String(arg || '').trim()) return null
+        loadPicker()
+        return pickerDefaultState()
+      },
+      reduce: (state, { ch, key }) => {
+        const closing = key.escape || ch === 'q' || ch === 'Q' || ctrlKey(key, ch, 'c')
+        if (state.phase !== 'ready') {
+          if (closing) return null
+          return (state.phase === 'saved' || state.phase === 'error') && key.return ? null : state
+        }
+        if (closing) return null
+        const categories = state.payload.categories
+        const name = categories[state.cursor].category
+        if (key.upArrow || ch === 'k') return { ...state, cursor: (state.cursor - 1 + categories.length) % categories.length }
+        if (key.downArrow || ch === 'j') return { ...state, cursor: (state.cursor + 1) % categories.length }
+        if (key.return) {
+          const changes = changedChains(state)
+          if (!Object.keys(changes).length) return null
+          savePicker(changes)
+          return { ...state, phase: 'saving' }
+        }
+        const aliases = state.payload.models.map(row => row.alias)
+        const chain = state.chains[name]
+        let next = chain
+        if (key.leftArrow || ch === 'h') next = stepHeadModel(chain, aliases, -1)
+        else if (key.rightArrow || ch === 'l') next = stepHeadModel(chain, aliases, 1)
+        else if (ch === '-' || ch === '_') next = stepEffort(chain, state.payload.efforts, -1)
+        else if (ch === '+' || ch === '=') next = stepEffort(chain, state.payload.efforts, 1)
+        else if (ch === 'd' || ch === 'D') next = chainPairs(categories[state.cursor].default_chain)
+        else return state
+        return { ...state, chains: { ...state.chains, [name]: next } }
+      },
+      render: ({ cols, rows, state, t }) => h(
+        Overlay,
+        { backdrop: true },
+        h(
+          Dialog,
+          {
+            hint: state.phase === 'ready'
+              ? '↑↓ category · ←→ head model · -/+ effort · d default · Enter save · Esc close'
+              : (state.phase === 'saving' ? 'writing…' : undefined),
+            title: 'OMH model chains',
+            width: Math.min(96, Math.max(48, cols - 4)),
+          },
+          ...ModelPickerBody({ cols, rows, state, t }),
+        ),
+      ),
+    })
+  }
 
   openWidget(todoApp, todoApp.init(''))
   openWidget(app, app.init(''))
