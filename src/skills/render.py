@@ -2269,7 +2269,11 @@ def loop_skill() -> SkillTemplate:
     marker = "## Runtime Evidence\n"
     if marker not in template.content:
         raise ValueError("loop skill constraint-discipline marker is missing")
-    sections = _constraint_discipline_section() + _MEASURED_LOOP_SECTION
+    sections = (
+        "## Goal Driver Ownership\n\n"
+        "Hermes narrates; the selected executor runs its goal; OMH verifies. "
+        "Driver recovery never overrides checkpoint `next_action`.\n\n"
+    ) + _constraint_discipline_section() + _MEASURED_LOOP_SECTION
     return SkillTemplate(template.name, template.content.replace(marker, sections + marker, 1))
 
 

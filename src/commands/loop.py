@@ -38,6 +38,7 @@ from ..goal_loop import (
 from ..installer import OmhError
 from ..workflows.loop_observation_input import read_loop_observation_json
 from .common import _chat_message, _paths, _print_json, add_revision_guard_arguments
+from .loop_driver import add_driver_commands
 
 
 def cmd_loop_start_card(args: argparse.Namespace) -> int:
@@ -88,6 +89,11 @@ def cmd_loop_start(args: argparse.Namespace) -> int:
             source=args.source,
             loop_id=args.loop_id or None,
             allow_unloopable=args.allow_unloopable,
+            driver_selection={
+                "executor": args.executor, "work_kind": args.work_kind,
+                "capability_snapshot": read_loop_observation_json(args.capability_json) if args.capability_json else None,
+                "session_ref": args.executor_session_ref or None,
+            },
         )
         _print_json({"loop": cycle, "status_card": build_loop_status_card(_paths(args), str(cycle["loop_id"]))})
     except (FileNotFoundError, ValueError) as exc:
@@ -258,7 +264,9 @@ def cmd_loop_goal_driver_observe(args: argparse.Namespace) -> int:
         status_card = build_loop_status_card(_paths(args), args.loop_id)
         _print_json(
             {
-                "goal_driver_observation": cycle["goal_driver_observations"][-1],
+                "goal_driver_observation": (cycle["executor_goal_observations"][-1]
+                    if status_card["driver"]["kind"] == "external_executor_goal"
+                    else cycle["goal_driver_observations"][-1]),
                 "native_goal_status": status_card["native_goal_status"],
                 "loop": cycle,
                 "status_card": status_card,
@@ -398,7 +406,12 @@ def _add_loop_commands(sub) -> None:
     loop = sub.add_parser("loop", help="Assess, start, inspect, and advance loopable goal control-plane records.")
     loop_sub = loop.add_subparsers(dest="loop_command", required=True)
 
+    add_driver_commands(loop_sub)
     start = loop_sub.add_parser("start")
+    start.add_argument("--executor", default="hermes")
+    start.add_argument("--work-kind", choices=("coding", "non_coding"), default="non_coding")
+    start.add_argument("--capability-json")
+    start.add_argument("--executor-session-ref")
     start.add_argument("--loop-id", default="")
     start.add_argument("--goal-summary", required=True)
     start.add_argument("--goal-reframe", required=True)

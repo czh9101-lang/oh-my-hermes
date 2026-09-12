@@ -15,7 +15,8 @@ from .executor_local_workflow_selection import (
 )
 
 
-EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: Final = "executor_capability_snapshot/v2"
+EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: Final = "executor_capability_snapshot/v3"
+MEDIA_EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: Final = "executor_capability_snapshot/v2"
 LEGACY_EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: Final = "executor_capability_snapshot/v1"
 PREPARED_CAPABILITY_SNAPSHOT_RECORDED_AT: Final = "1970-01-01T00:00:00Z"
 CAPABILITY_STATUSES: Final = frozenset({"prepared", "host_observed", "unavailable", "unknown"})
@@ -46,7 +47,7 @@ INPUT_MODALITY_CAPABILITY_NAMES: Final = frozenset(
         "input_modality_document",
     }
 )
-KNOWN_CAPABILITY_NAMES: Final = _OPERATIONAL_CAPABILITY_NAMES | INPUT_MODALITY_CAPABILITY_NAMES
+KNOWN_CAPABILITY_NAMES: Final = _OPERATIONAL_CAPABILITY_NAMES | INPUT_MODALITY_CAPABILITY_NAMES | {"resumable_goal"}
 DESCRIPTIVE_CAPABILITY_NAMES: Final = frozenset(
     {
         "edit_format_hashline",
@@ -159,7 +160,9 @@ def recorded_executor_capability_snapshot(
 def complete_executor_capability_snapshot(
     snapshot: Mapping[str, JsonValue],
 ) -> SnapshotRecord:
-    """Project a valid sparse snapshot onto the v2 vocabulary.
+    """Project a valid sparse snapshot onto the v3 vocabulary.
+
+    v1/v2 records cannot establish resumable goals; that row stays unknown.
 
     v1 records remain valid input, but cannot establish route-bound media
     support; every added modality row is therefore explicitly unknown.
@@ -193,6 +196,22 @@ def validate_executor_capability_snapshot(snapshot: Mapping[str, JsonValue]) -> 
     capabilities = snapshot.get("capabilities")
     if isinstance(capabilities, Mapping):
         errors.extend(_capability_errors(capabilities, recorded_at=snapshot.get("recorded_at")))
+        goal = capabilities.get("resumable_goal")
+        if goal is not None:
+            if snapshot.get("schema_version") != EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION:
+                errors.append("resumable_goal requires executor_capability_snapshot/v3")
+            if isinstance(goal, Mapping) and goal.get("status") == "host_observed":
+                scope = goal.get("scope")
+                if not isinstance(scope, Mapping) or set(scope) != {"executor", "environment", "session_ref"}:
+                    errors.append("resumable_goal scope requires executor, environment, session_ref")
+                elif scope.get("executor") != snapshot.get("executor") or not all(
+                    environment_name(scope.get(key)) for key in ("executor", "environment", "session_ref")
+                ):
+                    errors.append("resumable_goal scope must bind the executor and opaque environment/session")
+                if not evidence_reference(goal.get("evidence_ref")):
+                    errors.append("resumable_goal requires a safe evidence reference")
+                if not observation_time_relation(snapshot.get("recorded_at"), goal.get("observed_at")):
+                    errors.append("resumable_goal observation must precede recorded_at within 24 hours")
     bounded = [error[:240] for error in errors[:20]]
     if len(errors) > 20:
         bounded.append(f"... ({len(errors) - 20} more validation errors)")
@@ -261,6 +280,7 @@ def _root_errors(snapshot: Mapping[str, JsonValue]) -> list[str]:
         errors.append(f"snapshot contains unsupported fields: {rendered}")
     if snapshot.get("schema_version") not in {
         EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
+        MEDIA_EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
         LEGACY_EXECUTOR_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
     }:
         errors.append(

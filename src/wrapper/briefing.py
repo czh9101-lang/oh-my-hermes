@@ -49,7 +49,14 @@ def build_coding_briefing(
         next_action=next_action,
     )
 
+    loop_driver = _object(_object(runtime_status.get("loop_status_card")).get("driver"))
+    if loop_driver:
+        user_facing_lines.append(
+            f"Loop driver: {loop_driver['kind']}; owner {loop_driver['owner']}; "
+            f"session {loop_driver['session_ref'] or 'not bound'}; {loop_driver['observation_state']}."
+        )
     return {
+        **({"loop_driver": deepcopy(loop_driver)} if loop_driver else {}),
         "schema_version": CODING_BRIEFING_SCHEMA_VERSION,
         "session_id": session_id,
         "run_id": run_id,

@@ -301,7 +301,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(status, 0, stderr)
             self.assertEqual(stderr, "")
             prepared = json.loads(stdout)
-            self.assertEqual(prepared["schema_version"], "executor_capability_snapshot/v2")
+            self.assertEqual(prepared["schema_version"], "executor_capability_snapshot/v3")
             self.assertEqual(prepared["executor"], "codex")
             self.assertEqual(prepared["capabilities"]["parallel_agents"]["status"], "host_observed")
             for modality in ("text", "image", "audio", "video", "document"):
@@ -319,7 +319,7 @@ class CliTests(unittest.TestCase):
             recorded = json.loads(stdout)
             snapshot_path = Path(recorded["snapshot_path"])
             self.assertTrue(snapshot_path.is_file())
-            self.assertEqual(recorded["snapshot"]["schema_version"], "executor_capability_snapshot/v2")
+            self.assertEqual(recorded["snapshot"]["schema_version"], "executor_capability_snapshot/v3")
             self.assertIn("not execution evidence", recorded["claim_boundary"])
 
             status, stdout, stderr = run_cli(
@@ -9110,7 +9110,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertEqual(stderr, "")
             self.assertEqual(status, 0)
             started = json.loads(stdout)
-            self.assertEqual(started["loop"]["schema_version"], "loop_cycle/v1")
+            self.assertEqual(started["loop"]["schema_version"], "loop_cycle/v2")
             self.assertEqual(started["status_card"]["schema_version"], "loop_status_card/v1")
             self.assertIn("executor_dispatch", started["loop"]["authority_envelope"]["blocked_actions"])
             self.assertNotIn("raw_north_star", json.dumps(started))
