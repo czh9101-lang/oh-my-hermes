@@ -93,7 +93,11 @@ when file bytes are unchanged. It intentionally does **not** use `git status`
 or worktree diff: their index refresh can read secret contents and execute
 clean filters. Untracked discovery follows Git ignore metadata. User/system
 Git configuration, inherited Git environment, hooks, optional locks and
-fsmonitor are disabled. Git stderr is discarded, not persisted as evidence.
+fsmonitor are disabled. Every Git invocation also uses `--no-lazy-fetch`:
+missing promised objects produce a scan error instead of fetching objects or
+changing the checkout. Git versions without that flag fail closed with a scan
+error; brief-only scans do not require Git. Git stderr is discarded, not
+persisted as evidence.
 
 The scanner never opens secret file contents, hashes working-file bodies,
 invokes a model, accesses the network, mutates the index/refs/checkout,

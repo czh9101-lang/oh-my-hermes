@@ -79,6 +79,13 @@ def scenarios(output: Path, scratch: Path) -> list[Scenario]:
         if name == "repo":
             _ = (repo / "tracked.txt").write_text("changed", encoding="utf-8")
             _ = (repo / "untracked.txt").write_text("synthetic", encoding="utf-8")
+    promisor = output / "promisor"
+    git(output / "clean", ["clone", "--local", "--no-hardlinks", str(output / "clean"), str(promisor)], env)
+    git(promisor, ["config", "remote.origin.promisor", "true"], env)
+    tree = subprocess.run(["git", "-C", str(promisor), "rev-parse", "HEAD^{tree}"],
+                          env=env, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          timeout=10).stdout.decode().strip()
+    (promisor / ".git" / "objects" / tree[:2] / tree[2:]).unlink()
     fixtures = {
         "high.txt": 'Run git reset --hard; rm -rf "SYNTHETIC_PRIVATE_SENTINEL"; DROP TABLE customers;',
         "negated.txt": "Do not run git reset --hard; inspect status.",
@@ -88,7 +95,7 @@ def scenarios(output: Path, scratch: Path) -> list[Scenario]:
         _ = (output / name).write_text(value, encoding="utf-8")
     _ = (output / "invalid.txt").write_bytes(b"\xff")
     (output / "not-repo").mkdir()
-    before = {name: snapshot(output / name) for name in ("repo", "clean")}
+    before = {name: snapshot(output / name) for name in ("repo", "clean", "promisor")}
     cases: tuple[tuple[str, list[str], bytes | None, int, str | None], ...] = (
         ("brief-only", ["--brief-file", str(output / "high.txt")], None, 0, "high_risk"),
         ("repo-only", ["--repo", str(output / "repo")], None, 0, "high_risk"),
@@ -102,6 +109,7 @@ def scenarios(output: Path, scratch: Path) -> list[Scenario]:
         ("directory-brief", ["--brief-file", str(output / "repo")], None, 2, None),
         ("non-repo", ["--repo", str(output / "not-repo")], None, 2, None),
         ("missing-repo", ["--repo", str(output / "missing-repo")], None, 2, None),
+        ("promisor-missing-tree", ["--repo", str(promisor)], None, 2, None),
         ("invalid-utf8", ["--brief-file", str(output / "invalid.txt")], None, 2, None),
         ("input-required", [], None, 2, None),
         ("protected-override", ["--brief-stdin", "--protected-branch", "production", "--strict"], b"git push origin main", 0, "clear"),

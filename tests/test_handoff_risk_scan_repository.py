@@ -13,6 +13,24 @@ from omh.quality import handoff_risk_repository as metadata
 
 
 class HandoffRiskRepositoryTests(unittest.TestCase):
+    def test_S4_scan_error_when_promised_tree_missing_without_fetching(self):
+        with tempfile.TemporaryDirectory() as root:
+            # Given: a real promisor remote, but only a disposable local repository.
+            source = repository(Path(root))
+            clone = Path(root) / "clone"
+            _ = git(source, "clone", "--local", "--no-hardlinks", str(source), str(clone))
+            _ = git(clone, "config", "remote.origin.promisor", "true")
+            tree = git(clone, "rev-parse", "HEAD^{tree}").decode().strip()
+            (clone / ".git" / "objects" / tree[:2] / tree[2:]).unlink()
+            before = {str(path.relative_to(clone)): path.read_bytes() for path in clone.rglob("*") if path.is_file()}
+            # When
+            code, report = invoke(["--repo", str(clone)])
+            # Then: missing tree metadata is an error, never permission to fetch.
+            self.assertEqual(code, 2)
+            self.assertEqual(report["status"], "scan_error")
+            self.assertIsNone(report["verdict"])
+            self.assertEqual(before, {str(path.relative_to(clone)): path.read_bytes() for path in clone.rglob("*") if path.is_file()})
+
     def test_S5_error_when_git_output_pipe_overflows(self):
         # Given: a real child, only the Git process-launch boundary is replaced.
         process = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x' * 2097152)"],

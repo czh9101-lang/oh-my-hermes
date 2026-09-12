@@ -38,7 +38,7 @@ def _git(repo: Path, args: tuple[str, ...]) -> tuple[int, bytes]:
     env = {key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "WINDIR") if key in os.environ}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                GIT_OPTIONAL_LOCKS="0", GIT_ATTR_NOSYSTEM="1", LC_ALL="C")
-    argv = ["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
+    argv = ["git", "--no-optional-locks", "--no-lazy-fetch", "-c", "core.fsmonitor=false",
             "-c", f"core.hooksPath={os.devnull}", "-C", str(repo), *args]
     chunks: list[bytes] = []
     try:
