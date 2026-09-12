@@ -38,8 +38,11 @@ def _git(repo: Path, args: tuple[str, ...]) -> tuple[int, bytes]:
     env = {key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "WINDIR") if key in os.environ}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                GIT_OPTIONAL_LOCKS="0", GIT_ATTR_NOSYSTEM="1", LC_ALL="C")
+    # The closed command set below (rev-parse, symbolic-ref, ls-tree, ls-files)
+    # is read-only plumbing that fires no hooks, so no hooksPath override; the
+    # repo-wide blessed-override gate admits only core.fsmonitor=false here.
     argv = ["git", "--no-optional-locks", "--no-lazy-fetch", "-c", "core.fsmonitor=false",
-            "-c", f"core.hooksPath={os.devnull}", "-C", str(repo), *args]
+            "-C", str(repo), *args]
     chunks: list[bytes] = []
     try:
         with subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=False) as process:

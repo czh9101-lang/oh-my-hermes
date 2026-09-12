@@ -329,7 +329,7 @@ def run_doctor(paths: OmhPaths) -> list[Check]:
         f"last_outcome={activity['last_outcome']}; dropped={activity['dropped']}; gapped={activity['gapped']}; "
         f"rejected={activity['rejected']}; write_failed={activity['write_failed']}. "
         "Native member activity has no room-terminal guarantee; receipts remain partial.",
-        severity="warning" if activity["readiness"] == "unavailable" else "info", observed=False,
+        severity="warning" if activity["readiness"] == "unavailable" else "ok", observed=False,
     ))
     checks.append(_hook_integrity_check(paths))
     checks.append(_retired_skill_install_check(paths))

@@ -7,6 +7,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from _local_package import load_local_package
+
+load_local_package()
+
 from omh.paths import resolve_paths
 from omh.plugin_bundle.omh.memory_principals import build_memory_identity
 from omh.system.local_store import atomic_write_json

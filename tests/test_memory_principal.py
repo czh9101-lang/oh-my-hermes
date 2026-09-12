@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import json
 import unittest
 from datetime import datetime, timezone
@@ -31,16 +30,6 @@ PRINCIPAL_A = "principal:v1:" + "a" * 64
 PRINCIPAL_B = "principal:v1:" + "b" * 64
 NOW = datetime(2026, 9, 12, tzinfo=timezone.utc)
 
-
-
-def load_tests(
-    loader: unittest.TestLoader,
-    tests: unittest.TestSuite,
-    pattern: str | None,
-) -> unittest.TestSuite:
-    module: Any = importlib.import_module("_memory_principal_lifecycle_cases")
-    tests.addTests(loader.loadTestsFromTestCase(module.MemoryPrincipalLifecycleTests))
-    return tests
 
 
 def _context(
