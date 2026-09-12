@@ -12,6 +12,7 @@ from ..plugin_bundle.omh.memory_governance import (
     contains_credential_like_material,
     evaluate_renderable_strings,
 )
+from ..plugin_bundle.omh.memory_principals import parse_principal_context, principal_operation_decision
 from ..system.paths import OmhPaths
 from ._memory_lifecycle_model import LifecycleMutation, LifecyclePlan, LifecycleTransactionExecutor, MAX_MANIFEST_TARGETS
 from ._memory_lifecycle_plans import (
@@ -67,10 +68,19 @@ def _public_label(value: object) -> str:
     return "redacted" if contains_credential_like_material(text) else text
 
 
-def build_memory_retirement(paths: OmhPaths, record_id: str, revision: int, *, now: datetime) -> LifecyclePlan:
+def build_memory_retirement(
+    paths: OmhPaths,
+    record_id: str,
+    revision: int,
+    *,
+    now: datetime,
+    principal_context: dict[str, object] | None = None,
+) -> LifecyclePlan:
     record, error = _current_record(paths, record_id, revision)
     if error:
         return _rejected("retire", record_id, revision, now, error)
+    if record.get("schema_version") == "project_memory_record/v3" and not principal_operation_decision(record, principal_context)["allowed"]:
+        return _rejected("retire", record_id, revision, now, "principal_mismatch")
     if _retention_class(record) != "standard" or _expiry_reason(record, now) != "expired_standard":
         return _rejected("retire", record_id, revision, now, "retire_requires_expired_standard")
     archive = f"archive/{record_id}.r{revision}.json"
@@ -83,17 +93,34 @@ def build_memory_retirement(paths: OmhPaths, record_id: str, revision: int, *, n
     return _plan("retire", record_id, revision, _scope(record), now, manifest, mutations)
 
 
-def apply_memory_retirement(paths: OmhPaths, plan: LifecyclePlan, *, transaction_executor: LifecycleTransactionExecutor) -> dict[str, object]:
+def apply_memory_retirement(
+    paths: OmhPaths,
+    plan: LifecyclePlan,
+    *,
+    transaction_executor: LifecycleTransactionExecutor,
+    principal_context: dict[str, object] | None = None,
+) -> dict[str, object]:
     _require_guard(paths, plan, "records")
+    _require_principal_guard(paths, plan, principal_context, "records")
     if (paths.memory_dir / plan.mutations[0].target).exists():
         raise ValueError("operation_guard_mismatch")
     return _execute(paths, plan, transaction_executor)
 
 
-def build_memory_restore(paths: OmhPaths, record_id: str, revision: int, *, now: datetime, candidate_id: str | None = None) -> LifecyclePlan:
+def build_memory_restore(
+    paths: OmhPaths,
+    record_id: str,
+    revision: int,
+    *,
+    now: datetime,
+    candidate_id: str | None = None,
+    principal_context: dict[str, object] | None = None,
+) -> LifecyclePlan:
     archived, relative, error = _archived_record(paths, record_id, revision)
     if error:
         return _rejected("restore", record_id, revision, now, error)
+    if archived.get("schema_version") == "project_memory_record/v3" and not principal_operation_decision(archived, principal_context)["allowed"]:
+        return _rejected("restore", record_id, revision, now, "principal_mismatch")
     if (paths.memory_dir / f"tombstones/hard-deleted-{record_id}-r{revision}.json").exists():
         return _rejected("restore", record_id, revision, now, "tombstoned_identity")
     current, _ = read_json(paths.memory_dir, f"records/{record_id}.json")
@@ -111,8 +138,15 @@ def build_memory_restore(paths: OmhPaths, record_id: str, revision: int, *, now:
     return _plan("restore", record_id, revision, _scope(archived), now, manifest, (mutation,))
 
 
-def apply_memory_restore(paths: OmhPaths, plan: LifecyclePlan, *, transaction_executor: LifecycleTransactionExecutor) -> dict[str, object]:
+def apply_memory_restore(
+    paths: OmhPaths,
+    plan: LifecyclePlan,
+    *,
+    transaction_executor: LifecycleTransactionExecutor,
+    principal_context: dict[str, object] | None = None,
+) -> dict[str, object]:
     _require_guard(paths, plan, "archive")
+    _require_principal_guard(paths, plan, principal_context, "archive")
     if (paths.memory_dir / f"tombstones/hard-deleted-{plan.record_id}-r{plan.revision}.json").exists():
         raise ValueError("operation_guard_mismatch")
     current, _ = read_json(paths.memory_dir, f"records/{plan.record_id}.json")
@@ -121,7 +155,14 @@ def apply_memory_restore(paths: OmhPaths, plan: LifecyclePlan, *, transaction_ex
     return _execute(paths, plan, transaction_executor)
 
 
-def build_memory_reapproval(paths: OmhPaths, candidate_id: str, *, reviewer_claim: str, now: datetime) -> LifecyclePlan:
+def build_memory_reapproval(
+    paths: OmhPaths,
+    candidate_id: str,
+    *,
+    reviewer_claim: str,
+    now: datetime,
+    principal_context: dict[str, object] | None = None,
+) -> LifecyclePlan:
     if not safe_token(candidate_id):
         raise ValueError("unsafe_candidate_id")
     candidate, error = read_json(paths.memory_dir, f"candidates/{candidate_id}.json")
@@ -138,11 +179,17 @@ def build_memory_reapproval(paths: OmhPaths, candidate_id: str, *, reviewer_clai
     replacement = candidate.get("replacement")
     if not isinstance(replacement, Mapping):
         return _rejected("reapprove", record_id, revision, now, "restore_candidate_invalid")
+    identity = replacement.get("identity")
+    if isinstance(identity, Mapping) and not _principal_review_allowed(identity, principal_context):
+        return _rejected("reapprove", record_id, revision, now, "principal_mismatch")
     safety = evaluate_renderable_strings(dict(replacement))
     if safety["status"] != "safe":
         return _rejected("reapprove", record_id, revision, now, str(safety["reason_code"]))
     record = _approved_record(replacement, record_id, revision, reviewer_claim, now)
-    review_id = str(record["admission"]["review_id"])
+    admission = record.get("admission")
+    if not isinstance(admission, Mapping):
+        return _rejected("reapprove", record_id, revision, now, "restore_candidate_invalid")
+    review_id = str(admission.get("review_id", ""))
     review = _review(record, review_id, reviewer_claim)
     updated = {**candidate, "status": "approved", "reviewed_at": stamp(now), "admission": record["admission"]}
     manifest = _manifest(((f"candidate:{candidate_id}", "candidate", f"candidates/{candidate_id}.json"), (f"record:{record_id}:r{revision}", "record", f"records/{record_id}.json"), (f"review:{review_id}", "review", f"reviews/{review_id}.json")))
@@ -150,17 +197,43 @@ def build_memory_reapproval(paths: OmhPaths, candidate_id: str, *, reviewer_clai
     return _plan("reapprove", record_id, revision, _scope(record), now, manifest, mutations)
 
 
-def apply_memory_reapproval(paths: OmhPaths, plan: LifecyclePlan, *, transaction_executor: LifecycleTransactionExecutor) -> dict[str, object]:
+def apply_memory_reapproval(
+    paths: OmhPaths,
+    plan: LifecyclePlan,
+    *,
+    transaction_executor: LifecycleTransactionExecutor,
+    principal_context: dict[str, object] | None = None,
+) -> dict[str, object]:
     _require_guard(paths, plan, "candidates")
+    candidate_relative = next(
+        (mutation.target for mutation in plan.mutations if mutation.artifact_kind == "candidate"),
+        "",
+    )
+    candidate, error = read_json(paths.memory_dir, candidate_relative)
+    replacement = candidate.get("replacement") if candidate is not None and error is None else None
+    identity = replacement.get("identity") if isinstance(replacement, Mapping) else None
+    if isinstance(identity, Mapping) and not _principal_review_allowed(identity, principal_context):
+        raise ValueError("principal_mismatch")
     if (paths.memory_dir / f"records/{plan.record_id}.json").exists():
         raise ValueError("operation_guard_mismatch")
     return _execute(paths, plan, transaction_executor)
 
 
-def build_memory_correction(paths: OmhPaths, record_id: str, revision: int, summary: str, *, now: datetime, candidate_id: str | None = None) -> LifecyclePlan:
+def build_memory_correction(
+    paths: OmhPaths,
+    record_id: str,
+    revision: int,
+    summary: str,
+    *,
+    now: datetime,
+    candidate_id: str | None = None,
+    principal_context: dict[str, object] | None = None,
+) -> LifecyclePlan:
     record, error = _current_record(paths, record_id, revision)
     if error:
         return _rejected("correct", record_id, revision, now, error)
+    if record.get("schema_version") == "project_memory_record/v3" and not principal_operation_decision(record, principal_context)["allowed"]:
+        return _rejected("correct", record_id, revision, now, "principal_mismatch")
     candidate_id = candidate_id or _lifecycle_candidate_id("correct", record_id, revision)
     if not safe_token(candidate_id):
         raise ValueError("unsafe_candidate_id")
@@ -168,7 +241,7 @@ def build_memory_correction(paths: OmhPaths, record_id: str, revision: int, summ
     safety = evaluate_renderable_strings(replacement)
     if safety["status"] != "safe":
         return _rejected("correct", record_id, revision, now, str(safety["reason_code"]))
-    successor = {"schema_version": PROJECT_MEMORY_RECORD_SCHEMA_VERSION, "id": record_id, "id_key": "record_id", "revision": revision + 1, "scope": _scope(record)}
+    successor = {"schema_version": str(record.get("schema_version", PROJECT_MEMORY_RECORD_SCHEMA_VERSION)), "id": record_id, "id_key": "record_id", "revision": revision + 1, "scope": _scope(record)}
     history = {**record, "superseded_by": successor}
     candidate = _pending_candidate(replacement, candidate_id, revision + 1, "correction")
     manifest = _manifest(((f"record:{record_id}:r{revision}", "record", f"records/{record_id}.json"), (f"history:{record_id}:r{revision}", "history", f"history/{record_id}.r{revision}.json"), (f"candidate:{candidate_id}", "candidate", f"candidates/{candidate_id}.json")))
@@ -176,15 +249,31 @@ def build_memory_correction(paths: OmhPaths, record_id: str, revision: int, summ
     return _plan("correct", record_id, revision, _scope(record), now, manifest, mutations)
 
 
-def apply_memory_correction(paths: OmhPaths, plan: LifecyclePlan, *, transaction_executor: LifecycleTransactionExecutor) -> dict[str, object]:
+def apply_memory_correction(
+    paths: OmhPaths,
+    plan: LifecyclePlan,
+    *,
+    transaction_executor: LifecycleTransactionExecutor,
+    principal_context: dict[str, object] | None = None,
+) -> dict[str, object]:
     _require_guard(paths, plan, "records")
+    _require_principal_guard(paths, plan, principal_context, "records")
     return _execute(paths, plan, transaction_executor)
 
 
-def build_memory_prune(paths: OmhPaths, record_id: str, revision: int, *, now: datetime) -> LifecyclePlan:
+def build_memory_prune(
+    paths: OmhPaths,
+    record_id: str,
+    revision: int,
+    *,
+    now: datetime,
+    principal_context: dict[str, object] | None = None,
+) -> LifecyclePlan:
     record, error = _current_record(paths, record_id, revision)
     if error:
         return _rejected("prune", record_id, revision, now, error)
+    if record.get("schema_version") == "project_memory_record/v3" and not principal_operation_decision(record, principal_context)["allowed"]:
+        return _rejected("prune", record_id, revision, now, "principal_mismatch")
     if _retention_class(record) != "volatile" or _expiry_reason(record, now) != "expired_volatile" or _admission_state(record) not in {"approved_manual", "approved_auto_safe"}:
         return _rejected("prune", record_id, revision, now, "prune_requires_expired_approved_volatile")
     findings, errors, preserved = _prune_findings(paths, record_id, revision)
@@ -195,11 +284,30 @@ def build_memory_prune(paths: OmhPaths, record_id: str, revision: int, *, now: d
     return _plan("prune", record_id, revision, _scope(record), now, manifest, mutations, preserved)
 
 
-def apply_memory_prune(paths: OmhPaths, plan: LifecyclePlan, *, transaction_executor: LifecycleTransactionExecutor, confirm_hard_delete_local: bool, resume: bool = False) -> dict[str, object]:
+def apply_memory_prune(
+    paths: OmhPaths,
+    plan: LifecyclePlan,
+    *,
+    transaction_executor: LifecycleTransactionExecutor,
+    confirm_hard_delete_local: bool,
+    resume: bool = False,
+    principal_context: dict[str, object] | None = None,
+) -> dict[str, object]:
     if not confirm_hard_delete_local:
         raise ValueError("hard_delete_confirmation_required")
+    if resume and principal_context is not None:
+        parsed = parse_principal_context(principal_context)
+        if parsed is None or plan.scope.get("kind") != "user" or plan.scope.get("ref") != parsed.get("principal"):
+            raise ValueError("principal_mismatch")
     if not resume:
-        rebuilt = build_memory_prune(paths, plan.record_id, plan.revision, now=plan.now)
+        _require_principal_guard(paths, plan, principal_context, "records")
+        rebuilt = build_memory_prune(
+            paths,
+            plan.record_id,
+            plan.revision,
+            now=plan.now,
+            principal_context=principal_context,
+        )
         if rebuilt.report.get("manifest") != plan.report.get("manifest") or not rebuilt.report.get("eligible"):
             raise ValueError("manifest_mismatch")
     return _execute(paths, plan, transaction_executor)
@@ -235,6 +343,32 @@ def validate_lifecycle_receipt(receipt: Mapping[str, object]) -> list[str]:
 def _lifecycle_candidate_id(operation: str, record_id: str, revision: int) -> str:
     digest = hashlib.sha256(f"{operation}:{record_id}:{revision}".encode("utf-8")).hexdigest()[:24]
     return f"cand-{operation}-{digest}"
+
+
+def _principal_review_allowed(
+    identity: Mapping[str, object],
+    context: dict[str, object] | None,
+) -> bool:
+    parsed = parse_principal_context(context)
+    reviewer_value = identity.get("reviewer")
+    reviewer: Mapping[str, object] = dict(reviewer_value) if isinstance(reviewer_value, Mapping) else {}
+    allowed_principals = {identity.get("subject_principal"), reviewer.get("principal")}
+    return parsed is not None and parsed.get("principal") in allowed_principals
+
+
+def _require_principal_guard(
+    paths: OmhPaths,
+    plan: LifecyclePlan,
+    context: dict[str, object] | None,
+    directory: str,
+) -> None:
+    value, error = read_json(paths.memory_dir, f"{directory}/{plan.record_id}.json")
+    if directory == "archive":
+        value, _, error = _archived_record(paths, plan.record_id, plan.revision)
+    if error or value is None:
+        raise ValueError("operation_guard_mismatch")
+    if value.get("schema_version") == "project_memory_record/v3" and not principal_operation_decision(value, context)["allowed"]:
+        raise ValueError("principal_mismatch")
 
 
 def _execute(paths: OmhPaths, plan: LifecyclePlan, executor: LifecycleTransactionExecutor) -> dict[str, object]:

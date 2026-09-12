@@ -24,7 +24,8 @@ from typing import Any
 
 from .memory_records import PreparedPrefetch, RECORD_SUMMARY_LIMIT_CHARS
 
-MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION = "omh_memory_prefetch_receipt/v1"
+LEGACY_MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION = "omh_memory_prefetch_receipt/v1"
+MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION = "omh_memory_prefetch_receipt/v2"
 PREFETCH_RECEIPT_FILENAME = "prefetch_receipt.json"
 MAX_PREFETCH_RECEIPT_BYTES = 64 * 1024
 RECEIPT_STATES = ("prepared", "returned_to_host")
@@ -80,6 +81,8 @@ def build_prefetch_receipt(
             "query_digest": str(task_ref.get("sha256", "")),
             "query_supplied": bool(task_ref.get("query_supplied", False)),
         },
+        "principal_decision": dict(selection.principal_decision),
+        "audience_policy_digest": selection.audience_policy_digest,
         "selection": {
             "clock": _stamp(prepared.clock),
             "recall_enabled": bool(pack.get("enabled", False)),
@@ -128,8 +131,15 @@ def validate_prefetch_receipt(value: object) -> list[str]:
             errors.append("receipt_id")
     except (TypeError, ValueError, RecursionError):
         return ["encoding"]
-    if value.get("schema_version") != MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION:
+    schema_version = value.get("schema_version")
+    if schema_version not in {LEGACY_MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION, MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION}:
         errors.append("schema_version")
+    if schema_version == MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION:
+        decision = value.get("principal_decision")
+        if not isinstance(decision, dict) or decision.get("binding_state") not in {"validated_local", "host_validated", "unbound"}:
+            errors.append("principal_decision")
+        if not _hex64(value.get("audience_policy_digest")):
+            errors.append("audience_policy_digest")
     if value.get("state") not in RECEIPT_STATES:
         errors.append("state")
     for key in ("receipt_id", "configuration_id"):
@@ -215,6 +225,7 @@ def _stamp(moment: datetime) -> str:
 
 __all__ = [
     "CLAIM_BOUNDARY",
+    "LEGACY_MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION",
     "MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION",
     "PREFETCH_RECEIPT_FILENAME",
     "PROVES",

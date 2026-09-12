@@ -74,14 +74,25 @@ def _read_live_receipt(paths: OmhPaths, request: RecallIncidentRequest) -> tuple
         # The canonical selector recomputes the configuration identity for the
         # receipt's own lens under this profile's policy and the requested
         # budget; no record is evaluated and no hash logic is duplicated.
-        expected = select_memory_recall(
+        selection = select_memory_recall(
             [], allowed_scopes=allowlist, inspection=False,
             policy=memory.read_project_memory_policy(paths),
             observer=str(perspective.get('observer', '') or '') or None,
             observed=str(perspective.get('observed', '') or '') or None,
             query_intent=str(lens.get('query_intent', '') or '') or None,
             limit=request.limit, max_chars=request.max_chars, now=request.now,
-        ).configuration_id
+        )
+        principal = receipt.get('principal_decision')
+        binding = {
+            key: principal.get(key)
+            for key in ('binding_state', 'principal_ref', 'actor_kind', 'shared_surface', 'context_digest')
+        } if isinstance(principal, dict) else selection.configuration['principal_decision']
+        configuration = {
+            **selection.configuration,
+            'principal_decision': binding,
+            'audience_policy_digest': receipt.get('audience_policy_digest', selection.audience_policy_digest),
+        }
+        expected = digest(json.dumps(configuration, sort_keys=True, separators=(",", ":")))
     except (ValueError, TypeError):
         return rejected('incompatible_receipt:lens')
     if expected != receipt['configuration_id']:

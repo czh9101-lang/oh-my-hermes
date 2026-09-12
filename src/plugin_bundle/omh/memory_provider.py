@@ -30,6 +30,7 @@ provider reads OMH's own store, renders it, and records what it saw.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -80,6 +81,7 @@ from .memory_dreaming import (
     write_dreaming_state,
 )
 from .memory_eviction import build_eviction_plan
+from .memory_principals import parse_principal_context
 from .memory_prefetch_receipt import (
     build_prefetch_receipt,
     mark_prefetch_receipt_returned,
@@ -129,6 +131,10 @@ class OmhMemoryProvider(_MemoryProviderBase):
         self._hermes_home = Path(str(hermes_home)).expanduser() if hermes_home else None
         self._session_id = ""
         self._writes_enabled = True
+        self._principal_context: dict[str, object] | None = None
+        self._profile_ref = ""
+        self._turn_ref = ""
+        self._shared_surface = False
         # Reviewed records live in the project's own `.omh` when a session runs
         # inside a repository; `initialize` resolves it from the working
         # directory. The user home is always read as well.
@@ -181,6 +187,15 @@ class OmhMemoryProvider(_MemoryProviderBase):
         hermes_home = kwargs.get("hermes_home")
         self._hermes_home = Path(str(hermes_home)).expanduser() if hermes_home else None
         self._writes_enabled = str(kwargs.get("agent_context", "") or "") in _WRITING_CONTEXTS
+        platform = str(kwargs.get("platform", "") or "")
+        self._shared_surface = bool(kwargs.get("shared_surface", bool(platform and platform != "cli")))
+        self._principal_context = parse_principal_context(
+            kwargs.get("principal_context"),
+            expected_session=self._session_id,
+        )
+        self._profile_ref = str(self._principal_context.get("profile_ref", "")) if self._principal_context is not None else str(kwargs.get("active_profile", "") or "")
+        if self._shared_surface:
+            self._principal_context = None
         self._project_home = _project_omh_home(kwargs.get("cwd"))
         callback = kwargs.get("status_callback")
         self._status_callback = callback if callable(callback) else None
@@ -195,7 +210,24 @@ class OmhMemoryProvider(_MemoryProviderBase):
         """None. The on-demand block read lives on the existing `omh_memory` tool."""
         return []
 
-    def prefetch(self, query: str = "", *, session_id: str = "") -> str:
+    def prefetch(
+        self,
+        query: str = "",
+        *,
+        session_id: str = "",
+        principal_context: dict[str, object] | None = None,
+    ) -> str:
+        if principal_context is not None:
+            supplied = parse_principal_context(
+                principal_context,
+                expected_profile=self._profile_ref,
+                expected_session=self._session_id,
+                expected_turn=self._turn_ref,
+            )
+            if supplied != self._principal_context:
+                self._pack, self._pack_count, self._pack_has_memory = "", 0, False
+                self._prepared_receipt = None
+                self._principal_context = supplied
         self._served_pack, self._served_count = self._pack, self._pack_count
         self._served_has_memory = self._pack_has_memory
         self._served_receipt = (
@@ -212,12 +244,20 @@ class OmhMemoryProvider(_MemoryProviderBase):
         *,
         session_id: str = "",
         now: datetime | None = None,
+        principal_context: dict[str, object] | None = None,
     ) -> None:
         """Re-render for the next turn, which is where the base class puts this work.
 
         Hermes queues with the turn that just finished, so the records are
         ranked for the conversation as it stands, not for the next message.
         """
+        if principal_context is not None:
+            self._principal_context = parse_principal_context(
+                principal_context,
+                expected_profile=self._profile_ref,
+                expected_session=self._session_id,
+                expected_turn=self._turn_ref,
+            )
         self._query = str(query or "")
         self._pack = self.render_pack(now=now)
 
@@ -251,10 +291,23 @@ class OmhMemoryProvider(_MemoryProviderBase):
         self._pack, self._pack_count, self._pack_has_memory = "", 0, False
         self._served_pack, self._served_count, self._served_has_memory = "", 0, False
         self._prepared_receipt, self._served_receipt = None, None
+        self._principal_context = None
+        self._profile_ref = ""
+        self._turn_ref = ""
 
     # -- Optional hooks -----------------------------------------------------
 
     def on_turn_start(self, turn_number: int, message: str = "", **kwargs: Any) -> None:
+        self._turn_ref = f"turn_{turn_number}"
+        self._principal_context = parse_principal_context(
+            kwargs.get("principal_context"),
+            expected_profile=self._profile_ref,
+            expected_session=self._session_id,
+            expected_turn=self._turn_ref,
+        )
+        self._pack, self._pack_count, self._pack_has_memory = "", 0, False
+        self._served_pack, self._served_count, self._served_has_memory = "", 0, False
+        self._prepared_receipt, self._served_receipt = None, None
         if not self._writes_enabled:
             return
         self._mutate_state(record_turn)
@@ -278,7 +331,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
         if self._writes_enabled:
             self._mutate_state(record_compaction)
             self._evaluate_if_due("compaction", messages_at_risk=len(messages or []))
-        blocks = read_memory_blocks(self._omh_home, tier=SYSTEM_TIER)
+        blocks = () if self._shared_surface else read_memory_blocks(self._omh_home, tier=SYSTEM_TIER)
         if not blocks:
             return ""
         selection = self._block_selection(blocks=blocks, now=now)
@@ -351,7 +404,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
         """System blocks in full, reference blocks by label only, then the
         reviewed records the canonical selector chose for the queued query."""
         moment = now or datetime.now(timezone.utc)
-        blocks = read_memory_blocks(self._omh_home)
+        blocks = () if self._shared_surface else read_memory_blocks(self._omh_home)
         selection = self._block_selection(blocks=blocks, now=moment)
         system_blocks = tuple(block for block in blocks if block.tier == SYSTEM_TIER)
         reference_blocks = tuple(block for block in blocks if block.tier == REFERENCE_TIER)
@@ -371,6 +424,8 @@ class OmhMemoryProvider(_MemoryProviderBase):
             allowed_scopes=self._prefetch_scopes(),
             session_id=self._session_id,
             now=moment,
+            principal_context=self._principal_context,
+            shared_surface=self._shared_surface,
         )
         records = prepared.section.text
         # The count is what the renderer emitted, never what selection chose.
@@ -402,7 +457,13 @@ class OmhMemoryProvider(_MemoryProviderBase):
         widens this list.
         """
         identity = self._project_home.parent.name if self._project_home is not None else "default"
-        return prefetch_scope_allowlist(project_identity=identity, session_id=self._session_id)
+        principal = str(self._principal_context.get("principal", "")) if self._principal_context is not None else ""
+        return prefetch_scope_allowlist(
+            project_identity=identity,
+            session_id=self._session_id,
+            principal_ref=principal,
+            include_legacy_personal=not self._shared_surface,
+        )
 
     def consolidation_due(
         self,
@@ -419,7 +480,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
         state = read_dreaming_state(self._omh_home)
         moment = now or datetime.now(timezone.utc)
         plan, reason_kwargs, record_expiry = self._evaluation_inputs(trigger, now=moment)
-        blocks = read_memory_blocks(self._omh_home)
+        blocks = () if self._shared_surface else read_memory_blocks(self._omh_home)
         selection = self._block_selection(blocks=blocks, now=moment)
         reasons = self._with_replay_reminders(consolidation_reasons(state, **reason_kwargs), selection)
         handoff = build_consolidation_handoff(
@@ -474,7 +535,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
         )
         record_expiry = (
             count_record_expiry(self._omh_home, now=moment)
-            if count_expiry
+            if count_expiry and not self._shared_surface
             else {"expired": 0, "expiring_soon": 0}
         )
         return (
@@ -507,7 +568,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
         """
         state = read_dreaming_state(self._omh_home)
         _, reason_kwargs, _record_expiry = self._evaluation_inputs("memory_write", count_expiry=False)
-        blocks = read_memory_blocks(self._omh_home)
+        blocks = () if self._shared_surface else read_memory_blocks(self._omh_home)
         selection = self._block_selection(blocks=blocks)
         return [
             *consolidation_reasons(state, suppress=False, **reason_kwargs),
@@ -547,7 +608,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
         now: datetime | None = None,
     ) -> MemoryBlockSelection:
         return select_memory_blocks(
-            blocks if blocks is not None else read_memory_blocks(self._omh_home),
+            blocks if blocks is not None else (() if self._shared_surface else read_memory_blocks(self._omh_home)),
             now=now,
             omh_home=self._omh_home,
         )
@@ -625,9 +686,11 @@ class OmhMemoryProvider(_MemoryProviderBase):
             "action": str(action or ""),
             "target": str(target or ""),
             "chars": len(str(content or "")),
+            "content_digest": hashlib.sha256(str(content or "").encode("utf-8")).hexdigest(),
             "session_id": self._session_id,
             "write_origin": str((metadata or {}).get("write_origin", "") or ""),
             "execution_context": str((metadata or {}).get("execution_context", "") or ""),
+            "scope_decision": self._native_write_scope_decision(target, metadata),
             "redaction_policy": "metadata_only",
         }
         identity = _journal_record_identity((metadata or {}).get("record_identity"))
@@ -635,6 +698,29 @@ class OmhMemoryProvider(_MemoryProviderBase):
             entry["record_identity"] = identity
         path = self._omh_home / "memory" / "write_journal.jsonl"
         self._safely(lambda: _append_bounded_json_line(path, entry))
+
+    def _native_write_scope_decision(
+        self,
+        target: str,
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, object]:
+        supplied = metadata.get("principal_context") if isinstance(metadata, dict) and "principal_context" in metadata else metadata
+        context = parse_principal_context(
+            supplied,
+            expected_profile=self._profile_ref,
+            expected_session=self._session_id,
+            expected_turn=self._turn_ref,
+        )
+        actor_kind = str(context.get("actor_kind", "unknown")) if context is not None else "unknown"
+        principal = str(context.get("principal", "")) if context is not None else ""
+        allowed = str(target) == "user" and actor_kind == "human" and bool(principal)
+        return {
+            "decision": "allow_observation" if allowed else "deny_observation",
+            "reason_code": "human_principal_bound" if allowed else "principal_unbound_or_nonhuman",
+            "principal_ref": principal or None,
+            "actor_kind": actor_kind,
+            "admission_performed": False,
+        }
 
     def _say(self, line: str) -> None:
         """One status line through the host, where the host offered a channel.

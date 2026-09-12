@@ -33,6 +33,7 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     memory_sub = command.add_subparsers(dest="memory_command", required=True)
 
     status = memory_sub.add_parser("status", help="Show OMH project-memory policy, store paths, and review counts.")
+    status.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     status.set_defaults(func=memory.cmd_memory_status)
 
     capture = memory_sub.add_parser("capture", help="Capture an OMH project-memory candidate for review.")
@@ -74,6 +75,8 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     capture.add_argument("--observer", default=None, help="Optional perspective observer label; defaults to hermes when --observed is set.")
     capture.add_argument("--observed", default=None, help="Actor this record is about (e.g. codex, claude); scoped records only surface through a matching lens.")
     capture.add_argument("--source-class", choices=tuple(sorted(SOURCE_CLASSES)), default="omh_local", help="Source class; direct capture accepts OMH-local candidates only.")
+    capture.add_argument("--principal-context", default=None, metavar="PATH", help="Operator-supplied local memory_principal_context/v1 JSON; not host authentication evidence.")
+    capture.add_argument("--audience-principal", action="append", default=[], help="Opaque principal allowed to recall a reviewed shared project/thread record; repeatable.")
     capture.set_defaults(func=memory.cmd_memory_capture)
 
     review = memory_sub.add_parser("review", help="Return review cards for pending OMH project-memory candidates.")
@@ -84,6 +87,7 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     approve = memory_sub.add_parser("approve", help="Approve a reviewed project-memory candidate.")
     approve.add_argument("candidate_id")
     approve.add_argument("--approved-by", default="operator")
+    approve.add_argument("--principal-context", default=None, metavar="PATH")
     _add_candidate_revision_argument(approve, "approve")
     approve.add_argument(
         "--retention-class",
@@ -156,6 +160,8 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     )
     recall.add_argument("--observer", default=None, help="Perspective lens: only unscoped records and records with this observer pass.")
     recall.add_argument("--observed", default=None, help="Perspective lens: only unscoped records and records about this actor pass.")
+    recall.add_argument("--principal-context", default=None, metavar="PATH", help="Operator-supplied local memory_principal_context/v1 JSON; user-scoped recall fails closed without it.")
+    recall.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     recall.set_defaults(func=memory.cmd_memory_recall)
 
     rejected_recall = memory_sub.add_parser(
@@ -319,6 +325,7 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     restore.add_argument("record_id")
     restore.add_argument("--revision", required=True, type=int)
     restore.add_argument("--apply", action="store_true", help="Request restore of the exact archive revision (default is report-only).")
+    restore.add_argument("--principal-context", default=None, metavar="PATH")
     restore.set_defaults(func=memory.cmd_memory_restore)
 
     prune = memory_sub.add_parser("prune", help="Report hard-delete-local targets for one expired approved volatile revision.")
@@ -326,6 +333,7 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     prune.add_argument("--revision", required=True, type=int)
     prune.add_argument("--apply", action="store_true", help="Request hard-delete-local apply (default is report-only).")
     prune.add_argument("--confirm-hard-delete-local", action="store_true", help="Required alongside --apply; does not claim external deletion or erasure.")
+    prune.add_argument("--principal-context", default=None, metavar="PATH")
     prune.set_defaults(func=memory.cmd_memory_prune)
 
     correct = memory_sub.add_parser("correct", help="Prepare a superseding pending correction; --apply requires the lifecycle transaction executor.")
@@ -333,6 +341,7 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     correct.add_argument("summary", nargs="+", help="Bounded replacement summary for review.")
     correct.add_argument("--revision", required=True, type=int)
     correct.add_argument("--apply", action="store_true", help="Request correction apply (default is report-only).")
+    correct.add_argument("--principal-context", default=None, metavar="PATH")
     correct.set_defaults(func=memory.cmd_memory_correct)
 
     evaluate = memory_sub.add_parser("evaluate", help="Run deterministic, host-normalized OMH memory evaluation evidence.")
@@ -371,6 +380,20 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     dream = memory_sub.add_parser("dream", help="Report whether memory consolidation is due, and why. Never consolidates.")
     dream.add_argument("--evaluate", action="store_true", help="Weigh the triggers now and write the consolidation handoff when they fire.")
     dream.set_defaults(func=memory.cmd_memory_dream)
+
+    migration = memory_sub.add_parser("principal-migration", help="Report, apply, or roll back reviewed acting-principal assignments.")
+    migration_mode = migration.add_mutually_exclusive_group(required=True)
+    migration_mode.add_argument("--report", action="store_true", help="List bounded identity-unbound revisions without content or writes.")
+    migration_mode.add_argument("--plan", default=None, metavar="PATH", help="Reviewed memory_principal_migration_plan/v1 JSON.")
+    migration_mode.add_argument("--rollback", default=None, metavar="OPERATION_ID", help="Reverse an unchanged migrated revision.")
+    migration.add_argument("--apply", action="store_true", help="Required for plan application or rollback.")
+    migration.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+    migration.set_defaults(func=memory.cmd_memory_principal_migration)
+
+    principal_export = memory_sub.add_parser("principal-export", help="Export records allowed for one acting principal.")
+    principal_export.add_argument("--principal-context", required=True, metavar="PATH")
+    principal_export.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
+    principal_export.set_defaults(func=memory.cmd_memory_principal_export)
 
     provider = memory_sub.add_parser("provider", help="Show or change Hermes' single external memory-provider selection.")
     provider_slot = provider.add_mutually_exclusive_group()

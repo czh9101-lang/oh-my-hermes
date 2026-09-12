@@ -27,6 +27,8 @@ from ..plugin_bundle.omh.memory_dreaming import consolidation_path as _consolida
 from ..plugin_bundle.omh.memory_governance import (
     ADMISSION_STATES,
     MEMORY_GOVERNANCE_POLICY_VERSION,
+    PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+    PRINCIPAL_PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION,
     PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION as _V2_PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION,
     build_retention,
     canonical_payload_digest,
@@ -35,6 +37,7 @@ from ..plugin_bundle.omh.memory_governance import (
     evaluate_renderable_strings,
     stable_artifact_identity,
 )
+from ..plugin_bundle.omh.memory_principals import build_memory_identity, memory_identity_errors, parse_principal_context
 from ..plugin_bundle.omh.memory_recall_selector import (
     _evaluate_memory_artifact as _shared_evaluate_memory_artifact,
     effective_recall_configuration as effective_recall_configuration,
@@ -174,7 +177,7 @@ SOURCE_PRECEDENCE = {
     "wrapper_snapshot": 30,
 }
 ALLOWED_UPDATE_OPS = {"keep", "forget", "update", "change_scope", "dismiss_conflict"}
-ALLOWED_SCOPE_KINDS = {"user-global", "project", "target", "thread", "run"}
+ALLOWED_SCOPE_KINDS = {"user-global", "user", "project", "target", "thread", "run"}
 PROJECT_MEMORY_MODES = ("off", "review-first", "auto-safe")
 PROJECT_MEMORY_RECORD_TYPES = ("fact", "decision", "lesson", "procedure", "episode")
 MEMORY_ACTION_IDS = (
@@ -220,6 +223,7 @@ _PROJECT_MEMORY_RECORD_KEYS = {
     "superseded_by",
     "redaction_policy",
     "claim_boundary",
+    "identity",
 }
 _PROJECT_MEMORY_RECALL_PACK_KEYS = {
     "schema_version",
@@ -757,7 +761,9 @@ def build_project_memory_status(paths: OmhPaths) -> dict[str, object]:
         "counts": {
             "candidates": len(candidates),
             "pending_review": sum(1 for candidate in candidates if str(candidate.get("status", "")) in {"pending_review", "blocked_review_required"}),
-            "approved_records": sum(1 for record in records if record.get("schema_version") == PROJECT_MEMORY_RECORD_SCHEMA_VERSION),
+            "approved_records": sum(1 for record in records if record.get("schema_version") in {PROJECT_MEMORY_RECORD_SCHEMA_VERSION, PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION}),
+            "principal_bound_records": sum(1 for record in records if record.get("schema_version") == PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION),
+            "legacy_identity_unbound_records": sum(1 for record in records if record.get("schema_version") != PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION),
             "expired_records": expired_records,
             "eligible_records": sum(1 for evaluation in evaluations if evaluation["eligible"]),
             "ineligible_records": sum(1 for evaluation in evaluations if not evaluation["eligible"]),
@@ -796,6 +802,9 @@ def capture_project_memory_candidate(
     observer: str | None = None,
     observed: str | None = None,
     force_review: bool = False,
+    principal_context: dict[str, object] | None = None,
+    audience_principals: list[str] | tuple[str, ...] = (),
+    executor_perspective: str = "hermes",
 ) -> dict[str, object]:
     policy = read_project_memory_policy(paths)
     if not bool(policy.get("capture_enabled", True)):
@@ -867,12 +876,26 @@ def capture_project_memory_candidate(
         raise ValueError("durable memory cannot set ttl_days")
     stale_after_value = _absolute_deadline(stale_after, field="stale_after")
     expires_at_value = _absolute_deadline(expires_at, field="expires_at")
+    parsed_principal = parse_principal_context(principal_context)
+    if scope_kind == "user" and parsed_principal is None:
+        return {
+            "schema_version": PROJECT_MEMORY_CAPTURE_SCHEMA_VERSION,
+            "captured": False,
+            "auto_approved": False,
+            "policy": policy,
+            "reason": "principal_context_required",
+            "redaction_policy": "metadata_only",
+            "claim_boundary": "User-scoped memory admission fails closed without a validated acting principal.",
+        }
+    if audience_principals and parsed_principal is None:
+        raise ValueError("shared memory admission requires a validated acting principal")
+    effective_scope_ref = str(parsed_principal["principal"]) if scope_kind == "user" and parsed_principal is not None else scope_ref
     candidate = _build_project_memory_candidate(
         summary,
         content=content,
         record_type=record_type,
         scope_kind=scope_kind,
-        scope_ref=scope_ref,
+        scope_ref=effective_scope_ref,
         source=source,
         source_ref=source_ref,
         tags=tags or [],
@@ -886,6 +909,14 @@ def capture_project_memory_candidate(
         default_stale_after_days=_cadence_value(policy, "stale_after_days_default"),
         episode_ttl_days=_cadence_value(policy, "episode_ttl_days"),
     )
+    if parsed_principal is not None and (scope_kind == "user" or audience_principals):
+        candidate["schema_version"] = "project_memory_candidate/v2"
+        candidate["identity"] = build_memory_identity(
+            parsed_principal,
+            scope_kind=scope_kind,
+            executor_perspective=executor_perspective,
+            audience_principals=audience_principals,
+        )
     # Exact-summary duplicate detection, mnemosyne-style but review-first:
     # the match is surfaced on the candidate for the reviewer to decide, never
     # silently merged -- and a duplicate never auto-approves, because the
@@ -940,6 +971,15 @@ def capture_project_memory_candidate(
         "candidate": candidate,
         "record": record,
         "policy": policy,
+        "capture_receipt": {
+            "schema_version": "memory_capture_receipt/v1",
+            "subject_principal": candidate.get("identity", {}).get("subject_principal") if isinstance(candidate.get("identity"), dict) else None,
+            "event_actor": candidate.get("identity", {}).get("event_actor") if isinstance(candidate.get("identity"), dict) else None,
+            "reviewer": None,
+            "executor_perspective": candidate.get("identity", {}).get("executor_perspective") if isinstance(candidate.get("identity"), dict) else _redacted_metadata_label(executor_perspective),
+            "content_digest": str(candidate.get("content_ref", {}).get("sha256", "")) if isinstance(candidate.get("content_ref"), dict) else "",
+            "redaction_policy": "metadata_only",
+        },
         "claim_boundary": (
             "Captured project memory is an OMH-local candidate or reviewed record only; "
             "it is not execution, review, CI, merge, or Hermes internal-memory evidence."
@@ -1039,6 +1079,7 @@ def _project_memory_review_card_projection(candidate: dict[str, Any]) -> dict[st
             else {}
         ),
         "safety": safety,
+        **({"identity": candidate["identity"]} if isinstance(candidate.get("identity"), dict) else {}),
     }
 
 
@@ -1113,6 +1154,7 @@ def approve_project_memory_candidate(
     approved_by: str = "operator",
     retention_class: str | None = None,
     expected_revision: str = "",
+    reviewer_principal: str | None = None,
 ) -> dict[str, object]:
     reviewer_safety = classify_memory_admission(
         "\n".join((str(approved_by or ""), str(retention_class or "")))
@@ -1139,7 +1181,7 @@ def approve_project_memory_candidate(
         # summary and revision 1 -- and that garbage record then blocks the real
         # reapproval with newer_live_revision_conflict. The CLI catches this and
         # routes to the lifecycle reapproval executor instead.
-        if str(candidate.get("schema_version", "")) == "project_memory_candidate/v2" or str(candidate.get("lifecycle", "") or ""):
+        if str(candidate.get("lifecycle", "") or ""):
             raise LifecycleCandidateError(
                 f"candidate {candidate_id} is a lifecycle ({candidate.get('lifecycle', 'v2')}) candidate; "
                 "it must be reapproved through the lifecycle path, not plain approval"
@@ -1162,6 +1204,7 @@ def approve_project_memory_candidate(
             admission_state=admission_state,
             retention_class=retention_class,
             default_stale_after_days=_cadence_value(read_project_memory_policy(paths), "stale_after_days_default"),
+            reviewer_principal=reviewer_principal,
         )
         review = _project_memory_review_record(record, review_id=review_id, reviewer=approved_by, decision=admission_state)
         _write_project_memory_record(paths, record)
@@ -1262,6 +1305,8 @@ def build_project_memory_recall_pack(
     allowed_scopes: list[dict[str, str]] | tuple[dict[str, str], ...] | None = None,
     required_scope_kinds: tuple[str, ...] | None = None,
     inspection: bool = True,
+    principal_context: dict[str, object] | None = None,
+    shared_surface: bool = False,
 ) -> dict[str, object]:
     """Read the local store, then delegate every selection decision to the plugin.
 
@@ -1299,6 +1344,8 @@ def build_project_memory_recall_pack(
         observer=observer,
         observed=observed,
         query_intent=query_intent,
+        principal_context=principal_context,
+        shared_surface=shared_surface,
     ).pack
 
 
@@ -3070,6 +3117,7 @@ def _record_from_candidate(
     admission_state: str,
     retention_class: str | None = None,
     default_stale_after_days: int | None = None,
+    reviewer_principal: str | None = None,
 ) -> dict[str, object]:
     if admission_state not in ADMISSION_STATES:
         raise ValueError(f"unsupported memory admission state: {admission_state}")
@@ -3148,8 +3196,13 @@ def _record_from_candidate(
             )
             revalidation = {"deadline": str(refreshed["stale_after"])} if refreshed["stale_after"] else {}
             staleness_days = refreshed["stale_after_days"]
+    identity = candidate.get("identity") if isinstance(candidate.get("identity"), dict) else None
+    if identity is not None:
+        reviewer = {"principal": reviewer_principal, "review_ref": review_id}
+        audience = identity.get("audience") if isinstance(identity.get("audience"), dict) else {}
+        identity = {**identity, "reviewer": reviewer, "audience": {**audience, "review_ref": review_id}}
     record: dict[str, object] = {
-        "schema_version": PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+        "schema_version": PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION if identity is not None else PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
         "record_id": record_id,
         "candidate_id": str(candidate.get("candidate_id", "")),
         "revision": 1,
@@ -3203,6 +3256,7 @@ def _record_from_candidate(
             changed_at=approved_at,
         ),
         "safety": candidate.get("safety", {}),
+        **({"identity": identity} if identity is not None else {}),
         "redaction_policy": "metadata_only",
         "claim_boundary": "Reviewed OMH project memory is prepared context only; it is not execution, review, CI, merge, or Hermes internal-memory evidence.",
     }
@@ -3220,11 +3274,12 @@ def _project_memory_review_record(
     decision: str,
 ) -> dict[str, object]:
     return {
-        "schema_version": PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION,
+        "schema_version": PRINCIPAL_PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION if record.get("schema_version") == PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION else PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION,
         "review_id": review_id,
         "artifact_identity": stable_artifact_identity(record),
         "decision": decision,
         "reviewer_claim": str(reviewer or "operator"),
+        **({"identity": record["identity"]} if isinstance(record.get("identity"), dict) else {}),
         "payload_digest": canonical_payload_digest(record),
         "policy_version": MEMORY_GOVERNANCE_POLICY_VERSION,
         "reviewed_at": str(record.get("approved_at", "")),
@@ -3623,6 +3678,11 @@ def scan_project_memory_records(paths: OmhPaths) -> tuple[list[dict[str, Any]], 
         safe_schema_version = _redact_admitted_text(schema_version)
         if schema_version == PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
             records.append(record)
+        elif schema_version == PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
+            if validate_project_memory_record(record):
+                unreadable.append({"path_name": safe_path_name, "reason": "unsupported_record_schema", "schema_version": safe_schema_version})
+            else:
+                records.append(record)
         elif schema_version == LEGACY_PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
             if record.get("review_status") == "approved":
                 # Legacy records stay review/status visible, but the evaluator
@@ -3699,8 +3759,11 @@ def validate_project_memory_record(value: Any, *, label: str = "project_memory_r
     if not isinstance(value, dict):
         return [f"{label} must be an object"]
     _validate_allowed_keys(value, _PROJECT_MEMORY_RECORD_KEYS, errors, label)
-    if value.get("schema_version") != PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
-        errors.append(f"{label}.schema_version must be {PROJECT_MEMORY_RECORD_SCHEMA_VERSION}")
+    schema_version = value.get("schema_version")
+    if schema_version not in {PROJECT_MEMORY_RECORD_SCHEMA_VERSION, PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION}:
+        errors.append(f"{label}.schema_version is unsupported")
+    if schema_version == PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
+        errors.extend(f"{label}.{error}" for error in memory_identity_errors(value.get("identity")))
     if not isinstance(value.get("revision"), int) or int(value.get("revision", 0)) <= 0:
         errors.append(f"{label}.revision must be a positive integer")
     admission = value.get("admission")

@@ -16,6 +16,49 @@ For a forgotten-preference complaint, use the
 [Memory Recall Incident](MEMORY-RECALL-INCIDENT.md) workflow to distinguish
 storage, eligibility, selection, rendering, delivery, and use.
 
+## Acting-principal boundary
+
+`project_memory_record/v3`, `omh_memory_scope/v3`, and
+`project_memory_review_record/v3` add an identity block alongside scope. A
+`user` scope binds an opaque `principal:v1:<sha256>` subject; a reviewed shared
+project or thread record has no user subject and carries an explicit bounded
+principal audience. Subject, event actor, reviewer, executor perspective, and
+audience are separate fields. Profile, display name, session, thread, and
+executor labels never substitute for a subject principal.
+
+A host adapter derives a principal with the profile-local HMAC key and supplies
+a fresh `memory_principal_context/v1` for capture and each shared turn. The
+public `--principal-context PATH` option is an operator/wrapper-supplied local
+binding, not proof that a chat platform authenticated the author. Missing,
+wrong-profile, ambiguous, bot, and system contexts fail closed for personal
+admission and recall. On shared surfaces, v1/v2 identity-unbound records and
+unscoped memory blocks are not returned. On explicitly nonshared surfaces,
+existing reviewed v2 project and thread records retain their prior behavior;
+user-scoped v3 records still require a principal.
+
+The current Hermes callback contract does not provide an authenticated author
+on every shared turn. Wrappers may pass validated context through the provider
+API; otherwise OMH denies personal recall. Operators must also disable Hermes'
+unscoped built-in USER/MEMORY injection on shared profiles when they need this
+boundary: OMH cannot isolate native memory already loaded outside its provider,
+provider tenants, operating-system accounts, or platform authentication.
+
+Migration is report-first and agent/operator-only:
+
+```sh
+omh memory principal-migration --report --json
+omh memory principal-migration --plan reviewed-plan.json --apply --json
+omh memory principal-migration --rollback <operation-id> --apply --json
+omh memory principal-export --principal-context principal.json --json
+```
+
+The report contains bounded record identities, revisions, review IDs, and
+digests, never summaries. A plan binds the exact source revision, its immutable
+review ID, proposed identity, and plan digest. Apply archives the source and
+uses the existing operation store; replay is idempotent. Rollback restores only
+an unchanged migrated revision and refuses rather than clobbering newer data.
+Legacy records are never assigned to the next active user automatically.
+
 ## Optional Project Terms Source
 
 A repository may have one optional `PROJECT_TERMS.md` at its root. It is a
