@@ -48,7 +48,7 @@ def invoke(arguments: list[str], environment: dict[str, str]) -> CommandObservat
 def local(output: Path, scratch: Path) -> dict[str, object]:
     environment = dict(os.environ, OMH_HOME=str(scratch / 'omh'), HERMES_HOME=str(scratch / 'hermes'))
     notes = output / 'notes.md'
-    body = '- fixture $HOME "quotes"\n\n```md\n## Unreleased\n$(touch forbidden)\n```\n\n- caf\u00e9 \u2603  \n'
+    body = '- fixture $HOME "quotes"\n\n```md\n## Unreleased\n$(touch forbidden)\n```\n\n- caf\u00e9 \u2603  \n\nprefix\u2028## 1.0.0 - 2000-01-01\n- same body\n'
     history = '## 2.0.3 - 2026-09-12\r\n\r\n- historic\r\n'
     valid = output / 'valid'
     valid.mkdir()
@@ -77,6 +77,8 @@ def local(output: Path, scratch: Path) -> dict[str, object]:
     calls = [first, second, resumed]
     malformed = ('# Changelog\n', '## Unreleased\n\n', '## Unreleased\n- a\n## Unreleased\n- b\n',
                  '## Unreleased\n- new\n## 2.0.4 - 2026-09-13\n- old\n')
+    bounded_tail = '\n## Unreleased\n\n- fixture\n'
+    malformed += ('x' * (2 * 1024 * 1024 - len(bounded_tail)) + bounded_tail,)
     invalid_outputs = []
     for index, source in enumerate(malformed):
         fixture = output / f'invalid-{index}'

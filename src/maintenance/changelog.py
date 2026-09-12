@@ -48,7 +48,9 @@ def parse_changelog(raw: bytes) -> tuple[str, tuple[Section, ...]]:
     fence_char = ''
     fence_length = 0
     offset = 0
-    for line in text.splitlines(keepends=True):
+    lines = text.split('\n')
+    for index, content in enumerate(lines):
+        line = content + ('\n' if index < len(lines) - 1 else '')
         fence = _FENCE.fullmatch(line.rstrip('\r\n'))
         if fence_char:
             if fence and fence[1][0] == fence_char and len(fence[1]) >= fence_length and not fence[2].strip():
@@ -79,12 +81,12 @@ def parse_changelog(raw: bytes) -> tuple[str, tuple[Section, ...]]:
 
 
 def _body(text: str, section: Section) -> bytes:
-    lines = text[section.body_start:section.end].replace('\r\n', '\n').splitlines(keepends=True)
+    lines = text[section.body_start:section.end].replace('\r\n', '\n').split('\n')
     while lines and not lines[0].strip():
         lines.pop(0)
     while lines and not lines[-1].strip():
         lines.pop()
-    body = ''.join(lines).rstrip('\n') + '\n' if lines else ''
+    body = '\n'.join(lines) + '\n' if lines else ''
     encoded = body.encode('utf-8')
     if len(encoded) > MAX_NOTES_BYTES:
         raise ChangelogError('notes_too_large')
@@ -130,4 +132,6 @@ def stamp_changelog(raw: bytes, version: str, today: date) -> tuple[bytes, bytes
         + text[unreleased.body_start:unreleased.end]
     )
     stamped = (text[:unreleased.start] + replacement + text[unreleased.end:]).encode('utf-8')
+    if len(stamped) > MAX_CHANGELOG_BYTES:
+        raise ChangelogError('changelog_too_large')
     return stamped, pending

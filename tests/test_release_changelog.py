@@ -46,6 +46,26 @@ class ReleaseChangelogTests(unittest.TestCase):
         # Then
         self.assertEqual(result, b'- first\n\n- second  \n')
 
+    def test_preserves_unicode_separators_when_they_are_not_markdown_newlines(self):
+        from omh.maintenance.changelog import extract_notes
+        # Given
+        body = 'prefix\u2028## 2.0.3 - 2026-09-12\n\n- still target content\n'
+        raw = ('## 2.0.4 - 2026-09-13\n\n' + body).encode()
+        # When
+        result = extract_notes(raw, '2.0.4')
+        # Then
+        self.assertEqual(result, body.encode())
+
+    def test_refuses_stamp_when_output_would_exceed_parser_bound(self):
+        from datetime import date
+        from omh.maintenance.changelog import ChangelogError, MAX_CHANGELOG_BYTES, stamp_changelog
+        # Given
+        tail = b'\n## Unreleased\n\n- fixture\n'
+        raw = b'x' * (MAX_CHANGELOG_BYTES - len(tail)) + tail
+        # When / Then
+        with self.assertRaises(ChangelogError):
+            stamp_changelog(raw, '2.0.4', date(2026, 9, 13))
+
     def test_refuses_invalid_section_when_source_is_malformed(self):
         from omh.maintenance.changelog import ChangelogError, extract_notes
         # Given
