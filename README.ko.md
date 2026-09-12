@@ -128,7 +128,10 @@ omh doctor
 ```
 
 ```sh
-# 모델을 온보딩하거나 모델 라우팅을 설정하려면 Hermes에서 이 스킬을 사용하세요:
+# 작업 카테고리별 모델 설정 (화살표: 카테고리, ←→ head 모델, -/+ effort);
+# Hermes TUI 안에서는 /omh-model이 같은 피커를 엽니다:
+omh model
+# 새 모델 패밀리를 온보딩하려면 Hermes에서 이 스킬을 사용하세요:
 /omh-model-setup
 ```
 

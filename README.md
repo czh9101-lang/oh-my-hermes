@@ -136,7 +136,10 @@ omh doctor
 ```
 
 ```sh
-# To onboard models or configure model routing, use this skill in Hermes:
+# Set the model per work category (arrow keys: category, ←→ head model, -/+ effort);
+# the same picker opens inside the Hermes TUI as /omh-model:
+omh model
+# To onboard a new model family, use this skill in Hermes:
 /omh-model-setup
 ```
 

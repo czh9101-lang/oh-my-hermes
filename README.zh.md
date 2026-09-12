@@ -125,7 +125,10 @@ omh doctor
 ```
 
 ```sh
-# 如需接入模型或配置模型路由，请在 Hermes 中使用此技能：
+# 按工作类别设置模型（方向键：类别，←→ head 模型，-/+ effort）；
+# 在 Hermes TUI 中 /omh-model 打开同一个选择器：
+omh model
+# 如需接入新的模型家族，请在 Hermes 中使用此技能：
 /omh-model-setup
 ```
 
