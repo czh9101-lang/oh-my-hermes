@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from importlib import import_module
 from typing import Protocol
 
@@ -85,6 +86,10 @@ def register(ctx: _PluginContext) -> None:
     # ``get_config`` is a real Hermes PluginContext API.  Disabled installs
     # neither import the guard nor import SQLite nor register its hooks.
     get_config = getattr(ctx, "get_config", None)
+    # No supported member lifecycle producer exists on inspected Hermes hosts.
+    # Do not register an invented hook or import/start the local fixture engine.
+    activity_config = get_config("group_chat_activity", None) if callable(get_config) else None
+    activity_enabled = isinstance(activity_config, dict) and activity_config.get("enabled") is True
     egress_config = get_config("egress_attempts", None) if callable(get_config) else None
     if isinstance(egress_config, dict) and egress_config.get("enabled") is True:
         from .egress_attempts import register as register_egress_attempts
@@ -214,7 +219,7 @@ def register(ctx: _PluginContext) -> None:
         "omh_status",
         _TOOLSET,
         OMH_STATUS_SCHEMA,
-        omh_status_handler,
+        partial(omh_status_handler, group_activity_enabled=activity_enabled),
         description=OMH_STATUS_SCHEMA["description"],
     )
     _ = ctx.register_tool(

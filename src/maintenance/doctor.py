@@ -321,6 +321,11 @@ def run_doctor(paths: OmhPaths) -> list[Check]:
                 _awareness_delivery_check(paths),
             ]
         )
+    checks.append(Check(
+        "group_chat_activity", True,
+        "member_activity_contract_unsupported; collection defaults off. Keep it disabled until a documented Hermes member lifecycle callback has a supported OMH adapter.",
+        severity="info", observed=False,
+    ))
     checks.append(_hook_integrity_check(paths))
     checks.append(_retired_skill_install_check(paths))
     checks.append(_flat_skill_layout_check(paths))

@@ -17,8 +17,9 @@ A receipt is not:
 
 - automatic host execution or collection. OMH does not crawl Hermes
   databases, patch Hermes hooks, or start any telemetry of its own. The only
-  input is a payload someone chose to supply, through
-  `omh runtime session-receipt ingest --input <file>`.
+  live input remains a payload someone chose to supply, through
+  `omh runtime session-receipt ingest --input <file>`. The local normalized
+  observer engine described below is not a live-host adapter.
 - proof of an unobserved interval. A producer loaded mid-session reports a
   floor for the part it watched, never the whole session.
 - execution, verification, review, CI, merge-readiness, or merge evidence.
@@ -117,6 +118,98 @@ Consumers that read skill counters also carry the exposure summary.
 Coding-unit telemetry (`omh_unit_telemetry/v1`) remains the specialized
 surface for executor units; a session receipt describes a Hermes session and
 does not replace it.
+
+## Opt-in observer compatibility (operator and adapter reference)
+
+The profile-local option is explicitly default-off:
+
+```yaml
+plugins:
+  entries:
+    omh:
+      settings:
+        group_chat_activity:
+          enabled: false
+```
+
+OMH reads this via the host's `get_config("group_chat_activity", None)` API,
+including its legacy `config` fallback. Merely enabling the option currently
+reports `unavailable/member_activity_contract_unsupported` through `omh_status`.
+It registers no member callback, imports no observer engine, starts no worker,
+and writes no observer state. Existing tools, memory provider registration,
+and session hooks continue to work. Doctor and probe report this static
+compatibility boundary without failing normal chat or implying activation.
+
+**Live group-chat collection is not implemented on the supported host surface.**
+The inspected Hermes revisions `c32e0acb0ec59d53ac964007c75630e098bcd045` and
+`63de8e74ef91af66386336df27399f64828d0182` expose no documented room/member
+lifecycle producer. The installed group/session observation plugin does not
+publish one either. Platform reactions, edits, thread creation, streaming
+text, and pre-auth dispatch are not substitutes. A future adapter requires a
+supported callback signature, sequence semantics, and terminal fire-site;
+there is no guessed hook, event-bus publisher, transcript reader, or runtime
+patch here. Keep collection disabled until that integration is available.
+
+### Local normalized producer engine
+
+`plugin_bundle/omh/activity_observer.py` provides explicit `ActivityObserver`
+construction, `enqueue`, `flush`, `status`, and bounded `close` APIs for local
+adapter development. This engine requires the OMH core package for admission;
+standalone unsupported-host registration does not import it. Its closed
+**internal** schema `omh_group_activity_event/v1` is not a Hermes API:
+
+- Keys: `schema`, `profile_ref`, `session_ref`, `room_ref`, `member_ref`,
+  `turn_ref`, `kind`, `event_ref`, `sequence`, `observed_at`. There is no body,
+  payload, extension, approval, or transport slot. References must be
+  `sha256:<64 lowercase hex>`; timestamps are UTC seconds ending in `Z`.
+- Kinds: `session_start`, `member_start`, `member_complete`, `tool_call`,
+  `tool_error`, `compaction`, `session_end`. Member/turn refs are null only on
+  room boundaries. Profile-local keyed SHA-256 derivation happens before
+  enqueue; the adapter must own its secret key and never retain raw IDs.
+- Scope is `(profile, room, session)`, with nested member/turn identities.
+  Only directly observed tool calls, explicit tool errors, and compactions
+  become counters. Member presence never becomes subagent lifecycle evidence;
+  skill, model, token, and other unsupported counters remain null/unavailable.
+- Bounds are 64 active rooms, 1024 pending sanitized events, 4096 dedupe
+  identities per room, and 256 member/turn entries each. Topology or identity
+  overflow stops counting without evicting keys and permanently lowers coverage.
+  Queue loss conservatively lowers all subsequent intervals in that engine.
+- A single worker owns aggregation and existing locked receipt admission.
+  Dispatch submission only parses/copies bounded metadata and enqueues. Failed
+  writes/aggregation report bounded categories and counters, never raw errors
+  or successful recording. `flush` is an explicit non-dispatch barrier;
+  `close` drains with a bounded timeout and reports loss on timeout. A caller
+  must join the worker successfully before deleting its owned home.
+- `session_end` alone emits final; unload/process loss emits a useful partial
+  `process_exit`. Late starts, sequence gaps, drops, stale/conflicting events, and
+  checkpoint recovery fail closed for exactness. Restarted aggregates keep
+  their sequence high-water mark and counters, but always report floors.
+- Checkpoints contain only aggregates in one bounded profile-specific JSON
+  file under OMH runtime, never an event journal. Terminal in-memory dedupe is
+  capped at 64 rooms and expires after 24 hours, including idle workers. The existing receipt store
+  remains replay authority after expiration/restart; there is no second
+  receipt store. Engine status reports readiness, compatibility, dropped,
+  gapped, rejected, write-failed counts, and last bounded outcome.
+
+### Maintainer proof surfaces
+
+```sh
+PYTHONPATH=tests uv run python -m unittest tests/test_plugin_observer.py tests/test_plugin_observer_limits.py -v
+uv run python tools/qa/seven_issues_observer.py --scenario normalized-lifecycle
+uv run python tools/qa/seven_issues_observer.py --scenario installed-host-compatibility --host-source /path/to/hermes-agent
+uv run python tools/qa/seven_issues_observer.py --scenario supported-host-lifecycle
+```
+
+The first QA scenario exercises the real local producer, receipt admission,
+manual-ingestion replay, all six consumer projections, and CLI listing. The
+second uses the actual host interpreter, PluginContext, PluginManager, tool
+registry and existing session-end callback in disposable homes, then unloads
+registrations. Both report cleanup and bounded machine outputs, not live
+collection. A pristine fixture home's doctor may independently report missing
+installation state; its exit is retained separately from the advisory observer
+check. The supported-host lifecycle scenario exits **3 (unavailable)** until
+an actual adapter and callback producer exist. Exit 3 must not be aggregated
+as passing or used to close #1505.
 
 ## Boundaries the producer owns
 
