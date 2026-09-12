@@ -36,7 +36,7 @@ from omh.memory import (
     validate_project_memory_record,
     validate_project_memory_recall_pack,
 )
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.plugin_bundle.omh.memory_governance import canonical_payload_digest
 
 _NOW = datetime(2026, 6, 1, tzinfo=timezone.utc)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import chdir
 import hashlib
 import json
 from pathlib import Path
@@ -7,15 +8,17 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from _cli_harness import run_cli
+from project_identity_fixture import seed_project_identity
 from omh.plugin_bundle.omh.memory_provider import OmhMemoryProvider
 
 
 class MemoryRecallIncidentCliTests(unittest.TestCase):
     def test_pending_claim_diagnosis_is_private_and_explicitly_persisted(self) -> None:
         for persist in (False, True):
-            with self.subTest(persist=persist), TemporaryDirectory() as directory:
+            with self.subTest(persist=persist), TemporaryDirectory() as directory, chdir(directory):
                 # Given: a real pending candidate in isolated OMH/Hermes homes.
                 root = Path(directory)
+                seed_project_identity(root)
                 home = root / "omh"
                 prefix = ["--omh-home", str(home), "--hermes-home", str(root / "hermes")]
                 summary = "PRIVATE_CLAIM_SENTINEL"
@@ -68,9 +71,10 @@ class MemoryRecallIncidentCliTests(unittest.TestCase):
                     self.assertFalse(incidents.exists())
 
     def test_live_receipt_binds_only_to_its_session_and_configuration(self) -> None:
-        with TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory, chdir(directory):
             # Given: an approved record and the actual provider's served receipt in this home.
             root = Path(directory)
+            seed_project_identity(root)
             home = root / "omh"
             prefix = ["--omh-home", str(home), "--hermes-home", str(root / "hermes")]
             status, stdout, stderr = run_cli(prefix + ["memory", "capture", "LIVE_CLAIM_SENTINEL"])

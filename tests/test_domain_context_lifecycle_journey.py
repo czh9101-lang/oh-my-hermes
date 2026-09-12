@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from _local_package import load_local_package
+from project_identity_fixture import project_identity
 
 load_local_package()
 from omh.skills.catalog import builtin_definitions
@@ -74,7 +75,7 @@ class DomainContextLifecycleJourneyMixin:
             first_candidate_id = _capture_candidate(
                 root,
                 scope_kind="project",
-                scope_ref="redwood-project",
+                scope_ref=project_identity(root),
                 domain="redwood-operations",
                 phrase=phrase,
                 canonical="redwood_review_marker",
@@ -145,7 +146,7 @@ class DomainContextLifecycleJourneyMixin:
             replacement_id = _capture_candidate(
                 root,
                 scope_kind="project",
-                scope_ref="redwood-project",
+                scope_ref=project_identity(root),
                 domain="redwood-operations",
                 phrase=phrase,
                 canonical="redwood_review_marker",
@@ -175,7 +176,7 @@ class DomainContextLifecycleJourneyMixin:
                 "--scope-kind",
                 "project",
                 "--scope-ref",
-                "redwood-project",
+                project_identity(root),
                 "--domain",
                 "redwood-operations",
                 "--retired-by",

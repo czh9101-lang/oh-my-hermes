@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from omh.paths import project_identity
+from project_identity_fixture import project_identity
 from omh.workflows import domain_intelligence_profile_resolution as resolution
 
 

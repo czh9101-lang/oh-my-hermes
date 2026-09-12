@@ -23,9 +23,11 @@ from pathlib import Path
 from typing import Any
 
 from .memory_records import PreparedPrefetch, RECORD_SUMMARY_LIMIT_CHARS
+from .project_identity import DIAGNOSTICS, RESOLVER_VERSION, ProjectIdentityResolution
 
 LEGACY_MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION = "omh_memory_prefetch_receipt/v1"
-MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION = "omh_memory_prefetch_receipt/v2"
+PRINCIPAL_MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION = "omh_memory_prefetch_receipt/v2"
+MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION = "omh_memory_prefetch_receipt/v3"
 PREFETCH_RECEIPT_FILENAME = "prefetch_receipt.json"
 MAX_PREFETCH_RECEIPT_BYTES = 64 * 1024
 RECEIPT_STATES = ("prepared", "returned_to_host")
@@ -43,6 +45,7 @@ def build_prefetch_receipt(
     session_id: str,
     home_digests: tuple[str, ...] | list[str],
     rendered_block_count: int = 0,
+    project_resolution: ProjectIdentityResolution | None = None,
 ) -> dict[str, Any]:
     """Bind one selection and its rendering to configuration, lens, session and store.
 
@@ -69,6 +72,8 @@ def build_prefetch_receipt(
         "session_id": str(pack.get("session_id", "") or session_id or ""),
         "store": {"home_digests": [str(digest) for digest in home_digests]},
         "configuration_id": selection.configuration_id,
+        "resolver_version": str(configuration["resolver_version"]),
+        "project_identity": str(configuration["project_identity"]),
         "selector_schema_version": str(configuration.get("selector_schema_version", "")),
         "recall_pack_schema_version": str(pack.get("schema_version", "")),
         "render_configuration": render_configuration,
@@ -76,6 +81,8 @@ def build_prefetch_receipt(
         "lens": {
             "scope_allowlist": [dict(scope) for scope in selection.scope_allowlist],
             "scope_status": selection.scope_status,
+            "project_identity_state": project_resolution.state if project_resolution else selection.scope_status,
+            "project_identity_diagnostics": list(project_resolution.diagnostics) if project_resolution else [],
             "perspective": {"observer": str(perspective.get("observer", "")), "observed": str(perspective.get("observed", ""))},
             "query_intent": str(pack.get("query_intent", "")),
             "query_digest": str(task_ref.get("sha256", "")),
@@ -132,9 +139,19 @@ def validate_prefetch_receipt(value: object) -> list[str]:
     except (TypeError, ValueError, RecursionError):
         return ["encoding"]
     schema_version = value.get("schema_version")
-    if schema_version not in {LEGACY_MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION, MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION}:
+    if schema_version not in {LEGACY_MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION, PRINCIPAL_MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION, MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION}:
         errors.append("schema_version")
     if schema_version == MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION:
+        if value.get("resolver_version") != RESOLVER_VERSION:
+            errors.append("resolver_version")
+        if not isinstance(value.get("project_identity"), str):
+            errors.append("project_identity")
+        identity_lens = value.get("lens")
+        if not isinstance(identity_lens, dict) or identity_lens.get("project_identity_state") not in ("resolved", "unresolved", "inspection"):
+            errors.append("project_identity_state")
+        elif not isinstance(identity_lens.get("project_identity_diagnostics"), list) or any(not isinstance(token, str) or token not in DIAGNOSTICS for token in identity_lens["project_identity_diagnostics"]):
+            errors.append("project_identity_diagnostics")
+    if schema_version in {PRINCIPAL_MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION, MEMORY_PREFETCH_RECEIPT_SCHEMA_VERSION}:
         decision = value.get("principal_decision")
         if not isinstance(decision, dict) or decision.get("binding_state") not in {"validated_local", "host_validated", "unbound"}:
             errors.append("principal_decision")

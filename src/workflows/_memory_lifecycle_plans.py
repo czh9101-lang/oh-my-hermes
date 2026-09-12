@@ -162,6 +162,17 @@ def _approved_record(replacement: Mapping[str, object], record_id: str, revision
     return record
 
 
+def project_identity_successor(record: Mapping[str, Any], scope_ref: str, now: datetime, *, operation_id: str) -> tuple[dict[str, Any], dict[str, object]]:
+    """Reviewed scope-only successor; never renew retention or rewrite source evidence."""
+    replacement = {**record, "scope": {"kind": "project", "ref": scope_ref}}
+    successor: dict[str, Any] = _approved_record(replacement, str(record["record_id"]), int(record["revision"]) + 1, "reviewed_project_identity_migration", now)
+    successor = {**record, "operation_id": operation_id, **{key: successor[key] for key in ("revision", "scope", "admission")},
+                 **({"identity": successor["identity"]} if "identity" in successor else {})}
+    successor["admission"] = {**successor["admission"], "artifact_identity": stable_artifact_identity(successor), "payload_digest": canonical_payload_digest(successor)}
+    review = _review(successor, str(successor["admission"]["review_id"]), "reviewed_project_identity_migration")
+    return successor, review
+
+
 def _review(record: Mapping[str, object], review_id: str, reviewer: str) -> dict[str, object]:
     return {"schema_version": PRINCIPAL_PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION if record.get("schema_version") == PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION else PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION, "review_id": review_id, "artifact_identity": stable_artifact_identity(dict(record)), "decision": "approved_manual", "reviewer_claim": reviewer, **({"identity": dict(record["identity"])} if isinstance(record.get("identity"), Mapping) else {}), "payload_digest": canonical_payload_digest(dict(record)), "policy_version": MEMORY_GOVERNANCE_POLICY_VERSION, "classifier_version": MEMORY_CLASSIFIER_VERSION}
 

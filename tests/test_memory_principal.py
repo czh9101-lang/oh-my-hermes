@@ -12,7 +12,7 @@ from _local_package import load_local_package
 
 load_local_package()
 
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.plugin_bundle.omh.memory_blocks import approve_memory_block, build_memory_block, write_memory_block
 from omh.plugin_bundle.omh.memory_principals import (
     PrincipalContractError,
@@ -67,7 +67,6 @@ def _approved(
         paths,
         summary,
         scope_kind=scope_kind,
-        scope_ref="default",
         principal_context=context,
         audience_principals=audience,
         ttl_days=ttl_days,
@@ -266,13 +265,13 @@ class MemoryPrincipalTests(unittest.TestCase):
 
             # Then receipt/write evidence is decision metadata, not content or admission.
             journal = (paths.memory_dir / "write_journal.jsonl").read_text()
-            self.assertEqual(receipt["schema_version"], "omh_memory_prefetch_receipt/v2")
+            self.assertEqual(receipt["schema_version"], "omh_memory_prefetch_receipt/v3")
             self.assertEqual(receipt["principal_decision"]["principal_ref"], PRINCIPAL_A)
             self.assertNotIn("Receipt fixture fact", json.dumps(receipt))
             self.assertNotIn("native-write-body-sentinel", journal)
             self.assertIn('"admission_performed": false', journal)
 
-    def test_M8_nonshared_legacy_project_scope_remains_readable(self) -> None:
+    def test_M8_nonshared_legacy_project_scope_requires_explicit_inspection(self) -> None:
         # Given an existing v2 project record.
         with TemporaryDirectory() as tmp:
             paths = resolve_paths(Path(tmp) / "omh", Path(tmp) / "hermes")
@@ -288,8 +287,11 @@ class MemoryPrincipalTests(unittest.TestCase):
             finally:
                 provider.shutdown()
 
-            # Then the v2 project record remains available only in nonshared mode.
-            self.assertIn("Legacy project compatibility", text)
+            # Basename records remain inspectable, but never enter automatic recall.
+            self.assertNotIn("Legacy project compatibility", text)
+            from omh.workflows.memory import build_project_memory_recall_pack
+            inspection = build_project_memory_recall_pack(paths, scope_kind="project", scope_ref="default")
+            self.assertEqual(inspection["record_count"], 1)
 
 
 if __name__ == "__main__":

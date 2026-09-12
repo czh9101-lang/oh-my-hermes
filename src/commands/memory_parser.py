@@ -32,6 +32,16 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     command = sub.add_parser("memory", help="Agent/operator-only OMH memory review, migration, lifecycle, and prepared-context controls.")
     memory_sub = command.add_subparsers(dest="memory_command", required=True)
 
+    identity = memory_sub.add_parser("project-identity", help="Operator-only stable repository identity and reviewed scope migration.")
+    identity_sub = identity.add_subparsers(dest="identity_command", required=True)
+    for verb in ("show", "init", "report", "migrate"):
+        action = identity_sub.add_parser(verb)
+        action.set_defaults(func=memory.cmd_memory_project_identity)
+        if verb == "migrate":
+            approval = action.add_mutually_exclusive_group(required=True)
+            approval.add_argument("--approve", metavar="REPORT_DIGEST")
+            approval.add_argument("--rollback", metavar="RECEIPT_ID")
+
     status = memory_sub.add_parser("status", help="Show OMH project-memory policy, store paths, and review counts.")
     status.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     status.set_defaults(func=memory.cmd_memory_status)
@@ -42,7 +52,7 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     capture.add_argument("--content", default="", help="Optional raw source text. It is hashed/length-counted, not persisted raw.")
     capture.add_argument("--stdin", action="store_true", help="Read optional raw source text from stdin without persisting it raw.")
     capture.add_argument("--scope-kind", choices=tuple(sorted(SCOPE_KINDS)), default="project")
-    capture.add_argument("--scope-ref", default="default")
+    capture.add_argument("--scope-ref", default=None)
     capture.add_argument("--source", default="cli")
     capture.add_argument(
         "--source-ref",
@@ -117,7 +127,7 @@ def add_memory_commands(sub: argparse._SubParsersAction[argparse.ArgumentParser]
     incident.add_argument("--query", default="", help="Recall query; only its digest is retained.")
     incident.add_argument("--session-id", default="")
     incident.add_argument("--scope-kind", choices=tuple(sorted(SCOPE_KINDS)), default="project")
-    incident.add_argument("--scope-ref", default="default")
+    incident.add_argument("--scope-ref", default="")
     incident.add_argument("--observer", default=None)
     incident.add_argument("--observed", default=None)
     incident.add_argument("--limit", type=int, default=6)

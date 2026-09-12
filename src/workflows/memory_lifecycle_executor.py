@@ -8,10 +8,10 @@ from typing import Any
 from ..system.paths import OmhPaths
 from ._memory_lifecycle_model import LifecycleMutation, LifecyclePlan
 from .memory_lifecycle import make_lifecycle_receipt
-from .memory_store import run_memory_operation
+from .memory_store import OperationPreflight, run_memory_operation
 
 
-def execute_memory_lifecycle(paths: OmhPaths, plan: LifecyclePlan) -> dict[str, object]:
+def execute_memory_lifecycle(paths: OmhPaths, plan: LifecyclePlan, *, preflight: OperationPreflight | None = None) -> dict[str, object]:
     """Apply one plan through the shared operation lock and durable step log."""
     steps = lifecycle_operation_steps(plan)
     operation = run_memory_operation(
@@ -20,6 +20,7 @@ def execute_memory_lifecycle(paths: OmhPaths, plan: LifecyclePlan) -> dict[str, 
         operation_type=f"memory_lifecycle_{plan.operation_type}",
         steps=steps,
         now=plan.now,
+        preflight=preflight,
     )
     if not _same_steps(operation.get("steps"), steps):
         raise ValueError("lifecycle_operation_mismatch")

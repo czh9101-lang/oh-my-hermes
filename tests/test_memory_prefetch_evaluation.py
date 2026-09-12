@@ -299,7 +299,7 @@ class LiveParityReportShapeTests(unittest.TestCase):
                     lens["scope_allowlist"],
                     [
                         {"kind": "user-global", "ref": "default"},
-                        {"kind": "project", "ref": "default"},
+                        {"kind": "project", "ref": next(spec["scope_ref"] for spec in fixture["records"] if spec["scope_kind"] == "project" and not spec["contamination_class"])},
                         {"kind": "thread", "ref": PARITY_SESSION_ID},
                     ],
                 )

@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 from _local_package import load_local_package
+from project_identity_fixture import project_identity, seed_repository_remote
 
 load_local_package()
 from omh.skills.catalog import builtin_definitions
@@ -36,6 +37,7 @@ def _canonical(value: object) -> str:
 def _repository(path: Path) -> Path:
     path.mkdir(parents=True)
     (path / ".git").mkdir()
+    seed_repository_remote(path)
     return path.resolve()
 
 
@@ -149,7 +151,7 @@ def _capture_and_approve(
     candidate_id = _capture_candidate(
         root,
         scope_kind=scope_kind,
-        scope_ref=scope_ref or root.name,
+        scope_ref=scope_ref or project_identity(root),
         domain=domain,
         phrase=phrase,
         canonical=canonical,

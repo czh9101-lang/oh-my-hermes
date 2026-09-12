@@ -8,7 +8,7 @@ from _local_package import load_local_package
 load_local_package()
 
 from omh.coding_lifecycle import start_codex_delegation_lifecycle
-from omh.paths import project_identity
+from project_identity_fixture import project_identity
 from omh.runtime_records import (
     WRAPPER_SESSION_RECORD_KEYS,
     validate_wrapper_session_record,

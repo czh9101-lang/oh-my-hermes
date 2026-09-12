@@ -25,6 +25,12 @@ from omh.workflows.memory import (
 )
 
 
+def _legacy_handoff(paths):
+    # Lifecycle fixtures deliberately retain their persisted legacy refs.
+    return build_handoff_context_pack(paths, scope_kind="project", scope_ref="default",
+                                      inspection={"snapshots": _memory_snapshots(paths), "conflicts": []})
+
+
 def _batch(label: str, *, scope: dict[str, str] | None = None) -> dict[str, object]:
     return {
         "schema_version": "memory_update_batch/v1",
@@ -81,7 +87,7 @@ class MemoryBatchTests(TestCase):
             self.assertTrue(item["item_id"].startswith("item_"))
             self.assertEqual(item["retention_class"], "standard")
             self.assertTrue(staged["batch_id"].startswith("batch_"))
-            self.assertNotIn(item["item_id"], {row["item_id"] for row in build_handoff_context_pack(paths)["included_context"]})
+            self.assertNotIn(item["item_id"], {row["item_id"] for row in _legacy_handoff(paths)["included_context"]})
 
             applied = apply_approved_memory_update_batch(
                 paths,
@@ -93,7 +99,7 @@ class MemoryBatchTests(TestCase):
                 staged["batch_id"],
                 now=datetime(2026, 9, 6, 2, 0, tzinfo=timezone.utc),
             )
-            handoff = build_handoff_context_pack(paths)
+            handoff = _legacy_handoff(paths)
             receipt = applied["receipt"]
 
             self.assertEqual(applied["status"], "applied")
@@ -1517,13 +1523,13 @@ class MemoryBatchTests(TestCase):
             with self.assertRaisesRegex(RuntimeError, "injected named write interruption"):
                 apply_approved_memory_update_batch(paths, staged["batch_id"], write_hook=interrupt_on_second_write)
 
-            interrupted = build_handoff_context_pack(paths)
+            interrupted = _legacy_handoff(paths)
             self.assertFalse({item["item_id"] for item in interrupted["included_context"]} & {row["item_id"] for row in staged["items"]})
             self.assertEqual(
                 apply_approved_memory_update_batch(paths, staged["batch_id"])["status"],
                 "applied",
             )
-            recovered = build_handoff_context_pack(paths)
+            recovered = _legacy_handoff(paths)
             ids = [item["item_id"] for item in recovered["included_context"]]
             self.assertTrue({row["item_id"] for row in staged["items"]} <= set(ids))
 
@@ -1571,7 +1577,7 @@ class MemoryBatchTests(TestCase):
                     worker.join(timeout=10)
                     self.assertEqual(worker.exitcode, 0)
                 self.assertCountEqual([queue.get(timeout=2), queue.get(timeout=2)], [("applied", first["batch_id"]), ("applied", second["batch_id"])])
-                ids = {item["item_id"] for item in build_handoff_context_pack(paths)["included_context"]}
+                ids = {item["item_id"] for item in _legacy_handoff(paths)["included_context"]}
                 self.assertTrue({first["items"][0]["item_id"], second["items"][0]["item_id"]} <= ids)
 
 

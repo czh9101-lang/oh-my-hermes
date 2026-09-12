@@ -9,6 +9,7 @@ from typing import TypeAlias
 import unittest
 
 from _cli_harness import run_cli
+from project_identity_fixture import seed_project_identity
 
 
 Json: TypeAlias = str | int | float | bool | None | list["Json"] | dict[str, "Json"]
@@ -29,6 +30,7 @@ class GlobalScopeCliTests(unittest.TestCase):
     def test_reviewed_user_global_records_roundtrip_without_foreign_scope(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
+            seed_project_identity(root)
             homes = ["--omh-home", str(root / "omh"), "--hermes-home", str(root / "hermes")]
 
             def command(arguments: list[str]) -> dict[str, Json]:
@@ -70,7 +72,7 @@ class GlobalScopeCliTests(unittest.TestCase):
             assert isinstance(inspected, list)
             self.assertEqual(
                 {text(mapping(item)["record_id"]) for item in inspected},
-                {global_id, project_id},
+                {global_id},
             )
 
     def test_unknown_scope_still_fails_at_cli_boundary(self) -> None:

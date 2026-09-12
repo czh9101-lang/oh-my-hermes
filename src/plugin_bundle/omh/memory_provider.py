@@ -82,6 +82,7 @@ from .memory_dreaming import (
 )
 from .memory_eviction import build_eviction_plan
 from .memory_principals import parse_principal_context
+from .project_identity import ProjectIdentityResolution, project_identity_root, resolve_project_identity
 from .memory_prefetch_receipt import (
     build_prefetch_receipt,
     mark_prefetch_receipt_returned,
@@ -139,6 +140,8 @@ class OmhMemoryProvider(_MemoryProviderBase):
         # inside a repository; `initialize` resolves it from the working
         # directory. The user home is always read as well.
         self._project_home: Path | None = None
+        self._project_cwd: str | None = None
+        self._project_resolution = ProjectIdentityResolution()
         # prefetch() is called before every API call and the base class asks for
         # it to be fast, so the pack is rendered off the hot path and served
         # from here. `_query` is what the pack was ranked for; `_pack_count`
@@ -196,7 +199,9 @@ class OmhMemoryProvider(_MemoryProviderBase):
         self._profile_ref = str(self._principal_context.get("profile_ref", "")) if self._principal_context is not None else str(kwargs.get("active_profile", "") or "")
         if self._shared_surface:
             self._principal_context = None
-        self._project_home = _project_omh_home(kwargs.get("cwd"))
+        self._project_cwd = str(kwargs.get("cwd") or Path.cwd())
+        self._project_home = _project_omh_home(self._project_cwd)
+        self._project_resolution = resolve_project_identity(self._project_cwd)
         callback = kwargs.get("status_callback")
         self._status_callback = callback if callable(callback) else None
         self._pack = self.render_pack()
@@ -403,6 +408,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
     def render_pack(self, *, now: datetime | None = None) -> str:
         """System blocks in full, reference blocks by label only, then the
         reviewed records the canonical selector chose for the queued query."""
+        self._project_resolution = resolve_project_identity(self._project_cwd)
         moment = now or datetime.now(timezone.utc)
         blocks = () if self._shared_surface else read_memory_blocks(self._omh_home)
         selection = self._block_selection(blocks=blocks, now=moment)
@@ -436,6 +442,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
             session_id=self._session_id,
             home_digests=snapshot.home_digests,
             rendered_block_count=block_count,
+            project_resolution=self._project_resolution,
         )
         # The brief is a request, not a memory: it is served so the model can
         # consolidate in this turn, and it never moves the recall count.
@@ -449,14 +456,8 @@ class OmhMemoryProvider(_MemoryProviderBase):
         return (self._omh_home,)
 
     def _prefetch_scopes(self) -> list[dict[str, str]]:
-        """Explicit labels only: user-global, this project, this thread.
-
-        The project identity is the repository directory name -- the same rule
-        `omh memory recall` and the handoff apply through `project_identity` --
-        and `default` outside any repository. A record's own scope never
-        widens this list.
-        """
-        identity = self._project_home.parent.name if self._project_home is not None else "default"
+        """One stable project label, or an unresolved, fail-closed allowlist."""
+        identity = self._project_resolution.identity
         principal = str(self._principal_context.get("principal", "")) if self._principal_context is not None else ""
         return prefetch_scope_allowlist(
             project_identity=identity,
@@ -963,10 +964,9 @@ def _project_omh_home(cwd: object = None) -> Path | None:
     working directory to `initialize`, so the process cwd stands in.
     """
     try:
-        start = Path(str(cwd)).expanduser() if cwd else Path.cwd()
-        for candidate in (start, *start.parents):
-            if (candidate / ".git").exists():
-                return candidate / ".omh"
+        root = project_identity_root(str(cwd) if cwd else None)
+        if root is not None:
+            return root / ".omh"
     except OSError:
         return None
     return None

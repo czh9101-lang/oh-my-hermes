@@ -15,7 +15,7 @@ from unittest.mock import patch
 from _local_package import load_local_package
 
 load_local_package()
-from omh.paths import resolve_paths
+from project_identity_fixture import PROJECT_IDENTITY, memory_paths as resolve_paths
 from omh.plugin_bundle.omh import memory_recall_selector as selector
 from omh.workflows import memory
 from memory_recall_fixture import (
@@ -183,7 +183,7 @@ class CanonicalRecallTests(unittest.TestCase):
             paths = resolve_paths(root / ".omh", Path(tmp) / ".hermes")
             expected: list[str] = []
             with patch.object(memory, "utc_now", return_value="2026-09-01T00:00:00Z"):
-                for index, scope in enumerate((GLOBAL, PROJECT, THREAD, {"kind": "project", "ref": "foreign"})):
+                for index, scope in enumerate((GLOBAL, {"kind": "project", "ref": PROJECT_IDENTITY}, THREAD, {"kind": "project", "ref": "foreign"})):
                     captured = mapping(decode(json.dumps(memory.capture_project_memory_candidate(
                         paths, f"Release checklist fixture {index}", scope_kind=scope["kind"], scope_ref=scope["ref"],
                     ))))

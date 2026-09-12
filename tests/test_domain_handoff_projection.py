@@ -17,7 +17,8 @@ from omh.memory import (  # noqa: E402
     memory_recall_pack_for_handoff,
     validate_handoff_context_pack,
 )
-from omh.paths import OmhPaths, project_identity, resolve_paths  # noqa: E402
+from omh.paths import OmhPaths  # noqa: E402
+from project_identity_fixture import project_identity, memory_paths as resolve_paths
 from omh.workflows.domain_intelligence import (  # noqa: E402
     approve_domain_candidate,
     capture_domain_candidate,

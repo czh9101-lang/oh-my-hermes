@@ -26,7 +26,7 @@ from omh.memory import (
     validate_project_memory_record,
     validate_project_memory_recall_pack,
 )
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.runtime.records import _compact_memory_recall_pack
 
 

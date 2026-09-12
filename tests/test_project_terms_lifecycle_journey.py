@@ -19,7 +19,8 @@ from omh.coding.handoff_input_manifest import (  # noqa: E402
     validate_handoff_input_manifest,
 )
 from omh.memory import build_handoff_context_pack, validate_handoff_context_pack  # noqa: E402
-from omh.paths import project_identity, resolve_paths  # noqa: E402
+from omh.paths import resolve_paths  # noqa: E402
+from project_identity_fixture import project_identity, seed_project_identity
 from omh.routing.chat import route_chat_message  # noqa: E402
 from omh.routing.domain_context_eligibility import classify_domain_context_eligibility  # noqa: E402
 from omh.workflows.role_context_packs import (  # noqa: E402
@@ -57,6 +58,7 @@ def _repository(root: Path, *, source: bytes = _VALID_SOURCE) -> Path:
     root.mkdir(parents=True)
     (root / ".git").mkdir()
     (root / "PROJECT_TERMS.md").write_bytes(source)
+    seed_project_identity(root)
     return root.resolve()
 
 

@@ -34,7 +34,7 @@ from omh.memory import (
     record_recall_usage,
     validate_project_memory_recall_pack,
 )
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 
 
 def _approve_capture(paths, summary, **kwargs):

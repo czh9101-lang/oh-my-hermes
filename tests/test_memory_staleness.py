@@ -31,7 +31,7 @@ from omh.memory import (
     validate_project_memory_record,
     validate_project_memory_recall_pack,
 )
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.workflows import memory as memory_workflow
 from omh.workflows.memory_lifecycle import (
     apply_memory_correction,

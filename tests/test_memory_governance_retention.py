@@ -221,7 +221,7 @@ class RecordExpiryDeadlineTests(unittest.TestCase):
         from tempfile import TemporaryDirectory
 
         from omh.memory import approve_project_memory_candidate, capture_project_memory_candidate
-        from omh.paths import resolve_paths
+        from project_identity_fixture import memory_paths as resolve_paths
 
         with TemporaryDirectory() as tmp:
             paths = resolve_paths(Path(tmp) / ".omh", Path(tmp) / ".hermes")

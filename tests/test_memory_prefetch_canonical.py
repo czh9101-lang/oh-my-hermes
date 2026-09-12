@@ -30,7 +30,7 @@ from _credential_fixtures import AWS_ACCESS_KEY_ID
 from memory_recall_fixture import reviewed, selection
 
 load_local_package()
-from omh.paths import resolve_paths
+from project_identity_fixture import PROJECT_IDENTITY, memory_paths as resolve_paths
 from omh.plugin_bundle.omh import memory_prefetch_receipt as receipts
 from omh.plugin_bundle.omh import memory_records
 from omh.plugin_bundle.omh import memory_recall_selector as selector
@@ -42,7 +42,7 @@ NOW = datetime(2026, 9, 11, tzinfo=timezone.utc)
 CAPTURED_AT = "2026-09-01T00:00:00Z"
 SESSION = "session-a"
 GLOBAL = {"kind": "user-global", "ref": "default"}
-PROJECT = {"kind": "project", "ref": "default"}
+PROJECT = {"kind": "project", "ref": PROJECT_IDENTITY}
 THREAD = {"kind": "thread", "ref": SESSION}
 
 
@@ -133,9 +133,9 @@ class CanonicalPrefetchTests(unittest.TestCase):
             root = Path(tmp)
             repo = root / "repo"
             (repo / ".git").mkdir(parents=True)
-            approve(root, "project record labelled for this repository", home="repo/.omh", scope_ref="repo")
+            approve(root, "project record labelled for this repository", home="repo/.omh")
             approve(root, "global record from the user store", scope_kind="user-global", scope_ref="default")
-            unlabelled = approve(root, "user store record still labelled project default")
+            unlabelled = approve(root, "user store record still labelled project default", scope_ref="default")
             live = provider(root, cwd=repo)
             pack = serve(live)
             self.assertIn("labelled for this repository", pack)
@@ -144,7 +144,7 @@ class CanonicalPrefetchTests(unittest.TestCase):
             receipt = live.latest_prefetch_receipt()
             assert receipt is not None
             # The selector canonicalizes the allowlist: deduplicated, sorted by (kind, ref).
-            self.assertEqual(receipt["lens"]["scope_allowlist"], [{"kind": "project", "ref": "repo"}, THREAD, GLOBAL])
+            self.assertEqual(receipt["lens"]["scope_allowlist"], [PROJECT, THREAD, GLOBAL])
             self.assertEqual(receipt["selection"]["exclusion_reason_counts"], {"scope_mismatch": 1})
             self.assertEqual(len(receipt["store"]["home_digests"]), 2)
 
@@ -171,7 +171,7 @@ class CanonicalPrefetchTests(unittest.TestCase):
             receipt = live.latest_prefetch_receipt()
             assert receipt is not None
             snapshot = memory_records.read_record_store_snapshot((root / ".omh",))
-            allowlist = memory_records.prefetch_scope_allowlist(project_identity="default", session_id=SESSION)
+            allowlist = memory_records.prefetch_scope_allowlist(project_identity=PROJECT_IDENTITY, session_id=SESSION)
             expected = selector.select_memory_recall(
                 list(snapshot.records), "release tests", allowed_scopes=allowlist, required_scope_kinds=("project",),
                 inspection=False, review_resolver=snapshot.reviews, operation_states=snapshot.operation_states,
@@ -370,7 +370,7 @@ class CanonicalPrefetchTests(unittest.TestCase):
             root = Path(tmp)
             record = approve(root, "compatible record")
             snapshot = memory_records.read_record_store_snapshot((root / ".omh",))
-            allowlist = memory_records.prefetch_scope_allowlist(project_identity="default", session_id=SESSION)
+            allowlist = memory_records.prefetch_scope_allowlist(project_identity=PROJECT_IDENTITY, session_id=SESSION)
             prepared = memory_records.prepare_prefetch_records(snapshot, "", allowed_scopes=allowlist, session_id=SESSION, now=NOW)
             self.assertEqual([item["record_id"] for item in prepared.section.rendered], [record["record_id"]])
             foreign_pack = {**prepared.selection.pack, "schema_version": "project_memory_recall_pack/v0"}

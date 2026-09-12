@@ -7,7 +7,8 @@ from pathlib import Path
 import re
 import stat
 
-from ..paths import OmhPaths, find_project_root, project_identity
+from ..paths import OmhPaths, find_project_root
+from ..plugin_bundle.omh.project_identity import require_project_identity, resolve_project_identity
 from ..system.binary_io import open_binary
 from ..system.local_store import utc_now
 from .domain_intelligence_contracts import (
@@ -71,7 +72,7 @@ def capture_project_terms_file(
     source = _read_repository_project_terms(root, from_file)
     document = parse_project_terms(source)
     inputs = build_project_terms_capture_inputs(document)
-    scope = normalize_scope("project", project_identity(root))
+    scope = normalize_scope("project", require_project_identity(root))
     domains = _preview_domains(paths, scope, inputs)
     available = _candidate_capacity_available(paths)
     required = len(inputs)
@@ -130,7 +131,8 @@ def project_terms_source_freshness(
         and digest_match is not None
         and isinstance(scope, dict)
         and scope.get("kind") == "project"
-        and scope.get("ref") == project_identity(root)
+        and scope.get("ref") == resolve_project_identity(root).identity
+        and bool(scope.get("ref"))
     )
     if not tracked:
         return _freshness_payload(

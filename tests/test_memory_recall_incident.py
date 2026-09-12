@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from contextlib import chdir
 from datetime import datetime, timezone
 from importlib import import_module
 from typing import TypedDict
@@ -14,7 +15,7 @@ from unittest.mock import patch
 from _local_package import load_local_package
 
 load_local_package()
-from omh.paths import resolve_paths
+from project_identity_fixture import PROJECT_IDENTITY, memory_paths as resolve_paths
 from omh.plugin_bundle.omh import memory_prefetch_receipt as receipts
 from omh.plugin_bundle.omh.memory_provider import OmhMemoryProvider
 from omh.routing.chat import route_chat_message
@@ -37,6 +38,7 @@ class MemoryRecallIncidentTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.root = Path(self.enterContext(TemporaryDirectory()))
+        self.enterContext(chdir(self.root))
 
     @property
     def paths(self):
@@ -47,7 +49,7 @@ class MemoryRecallIncidentTests(unittest.TestCase):
         # The repository loader supplies the worktree package dynamically.
         return import_module('omh.workflows.memory_recall_incident')
 
-    def approved(self, summary='Prefer structured response output', *, scope_kind='project', scope_ref='default'):
+    def approved(self, summary='Prefer structured response output', *, scope_kind='project', scope_ref=PROJECT_IDENTITY):
         candidate = memory.capture_project_memory_candidate(
             self.paths, summary, scope_kind=scope_kind, scope_ref=scope_ref)['candidate']
         assert isinstance(candidate, dict)

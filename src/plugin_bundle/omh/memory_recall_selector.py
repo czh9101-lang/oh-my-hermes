@@ -20,6 +20,7 @@ from .memory_governance import (
     evaluate_memory_replay,
 )
 from .memory_principals import audience_policy_digest, parse_principal_context, principal_recall_decision
+from .project_identity import RESOLVER_VERSION
 from .memory_recall_support import (
     LEGACY_MEMORY_SCOPE_SCHEMA_VERSION,
     LEGACY_PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
@@ -100,6 +101,8 @@ def resolve_scope_allowlist(
             return (), "unresolved"
         if scope not in scopes:
             scopes.append(scope)
+    if not inspection and sum(scope["kind"] == "project" for scope in scopes) > 1:
+        return (), "unresolved"
     if not scopes or any(kind not in {scope["kind"] for scope in scopes} for kind in required_scope_kinds):
         return (), "unresolved"
     return tuple(sorted(scopes, key=lambda scope: (scope["kind"], scope["ref"]))), "resolved"
@@ -116,6 +119,7 @@ def _selection_result(
     configuration = {
         **effective_recall_configuration(),
         "scope_allowlist": list(scopes),
+        "project_identity": next((scope["ref"] for scope in scopes if scope["kind"] == "project"), ""),
         "scope_status": scope_status,
         "perspective": pack["perspective"],
         "query_intent": pack["query_intent"],
@@ -157,6 +161,7 @@ def effective_recall_configuration() -> dict[str, object]:
     """
     return {
         "selector_schema_version": "omh_memory_recall_selector/v1",
+        "resolver_version": RESOLVER_VERSION,
         "scope_policy": "explicit_allowlist/v1",
         "recall_pack_schema_version": PROJECT_MEMORY_RECALL_PACK_SCHEMA_VERSION,
         "rrf_k": _RECALL_RRF_K,

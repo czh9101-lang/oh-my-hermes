@@ -11,7 +11,7 @@ from _local_package import load_local_package
 
 load_local_package()
 
-from omh.paths import resolve_paths
+from project_identity_fixture import memory_paths as resolve_paths
 from omh.plugin_bundle.omh.memory_principals import build_memory_identity
 from omh.system.local_store import atomic_write_json
 from omh.workflows.memory import approve_project_memory_candidate, capture_project_memory_candidate

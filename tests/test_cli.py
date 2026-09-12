@@ -5201,7 +5201,7 @@ Latest runtime run: 20260625T090917585910Z-loop-goal-loop-8b5bec.
             self.assertTrue(applied["applied"])
             self.assertIn("receipt", applied)
 
-            status, stdout, stderr = run_cli(["--omh-home", str(omh_home), "memory", "pack", "--executor", "codex"])
+            status, stdout, stderr = run_cli(["--omh-home", str(omh_home), "memory", "pack", "--executor", "codex", "--scope-kind", "project", "--scope-ref", "default"])
 
             self.assertEqual(stderr, "")
             self.assertEqual(status, 0)
