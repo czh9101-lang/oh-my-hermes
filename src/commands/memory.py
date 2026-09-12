@@ -24,6 +24,7 @@ from ..plugin_bundle.omh.memory_blocks import (
     write_memory_block,
 )
 from ..plugin_bundle.omh.memory_dreaming import read_dreaming_state
+from ..plugin_bundle.omh.memory_principals import parse_principal_context
 from ..plugin_bundle.omh.memory_provider import OmhMemoryProvider
 from ..plugin_bundle.omh.metadata import MEMORY_PROVIDER_NAME
 from ..memory import (
@@ -77,6 +78,12 @@ from ..workflows.memory_lifecycle import (
     build_memory_restore,
 )
 from ..workflows.memory_lifecycle_executor import execute_memory_lifecycle
+from ..workflows.memory_principal_migration import (
+    apply_principal_migration,
+    build_principal_migration_report,
+    export_principal_memory,
+    rollback_principal_migration,
+)
 from ..workflows.memory_migration import (
     build_memory_migration_inventory,
     reactivate_memory_artifact,
@@ -119,6 +126,8 @@ def cmd_memory_capture(args: argparse.Namespace) -> int:
             derived_from=args.derived_from or [],
             observer=args.observer,
             observed=args.observed,
+            principal_context=_read_optional_json(args.principal_context),
+            audience_principals=args.audience_principal or [],
         )
     except (OSError, ValueError) as exc:
         raise OmhError(str(exc)) from exc
@@ -186,12 +195,18 @@ def cmd_memory_approve(args: argparse.Namespace) -> int:
         _print_json(refusal)
         return 1
     try:
+        reviewer_context = parse_principal_context(_read_optional_json(args.principal_context))
         payload = approve_project_memory_candidate(
             paths,
             args.candidate_id,
             approved_by=args.approved_by,
             retention_class=args.retention_class,
             expected_revision=args.candidate_revision,
+            reviewer_principal=(
+                str(reviewer_context.get("principal"))
+                if reviewer_context is not None and reviewer_context.get("actor_kind") == "human"
+                else None
+            ),
         )
     except StaleMemoryReviewError as exc:
         _print_json(_review_revision_refusal(str(args.candidate_id), "stale_review", str(exc)))
@@ -207,10 +222,17 @@ def cmd_memory_approve(args: argparse.Namespace) -> int:
         # operator keeps one approve verb either way.
         try:
             plan = build_memory_reapproval(
-                paths, args.candidate_id, reviewer_claim=args.approved_by, now=datetime.now(timezone.utc)
+                paths,
+                args.candidate_id,
+                reviewer_claim=args.approved_by,
+                now=datetime.now(timezone.utc),
+                principal_context=_read_optional_json(args.principal_context),
             )
             payload = dict(plan.report) if not plan.report.get("eligible") else apply_memory_reapproval(
-                paths, plan, transaction_executor=execute_memory_lifecycle
+                paths,
+                plan,
+                transaction_executor=execute_memory_lifecycle,
+                principal_context=_read_optional_json(args.principal_context),
             )
         except (OSError, ValueError) as exc:
             raise OmhError(str(exc)) from exc
@@ -264,6 +286,8 @@ def cmd_memory_recall(args: argparse.Namespace) -> int:
             observer=args.observer,
             observed=args.observed,
             query_intent=args.intent,
+            principal_context=_read_optional_json(args.principal_context),
+            shared_surface=bool(args.principal_context),
         )
     except (OSError, ValueError) as exc:
         raise OmhError(str(exc)) from exc
@@ -739,6 +763,34 @@ def cmd_memory_retire(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_memory_principal_migration(args: argparse.Namespace) -> int:
+    try:
+        paths = _paths(args)
+        if args.report:
+            payload = build_principal_migration_report(paths)
+        elif args.plan:
+            if not args.apply:
+                raise ValueError("--plan requires --apply")
+            payload = apply_principal_migration(paths, _read_required_json(args.plan))
+        else:
+            if not args.rollback or not args.apply:
+                raise ValueError("--rollback requires an operation id and --apply")
+            payload = rollback_principal_migration(paths, args.rollback)
+    except (OSError, ValueError) as exc:
+        raise OmhError(str(exc)) from exc
+    _print_json(payload)
+    return 0 if payload.get("applied", True) else 1
+
+
+def cmd_memory_principal_export(args: argparse.Namespace) -> int:
+    try:
+        payload = export_principal_memory(_paths(args), _read_required_json(args.principal_context))
+    except (OSError, ValueError) as exc:
+        raise OmhError(str(exc)) from exc
+    _print_json(payload)
+    return 0
+
+
 def cmd_memory_provider(args: argparse.Namespace) -> int:
     """Show, take, or hand back Hermes' single external memory-provider slot."""
     paths = _paths(args)
@@ -783,15 +835,23 @@ def _cmd_memory_lifecycle(args: argparse.Namespace, operation: str) -> int:
         paths = _paths(args)
         revision = _required_positive_int(args.revision, "--revision")
         now = datetime.now(timezone.utc)
+        principal_context = _read_optional_json(args.principal_context)
         if operation == "restore":
-            plan = build_memory_restore(paths, args.record_id, revision, now=now)
+            plan = build_memory_restore(paths, args.record_id, revision, now=now, principal_context=principal_context)
         elif operation == "prune":
-            plan = build_memory_prune(paths, args.record_id, revision, now=now)
+            plan = build_memory_prune(paths, args.record_id, revision, now=now, principal_context=principal_context)
         else:
             summary = " ".join(args.summary).strip()
             if not summary:
                 raise ValueError("memory correct requires a summary")
-            plan = build_memory_correction(paths, args.record_id, revision, summary, now=now)
+            plan = build_memory_correction(
+                paths,
+                args.record_id,
+                revision,
+                summary,
+                now=now,
+                principal_context=principal_context,
+            )
     except (OSError, ValueError) as exc:
         raise OmhError(str(exc)) from exc
 
@@ -810,7 +870,7 @@ def _cmd_memory_lifecycle(args: argparse.Namespace, operation: str) -> int:
             payload = _lifecycle_operation_state_payload(plan, state)
         else:
             try:
-                result = _apply_memory_lifecycle_plan(paths, plan, operation)
+                result = _apply_memory_lifecycle_plan(paths, plan, operation, principal_context)
             except ValueError as exc:
                 state = _existing_memory_operation_state(paths, plan.operation_id)
                 if state in {"failed", "interrupted", "corrupt"}:
@@ -833,12 +893,33 @@ def _cmd_memory_lifecycle(args: argparse.Namespace, operation: str) -> int:
     return 0
 
 
-def _apply_memory_lifecycle_plan(paths, plan, operation: str) -> dict[str, object]:
+def _apply_memory_lifecycle_plan(
+    paths,
+    plan,
+    operation: str,
+    principal_context: dict[str, object] | None,
+) -> dict[str, object]:
     if operation == "restore":
-        return apply_memory_restore(paths, plan, transaction_executor=execute_memory_lifecycle)
+        return apply_memory_restore(
+            paths,
+            plan,
+            transaction_executor=execute_memory_lifecycle,
+            principal_context=principal_context,
+        )
     if operation == "prune":
-        return apply_memory_prune(paths, plan, transaction_executor=execute_memory_lifecycle, confirm_hard_delete_local=True)
-    return apply_memory_correction(paths, plan, transaction_executor=execute_memory_lifecycle)
+        return apply_memory_prune(
+            paths,
+            plan,
+            transaction_executor=execute_memory_lifecycle,
+            confirm_hard_delete_local=True,
+            principal_context=principal_context,
+        )
+    return apply_memory_correction(
+        paths,
+        plan,
+        transaction_executor=execute_memory_lifecycle,
+        principal_context=principal_context,
+    )
 
 
 def _lifecycle_operation_state_payload(plan, state: str) -> dict[str, object]:

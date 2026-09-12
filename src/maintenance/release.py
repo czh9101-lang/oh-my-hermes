@@ -21,6 +21,8 @@ from ..command_path import (
     path_check_kind,
 )
 from ..local_store import atomic_write_json, read_json_object_result, utc_now
+from .changelog import ChangelogError, MAX_CHANGELOG_BYTES, extract_notes
+from .release_notes import notes_metadata, read_bounded, read_notes
 from .documentation_claims import DocumentationClaimReport, documentation_claims_report
 from .release_identity import (
     RELEASE_EVIDENCE_BUNDLE_SCHEMA_V2,
@@ -839,7 +841,11 @@ STANDALONE_CAPABILITY_SKILL_ITEM_CHAR_LIMIT = 2200
 # is chased rather than waited on. Both belong in the always-loaded body --
 # they are read on every poll, and a supervisor that has already ended its turn
 # cannot be told afterwards which field it should have read; warranted growth.
-FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 935543
+# 935543 -> 935940: #1495 adds the explicit post-composition advisory scan
+# before unattended handoff, including confirmation/error routing and the
+# no-permission boundary. The dispatching lane must read this before handoff;
+# warranted always-loaded guidance, re-derived from the full-profile producer.
+FULL_PROFILE_SKILL_BODY_CHAR_LIMIT = 935940
 FULL_PROFILE_SKILL_BODY_REVIEWED_EXCEPTION_CHARS = 0
 
 
@@ -2670,8 +2676,16 @@ def release_evidence_bundle(
     archive_digest: str = "",
     artifact_digest: str = "",
     runner: Callable[..., object] | None = None,
+    notes_file: str | Path | None = None,
 ) -> dict[str, object]:
     release_version = _normalize_release_version(version)
+    notes = notes_metadata(Path(notes_file), release_version) if notes_file is not None else None
+    if notes_file is not None:
+        if repo_root is None:
+            raise ChangelogError('notes_source_required')
+        authored = extract_notes(read_bounded(Path(repo_root) / 'CHANGELOG.md', MAX_CHANGELOG_BYTES), release_version)
+        if read_notes(Path(notes_file)) != authored:
+            raise ChangelogError('notes_source_mismatch')
     resolved_paths = paths or OmhPaths(omh_home=Path("~/.omh").expanduser(), hermes_home=Path("~/.hermes").expanduser())
     probe_kwargs: dict[str, object] = {}
     if runner is not None:
@@ -2686,6 +2700,7 @@ def release_evidence_bundle(
         source_identity=source_identity,
         paths=resolved_paths,
         artifact=artifact,
+        release_notes=notes,
     )
     quality_evidence = _build_release_quality_evidence(release_version=release_version, omh_command=omh_command)
     checklist = quality_evidence.checklist
@@ -2740,7 +2755,9 @@ def release_evidence_bundle(
             "source_identity: unavailable; pass --repo-root, --archive-digest, or --artifact-digest "
             "so the bundle is bound to an immutable source revision"
         )
-    publication_ready = not blocking_failures and identity_available
+    if notes is None:
+        warnings.append('release_notes: not_recorded; regenerate from the immutable tag with --notes-file before publication')
+    publication_ready = not blocking_failures and identity_available and notes is not None and source_identity.get('dirty') is not True
     grounded_score_summary = grounded_score.get("summary", {}) if isinstance(grounded_score.get("summary"), Mapping) else {}
     chat_card_summary = chat_cards.get("summary", {}) if isinstance(chat_cards.get("summary"), Mapping) else {}
     route_hint_summary = route_hints.get("summary", {}) if isinstance(route_hints.get("summary"), Mapping) else {}
@@ -2896,6 +2913,8 @@ def release_evidence_bundle(
             "pass CI, merge, deliver messages, publish GitHub releases, or prove provider billing/quota truth."
         ),
     }
+    if notes is not None:
+        payload['release_notes'] = notes
     if write:
         artifact_path = resolved_paths.release_evidence_dir / f"{release_version}.json"
         payload["written"] = True

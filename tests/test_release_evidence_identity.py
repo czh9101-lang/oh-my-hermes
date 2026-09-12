@@ -116,7 +116,8 @@ class ReleaseEvidenceIdentityTests(unittest.TestCase):
         self.assertEqual(len(identity["commit_sha"]), 40)
         self.assertEqual(len(identity["tree_sha"]), 40)
         self.assertEqual(payload["status"], "ready")
-        self.assertTrue(payload["publication_ready"])
+        # A source binding alone does not establish curated publication notes.
+        self.assertFalse(payload["publication_ready"])
         self.assertIn("source_revision_bound", payload["claims"])
         self.assertIn("input_manifest_digest_recorded", payload["claims"])
 

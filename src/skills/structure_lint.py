@@ -27,7 +27,14 @@ STRUCTURE_LINT_RULE_IDS = (
 # ultrawork body measured 25_078 bytes after the seven executing-engine bars
 # gained the follow-up-authority and closing-brief rules (Codex Desktop prompt
 # review, MODEL_OPTI.md); ultrawork already sat 9 bytes under the old ceiling.
-STRUCTURE_LINT_SKILL_BODY_BYTE_CEILING = 25_100
+# 25_100 held until 2026-09-12, when the ultrawork body measured 25_475 bytes
+# after the #1494 executor-owned loop-driver and #1495 advisory
+# handoff-risk-scan guidance joined the always-loaded catalog text
+# (issues-1485-1505 delivery); the dispatching lane must read both before
+# acting, and the sibling FULL_PROFILE_SKILL_BODY_CHAR_LIMIT pin in
+# src/maintenance/release.py was re-derived from the same producer on the
+# same branch. Warranted always-loaded growth, not drift.
+STRUCTURE_LINT_SKILL_BODY_BYTE_CEILING = 25_500
 _PICKER_SAFE_TRIGGER = re.compile(r"^[0-9A-Za-z\uac00-\ud7a3][0-9A-Za-z\uac00-\ud7a3 _.-]*$")
 _FRONTMATTER = re.compile(r'^---\nname: (.+)\ndescription: (.+)\nmetadata:\n(.*?)\n---\n', re.DOTALL)
 _JSON_STRING = re.compile(r'"(?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9A-Fa-f]{4})*"')

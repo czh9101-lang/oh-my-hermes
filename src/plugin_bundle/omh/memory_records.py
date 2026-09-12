@@ -130,7 +130,13 @@ def read_record_store_snapshot(homes: list[Path] | tuple[Path, ...]) -> RecordSt
     )
 
 
-def prefetch_scope_allowlist(*, project_identity: str, session_id: str = "") -> list[dict[str, str]]:
+def prefetch_scope_allowlist(
+    *,
+    project_identity: str,
+    session_id: str = "",
+    principal_ref: str = "",
+    include_legacy_personal: bool = True,
+) -> list[dict[str, str]]:
     """Explicit user-global, current project and current thread labels.
 
     Nothing is inferred from a stored record. A blank project identity yields
@@ -140,7 +146,10 @@ def prefetch_scope_allowlist(*, project_identity: str, session_id: str = "") -> 
     identity = str(project_identity or "").strip()
     if not identity:
         return []
-    scopes = [{"kind": "user-global", "ref": "default"}, {"kind": "project", "ref": identity}]
+    scopes = ([{"kind": "user-global", "ref": "default"}] if include_legacy_personal else [])
+    scopes.append({"kind": "project", "ref": identity})
+    if principal_ref:
+        scopes.append({"kind": "user", "ref": principal_ref})
     thread = str(session_id or "").strip()
     if thread:
         scopes.append({"kind": "thread", "ref": thread})
@@ -159,6 +168,8 @@ def select_prefetch_records(
     now: datetime | None = None,
     policy: dict[str, object] | None = None,
     query_intent: str | None = None,
+    principal_context: dict[str, object] | None = None,
+    shared_surface: bool = False,
 ) -> MemoryRecallSelection:
     """The canonical selection for a live prefetch: delivery mode, never inspection."""
     return select_memory_recall(
@@ -178,6 +189,8 @@ def select_prefetch_records(
         max_chars=max_chars,
         now=now,
         query_intent=query_intent,
+        principal_context=principal_context,
+        shared_surface=shared_surface,
     )
 
 
@@ -194,6 +207,8 @@ def prepare_prefetch_records(
     now: datetime | None = None,
     policy: dict[str, object] | None = None,
     query_intent: str | None = None,
+    principal_context: dict[str, object] | None = None,
+    shared_surface: bool = False,
 ) -> PreparedPrefetch:
     """Select, then render, under one clock. The receipt is built from this."""
     clock = now if now is not None else _utc_now()
@@ -208,6 +223,8 @@ def prepare_prefetch_records(
         now=clock,
         policy=policy,
         query_intent=query_intent,
+        principal_context=principal_context,
+        shared_surface=shared_surface,
     )
     return PreparedPrefetch(selection, render_selected_memory_records(selection, snapshot.records, budget_chars=budget_chars), clock)
 

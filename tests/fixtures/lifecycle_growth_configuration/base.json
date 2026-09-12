@@ -1,0 +1,343 @@
+{
+  "brief": {
+    "schema_version": "lifecycle_growth_brief/v1",
+    "status": "prepared_not_observed",
+    "lifecycle_growth_id": "lifecycle_activation_q3",
+    "lifecycle_stage": "activation",
+    "target_behavior_ref": "behavior_activation_completed",
+    "target_segment_ref": "segment_new_accounts",
+    "baseline_ref": "baseline_activation_weekly",
+    "available_surface_refs": [
+      "surface_in_app"
+    ],
+    "experiment_budget_ref": "budget_activation_q3",
+    "observed_evidence_refs": [
+      "evidence_activation_weekly"
+    ],
+    "hypotheses": [
+      "hypothesis_guided_setup"
+    ],
+    "non_goals": [
+      "non_goal_external_send"
+    ],
+    "decision_owner": "owner_growth",
+    "claim_boundary": "This prepared lifecycle-growth metadata records bounded references and caller assertions only. It does not identify people, send messages, schedule work, mutate flags, deliver treatment, observe outcomes, or establish causality."
+  },
+  "audience": {
+    "schema_version": "audience_trigger_policy/v1",
+    "status": "prepared_not_observed",
+    "lifecycle_growth_id": "lifecycle_activation_q3",
+    "audience_identity_state": "known",
+    "audience_identity_ref": "identity_account_stable",
+    "canonical_event_state": "known",
+    "canonical_event_schema_ref": "event_activation_completed_v1",
+    "entry_condition_ref": "entry_new_account",
+    "exit_condition_ref": "exit_activation_completed",
+    "exclusion_refs": [
+      "exclude_opted_out"
+    ],
+    "idempotency_key_ref": "idempotency_account_journey_v1",
+    "reentry_policy": "after_exit_only",
+    "collision_policy": "hold_on_overlap",
+    "claim_boundary": "This prepared lifecycle-growth metadata records bounded references and caller assertions only. It does not identify people, send messages, schedule work, mutate flags, deliver treatment, observe outcomes, or establish causality."
+  },
+  "safety": {
+    "schema_version": "lifecycle_safety_policy/v1",
+    "status": "prepared_not_observed",
+    "lifecycle_growth_id": "lifecycle_activation_q3",
+    "consent_state": "eligible",
+    "suppression_state": "eligible",
+    "frequency_state": "eligible",
+    "suppression_precedence": "suppression_overrides_all",
+    "preference_policy_ref": "policy_preferences_v1",
+    "global_frequency_budget_ref": "budget_global_weekly",
+    "campaign_frequency_budget_ref": "budget_activation_weekly",
+    "channel_eligibility_state": "eligible",
+    "quiet_hours_state": "eligible",
+    "locale_state": "eligible",
+    "legal_tenant_state": "eligible",
+    "throttle_grouping": {
+      "key_kind": "dynamic_expression",
+      "configured_key_ref": "throttle_key_tenant_expression",
+      "scope": "tenant",
+      "resolved_value_state": "present",
+      "resolved_value_ref": "tenant_acme",
+      "fallback_state": "none",
+      "group_identity": "dynamic_expression:throttle_key_tenant_expression=tenant_acme",
+      "window_reset_consequence": "none"
+    },
+    "workflow_content_state": "development_draft",
+    "mutation_route": "development_draft_then_promotion",
+    "promotion_decision_state": "approved",
+    "promotion_result_state": "not_observed",
+    "claim_boundary": "This prepared lifecycle-growth metadata records bounded references and caller assertions only. It does not identify people, send messages, schedule work, mutate flags, deliver treatment, observe outcomes, or establish causality."
+  },
+  "experiment": {
+    "schema_version": "growth_experiment_plan/v1",
+    "status": "prepared_not_observed",
+    "lifecycle_growth_id": "lifecycle_activation_q3",
+    "treatment_ref": "treatment_guided_setup",
+    "control_ref": "control_existing_setup",
+    "assignment_unit": "account",
+    "exposure_unit": "account",
+    "sticky_assignment_policy": "sticky",
+    "assignment_event_ref": "event_assignment_v1",
+    "actual_exposure_event_ref": "event_displayed_v1",
+    "primary_metric_ref": "metric_activation_rate",
+    "guardrail_metric_refs": [
+      "metric_opt_out_rate"
+    ],
+    "holdout_state": "preserved",
+    "holdout_rationale_ref": "rationale_holdout",
+    "minimum_runtime_days": 14,
+    "data_health_state": "healthy",
+    "rollback_conditions": [
+      "rollback_guardrail"
+    ],
+    "pause_condition_refs": [
+      "pause_sample_ratio"
+    ],
+    "approval_state": "approved",
+    "claim_boundary": "This prepared lifecycle-growth metadata records bounded references and caller assertions only. It does not identify people, send messages, schedule work, mutate flags, deliver treatment, observe outcomes, or establish causality."
+  },
+  "handoff": {
+    "schema_version": "growth_handoff_disposition/v1",
+    "status": "prepared_not_observed",
+    "lifecycle_growth_id": "lifecycle_activation_q3",
+    "proposed_action_refs": [
+      "action_connector_prepare"
+    ],
+    "proposed_action_kinds": [
+      "connector"
+    ],
+    "action_owner": "owner_lifecycle_ops",
+    "approver": "owner_growth",
+    "connector_evidence_state": "observed_available",
+    "connector_evidence_refs": [
+      "evidence_connector_observed"
+    ],
+    "timing_state": "not_scheduled",
+    "stop_condition_refs": [
+      "stop_consent_changed"
+    ],
+    "analysis_cancellation": {
+      "request_state": "not_requested",
+      "handoff_status": "prepared_not_observed",
+      "run_ref": "",
+      "cancel_scope": "",
+      "acknowledgement_state": "not_observed",
+      "result_state": "not_observed",
+      "evidence_refs": []
+    },
+    "claim_boundary": "This prepared lifecycle-growth metadata records bounded references and caller assertions only. It does not identify people, send messages, schedule work, mutate flags, deliver treatment, observe outcomes, or establish causality."
+  },
+  "readout": {
+    "schema_version": "growth_measurement_readout/v1",
+    "status": "prepared_not_observed",
+    "lifecycle_growth_id": "lifecycle_activation_q3",
+    "eligible_count": 10,
+    "attempted_count": 8,
+    "delivered_count": 8,
+    "displayed_count": 8,
+    "acted_count": 2,
+    "outcome_count": 1,
+    "runtime_days_observed": 14,
+    "denominator_state": "known",
+    "data_freshness_state": "fresh",
+    "instrumentation_state": "healthy",
+    "sample_ratio_state": "match",
+    "cross_exposure_state": "absent",
+    "overlap_state": "absent",
+    "primary_metric_state": "improved",
+    "guardrail_state": "passed",
+    "causal_claim_status": "established",
+    "rollback_state": "not_triggered",
+    "provider_evidence_refs": [
+      "evidence_provider_delivery"
+    ],
+    "actual_exposure_evidence_refs": [
+      "evidence_provider_display"
+    ],
+    "data_evidence_refs": [
+      "evidence_metric"
+    ],
+    "runtime_evidence_refs": [
+      "evidence_runtime"
+    ],
+    "causal_evidence_refs": [
+      "evidence_holdout"
+    ],
+    "step_outcomes": [
+      {
+        "step_ref": "step_welcome_in_app",
+        "outcome": "matched",
+        "status": "step_proceeded",
+        "reason_code": "reason_condition_true",
+        "evaluated_values_state": "redacted"
+      },
+      {
+        "step_ref": "step_reminder_email",
+        "outcome": "skipped",
+        "status": "step_skipped",
+        "reason_code": "reason_condition_false",
+        "evaluated_values_state": "redacted"
+      }
+    ],
+    "step_trace_state": "recorded",
+    "analysis_status": {
+      "run_ref": "analysis_run_activation_q3_01",
+      "run_state": "completed",
+      "observed_at": "2026-09-08T09:00:00Z",
+      "elapsed_minutes": 42,
+      "service_expectation_minutes": 120,
+      "delay_state": "not_applicable",
+      "evidence_refs": [
+        "evidence_analysis_run_completed"
+      ]
+    },
+    "disposition": "ship",
+    "claim_boundary": "This prepared lifecycle-growth metadata records bounded references and caller assertions only. It does not identify people, send messages, schedule work, mutate flags, deliver treatment, observe outcomes, or establish causality."
+  },
+  "exposure_evidence": {
+    "schema_version": "lifecycle_growth_exposure_evidence/v1",
+    "status": "prepared_not_observed",
+    "claim_boundary": "This prepared lifecycle-growth metadata records bounded references and caller assertions only. It does not identify people, send messages, schedule work, mutate flags, deliver treatment, observe outcomes, or establish causality.",
+    "lifecycle_growth_id": "lifecycle_activation_q3",
+    "audience": {
+      "schema_version": "audience_trigger_policy/v1",
+      "status": "prepared_not_observed",
+      "lifecycle_growth_id": "lifecycle_activation_q3",
+      "audience_identity_state": "known",
+      "audience_identity_ref": "identity_account_stable",
+      "canonical_event_state": "known",
+      "canonical_event_schema_ref": "event_activation_completed_v1",
+      "entry_condition_ref": "entry_new_account",
+      "exit_condition_ref": "exit_activation_completed",
+      "exclusion_refs": [
+        "exclude_opted_out"
+      ],
+      "idempotency_key_ref": "idempotency_account_journey_v1",
+      "reentry_policy": "after_exit_only",
+      "collision_policy": "hold_on_overlap",
+      "claim_boundary": "This prepared lifecycle-growth metadata records bounded references and caller assertions only. It does not identify people, send messages, schedule work, mutate flags, deliver treatment, observe outcomes, or establish causality."
+    },
+    "safety": {
+      "schema_version": "lifecycle_safety_policy/v1",
+      "status": "prepared_not_observed",
+      "lifecycle_growth_id": "lifecycle_activation_q3",
+      "consent_state": "eligible",
+      "suppression_state": "eligible",
+      "frequency_state": "eligible",
+      "suppression_precedence": "suppression_overrides_all",
+      "preference_policy_ref": "policy_preferences_v1",
+      "global_frequency_budget_ref": "budget_global_weekly",
+      "campaign_frequency_budget_ref": "budget_activation_weekly",
+      "channel_eligibility_state": "eligible",
+      "quiet_hours_state": "eligible",
+      "locale_state": "eligible",
+      "legal_tenant_state": "eligible",
+      "throttle_grouping": {
+        "key_kind": "dynamic_expression",
+        "configured_key_ref": "throttle_key_tenant_expression",
+        "scope": "tenant",
+        "resolved_value_state": "present",
+        "resolved_value_ref": "tenant_acme",
+        "fallback_state": "none",
+        "group_identity": "dynamic_expression:throttle_key_tenant_expression=tenant_acme",
+        "window_reset_consequence": "none"
+      },
+      "workflow_content_state": "development_draft",
+      "mutation_route": "development_draft_then_promotion",
+      "promotion_decision_state": "approved",
+      "promotion_result_state": "not_observed",
+      "claim_boundary": "This prepared lifecycle-growth metadata records bounded references and caller assertions only. It does not identify people, send messages, schedule work, mutate flags, deliver treatment, observe outcomes, or establish causality."
+    },
+    "observation_window_ref": "window_activation_q3",
+    "assignment_unit": "account",
+    "exposure_unit": "account",
+    "assignment_event_ref": "event_assignment_v1",
+    "actual_exposure_event_ref": "event_displayed_v1",
+    "eligible_count": 10,
+    "assigned_count": 8,
+    "repeated_contact_count": 0,
+    "eligibility_evidence_refs": [
+      "eligible_accounts"
+    ],
+    "exclusion_evidence_refs": [
+      "checked_exclusions"
+    ],
+    "assignment_evidence_refs": [
+      "observed_assignment"
+    ],
+    "population_reconciliation_state": "reconciled",
+    "population_evidence_refs": [
+      "deduplicated_window_counts"
+    ],
+    "contact_pressure_state": "within_budget",
+    "contact_evidence_refs": [
+      "checked_contact_window"
+    ],
+    "overlap_state": "absent",
+    "overlapping_experiment_refs": [],
+    "overlap_evidence_refs": [
+      "checked_concurrent_experiments"
+    ],
+    "analysis_run_ref": "analysis_run_activation_q3_01",
+    "channel_refs": [
+      "surface_in_app"
+    ],
+    "channels": [
+      {
+        "channel_ref": "surface_in_app",
+        "reachability_state": "reachable",
+        "attempted_count": 8,
+        "delivered_count": 8,
+        "reached_count": 8,
+        "failed_count": 0,
+        "unresolved_count": 0,
+        "failure_reason_refs": [],
+        "evidence_refs": [
+          "observed_display_receipts"
+        ]
+      }
+    ]
+  },
+  "audience_review": {
+    "schema_version": "launch_audience_review/v1",
+    "status": "prepared_not_observed",
+    "lifecycle_growth_id": "lifecycle_activation_q3",
+    "evaluation_semantics": "first_match",
+    "rules": [
+      {
+        "rule_ref": "rule_first",
+        "evaluation_domain_ref": "domain_accounts_v1",
+        "bucketing_domain_ref": "bucket_accounts_v1",
+        "bucketing_subject": "group",
+        "condition_refs": [
+          "condition_eligible_v1",
+          "condition_consent_v1"
+        ],
+        "rollout_share": 50,
+        "result_kind": "variant",
+        "variant_ref": "variant_treatment_v1",
+        "reachable": true
+      },
+      {
+        "rule_ref": "rule_second",
+        "evaluation_domain_ref": "domain_accounts_v1",
+        "bucketing_domain_ref": "bucket_accounts_v1",
+        "bucketing_subject": "group",
+        "condition_refs": [],
+        "rollout_share": 25,
+        "result_kind": "on",
+        "variant_ref": null,
+        "reachable": true
+      }
+    ],
+    "holdout_exclusion_share": 10,
+    "unreachable_rule_refs": [],
+    "unknown_rule_refs": [],
+    "verdict": "READY",
+    "claim_boundary": "This prepared lifecycle-growth metadata records bounded references and caller assertions only. It does not identify people, send messages, schedule work, mutate flags, deliver treatment, observe outcomes, or establish causality."
+  }
+}

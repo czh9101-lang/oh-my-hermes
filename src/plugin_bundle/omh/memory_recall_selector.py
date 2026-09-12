@@ -9,11 +9,17 @@ import hashlib
 import json
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from .memory_governance import canonical_memory_scope, contains_credential_like_material, evaluate_memory_replay
+from .memory_governance import (
+    PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+    canonical_memory_scope,
+    contains_credential_like_material,
+    evaluate_memory_replay,
+)
+from .memory_principals import audience_policy_digest, parse_principal_context, principal_recall_decision
 from .memory_recall_support import (
     LEGACY_MEMORY_SCOPE_SCHEMA_VERSION,
     LEGACY_PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
@@ -64,6 +70,8 @@ class MemoryRecallSelection:
     exclusion_reason_counts: dict[str, int]
     configuration: dict[str, object]
     configuration_id: str
+    principal_decision: dict[str, object] = field(default_factory=dict)
+    audience_policy_digest: str = ""
 
 
 def resolve_scope_allowlist(
@@ -101,6 +109,7 @@ def _selection_result(
     pack: dict[str, Any], scopes: tuple[dict[str, str], ...], scope_status: str,
     hidden_exclusions: Counter[str], *, limit: int, max_chars: int | None,
     inspection: bool, include_stale: bool, include_archived: bool,
+    principal_decision: dict[str, object], audience_digest: str,
 ) -> MemoryRecallSelection:
     counts = hidden_exclusions.copy()
     counts.update(str(item["reason"]) for item in pack["excluded_records"])
@@ -117,9 +126,23 @@ def _selection_result(
         "max_chars": max_chars,
         "recall_enabled": bool(pack["enabled"]),
         "due_soon_days": _cadence_value(pack["policy"], "due_soon_days"),
+        "principal_decision": {
+            key: principal_decision.get(key)
+            for key in ("binding_state", "principal_ref", "actor_kind", "shared_surface", "context_digest")
+        },
+        "audience_policy_digest": audience_digest,
     }
     configuration_id = hashlib.sha256(json.dumps(configuration, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    return MemoryRecallSelection(pack, scopes, scope_status, dict(sorted(counts.items())), configuration, configuration_id)
+    return MemoryRecallSelection(
+        pack,
+        scopes,
+        scope_status,
+        dict(sorted(counts.items())),
+        configuration,
+        configuration_id,
+        principal_decision,
+        audience_digest,
+    )
 
 
 def effective_recall_configuration() -> dict[str, object]:
@@ -182,7 +205,11 @@ def _evaluate_memory_artifact(
     review_id = admission.get("review_id") if isinstance(admission, dict) else ""
     if (
         result.get("eligible") is True
-        and artifact.get("schema_version") in {PROJECT_MEMORY_RECORD_SCHEMA_VERSION, MEMORY_SCOPE_SCHEMA_VERSION}
+        and artifact.get("schema_version") in {
+            PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+            PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+            MEMORY_SCOPE_SCHEMA_VERSION,
+        }
         and (not isinstance(review_id, str) or not review_id or not review_resolver or review_id not in review_resolver)
     ):
         # The core boundary supplies a resolver, so an approval without its
@@ -220,6 +247,8 @@ def select_memory_recall(
     observer: str | None = None,
     observed: str | None = None,
     query_intent: str | None = None,
+    principal_context: dict[str, object] | None = None,
+    shared_surface: bool = False,
 ) -> MemoryRecallSelection:
     """One read-only eligibility/ranking/budget contract for every recall surface.
 
@@ -254,6 +283,23 @@ def select_memory_recall(
     if not inspection and observed is None:
         observed = str(executor_target or "").strip().lower() or "choose"
     query_intent = _resolve_query_intent(query, query_intent)
+    parsed_principal = parse_principal_context(principal_context, expected_session=session_id)
+    principal_ref = str(parsed_principal.get("principal", "")) if parsed_principal is not None else ""
+    actor_kind = str(parsed_principal.get("actor_kind", "unknown")) if parsed_principal is not None else "unknown"
+    principal_counts: Counter[str] = Counter()
+    allowed_identity_count = 0
+    audience_digests: set[str] = set()
+    context_projection = {
+        key: parsed_principal.get(key)
+        for key in ("principal", "profile_ref", "surface_ref", "session_ref", "turn_ref", "actor_kind", "binding_state")
+    } if parsed_principal is not None else {}
+    principal_metadata = {
+        "binding_state": str(parsed_principal.get("binding_state", "unbound")) if parsed_principal is not None else "unbound",
+        "principal_ref": principal_ref or None,
+        "actor_kind": actor_kind,
+        "shared_surface": bool(shared_surface),
+        "context_digest": hashlib.sha256(json.dumps(context_projection, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
+    }
     task_ref = {
         "sha256": hashlib.sha256(query.encode("utf-8")).hexdigest() if query else "",
         "length": len(query),
@@ -271,14 +317,33 @@ def select_memory_recall(
         )
         pack["perspective"] = {"observer": observer or "", "observed": observed or ""}
         pack["query_intent"] = query_intent
-        return _selection_result(pack, scopes, scope_status, hidden_exclusions, limit=limit, max_chars=max_chars,
-                                 inspection=inspection, include_stale=include_stale, include_archived=include_archived)
+        return _selection_result(
+            pack,
+            scopes,
+            scope_status,
+            hidden_exclusions,
+            limit=limit,
+            max_chars=max_chars,
+            inspection=inspection,
+            include_stale=include_stale,
+            include_archived=include_archived,
+            principal_decision={**principal_metadata, "allowed_count": 0, "denied_count": 0, "reason_counts": {}},
+            audience_digest=hashlib.sha256(b"").hexdigest(),
+        )
     pins = set(pins or ())
     usage = usage or {}
     included: list[dict[str, object]] = []
     excluded: list[dict[str, object]] = []
     archived_excluded = 0
     for record in records:
+        identity_decision = principal_recall_decision(record, parsed_principal, shared_surface=shared_surface)
+        reason_code = str(identity_decision["reason_code"])
+        principal_counts[reason_code] += 1
+        if not bool(identity_decision["allowed"]):
+            hidden_exclusions[reason_code] += 1
+            continue
+        allowed_identity_count += 1
+        audience_digests.add(audience_policy_digest(record))
         if (scopes or not inspection) and record.get("scope") not in scopes:
             hidden_exclusions["scope_mismatch"] += 1
             continue
@@ -439,5 +504,22 @@ def select_memory_recall(
         ),
     }
 
-    return _selection_result(pack, scopes, scope_status, hidden_exclusions, limit=limit, max_chars=max_chars,
-                             inspection=inspection, include_stale=include_stale, include_archived=include_archived)
+    audience_digest = hashlib.sha256("".join(sorted(audience_digests)).encode("utf-8")).hexdigest()
+    return _selection_result(
+        pack,
+        scopes,
+        scope_status,
+        hidden_exclusions,
+        limit=limit,
+        max_chars=max_chars,
+        inspection=inspection,
+        include_stale=include_stale,
+        include_archived=include_archived,
+        principal_decision={
+            **principal_metadata,
+            "allowed_count": allowed_identity_count,
+            "denied_count": sum(principal_counts.values()) - allowed_identity_count,
+            "reason_counts": dict(sorted(principal_counts.items())),
+        },
+        audience_digest=audience_digest,
+    )

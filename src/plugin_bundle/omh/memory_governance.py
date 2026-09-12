@@ -13,7 +13,9 @@ from datetime import datetime, timedelta, timezone
 
 __all__ = [
     "PROJECT_MEMORY_RECORD_SCHEMA_VERSION",
+    "PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION",
     "MEMORY_SCOPE_SCHEMA_VERSION",
+    "PRINCIPAL_MEMORY_SCOPE_SCHEMA_VERSION",
     "MEMORY_BLOCK_SCHEMA_VERSION",
     "PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION",
     "MEMORY_GOVERNANCE_POLICY_VERSION",
@@ -40,9 +42,12 @@ __all__ = [
 
 # Schema versions for v2 governance model
 PROJECT_MEMORY_RECORD_SCHEMA_VERSION = "project_memory_record/v2"
+PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION = "project_memory_record/v3"
 MEMORY_SCOPE_SCHEMA_VERSION = "omh_memory_scope/v2"
+PRINCIPAL_MEMORY_SCOPE_SCHEMA_VERSION = "omh_memory_scope/v3"
 MEMORY_BLOCK_SCHEMA_VERSION = "omh_memory_block/v2"
 PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION = "project_memory_review_record/v2"
+PRINCIPAL_PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION = "project_memory_review_record/v3"
 
 # Governance policy and classifier versions
 MEMORY_GOVERNANCE_POLICY_VERSION = "governance/v2"
@@ -73,7 +78,7 @@ SOURCE_CLASSES = frozenset({
 
 # User-global is explicit profile-local authority, never inferred from a
 # record's location or a foreign project ref. Existing scope labels stay valid.
-SCOPE_KINDS = frozenset({"user-global", "project", "target", "thread", "run"})
+SCOPE_KINDS = frozenset({"user-global", "user", "project", "target", "thread", "run"})
 
 # Default TTL days for retention classes
 DEFAULT_VOLATILE_TTL_DAYS = 7
@@ -210,6 +215,9 @@ def canonical_payload_digest(artifact: dict[str, object]) -> str:
     
     if "scope" in artifact:
         payload["scope"] = artifact["scope"]
+
+    if "identity" in artifact:
+        payload["identity"] = artifact["identity"]
     
     if "value" in artifact:
         payload["value"] = artifact["value"]

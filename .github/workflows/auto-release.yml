@@ -74,6 +74,9 @@ jobs:
             echo "tag v$new_version already exists; refusing to reuse it" >&2
             exit 1
           fi
+          uv run python -m omh.cli release prepare --version "$new_version" \
+            --repo-root "$GITHUB_WORKSPACE" --notes-file "$RUNNER_TEMP/release-notes.md" --json
+          git add CHANGELOG.md
           echo "version=$new_version" >> "$GITHUB_OUTPUT"
 
       - name: Run release gates on the bumped tree
@@ -93,7 +96,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml src/omh/version.py \
+          git add CHANGELOG.md pyproject.toml src/omh/version.py \
             src/plugin_bundle/omh/plugin.yaml .release-channel \
             site/index.html site/i18n.js
           git commit -s -m "chore(release): cut v$NEW_VERSION

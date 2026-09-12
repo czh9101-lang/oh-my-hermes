@@ -21,6 +21,10 @@ from ..loopability import LOOPABILITY_ASSESSMENT_SCHEMA, assess_loopability, val
 from ..paths import OmhPaths
 from ..system.security_posture import resolve_security_posture, strict_override
 from .goal_quality_coaching import UPSTREAM_GOAL_DEFAULT_MAX_TURNS
+from ..coding.executor_capability_snapshots import JsonValue
+from .loop_driver_contract import driver_status, select_driver, validate_driver_cycle, validate_driver_history
+from .loop_driver_updates import observe_external_driver
+from .loop_executor_observations import OBSERVATION_SCHEMA, LoopDriverError
 from .loop_phase_transitions import (
     LOOP_GOAL_DRIVER_OBSERVATION_SCHEMA,
     LOOP_PHASES,
@@ -33,7 +37,7 @@ from .loop_phase_transitions import (
 )
 
 
-LOOP_CYCLE_SCHEMA = "loop_cycle/v1"
+LOOP_CYCLE_SCHEMA = "loop_cycle/v2"
 LOOP_STATUS_CARD_SCHEMA = "loop_status_card/v1"
 LOOP_RUNTIME_SCHEMA = "loop_runtime/v1"
 LOOP_QUEUE_ITEM_SCHEMA = "loop_queue_item/v1"
@@ -550,6 +554,7 @@ def create_loop_cycle(
     source: str = "omh",
     loop_id: str | None = None,
     allow_unloopable: bool = False,
+    driver_selection: Mapping[str, JsonValue] | None = None,
 ) -> dict[str, Any]:
     if not goal_summary.strip():
         raise ValueError("goal summary is required")
@@ -563,8 +568,12 @@ def create_loop_cycle(
     _enforce_loopability_start(loopability, allow_unloopable=allow_unloopable)
     loopability = _started_loopability_assessment(loopability, goal_reframe)
     now = utc_now()
+    driver, capability_snapshot = select_driver(sha256_text(goal_reframe), driver_selection)
     cycle = {
         "schema_version": LOOP_CYCLE_SCHEMA,
+        "driver": driver,
+        "executor_capability_snapshot": capability_snapshot,
+        "executor_goal_observations": [],
         "loop_id": loop_id,
         "created_at": now,
         "updated_at": now,
@@ -606,8 +615,13 @@ def create_loop_cycle(
     if not validation["ok"]:
         raise ValueError("; ".join(validation["errors"]))
     ensure_dir(_loop_dir(paths, loop_id), private=True)
+    def initialize(current):
+        if current:
+            raise LoopDriverError("loop_already_exists")
+        return dict(cycle)
+
     return _guarded_cycle_update(
-        paths, loop_id, lambda current: dict(cycle), operation="create_loop_cycle", default={}
+        paths, loop_id, initialize, operation="create_loop_cycle", default={}
     )
 
 
@@ -788,8 +802,8 @@ def build_loop_start_card(
         "backend_contract": {
             "operation": "loop.start",
             "required_fields": ["goal_summary", "goal_reframe", "success_criteria", "permission_profile"],
-            "optional_fields": ["allowed_executors", "linked_goal_id", "source", "loopability_assessment"],
-            "creates_artifact": "loop_cycle/v1",
+            "optional_fields": ["allowed_executors", "linked_goal_id", "source", "loopability_assessment", "driver_selection"],
+            "creates_artifact": LOOP_CYCLE_SCHEMA,
             "assessment_schema": LOOPABILITY_ASSESSMENT_SCHEMA,
         },
         "loop_engineering": _loop_engineering_template(),
@@ -1714,8 +1728,28 @@ def _build_loop_goal_driver_handoff(
     else:
         wait_state = {"waiting": False, "reason": wait_reason, "caveat": ""}
 
+    selected_driver = driver_status(cycle)
+    if selected_driver["kind"] == "external_executor_goal":
+        return {
+            "schema_version": LOOP_GOAL_DRIVER_HANDOFF_SCHEMA,
+            "loop_id": cycle["loop_id"], "phase": cycle["phase"], "driver": selected_driver,
+            "goal_intent": {
+                "owner": selected_driver["owner"], "session_ref": selected_driver["session_ref"],
+                "objective_sha256": selected_driver["objective_sha256"],
+                "objective_ref": f"loop:{cycle['loop_id']}:goal",
+                "continuation_ref": f"loop:{cycle['loop_id']}",
+                "evidence_refs": [f"goal:{linked_goal_id}"] if linked_goal_id else [],
+                "verification_criteria": verify_list, "gate_commands": commands,
+            },
+            "observation_contract": {"schema_version": OBSERVATION_SCHEMA,
+                                     "record_command": "omh loop goal-driver-observe"},
+            "completion_ownership": completion_ownership,
+            "status": "prepared_not_observed", "next_action": "prepare_selected_executor_goal",
+            "claim_boundary": "One selected-owner goal intent; not dispatch, execution, verification or completion evidence.",
+        }
     goal_command_sha256 = sha256_text(goal_command)
     return {
+        "driver": selected_driver,
         "schema_version": LOOP_GOAL_DRIVER_HANDOFF_SCHEMA,
         "loop_id": cycle["loop_id"],
         "phase": cycle["phase"],
@@ -1830,6 +1864,10 @@ def record_loop_goal_driver_observation(
         raise ValueError("goal driver observation must be an object")
 
     def mutate(cycle: dict[str, Any]) -> dict[str, Any] | None:
+        if submitted.get("schema_version") == OBSERVATION_SCHEMA:
+            return observe_external_driver(cycle, submitted)
+        if driver_status(cycle)["kind"] == "external_executor_goal":
+            raise LoopDriverError("driver_native_observation_requires_native_owner")
         expected_digest = str(_build_loop_goal_driver_handoff(paths, cycle)["goal_command_sha256"])
         observations = cycle.get("goal_driver_observations", [])
         if not isinstance(observations, list):
@@ -2407,6 +2445,7 @@ def build_loop_status_card(paths: OmhPaths, loop_id: str) -> dict[str, Any]:
         "failure_mode_summary": _failure_mode_summary(cycle),
         "small_loop_guidance": _small_loop_guidance(),
         "linked_goal_completion": linked_gate or {"observed": False, "reason": "no linked goal ledger"},
+        "driver": driver_status(cycle, bool(linked_gate and linked_gate["ready"])),
         "next_action": _next_action(cycle),
         "safe_copy": _safe_status_copy(cycle, envelope),
         "completion_claim_allowed": _completion_claim_allowed(linked_gate),
@@ -2453,8 +2492,13 @@ def build_authority_envelope(
 
 def validate_loop_cycle(cycle: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
-    if cycle.get("schema_version") != LOOP_CYCLE_SCHEMA:
-        errors.append(f"schema_version must be {LOOP_CYCLE_SCHEMA}")
+    if cycle.get("schema_version") not in {LOOP_CYCLE_SCHEMA, "loop_cycle/v1"}:
+        errors.append(f"schema_version must be {LOOP_CYCLE_SCHEMA} or loop_cycle/v1")
+    if cycle.get("schema_version") == LOOP_CYCLE_SCHEMA:
+        errors.extend(validate_driver_cycle(cycle))
+        errors.extend(validate_driver_history(cycle))
+    elif any(key in cycle for key in ("driver", "executor_goal_observations", "executor_capability_snapshot")):
+        errors.append("driver_companion_requires_explicit_v2_migration")
     loop_id = str(cycle.get("loop_id", ""))
     if not STORAGE_ID_RE.fullmatch(loop_id) or "/" in loop_id or "\\" in loop_id or ".." in loop_id:
         errors.append("loop_id must be a storage id")

@@ -66,7 +66,71 @@ This section is executor-neutral: the same guidance applies whether the
 coding executor behind a handoff is Codex, Claude Code, Hermes's own runtime,
 or another selected executor.
 
-### Driving loop iteration through `/goal` (goal driver handoff)
+### Selected-executor loop driver (agent/operator reference)
+
+Hermes narrates cycle start, problem definition, solution approach, progress,
+verification/review, and next action. The selected capable coding executor owns
+its resumable goal. OMH alone evaluates checkpoint criteria and observed runtime
+evidence: an executor's closed goal cannot complete a checkpoint, and an active,
+missing, closed, or different-objective snapshot cannot veto a passing one.
+
+Agents select a driver with `omh loop start --executor codex --work-kind coding
+--capability-json capability.json --executor-session-ref executor_fixture_1`
+(alongside the required goal summary, reframe, and criteria). Other explicitly
+selected executors use the same contract; Codex is not an implicit default.
+The capability file must be a validated `executor_capability_snapshot/v3` with
+`resumable_goal.status=host_observed`, safe evidence reference, observed time,
+and scope containing exactly `executor`, `environment`, and `session_ref`.
+The executor and session must match the selection. Legacy v1/v2 capability
+snapshots remain readable but project resumable goals as unknown. Prepared,
+unknown, unavailable, owner/session mismatch, Hermes-owned, and non-coding
+selections declare a native fallback rather than inventing goal controls.
+
+New `loop_cycle/v2` records contain `loop_driver/v1`: driver kind, owner,
+capability digest, opaque session, objective SHA-256, preparation/observation
+state, timestamp, and bounded advisory snapshot. `goal-driver-handoff` emits
+one external `goal_intent` with objective, continuation, and evidence references;
+it emits no competing `goal_command`. The selected adapter interprets its own
+goal API. Preparation launches nothing and grants no permission.
+
+External `goal-driver-observe` input uses the separate closed
+`loop_executor_goal_observation/v1` schema: `loop_id`, `driver_id`, `owner`,
+`session_ref`, `objective_sha256`, positive monotonic `sequence`, opaque
+`observation_id`, nonfuture `observed_at`, `status`, and 1-8 safe `evidence_refs`.
+Statuses are `active`, `paused`, `budget_limited`, and `closed`; missing is an
+absence, not a fabricated observation. Replay is idempotent; conflicting IDs,
+old sequences/times, foreign identity, and extra fields fail without writes.
+History is capped at 128 observations per binding and eight driver transfers;
+reaching either bound refuses new entries rather than silently evicting evidence.
+Status reports timestamp/age without inferring closure from elapsed time.
+
+| Advisory state | Warning | Driver recovery action |
+| --- | --- | --- |
+| Missing | `driver_missing` | `observe_or_resume_selected_executor` |
+| Active | none | `observe_progress` |
+| Paused | `driver_paused` | `resume_after_confirmation` |
+| Budget limited | `driver_budget_limited` | `review_budget` |
+| Closed, checkpoint incomplete | `driver_closed_early` | `resume_for_missing_evidence` |
+| Different objective | `driver_objective_mismatch` | `reconcile_objective` |
+
+Objective mismatch has priority, followed by budget, pause, closed, missing,
+and active. Applicable warnings are retained in that order. `status_card.driver`
+is the wrapper's same projection; driver recovery is separate from checkpoint
+`next_action`. Native observations never enter the external observation stream.
+
+Existing `loop_cycle/v1` artifacts project as `legacy_native_driver`, without
+on-read writes. `omh loop migrate-driver --loop ID` previews; adding `--apply`
+performs an idempotent local migration preserving `driver_migration.source_revision`
+and the entire native observation/phase history. `omh loop driver-bind --loop ID
+--input binding.json` accepts exactly `selection` (executor, work_kind,
+capability_snapshot, session_ref) and `previous_driver` (driver_id, status
+`stopped|absent`, observed_at, evidence_refs). The previous identity must match
+and its stop/absence must be observed before a transfer; otherwise the command
+fails with `driver_transfer_requires_reconciliation`. Starting again with an
+existing loop ID is refused, not an alternate transfer path. Both mutations
+accept `--expected-revision`; no executor process is stopped or started by OMH.
+
+### Native `/goal` fallback (goal driver handoff)
 
 Audience: agents, wrappers, and operators — not chat users. This subsection
 discharges the directive above: instead of inventing a parallel completion
@@ -88,7 +152,7 @@ the legal phase gate it satisfied, and activation, turn-end, and gate evidence
 references must be non-empty. OMH stores a
 `loop_goal_driver_observation/v1` receipt and one
 `loop_phase_transition/v1` record per accepted turn in the existing guarded
-`loop_cycle/v1`; it does not store prompts, transcripts, reasoning, or log
+`loop_cycle/v2` (or an unmigrated legacy v1); it does not store prompts, transcripts, reasoning, or log
 bodies. The first receipt starts at turn 1 and must carry at least two turns;
 later receipts may carry one or more turns but must start at the next index for
 the same original session and command digest. JSON input is capped at 65,536

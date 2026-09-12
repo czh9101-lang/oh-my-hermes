@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..plugin_bundle.omh.memory_governance import contains_credential_like_material
+from ..plugin_bundle.omh.memory_principals import PRINCIPAL_REF_PATTERN
 
 MEMORY_OPERATION_SCHEMA_VERSION = "memory_operation/v1"
 MEMORY_TOMBSTONE_SCHEMA_VERSION = "memory_tombstone/v1"
@@ -18,6 +19,10 @@ _STEP_OUTCOMES = frozenset({"applied", "already_present", "copied", "moved", "wr
 _TOMBSTONE_FIELDS = frozenset({"schema_version", "tombstone_id", "record_id", "revision", "scope", "operation_id", "reason_code", "actor_class", "tombstoned_at", "expires_at"})
 _OPERATION_FIELDS = frozenset({"schema_version", "operation_id", "operation_type", "state", "created_at", "updated_at", "recovery_count", "steps", "receipt"})
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$")
+_GENERATED_MEMORY_REF = re.compile(
+    r"^(?:(?:candidates/)?cand_|(?:records/)?mem_|(?:reviews/)?review_cand_)[0-9a-f]{16}(?:\.json)?$"
+    r"|^(?:hard-deleted-|memory-prune-)?mem_[0-9a-f]{16}(?:-r[0-9]+)?$"
+)
 
 
 def build_memory_operation(operation_id: str, operation_type: str, steps: Sequence[Mapping[str, object]], timestamp: str) -> dict[str, Any]:
@@ -172,7 +177,11 @@ def _json_value(value: object) -> bool:
     if value is None or isinstance(value, (bool, int)):
         return True
     if isinstance(value, str):
-        return not contains_credential_like_material(value)
+        return (
+            PRINCIPAL_REF_PATTERN.fullmatch(value) is not None
+            or _GENERATED_MEMORY_REF.fullmatch(value) is not None
+            or not contains_credential_like_material(value)
+        )
     if isinstance(value, float):
         return value == value and value not in {float("inf"), float("-inf")}
     if isinstance(value, Mapping):

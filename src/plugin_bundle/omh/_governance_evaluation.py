@@ -13,13 +13,20 @@ from ._governance_overrides import validate_stale_override
 
 def stable_artifact_identity(artifact: dict[str, object]) -> dict[str, object]:
     """Compute stable identity: schema_version + id + revision + scope."""
-    from .memory_governance import canonical_memory_scope, PROJECT_MEMORY_RECORD_SCHEMA_VERSION, MEMORY_SCOPE_SCHEMA_VERSION, MEMORY_BLOCK_SCHEMA_VERSION
+    from .memory_governance import (
+        MEMORY_BLOCK_SCHEMA_VERSION,
+        MEMORY_SCOPE_SCHEMA_VERSION,
+        PRINCIPAL_MEMORY_SCOPE_SCHEMA_VERSION,
+        PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+        PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+        canonical_memory_scope,
+    )
     
     schema_version = artifact.get("schema_version")
     
-    if schema_version == PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
+    if schema_version in {PROJECT_MEMORY_RECORD_SCHEMA_VERSION, PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION}:
         id_key = "record_id"
-    elif schema_version == MEMORY_SCOPE_SCHEMA_VERSION:
+    elif schema_version in {MEMORY_SCOPE_SCHEMA_VERSION, PRINCIPAL_MEMORY_SCOPE_SCHEMA_VERSION}:
         id_key = "item_id"
     elif schema_version == MEMORY_BLOCK_SCHEMA_VERSION:
         id_key = "block_id"
@@ -67,7 +74,9 @@ def evaluate_memory_replay(
     """
     from .memory_governance import (
         PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+        PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
         MEMORY_SCOPE_SCHEMA_VERSION,
+        PRINCIPAL_MEMORY_SCOPE_SCHEMA_VERSION,
         MEMORY_BLOCK_SCHEMA_VERSION,
         canonical_memory_scope,
         canonical_payload_digest,
@@ -98,9 +107,9 @@ def evaluate_memory_replay(
     # 1. Check schema version
     schema_version = artifact.get("schema_version")
     
-    if schema_version == PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
+    if schema_version in {PROJECT_MEMORY_RECORD_SCHEMA_VERSION, PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION}:
         pass
-    elif schema_version == MEMORY_SCOPE_SCHEMA_VERSION:
+    elif schema_version in {MEMORY_SCOPE_SCHEMA_VERSION, PRINCIPAL_MEMORY_SCOPE_SCHEMA_VERSION}:
         pass
     elif schema_version == MEMORY_BLOCK_SCHEMA_VERSION:
         pass

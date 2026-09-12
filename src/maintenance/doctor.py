@@ -321,6 +321,16 @@ def run_doctor(paths: OmhPaths) -> list[Check]:
                 _awareness_delivery_check(paths),
             ]
         )
+    from ..plugin_bundle.omh.group_activity_status import read_group_activity_status
+    activity = read_group_activity_status(paths.omh_home, paths.hermes_home)
+    checks.append(Check(
+        "group_chat_activity", True,
+        f"Last profile snapshot: readiness={activity['readiness']}; compatibility={activity['compatibility']}; "
+        f"last_outcome={activity['last_outcome']}; dropped={activity['dropped']}; gapped={activity['gapped']}; "
+        f"rejected={activity['rejected']}; write_failed={activity['write_failed']}. "
+        "Native member activity has no room-terminal guarantee; receipts remain partial.",
+        severity="warning" if activity["readiness"] == "unavailable" else "ok", observed=False,
+    ))
     checks.append(_hook_integrity_check(paths))
     checks.append(_retired_skill_install_check(paths))
     checks.append(_flat_skill_layout_check(paths))

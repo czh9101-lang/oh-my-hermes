@@ -358,6 +358,13 @@ PROCESS_SPAWN_ALLOWLIST: dict[str, str] = {
         "Git object reads through a temporary object directory plus read-only alternates, disables "
         "fsmonitor and optional locks, streams only changed/untracked bytes, and never starts work."
     ),
+    "src/quality/handoff_risk_repository.py": (
+        "repository metadata observer for the explicit `omh handoff-risk-scan --repo` advisory "
+        "command (#1495); runs only the closed local read-only plumbing set enumerated in "
+        "GIT_ARGV_ALLOWLIST below (rev-parse, symbolic-ref, ls-tree, ls-files) under "
+        "--no-lazy-fetch so a partial clone cannot reach its promisor remote, with bounded "
+        "output, a kill-on-timeout deadline, and no agent, network client, or write."
+    ),
     "src/workflows/browser_workflow_learning_store.py": (
         "the shared observed-Git-root boundary reached by explicit web-qa trace, observation, "
         "and promotion commands; runs only bounded local rev-parse --show-toplevel with "
@@ -874,6 +881,15 @@ GIT_ARGV_ALLOWLIST: dict[tuple[str, tuple[str, ...]], str] = {
     ("src/quality/evidence_records.py", ("rev-parse", "HEAD^{tree}")): (
         "legacy `rev-parse --short HEAD^{tree}` compatibility helper; fresh local evidence uses "
         "the complete-content collector rather than this committed-tree-only read"
+    ),
+    ("src/quality/handoff_risk_repository.py", ("core.fsmonitor=false",)): (
+        "one private argv factory prefixes every closed internal command (rev-parse "
+        "--is-inside-work-tree/--show-toplevel/--verify, symbolic-ref --quiet --short HEAD, "
+        "ls-tree -r -z HEAD, ls-files --stage/--others) with `--no-optional-locks "
+        "--no-lazy-fetch -c core.fsmonitor=false`; the fsmonitor override keeps a read-only "
+        "scan from executing repo-configured hook-shaped config, the command words are closed "
+        "internal tuples never built from caller input, and the set fires no hooks, so no "
+        "second `-c` override is needed or blessed. Read-only, local-only, names no remote."
     ),
     ("src/quality/working_tree_fingerprint.py", ("core.fsmonitor=false", "core.filemode=true")): (
         "the collector's one private argv factory prefixes every fixed local Git plumbing command "

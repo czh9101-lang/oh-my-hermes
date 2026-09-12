@@ -111,4 +111,5 @@ def add_runtime_session_receipt_commands(runtime_sub: argparse._SubParsersAction
     listing = receipt_sub.add_parser("list", help="List recorded receipts and quarantined payload handles.")
     listing.add_argument("--session", default=None, help="Only receipts for this session ref.")
     listing.add_argument("--limit", type=int, default=20)
+    listing.add_argument("--json", action="store_true", help="Emit JSON (the default).")
     listing.set_defaults(func=cmd_runtime_session_receipt_list)

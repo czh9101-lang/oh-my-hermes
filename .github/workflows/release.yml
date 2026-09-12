@@ -100,11 +100,15 @@ jobs:
           version="$(uv run tools/package_manager/metadata.py --version)"
           test "v$version" = "$RELEASE_TAG"
           evidence_home="$RUNNER_TEMP/omh-evidence-home"
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          uv run python -m omh.cli release notes --version "$version" \
+            --repo-root "$GITHUB_WORKSPACE" --notes-file "$notes_file" --json
+          echo "OMH_NOTES_FILE=$notes_file" >> "$GITHUB_ENV"
           uv run python -m omh.cli \
             --omh-home "$evidence_home" \
             --hermes-home "$RUNNER_TEMP/omh-evidence-hermes" \
             release evidence-bundle --version "$version" --write \
-            --repo-root "$GITHUB_WORKSPACE" --json > "$RUNNER_TEMP/evidence.json"
+            --repo-root "$GITHUB_WORKSPACE" --notes-file "$notes_file" --json > "$RUNNER_TEMP/evidence.json"
           tag_commit="$(git rev-list -n 1 "$RELEASE_TAG")"
           test "$tag_commit" = "$(git rev-parse HEAD)"
           bundle="$evidence_home/runtime/release-evidence/$version.json"
@@ -180,7 +184,8 @@ jobs:
             --omh-home "$OMH_EVIDENCE_HOME" \
             --hermes-home "$RUNNER_TEMP/omh-evidence-hermes" \
             release evidence-bundle --version "$OMH_VERSION" --write \
-            --repo-root "$GITHUB_WORKSPACE" --artifact "$OMH_WHEEL" --json > "$RUNNER_TEMP/evidence-bound.json"
+            --repo-root "$GITHUB_WORKSPACE" --artifact "$OMH_WHEEL" \
+            --notes-file "$OMH_NOTES_FILE" --json > "$RUNNER_TEMP/evidence-bound.json"
           bundle="$OMH_EVIDENCE_HOME/runtime/release-evidence/$OMH_VERSION.json"
           uv run python - "$bundle" "$OMH_WHEEL_SHA256" <<'PY'
           import json
@@ -234,7 +239,10 @@ jobs:
           set -euo pipefail
           asset="$(basename "$OMH_WHEEL")"
           evidence_asset="$(basename "$OMH_EVIDENCE_ASSET")"
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          body_json="$RUNNER_TEMP/release-body.json"
+          if gh release view "$RELEASE_TAG" --json body > "$body_json"; then
+            uv run python -m omh.cli release notes-verify \
+              --notes-file "$OMH_NOTES_FILE" --body-json "$body_json" --json
             asset_count="$(
               gh release view "$RELEASE_TAG" \
                 --json assets \
@@ -258,6 +266,21 @@ jobs:
               test "$evidence_count" = 1
             fi
           else
+            # A failed lookup is not absence. Require repository access and a
+            # structured 404 from the release endpoint before selecting create.
+            gh api "repos/$GITHUB_REPOSITORY" --silent
+            lookup="$RUNNER_TEMP/release-lookup.json"
+            if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$lookup"; then
+              echo "release lookup changed; rerun without publication" >&2
+              exit 1
+            fi
+            uv run python - "$lookup" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              lookup = json.load(handle)
+          assert str(lookup.get("status")) == "404", "release lookup did not prove absence"
+          PY
             extra=()
             if [ "$RELEASE_CHANNEL" = "beta" ]; then
               extra+=(--prerelease)
@@ -270,10 +293,13 @@ jobs:
               "$OMH_WHEEL#Python wheel" \
               "$OMH_EVIDENCE_ASSET#Release evidence bundle" \
               --verify-tag \
-              --generate-notes \
+              --notes-file "$OMH_NOTES_FILE" \
               --title "$RELEASE_TAG" \
               ${extra[@]+"${extra[@]}"}
           fi
+          gh release view "$RELEASE_TAG" --json body > "$body_json"
+          uv run python -m omh.cli release notes-verify \
+            --notes-file "$OMH_NOTES_FILE" --body-json "$body_json" --json
 
       - name: Verify immutable release wheel
         env:

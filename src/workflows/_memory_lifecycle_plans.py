@@ -7,6 +7,8 @@ from typing import Any
 from ..plugin_bundle.omh.memory_governance import (
     MEMORY_CLASSIFIER_VERSION,
     MEMORY_GOVERNANCE_POLICY_VERSION,
+    PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+    PRINCIPAL_PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION,
     PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
     PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION,
     build_retention,
@@ -72,7 +74,7 @@ def _current_record(paths: OmhPaths, record_id: str, revision: int) -> tuple[dic
     value, error = read_json(paths.memory_dir, f"records/{record_id}.json")
     if error or value is None:
         return {}, error or "record_not_found"
-    if value.get("schema_version") != PROJECT_MEMORY_RECORD_SCHEMA_VERSION or value.get("record_id") != record_id or value.get("revision") != revision:
+    if value.get("schema_version") not in {PROJECT_MEMORY_RECORD_SCHEMA_VERSION, PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION} or value.get("record_id") != record_id or value.get("revision") != revision:
         return {}, "exact_revision_not_current"
     if value.get("source_class") != "omh_local":
         return {}, "external_target"
@@ -92,7 +94,7 @@ def _archived_record(paths: OmhPaths, record_id: str, revision: int) -> tuple[di
     if len(matches) != 1:
         return {}, "", "archive_exact_revision_not_found" if not matches else "archive_exact_revision_ambiguous"
     value, relative = dict(matches[0].value), matches[0].relative_path
-    if value.get("schema_version") != PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
+    if value.get("schema_version") not in {PROJECT_MEMORY_RECORD_SCHEMA_VERSION, PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION}:
         return {}, relative, "archive_exact_revision_not_found"
     try:
         _scope(value)
@@ -108,7 +110,7 @@ def _tombstone(tombstone_id: str, record_id: str, revision: int, scope: Mapping[
 
 def _pending_candidate(record: Mapping[str, object], candidate_id: str, revision: int, lifecycle: str) -> dict[str, object]:
     origin = stable_artifact_identity(dict(record))
-    replacement = {key: record[key] for key in ("record_type", "summary", "scope", "source_class", "source_ref", "source_evidence", "retention", "revalidation", "ttl", "staleness", "derived_from", "perspective", "attention") if key in record}
+    replacement = {key: record[key] for key in ("record_type", "summary", "scope", "source_class", "source_ref", "source_evidence", "retention", "revalidation", "ttl", "staleness", "derived_from", "perspective", "attention", "identity") if key in record}
     return {"schema_version": "project_memory_candidate/v2", "candidate_id": candidate_id, "candidate_revision": revision, "record_id": str(record["record_id"]), "artifact_kind": "record", "status": "pending_review", "admission": {"state": "pending_review"}, "origin": origin, "lifecycle": lifecycle, "replacement": replacement}
 
 
@@ -147,14 +149,21 @@ def _approved_record(replacement: Mapping[str, object], record_id: str, revision
     record_type = str(replacement.get("record_type", "fact"))
     retention = replacement.get("retention") if isinstance(replacement.get("retention"), Mapping) else {}
     ttl_days = retention.get("ttl_days") if isinstance(retention.get("ttl_days"), int) and not isinstance(retention.get("ttl_days"), bool) else None
-    record: dict[str, object] = {"schema_version": PROJECT_MEMORY_RECORD_SCHEMA_VERSION, "record_id": record_id, "revision": revision, "record_type": record_type, "summary": str(replacement.get("summary", "")), "scope": _scope(replacement), "source_class": str(replacement.get("source_class", "omh_local")), "derived_from": [str(ref) for ref in (replacement.get("derived_from") if isinstance(replacement.get("derived_from"), list) else []) if isinstance(ref, str)], **({"perspective": {"observer": str(replacement["perspective"].get("observer", "")), "observed": str(replacement["perspective"].get("observed", ""))}} if isinstance(replacement.get("perspective"), Mapping) and str(replacement["perspective"].get("observed", "")) else {}), **({"source_evidence": evidence} if (evidence := _source_evidence(replacement)) else {}), **({"attention": attention} if (attention := _attention(replacement)) else {}), "retention": build_retention(str(retention.get("class", "standard")), record_type=record_type, admitted_at=now, ttl_days=ttl_days), "revalidation": {}, "admission": {"state": "approved_manual", "review_id": f"review-{record_id}-r{revision}", "reviewer_claim": reviewer, "admitted_at": stamp(now), "policy_version": MEMORY_GOVERNANCE_POLICY_VERSION, "classifier_version": MEMORY_CLASSIFIER_VERSION}}
+    identity = replacement.get("identity") if isinstance(replacement.get("identity"), Mapping) else None
+    if identity is not None:
+        identity = {
+            **identity,
+            "reviewer": {"principal": identity.get("reviewer", {}).get("principal") if isinstance(identity.get("reviewer"), Mapping) else None, "review_ref": f"review-{record_id}-r{revision}"},
+            "audience": {**identity.get("audience", {}), "review_ref": f"review-{record_id}-r{revision}"} if isinstance(identity.get("audience"), Mapping) else {},
+        }
+    record: dict[str, object] = {"schema_version": PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION if identity is not None else PROJECT_MEMORY_RECORD_SCHEMA_VERSION, "record_id": record_id, "revision": revision, "record_type": record_type, "summary": str(replacement.get("summary", "")), "scope": _scope(replacement), "source_class": str(replacement.get("source_class", "omh_local")), "derived_from": [str(ref) for ref in (replacement.get("derived_from") if isinstance(replacement.get("derived_from"), list) else []) if isinstance(ref, str)], **({"perspective": {"observer": str(replacement["perspective"].get("observer", "")), "observed": str(replacement["perspective"].get("observed", ""))}} if isinstance(replacement.get("perspective"), Mapping) and str(replacement["perspective"].get("observed", "")) else {}), **({"source_evidence": evidence} if (evidence := _source_evidence(replacement)) else {}), **({"attention": attention} if (attention := _attention(replacement)) else {}), **({"identity": dict(identity)} if identity is not None else {}), "retention": build_retention(str(retention.get("class", "standard")), record_type=record_type, admitted_at=now, ttl_days=ttl_days), "revalidation": {}, "admission": {"state": "approved_manual", "review_id": f"review-{record_id}-r{revision}", "reviewer_claim": reviewer, "admitted_at": stamp(now), "policy_version": MEMORY_GOVERNANCE_POLICY_VERSION, "classifier_version": MEMORY_CLASSIFIER_VERSION}}
     identity = stable_artifact_identity(record)
     record["admission"] = {**record["admission"], "artifact_identity": identity, "payload_digest": canonical_payload_digest(record)}
     return record
 
 
 def _review(record: Mapping[str, object], review_id: str, reviewer: str) -> dict[str, object]:
-    return {"schema_version": PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION, "review_id": review_id, "artifact_identity": stable_artifact_identity(dict(record)), "decision": "approved_manual", "reviewer_claim": reviewer, "payload_digest": canonical_payload_digest(dict(record)), "policy_version": MEMORY_GOVERNANCE_POLICY_VERSION, "classifier_version": MEMORY_CLASSIFIER_VERSION}
+    return {"schema_version": PRINCIPAL_PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION if record.get("schema_version") == PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION else PROJECT_MEMORY_REVIEW_RECORD_SCHEMA_VERSION, "review_id": review_id, "artifact_identity": stable_artifact_identity(dict(record)), "decision": "approved_manual", "reviewer_claim": reviewer, **({"identity": dict(record["identity"])} if isinstance(record.get("identity"), Mapping) else {}), "payload_digest": canonical_payload_digest(dict(record)), "policy_version": MEMORY_GOVERNANCE_POLICY_VERSION, "classifier_version": MEMORY_CLASSIFIER_VERSION}
 
 
 def _manifest(items: Sequence[tuple[str, str, str]]) -> list[dict[str, object]]:

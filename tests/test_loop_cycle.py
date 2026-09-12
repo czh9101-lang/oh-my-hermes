@@ -137,7 +137,7 @@ class GoalLoopTests(unittest.TestCase):
         self.assertEqual(card["backend_contract"]["operation"], "loop.start")
         self.assertIn("goal_reframe", card["backend_contract"]["required_fields"])
         self.assertIn("handoff_only", {option["id"] for option in card["permission_profiles"]})
-        self.assertIn("loop_cycle/v1", card["backend_contract"]["creates_artifact"])
+        self.assertEqual("loop_cycle/v2", card["backend_contract"]["creates_artifact"])
         self.assertEqual(card["loop_engineering"]["schema_version"], "loop_engineering/v1")
         self.assertEqual(
             [step["id"] for step in card["loop_engineering"]["pipeline"]],

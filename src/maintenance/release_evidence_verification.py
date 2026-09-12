@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from ..system.local_store import utc_now
+from .release_notes_verification import verify_notes_binding
 from .release_source_identity import (
     RELEASE_EVIDENCE_BUNDLE_SCHEMA_V2,
     _DEFAULT_GIT_RUNNER,
@@ -45,6 +46,7 @@ def verify_release_evidence_bundle(
     archive_digest: str = "",
     artifact_digest: str = "",
     runner: Callable[..., Any] = _DEFAULT_GIT_RUNNER,
+    notes_file: str | Path | None = None,
 ) -> dict[str, object]:
     """Re-compute the recorded binding and return a verdict; never writes.
 
@@ -222,12 +224,12 @@ def verify_release_evidence_bundle(
                 checked_at=checked_at,
                 reasons=["the artifact digest differs from the recorded artifact digest"],
             )
-    return _verification_payload(
-        VERIFY_MATCHING,
-        version=version,
-        checked_at=checked_at,
-        reasons=[],
-    )
+    verdict, notes_binding = verify_notes_binding(bundle, recorded_manifest, notes_file)
+    result = _verification_payload(verdict, version=version, checked_at=checked_at,
+                                   reasons=[] if verdict == VERIFY_MATCHING else [notes_binding])
+    result['notes_binding'] = notes_binding
+    result['publication_ready'] = notes_binding == 'matching' and bundle.get('publication_ready') is True
+    return result
 
 
 def _verification_payload(

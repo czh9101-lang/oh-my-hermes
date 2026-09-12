@@ -22,6 +22,9 @@ from .lifecycle_growth_contracts import (
     validate_lifecycle_growth_artifact,
 )
 from .lifecycle_growth_launch import prepare_lifecycle_launch
+from .lifecycle_growth_configuration import build_configuration_binding
+from .lifecycle_growth_metrics import build_metric_coverage
+from .lifecycle_growth_configuration_values import ConfigurationInputError
 from .product_discovery_validation import (
     append_product_discovery_artifact,
     discovery_audience_gate,
@@ -50,7 +53,7 @@ class WorkflowArtifactOperationError(ValueError):
 Operation = Callable[[OmhPaths, Mapping[str, Any]], dict[str, Any]]
 WORKFLOW_ARTIFACT_OPERATIONS: Final[dict[str, tuple[str, ...]]] = {
     "decision-prototype": ("prepare", "validate", "observe", "receipt", "handoff", "persist"),
-    "lifecycle-growth": ("build", "prepare", "validate", "evaluate", "readout", "audience", "promote", "graduate"),
+    "lifecycle-growth": ("build", "prepare", "validate", "evaluate", "readout", "audience", "promote", "graduate", "configuration", "metrics"),
     "product-discovery-validation": ("build", "prepare", "validate", "audience-gate", "evaluate", "handoff", "append"),
     "sales-pipeline-review": ("prepare", "validate", "evaluate", "handoff"),
 }
@@ -105,7 +108,18 @@ def _lifecycle_build(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, 
 
 
 def _lifecycle_prepare(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, Any]:
+    if set(payload) - {"brief", "audience", "safety", "experiment", "handoff", "readout", "exposure_evidence",
+                       "evaluation_context", "audience_review", "configuration_binding", "metric_coverage", "metric_plan_binding"}:
+        raise ConfigurationInputError("configuration_operation_keys_invalid")
     return prepare_lifecycle_growth(payload)
+
+
+def _lifecycle_configuration(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, Any]:
+    return dict(build_configuration_binding(payload))
+
+
+def _lifecycle_metrics(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, Any]:
+    return dict(build_metric_coverage(payload))
 
 
 def _lifecycle_validate(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -114,10 +128,15 @@ def _lifecycle_validate(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[st
 
 
 def _lifecycle_evaluate(_paths: OmhPaths, payload: Mapping[str, Any]) -> dict[str, Any]:
+    if set(payload) - {"experiment", "readout", "evaluation_context", "exposure_evidence", "audience_review", "configuration_binding", "metric_coverage", "metric_plan_binding"}:
+        raise ConfigurationInputError("configuration_operation_keys_invalid")
     return evaluate_lifecycle_growth(
         _required_mapping(payload, "experiment"), _required_mapping(payload, "readout"),
         evaluation_context=payload.get("evaluation_context"),
         exposure_evidence=payload.get("exposure_evidence"),
+        audience_review=payload.get("audience_review"),
+        configuration_binding=payload.get("configuration_binding"),
+        metric_coverage=payload.get("metric_coverage"), metric_plan_binding=payload.get("metric_plan_binding"),
     )
 
 
@@ -223,6 +242,8 @@ _DISPATCH: Final[dict[tuple[str, str], Operation]] = {
     ("lifecycle-growth", "audience"): _lifecycle_audience,
     ("lifecycle-growth", "promote"): _lifecycle_promote,
     ("lifecycle-growth", "graduate"): _lifecycle_graduate,
+    ("lifecycle-growth", "configuration"): _lifecycle_configuration,
+    ("lifecycle-growth", "metrics"): _lifecycle_metrics,
     ("product-discovery-validation", "build"): _discovery_build,
     ("product-discovery-validation", "prepare"): _discovery_prepare,
     ("product-discovery-validation", "validate"): _discovery_validate,

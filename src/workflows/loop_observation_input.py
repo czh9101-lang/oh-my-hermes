@@ -8,6 +8,8 @@ import stat
 import sys
 from typing import Final, Never
 
+from ..coding.executor_capability_snapshots import JsonValue
+
 
 MAX_LOOP_OBSERVATION_BYTES: Final = 65_536
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -15,7 +17,7 @@ _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 _BINARY = getattr(os, "O_BINARY", 0)
 
 
-def read_loop_observation_json(source: str) -> dict[str, object]:
+def read_loop_observation_json(source: str) -> dict[str, JsonValue]:
     """Read one bounded strict JSON object from stdin or a stable regular file."""
     encoded = (
         _read_stdin_bytes()

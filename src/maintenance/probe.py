@@ -25,6 +25,7 @@ from ..plugin_observations import (
     read_plugin_host_observations,
 )
 from ..plugin_bundle.omh.buzz_diagnostics import probe_buzz
+from ..plugin_bundle.omh.group_activity_status import read_group_activity_status
 from ..plugin_pack import inspect_plugin_bundle
 from .structural_search import inspect_structural_search
 from ..runtime.artifacts import read_state_result
@@ -636,6 +637,8 @@ def probe_capabilities(paths: OmhPaths, *, include_parity: bool = False, include
         "hermes_home": str(paths.hermes_home),
         "capabilities": [capability.to_dict() for capability in capabilities],
         "buzz": buzz,
+        # Historical bounded profile snapshot, not a live host/terminal guarantee.
+        "group_chat_activity": read_group_activity_status(paths.omh_home, paths.hermes_home),
         "target_topology": target_topology,
         "plugin_distribution_ready": bool(plugin["plugin_distribution_ready"]),
         "plugin_runtime_observed": plugin_runtime_observed,

@@ -13,8 +13,11 @@ With `memory.provider: omh`, `OmhMemoryProvider.render_pack` calls
 modules and the standard library, not the control-plane package or a second
 ranker.
 
-The shared contract applies scope, perspective, immutable review linkage,
-supersession, lifecycle, source freshness, and archive eligibility. Eligible
+The shared contract applies acting principal and reviewed audience before
+scope, perspective, immutable review linkage, supersession, lifecycle, source
+freshness, and archive eligibility. Unauthorized records contribute only
+aggregate reason counts; their IDs and summaries never reach ranking, pins,
+rendering, or receipts. Eligible
 records compete in this order: privileged pins, attention tier, relevance,
 decayed rank-fusion score, then record ID. Recency, saturating handoff-usage
 buckets, age, admission weight, and temporal query intent feed that score.
@@ -71,11 +74,13 @@ what the live provider delivers.
 
 ## Store rollout
 
-The store layout and `project_memory_record/v2` and
-`project_memory_recall_pack/v1` schemas stay unchanged. Existing `project`,
-`target`, `thread`, and `run` labels remain readable. `user-global` is additive,
-not a reinterpretation of old data. Neither upgrade nor recall rewrites records,
-review evidence, or scope labels.
+The store layout stays compatible while newly principal-bound records use
+`project_memory_record/v3`, `omh_memory_scope/v3`, and
+`project_memory_review_record/v3`. Existing v2 `project`, `target`, `thread`, and
+`run` labels remain readable on explicitly nonshared surfaces. `user-global`
+remains a legacy profile-local scope, not a human identity; it is excluded on a
+shared surface. Upgrade and recall never silently rewrite or assign old records.
+Use the report-first principal migration described in [Project Memory](MEMORY.md).
 
 A record in the user home is not automatically global. In particular,
 `project/default`, the capture default, doesn't match prefetch inside a
@@ -143,8 +148,11 @@ or model use.
 
 ## Receipt privacy and identity
 
-`build_prefetch_receipt` creates `omh_memory_prefetch_receipt/v1` in `prepared`
-state. `prefetch` marks it `returned_to_host`, exposes it through
+`build_prefetch_receipt` creates `omh_memory_prefetch_receipt/v2` in `prepared`
+state. It adds the opaque principal binding state, actor kind, shared-surface
+flag, aggregate allow/deny reasons, and audience-policy digest. Existing v1
+receipts remain readable but establish no principal-isolation claim. `prefetch`
+marks the current receipt `returned_to_host`, exposes it through
 `latest_prefetch_receipt()`, and attempts to persist it at
 `<provider-user-home>/memory/prefetch_receipt.json`. A write `OSError` doesn't
 fail the turn or produce a separate failure receipt, so disk may still hold an

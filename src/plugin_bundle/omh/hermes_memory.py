@@ -281,6 +281,7 @@ def nearest_entry(text: str, entries: tuple[str, ...] | list[str]) -> tuple[int,
 
 HERMES_MEMORY_BRIDGE_SCHEMA_VERSION = "hermes_memory_bridge/v1"
 PROJECT_MEMORY_RECORD_SCHEMA_VERSION = "project_memory_record/v2"
+PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION = "project_memory_record/v3"
 
 
 def read_reviewed_records(omh_home: str | Path) -> list[dict[str, Any]]:
@@ -323,7 +324,10 @@ def _reviewed_records(home: Path, reviews: dict[str, dict[str, object]]) -> list
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, ValueError):
             continue
-        if not isinstance(data, dict) or data.get("schema_version") != PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
+        if not isinstance(data, dict) or data.get("schema_version") not in {
+            PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+            PRINCIPAL_PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+        }:
             continue
         admission = data.get("admission") if isinstance(data.get("admission"), dict) else {}
         review_id = admission.get("review_id") if isinstance(admission, dict) else None
