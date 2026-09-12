@@ -137,15 +137,20 @@ class LoopDriverBoundaryTests(unittest.TestCase):
         record_goal_quality_gate(self.paths, "fixture-goal", "Fixture verification", status="passed", evidence_refs=["fixture:verified"])
         cycle = self.start(linked_goal_id="fixture-goal")
         self.assertTrue(build_loop_status_card(self.paths, "fixture")["linked_goal_completion"]["ready"])
-        for seq, status in enumerate(("active", "closed", "paused", "budget_limited"), 1):
-            with self.subTest(status=status):
-                submitted = observation(cycle, status, seq)
-                submitted["objective_sha256"] = "b" * 64
-                # When
-                record_loop_goal_driver_observation(self.paths, "fixture", submitted)
-                # Then
+        states = ((None, False), ("active", False), ("closed", False),
+                  ("closed", True), ("paused", True), ("budget_limited", True))
+        for seq, (status, objective_differs) in enumerate(states, 1):
+            with self.subTest(status=status, objective_differs=objective_differs):
+                if status is not None:
+                    submitted = observation(cycle, status, seq)
+                    if objective_differs:
+                        submitted["objective_sha256"] = "b" * 64
+                    record_loop_goal_driver_observation(self.paths, "fixture", submitted)
+                # When: project the actual checkpoint decision for this advisory state.
                 card = build_loop_status_card(self.paths, "fixture")
+                # Then: both the authority and the user-visible decision remain ready.
                 self.assertTrue(card["linked_goal_completion"]["ready"])
+                self.assertTrue(card["completion_claim_allowed"])
                 self.assertNotEqual(card["next_action"], card["driver"]["next_action"])
 
     def test_stream_rejects_old_or_conflicting_input_when_an_observation_exists(self):

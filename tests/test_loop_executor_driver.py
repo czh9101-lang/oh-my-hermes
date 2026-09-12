@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import inspect
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -66,7 +65,6 @@ class LoopExecutorDriverTests(unittest.TestCase):
         self.paths = resolve_paths(Path(self.home.name) / "omh", Path(self.home.name) / "hermes")
 
     def start(self, selected=None, linked_goal_id=""):
-        self.assertIn("driver_selection", inspect.signature(create_loop_cycle).parameters)
         return create_loop_cycle(
             self.paths, goal_summary="Improve fixture correctness", goal_reframe="Verify the bounded fixture",
             success_criteria=["Observed fixture verification passes"], allow_unloopable=True,
