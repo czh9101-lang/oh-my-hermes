@@ -14,7 +14,13 @@ load_local_package()
 
 from omh.paths import resolve_paths
 from omh.plugin_bundle.omh.memory_blocks import approve_memory_block, build_memory_block, write_memory_block
-from omh.plugin_bundle.omh.memory_principals import derive_principal_ref
+from omh.plugin_bundle.omh.memory_principals import (
+    PrincipalContractError,
+    build_memory_identity,
+    derive_principal_ref,
+    memory_identity_errors,
+    parse_principal_context,
+)
 from omh.plugin_bundle.omh.memory_provider import OmhMemoryProvider
 from omh.workflows.memory import approve_project_memory_candidate, capture_project_memory_candidate
 PRINCIPAL_A = "principal:v1:" + "a" * 64
@@ -94,6 +100,63 @@ def _provider_pack(paths, context: dict[str, Any] | None) -> tuple[str, dict[str
 
 
 class MemoryPrincipalTests(unittest.TestCase):
+    def test_M3_malformed_actor_and_binding_values_fail_closed_without_exceptions(self) -> None:
+        # Given closed context JSON with malformed empty/container/non-string variants.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / "omh", Path(tmp) / "hermes")
+            malformed_values: tuple[Any, ...] = ("", [], {}, 7, None)
+
+            # When parsing and user-scoped capture cross the actual boundary.
+            for field in ("actor_kind", "binding_state"):
+                for malformed in malformed_values:
+                    with self.subTest(field=field, malformed=malformed):
+                        context = {**_context(PRINCIPAL_A), field: malformed}
+                        parsed = parse_principal_context(context)
+                        capture: Any = capture_project_memory_candidate(
+                            paths,
+                            "Malformed principal context fixture",
+                            scope_kind="user",
+                            principal_context=context,
+                        )
+
+                        # Then malformed input is a bounded deny, never an exception/write.
+                        self.assertIsNone(parsed)
+                        self.assertFalse(capture["captured"])
+                        self.assertEqual(capture["reason"], "principal_context_required")
+            self.assertFalse((paths.memory_dir / "candidates").exists())
+
+    def test_M4_review_refs_reject_malformed_and_private_values_without_retention(self) -> None:
+        # Given a safe candidate plus review-ref variants at the identity boundary.
+        with TemporaryDirectory() as tmp:
+            paths = resolve_paths(Path(tmp) / "omh", Path(tmp) / "hermes")
+            context = _context(PRINCIPAL_A)
+            capture_project_memory_candidate(paths, "Safe persisted candidate", scope_kind="user", principal_context=context)
+            private_sentinel = "password=private-review-ref-sentinel"
+            malformed_values: tuple[Any, ...] = ("", [], {}, 7, private_sentinel)
+
+            # When persisted identity validation inspects each nested review_ref.
+            valid = build_memory_identity(
+                context,
+                scope_kind="user",
+                reviewer_principal=PRINCIPAL_B,
+                review_ref="review_safe_1",
+            )
+            for owner in ("reviewer", "audience"):
+                for malformed in malformed_values:
+                    with self.subTest(owner=owner, malformed=malformed):
+                        identity = json.loads(json.dumps(valid))
+                        identity[owner]["review_ref"] = malformed
+                        self.assertTrue(memory_identity_errors(identity))
+
+            # Then builders reject container/non-string/private refs without echoing them.
+            identity_builder: Any = build_memory_identity
+            for malformed in ([], {}, 7, private_sentinel):
+                with self.subTest(builder_ref=malformed), self.assertRaises(PrincipalContractError) as raised:
+                    identity_builder(context, scope_kind="user", review_ref=malformed)
+                self.assertNotIn(private_sentinel, str(raised.exception))
+            persisted = "".join(path.read_text(encoding="utf-8") for path in paths.memory_dir.rglob("*.json"))
+            self.assertNotIn(private_sentinel, persisted)
+
     def test_M1_M2_two_principals_share_thread_without_cross_user_recall(self) -> None:
         # Given user-only A/B records and reviewed shared project audiences.
         with TemporaryDirectory() as tmp:

@@ -6,10 +6,23 @@ import hashlib
 import hmac
 import json
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from ._memory_principal_validation import (
+    ACTOR_KINDS,
+    BINDING_STATES,
+    MEMORY_AUDIENCE_SCHEMA_VERSION,
+    MEMORY_IDENTITY_SCHEMA_VERSION,
+    PRINCIPAL_CONTEXT_KEYS,
+    PRINCIPAL_CONTEXT_SCHEMA_VERSION,
+    PRINCIPAL_REF_PATTERN as PRINCIPAL_REF_PATTERN,
+    memory_identity_errors,
+    principal_ref as _principal,
+    safe_ref as _safe,
+    valid_review_ref as _valid_review_ref,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,19 +31,6 @@ class PrincipalContractError(ValueError):
 
     def __str__(self) -> str:
         return self.reason
-
-PRINCIPAL_CONTEXT_SCHEMA_VERSION = "memory_principal_context/v1"
-MEMORY_IDENTITY_SCHEMA_VERSION = "omh_memory_identity/v1"
-MEMORY_AUDIENCE_SCHEMA_VERSION = "omh_memory_audience/v1"
-PRINCIPAL_REF_PATTERN = re.compile(r"^principal:v1:[0-9a-f]{64}$")
-ACTOR_KINDS = frozenset({"human", "bot", "system", "ambiguous", "unknown"})
-BINDING_STATES = frozenset({"validated_local", "host_validated", "unbound"})
-_CONTEXT_KEYS = frozenset({
-    "schema_version", "principal", "profile_ref", "surface_ref", "session_ref",
-    "turn_ref", "actor_kind", "identity_evidence_refs", "binding_state",
-})
-_SAFE_REF = re.compile(r"^[A-Za-z0-9_.:-]{1,120}$")
-
 
 def derive_principal_ref(
     omh_home: str | Path,
@@ -108,14 +108,19 @@ def parse_principal_context(
     expected_turn: str = "",
 ) -> dict[str, Any] | None:
     """Parse a closed principal context and fail closed on active-context mismatch."""
-    if not isinstance(value, dict) or set(value) != _CONTEXT_KEYS:
+    if not isinstance(value, dict) or set(value) != PRINCIPAL_CONTEXT_KEYS:
         return None
     if value.get("schema_version") != PRINCIPAL_CONTEXT_SCHEMA_VERSION:
         return None
     kind = value.get("actor_kind")
     binding = value.get("binding_state")
     principal = value.get("principal")
-    if kind not in ACTOR_KINDS or binding not in BINDING_STATES:
+    if (
+        not isinstance(kind, str)
+        or kind not in ACTOR_KINDS
+        or not isinstance(binding, str)
+        or binding not in BINDING_STATES
+    ):
         return None
     if kind == "human" and (binding not in {"validated_local", "host_validated"} or not _principal(principal)):
         return None
@@ -133,7 +138,7 @@ def parse_principal_context(
         return None
     if expected_turn and value.get("turn_ref") != expected_turn:
         return None
-    return {key: value[key] for key in _CONTEXT_KEYS}
+    return {key: value[key] for key in PRINCIPAL_CONTEXT_KEYS}
 
 
 def build_memory_identity(
@@ -161,48 +166,20 @@ def build_memory_identity(
         raise PrincipalContractError("shared project/thread memory requires an explicit principal audience")
     if reviewer_principal is not None and not _principal(reviewer_principal):
         raise PrincipalContractError("reviewer principal must be opaque")
+    normalized_review_ref = _review_ref(review_ref, allow_empty=True)
     return {
         "schema_version": MEMORY_IDENTITY_SCHEMA_VERSION,
         "subject_principal": subject,
         "event_actor": {"principal": actor, "actor_kind": "human"},
-        "reviewer": {"principal": reviewer_principal, "review_ref": str(review_ref)},
+        "reviewer": {"principal": reviewer_principal, "review_ref": normalized_review_ref},
         "executor_perspective": _safe_ref(executor_perspective, "executor_perspective"),
         "audience": {
             "schema_version": MEMORY_AUDIENCE_SCHEMA_VERSION,
             "kind": audience_kind,
             "principal_refs": audience,
-            "review_ref": str(review_ref),
+            "review_ref": normalized_review_ref,
         },
     }
-
-
-def memory_identity_errors(value: Any) -> list[str]:
-    """Validate the closed persisted identity and audience shape."""
-    if not isinstance(value, dict) or set(value) != {
-        "schema_version", "subject_principal", "event_actor", "reviewer",
-        "executor_perspective", "audience",
-    }:
-        return ["identity_shape"]
-    actor, reviewer, audience = value.get("event_actor"), value.get("reviewer"), value.get("audience")
-    if value.get("schema_version") != MEMORY_IDENTITY_SCHEMA_VERSION:
-        return ["identity_schema"]
-    if not isinstance(actor, dict) or set(actor) != {"principal", "actor_kind"} or actor.get("actor_kind") != "human" or not _principal(actor.get("principal")):
-        return ["event_actor"]
-    if not isinstance(reviewer, dict) or set(reviewer) != {"principal", "review_ref"} or (reviewer.get("principal") is not None and not _principal(reviewer.get("principal"))):
-        return ["reviewer"]
-    if not isinstance(audience, dict) or set(audience) != {"schema_version", "kind", "principal_refs", "review_ref"}:
-        return ["audience"]
-    refs = audience.get("principal_refs")
-    if audience.get("schema_version") != MEMORY_AUDIENCE_SCHEMA_VERSION or not isinstance(refs, list) or not refs or len(refs) > 64 or any(not _principal(item) for item in refs):
-        return ["audience"]
-    subject = value.get("subject_principal")
-    if audience.get("kind") == "subject_only" and (not _principal(subject) or refs != [subject]):
-        return ["subject_audience"]
-    if audience.get("kind") == "explicit_principals" and subject is not None:
-        return ["shared_subject"]
-    if audience.get("kind") not in {"subject_only", "explicit_principals"} or not _safe(value.get("executor_perspective")):
-        return ["identity_values"]
-    return []
 
 
 def principal_recall_decision(
@@ -216,7 +193,7 @@ def principal_recall_decision(
     if schema != "project_memory_record/v3":
         return {"allowed": not shared_surface, "reason_code": "legacy_nonshared" if not shared_surface else "identity_unbound_shared"}
     identity = record.get("identity")
-    if not isinstance(identity, dict):
+    if not isinstance(identity, dict) or memory_identity_errors(identity):
         return {"allowed": False, "reason_code": "identity_invalid"}
     parsed = parse_principal_context(context)
     if parsed is None:
@@ -256,12 +233,10 @@ def audience_policy_digest(record: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _principal(value: Any) -> bool:
-    return isinstance(value, str) and PRINCIPAL_REF_PATTERN.fullmatch(value) is not None
-
-
-def _safe(value: Any) -> bool:
-    return isinstance(value, str) and _SAFE_REF.fullmatch(value) is not None
+def _review_ref(value: Any, *, allow_empty: bool) -> str:
+    if not _valid_review_ref(value, allow_empty=allow_empty):
+        raise PrincipalContractError("review_ref must be a bounded opaque metadata reference")
+    return value
 
 
 def _safe_ref(value: Any, field: str) -> str:
