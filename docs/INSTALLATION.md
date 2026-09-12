@@ -294,7 +294,11 @@ restore the shipped default, Enter to save and `q` to leave the file alone;
 interactive `omh setup` offers that walk as its last question, default No, and
 a "no" leaves the seeded defaults in effect — and
 `omh model-chains set <category> "model[:effort], ..."` is the scriptable
-write (agents included). All of them edit the same document: `omh setup` seeds
+write (agents included).
+
+![Bare omh model-chains: one row per category with its head model, effort bar and state; the cursor row shows the left/right and -/+ handles](../assets/model-chain-picker-cli.png)
+
+All of them edit the same document: `omh setup` seeds
 `~/.omh/routing/model-chains.json` (`mixture_chain_overrides/v1`) with an
 empty `categories` object, meaning the shipped defaults above stay live and
 keep updating with `omh update`. A category written into that file replaces
